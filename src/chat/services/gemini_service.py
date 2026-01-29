@@ -1202,43 +1202,142 @@ class GeminiService:
             return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？✨"
         return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？✨"
 
-    @_api_key_handler
     async def generate_embedding(
         self,
         text: str,
         task_type: str = "retrieval_document",
         title: Optional[str] = None,
-        client: Any = None,
     ) -> Optional[List[float]]:
         """
         为给定文本生成嵌入向量。
+        支持多种提供商: gemini, openai, siliconflow
         """
-        if not client:
-            raise ValueError("装饰器未能提供客户端实例。")
-
         if not text or not text.strip():
             log.warning(
                 f"generate_embedding 接收到空文本！text: '{text}', task_type: '{task_type}'"
             )
             return None
 
-        loop = asyncio.get_event_loop()
-        embed_config = types.EmbedContentConfig(task_type=task_type)
-        if title and task_type == "retrieval_document":
-            embed_config.title = title
+        # 获取嵌入配置
+        embed_config = app_config.EMBEDDING_CONFIG
+        if not embed_config.get("ENABLED", True):
+            log.warning("向量嵌入功能已禁用")
+            return None
+        
+        provider = embed_config.get("PROVIDER", "gemini")
+        api_key = embed_config.get("API_KEY") or os.getenv("GEMINI_API_KEYS", "").split(",")[0].strip()
+        base_url = embed_config.get("BASE_URL")
+        model_name = embed_config.get("MODEL_NAME", "gemini-embedding-001")
+        
+        if not api_key:
+            log.error("未配置向量嵌入 API 密钥")
+            return None
+        
+        try:
+            if provider == "gemini":
+                return await self._generate_gemini_embedding(text, task_type, title, api_key, base_url, model_name)
+            elif provider in ["openai", "siliconflow"]:
+                return await self._generate_openai_compatible_embedding(text, api_key, base_url, model_name, provider)
+            else:
+                log.error(f"不支持的嵌入提供商: {provider}")
+                return None
+        except Exception as e:
+            log.error(f"生成向量嵌入时发生错误 ({provider}): {e}", exc_info=True)
+            return None
+    
+    async def _generate_gemini_embedding(
+        self,
+        text: str,
+        task_type: str,
+        title: Optional[str],
+        api_key: str,
+        base_url: Optional[str],
+        model_name: str,
+    ) -> Optional[List[float]]:
+        """使用 Gemini API 生成嵌入"""
+        try:
+            # 创建客户端
+            if base_url:
+                http_options = types.HttpOptions(base_url=base_url)
+                client = genai.Client(api_key=api_key, http_options=http_options)
+            else:
+                client = genai.Client(api_key=api_key)
+            
+            loop = asyncio.get_event_loop()
+            embed_config = types.EmbedContentConfig(task_type=task_type)
+            if title and task_type == "retrieval_document":
+                embed_config.title = title
 
-        embedding_result = await loop.run_in_executor(
-            self.executor,
-            lambda: client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=[types.Part(text=text)],
-                config=embed_config,
-            ),
-        )
+            embedding_result = await loop.run_in_executor(
+                self.executor,
+                lambda: client.models.embed_content(
+                    model=model_name,
+                    contents=[types.Part(text=text)],
+                    config=embed_config,
+                ),
+            )
 
-        if embedding_result and embedding_result.embeddings:
-            return embedding_result.embeddings[0].values
-        return None
+            if embedding_result and embedding_result.embeddings:
+                return embedding_result.embeddings[0].values
+            return None
+        except Exception as e:
+            log.error(f"Gemini 嵌入生成失败: {e}")
+            return None
+    
+    async def _generate_openai_compatible_embedding(
+        self,
+        text: str,
+        api_key: str,
+        base_url: Optional[str],
+        model_name: str,
+        provider: str,
+    ) -> Optional[List[float]]:
+        """使用 OpenAI 兼容 API 生成嵌入 (支持硅基流动等)"""
+        import aiohttp
+        
+        # 根据提供商设置默认 URL
+        if not base_url:
+            if provider == "siliconflow":
+                base_url = "https://api.siliconflow.cn/v1"
+            else:
+                base_url = "https://api.openai.com/v1"
+        
+        url = f"{base_url.rstrip('/')}/embeddings"
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        payload = {
+            "model": model_name,
+            "input": text,
+            "encoding_format": "float",
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if "data" in data and len(data["data"]) > 0:
+                            embedding = data["data"][0].get("embedding")
+                            if embedding:
+                                return embedding
+                        log.warning(f"OpenAI 兼容 API 返回无效响应: {data}")
+                        return None
+                    else:
+                        error_text = await response.text()
+                        log.error(f"OpenAI 兼容嵌入 API 错误 ({response.status}): {error_text}")
+                        return None
+        except Exception as e:
+            log.error(f"OpenAI 兼容嵌入请求失败: {e}")
+            return None
 
     @_api_key_handler
     async def generate_text(

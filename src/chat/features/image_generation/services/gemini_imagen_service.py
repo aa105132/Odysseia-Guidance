@@ -58,9 +58,90 @@ class GeminiImagenService:
     def is_available(self) -> bool:
         """检查服务是否可用"""
         return (
-            self._client is not None 
+            self._client is not None
             and app_config.GEMINI_IMAGEN_CONFIG.get("ENABLED", False)
         )
+    
+    def reload_config(self) -> dict:
+        """
+        热重载配置并重新初始化客户端
+        
+        Returns:
+            包含重载状态的字典
+        """
+        try:
+            # 重新读取环境变量
+            from dotenv import load_dotenv
+            load_dotenv(override=True)
+            
+            # 更新配置
+            import os
+            app_config.GEMINI_IMAGEN_CONFIG["ENABLED"] = os.getenv("GEMINI_IMAGEN_ENABLED", "False").lower() == "true"
+            app_config.GEMINI_IMAGEN_CONFIG["API_KEY"] = os.getenv("GEMINI_IMAGEN_API_KEY")
+            app_config.GEMINI_IMAGEN_CONFIG["BASE_URL"] = os.getenv("GEMINI_IMAGEN_BASE_URL")
+            app_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = os.getenv("GEMINI_IMAGEN_MODEL", "imagen-3.0-generate-002")
+            
+            # 重新初始化客户端
+            self._client = None
+            self._initialize_client()
+            
+            if self.is_available():
+                log.info("✅ Gemini Imagen 服务配置已热重载")
+                return {"success": True, "message": "Imagen 服务已重新初始化", "available": True}
+            else:
+                return {"success": True, "message": "配置已更新但服务未启用", "available": False}
+                
+        except Exception as e:
+            log.error(f"热重载 Imagen 配置失败: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def update_config(self, enabled: bool = None, api_key: str = None, base_url: str = None, model_name: str = None) -> dict:
+        """
+        更新配置并重新初始化
+        
+        Args:
+            enabled: 是否启用服务
+            api_key: API 密钥
+            base_url: 自定义端点 URL
+            model_name: 模型名称
+            
+        Returns:
+            包含更新状态的字典
+        """
+        try:
+            import os
+            
+            if enabled is not None:
+                app_config.GEMINI_IMAGEN_CONFIG["ENABLED"] = enabled
+                os.environ["GEMINI_IMAGEN_ENABLED"] = str(enabled).lower()
+            
+            if api_key is not None:
+                app_config.GEMINI_IMAGEN_CONFIG["API_KEY"] = api_key
+                os.environ["GEMINI_IMAGEN_API_KEY"] = api_key
+            
+            if base_url is not None:
+                app_config.GEMINI_IMAGEN_CONFIG["BASE_URL"] = base_url
+                os.environ["GEMINI_IMAGEN_BASE_URL"] = base_url
+            
+            if model_name is not None:
+                app_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = model_name
+                os.environ["GEMINI_IMAGEN_MODEL"] = model_name
+            
+            # 重新初始化客户端
+            self._client = None
+            self._initialize_client()
+            
+            if self.is_available():
+                log.info("✅ Gemini Imagen 配置已更新并重新初始化")
+                return {"success": True, "message": "Imagen 服务已更新并启用", "available": True}
+            elif app_config.GEMINI_IMAGEN_CONFIG.get("ENABLED"):
+                return {"success": False, "message": "配置已更新但客户端初始化失败", "available": False}
+            else:
+                return {"success": True, "message": "配置已更新，服务已禁用", "available": False}
+                
+        except Exception as e:
+            log.error(f"更新 Imagen 配置失败: {e}")
+            return {"success": False, "error": str(e)}
 
     async def generate_image(
         self,

@@ -78,6 +78,22 @@ GEMINI_IMAGEN_CONFIG = {
     "DEFAULT_ASPECT_RATIO": os.getenv("GEMINI_IMAGEN_ASPECT_RATIO", "1:1"),
 }
 
+# --- 向量嵌入 (Embedding) 配置 ---
+# 用于知识库检索和语义搜索功能
+EMBEDDING_CONFIG = {
+    "ENABLED": os.getenv("EMBEDDING_ENABLED", "True").lower() == "true",
+    # API 提供商类型: "gemini" (官方), "openai" (兼容), "siliconflow" (硅基流动)
+    "PROVIDER": os.getenv("EMBEDDING_PROVIDER", "gemini"),
+    # API 密钥 (如果为空则使用主 Gemini API 密钥)
+    "API_KEY": os.getenv("EMBEDDING_API_KEY"),
+    # 自定义端点 URL (留空使用默认)
+    "BASE_URL": os.getenv("EMBEDDING_BASE_URL"),
+    # 模型名称
+    "MODEL_NAME": os.getenv("EMBEDDING_MODEL", "gemini-embedding-001"),
+    # 向量维度 (不同模型维度不同)
+    "DIMENSIONS": int(os.getenv("EMBEDDING_DIMENSIONS", "768")),
+}
+
 # --- ComfyUI 图像生成配置 ---
 COMFYUI_CONFIG = {
     "ENABLED": os.getenv("COMFYUI_ENABLED", "True").lower() == "true",

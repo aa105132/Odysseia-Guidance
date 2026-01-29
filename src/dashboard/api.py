@@ -61,11 +61,22 @@ class ConfigUpdate(BaseModel):
 
 class ImagenConfigUpdate(BaseModel):
     """Imagen 配置更新"""
+    enabled: Optional[bool] = None
     api_url: Optional[str] = None
     model: Optional[str] = None
     default_images: Optional[int] = None
     api_key: Optional[str] = None
     api_format: Optional[str] = None  # 'gemini' 或 'openai'
+
+
+class EmbeddingConfigUpdate(BaseModel):
+    """向量嵌入配置更新"""
+    enabled: Optional[bool] = None
+    provider: Optional[str] = None  # 'gemini', 'openai', 'siliconflow'
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    dimensions: Optional[int] = None
 
 
 class AIConfigUpdate(BaseModel):
@@ -334,22 +345,40 @@ def update_env_file(updates: Dict[str, str]):
 async def get_imagen_config(token: str = Depends(verify_token)):
     """获取 Imagen 配置"""
     config = chat_config.GEMINI_IMAGEN_CONFIG
-    api_url = config.get("API_URL", "")
+    api_url = config.get("BASE_URL", "") or config.get("API_URL", "")
+    api_key = config.get("API_KEY", "")
     
-    # 隐藏部分 URL
+    # 隐藏部分信息
     masked_url = ""
     if api_url and len(api_url) > 30:
         masked_url = api_url[:20] + "..." + api_url[-10:]
     elif api_url:
         masked_url = api_url
     
+    masked_key = ""
+    if api_key and len(api_key) > 14:
+        masked_key = api_key[:10] + "..." + api_key[-4:]
+    elif api_key:
+        masked_key = "***"
+    
+    # 检查服务是否可用
+    try:
+        from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
+        service_available = gemini_imagen_service.is_available()
+    except Exception:
+        service_available = False
+    
     return {
+        "enabled": config.get("ENABLED", False),
         "api_url": api_url,
         "api_url_masked": masked_url,
-        "model": config.get("MODEL", "imagen-3.0-generate-002"),
+        "api_key_masked": masked_key,
+        "has_api_key": bool(api_key),
+        "model": config.get("MODEL_NAME", "") or config.get("MODEL", "imagen-3.0-generate-002"),
         "default_images": config.get("DEFAULT_NUMBER_OF_IMAGES", 1),
         "aspect_ratios": config.get("ASPECT_RATIOS", {}),
         "api_format": config.get("API_FORMAT", "gemini"),
+        "service_available": service_available,
         "available_models": [
             "imagen-3.0-generate-002",
             "imagen-3.0-fast-generate-001",
@@ -361,18 +390,28 @@ async def get_imagen_config(token: str = Depends(verify_token)):
 
 @app.put("/api/config/imagen")
 async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(verify_token)):
-    """更新 Imagen 配置"""
+    """更新 Imagen 配置并热重载服务"""
     updated = {}
     env_updates = {}
+    
+    if config.enabled is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["ENABLED"] = config.enabled
+        os.environ["GEMINI_IMAGEN_ENABLED"] = str(config.enabled).lower()
+        env_updates["GEMINI_IMAGEN_ENABLED"] = str(config.enabled).lower()
+        updated["enabled"] = config.enabled
     
     if config.api_url is not None:
         if config.api_url and not (config.api_url.startswith("http://") or config.api_url.startswith("https://")):
             raise HTTPException(400, "API URL 必须以 http:// 或 https:// 开头")
-        chat_config.GEMINI_IMAGEN_CONFIG["API_URL"] = config.api_url
+        chat_config.GEMINI_IMAGEN_CONFIG["BASE_URL"] = config.api_url
+        os.environ["GEMINI_IMAGEN_BASE_URL"] = config.api_url
+        env_updates["GEMINI_IMAGEN_BASE_URL"] = config.api_url
         updated["api_url"] = config.api_url[:30] + "..." if len(config.api_url) > 30 else config.api_url
     
     if config.model is not None:
-        chat_config.GEMINI_IMAGEN_CONFIG["MODEL"] = config.model
+        chat_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = config.model
+        os.environ["GEMINI_IMAGEN_MODEL"] = config.model
+        env_updates["GEMINI_IMAGEN_MODEL"] = config.model
         updated["model"] = config.model
     
     if config.default_images is not None:
@@ -382,7 +421,7 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         updated["default_images"] = config.default_images
     
     if config.api_key is not None:
-        # 更新环境变量
+        chat_config.GEMINI_IMAGEN_CONFIG["API_KEY"] = config.api_key
         os.environ["GEMINI_IMAGEN_API_KEY"] = config.api_key
         env_updates["GEMINI_IMAGEN_API_KEY"] = config.api_key
         updated["api_key"] = "已更新"
@@ -401,7 +440,129 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         except Exception as e:
             log.warning(f"无法写入 .env 文件: {e}")
     
+    # 热重载 Imagen 服务
+    try:
+        from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
+        reload_result = gemini_imagen_service.update_config(
+            enabled=config.enabled,
+            api_key=config.api_key,
+            base_url=config.api_url,
+            model_name=config.model
+        )
+        updated["service_reloaded"] = reload_result.get("success", False)
+        updated["service_available"] = reload_result.get("available", False)
+        if not reload_result.get("success"):
+            updated["reload_error"] = reload_result.get("error", reload_result.get("message"))
+        log.info(f"Imagen 服务热重载结果: {reload_result}")
+    except Exception as e:
+        log.error(f"热重载 Imagen 服务失败: {e}")
+        updated["service_reload_error"] = str(e)
+    
     log.info(f"Imagen 配置已更新: {updated}")
+    return {"success": True, "updated": updated}
+
+
+# --- 向量嵌入配置 API ---
+
+@app.get("/api/config/embedding")
+async def get_embedding_config(token: str = Depends(verify_token)):
+    """获取向量嵌入配置"""
+    config = chat_config.EMBEDDING_CONFIG
+    api_url = config.get("BASE_URL", "")
+    api_key = config.get("API_KEY", "")
+    
+    # 隐藏部分信息
+    masked_url = ""
+    if api_url and len(api_url) > 30:
+        masked_url = api_url[:20] + "..." + api_url[-10:]
+    elif api_url:
+        masked_url = api_url
+    
+    masked_key = ""
+    if api_key and len(api_key) > 14:
+        masked_key = api_key[:10] + "..." + api_key[-4:]
+    elif api_key:
+        masked_key = "***"
+    
+    return {
+        "enabled": config.get("ENABLED", True),
+        "provider": config.get("PROVIDER", "gemini"),
+        "api_url": api_url,
+        "api_url_masked": masked_url,
+        "api_key_masked": masked_key,
+        "has_api_key": bool(api_key),
+        "model": config.get("MODEL_NAME", "gemini-embedding-001"),
+        "dimensions": config.get("DIMENSIONS", 768),
+        "available_providers": [
+            {"id": "gemini", "name": "Google Gemini (官方)", "default_model": "gemini-embedding-001"},
+            {"id": "openai", "name": "OpenAI 兼容", "default_model": "text-embedding-3-small"},
+            {"id": "siliconflow", "name": "硅基流动", "default_model": "BAAI/bge-large-zh-v1.5"},
+        ],
+        "available_models": {
+            "gemini": ["gemini-embedding-001", "embedding-001"],
+            "openai": ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"],
+            "siliconflow": ["BAAI/bge-large-zh-v1.5", "BAAI/bge-m3", "Pro/BAAI/bge-m3"],
+        }
+    }
+
+
+@app.put("/api/config/embedding")
+async def update_embedding_config(config: EmbeddingConfigUpdate, token: str = Depends(verify_token)):
+    """更新向量嵌入配置"""
+    updated = {}
+    env_updates = {}
+    
+    if config.enabled is not None:
+        chat_config.EMBEDDING_CONFIG["ENABLED"] = config.enabled
+        os.environ["EMBEDDING_ENABLED"] = str(config.enabled).lower()
+        env_updates["EMBEDDING_ENABLED"] = str(config.enabled).lower()
+        updated["enabled"] = config.enabled
+    
+    if config.provider is not None:
+        if config.provider not in ["gemini", "openai", "siliconflow"]:
+            raise HTTPException(400, "提供商必须是 'gemini', 'openai' 或 'siliconflow'")
+        chat_config.EMBEDDING_CONFIG["PROVIDER"] = config.provider
+        os.environ["EMBEDDING_PROVIDER"] = config.provider
+        env_updates["EMBEDDING_PROVIDER"] = config.provider
+        updated["provider"] = config.provider
+    
+    if config.api_url is not None:
+        if config.api_url and not (config.api_url.startswith("http://") or config.api_url.startswith("https://")):
+            raise HTTPException(400, "API URL 必须以 http:// 或 https:// 开头")
+        chat_config.EMBEDDING_CONFIG["BASE_URL"] = config.api_url
+        os.environ["EMBEDDING_BASE_URL"] = config.api_url
+        env_updates["EMBEDDING_BASE_URL"] = config.api_url
+        updated["api_url"] = config.api_url[:30] + "..." if len(config.api_url) > 30 else config.api_url
+    
+    if config.api_key is not None:
+        chat_config.EMBEDDING_CONFIG["API_KEY"] = config.api_key
+        os.environ["EMBEDDING_API_KEY"] = config.api_key
+        env_updates["EMBEDDING_API_KEY"] = config.api_key
+        updated["api_key"] = "已更新"
+    
+    if config.model is not None:
+        chat_config.EMBEDDING_CONFIG["MODEL_NAME"] = config.model
+        os.environ["EMBEDDING_MODEL"] = config.model
+        env_updates["EMBEDDING_MODEL"] = config.model
+        updated["model"] = config.model
+    
+    if config.dimensions is not None:
+        if config.dimensions < 1 or config.dimensions > 4096:
+            raise HTTPException(400, "向量维度必须在 1 到 4096 之间")
+        chat_config.EMBEDDING_CONFIG["DIMENSIONS"] = config.dimensions
+        os.environ["EMBEDDING_DIMENSIONS"] = str(config.dimensions)
+        env_updates["EMBEDDING_DIMENSIONS"] = str(config.dimensions)
+        updated["dimensions"] = config.dimensions
+    
+    # 如果有环境变量更新，尝试写入 .env 文件
+    if env_updates:
+        try:
+            update_env_file(env_updates)
+            log.info(f"向量嵌入环境变量已写入 .env 文件")
+        except Exception as e:
+            log.warning(f"无法写入 .env 文件: {e}")
+    
+    log.info(f"向量嵌入配置已更新: {updated}")
     return {"success": True, "updated": updated}
 
 
