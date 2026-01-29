@@ -14,6 +14,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv()
 
+# 调试：打印数据库相关环境变量
+print(f"🔍 DB_HOST: {os.getenv('DB_HOST', 'NOT SET')}")
+print(f"🔍 RUNNING_IN_DOCKER: {os.getenv('RUNNING_IN_DOCKER', 'NOT SET')}")
+print(f"🔍 POSTGRES_DB: {os.getenv('POSTGRES_DB', 'NOT SET')}")
+
 if __name__ == "__main__":
     import uvicorn
     

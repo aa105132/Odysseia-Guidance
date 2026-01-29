@@ -257,8 +257,9 @@ class GeminiService:
             raise ValueError("GOOGLE_API_KEYS_LIST is not set.")
 
         # 先移除整个字符串两端的空格和引号，以支持 "key1,key2" 格式
-        processed_keys_str = google_api_keys_str.strip().strip('"')
-        api_keys = [key.strip() for key in processed_keys_str.split(",") if key.strip()]
+        # 同时移除换行符和回车符，避免 header injection 问题
+        processed_keys_str = google_api_keys_str.strip().strip('"').replace('\n', '').replace('\r', '')
+        api_keys = [key.strip().replace('\n', '').replace('\r', '') for key in processed_keys_str.split(",") if key.strip()]
         self.key_rotation_service = KeyRotationService(api_keys)
         log.info(
             f"GeminiService 初始化并由 KeyRotationService 管理 {len(api_keys)} 个密钥。"

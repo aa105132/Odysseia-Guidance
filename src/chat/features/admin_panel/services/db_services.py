@@ -16,15 +16,18 @@ def get_parade_db_connection() -> Optional[psycopg2.extensions.connection]:
     支持通过 DATABASE_URL 或分别设置的环境变量连接。
     """
     try:
-        # 优先使用 DB_HOST 环境变量，其次根据运行环境决定
+        # 优先使用 DB_HOST 环境变量
         db_host = os.getenv("DB_HOST")
+        log.info(f"DB_HOST 环境变量: {db_host}")
         
         if not db_host:
             if os.getenv("RUNNING_IN_DOCKER"):
                 # Docker 内部优先使用用户指定的外部数据库容器名
-                db_host = os.getenv("EXTERNAL_DB_HOST", "odysseia_pg_db")
+                db_host = os.getenv("EXTERNAL_DB_HOST", "yueyue-postgres")
+                log.info(f"Docker 内部，使用默认主机: {db_host}")
             else:
                 db_host = "localhost"
+                log.info("本机运行，使用 localhost")
 
         conn = psycopg2.connect(
             dbname=os.getenv("POSTGRES_DB", "yueyue"),
