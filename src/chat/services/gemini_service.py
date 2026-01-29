@@ -1013,6 +1013,22 @@ class GeminiService:
                             },
                         )
                     )
+                # 处理图片类型的 Part（inline_data）
+                elif (
+                    isinstance(result, types.Part)
+                    and hasattr(result, 'inline_data')
+                    and result.inline_data
+                ):
+                    # 这是图片工具返回的图片数据，直接添加到结果中
+                    log.info("检测到图片工具返回的 inline_data，已添加到工具结果。")
+                    tool_result_parts.append(result)
+                    # 同时添加一个 FunctionResponse 告诉模型图片已生成
+                    tool_result_parts.append(
+                        types.Part.from_function_response(
+                            name="generate_image",
+                            response={"result": "图片已成功生成并展示给用户。请用自己的语气告诉用户图片已经画好了。"},
+                        )
+                    )
                 # 确保 result 是 Part 类型，并且其 function_response 和 response 属性都存在
                 elif (
                     isinstance(result, types.Part)

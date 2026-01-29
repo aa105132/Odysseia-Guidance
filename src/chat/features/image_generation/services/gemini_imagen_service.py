@@ -507,7 +507,8 @@ class GeminiImagenService:
         )
         
         if images and len(images) > 0:
-            return images[0]
+            # 返回最后一张图片（通常是完整图，第一张可能是缩略图）
+            return images[-1]
         return None
 
 

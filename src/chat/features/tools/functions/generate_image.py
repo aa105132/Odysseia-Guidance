@@ -21,6 +21,7 @@ async def generate_image(
     prompt: str,
     negative_prompt: Optional[str] = None,
     aspect_ratio: str = "1:1",
+    preview_message: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
@@ -36,6 +37,9 @@ async def generate_image(
                 例如："low quality, blurry, text, watermark"
         aspect_ratio: 图片宽高比，支持 "1:1", "3:4", "4:3", "9:16", "16:9"。
                 默认为 "1:1"。
+        preview_message: （必填）在生成图片前先发送给用户的预告消息。
+                根据用户的请求内容和你的性格特点，写一句有趣的话告诉用户你正在画图。
+                例如："哇，你想要一只可爱的狐狸女孩？让我来画~" 或 "这个我很拿手哦，稍等一下~"
     
     Returns:
         如果成功，返回包含 image_data 的字典，LLM会将图片展示给用户。
@@ -101,6 +105,15 @@ async def generate_image(
     
     # 添加"正在生成"反应
     await add_reaction(GENERATING_EMOJI)
+    
+    # 发送预告消息（先回复用户，使用 LLM 生成的消息）
+    channel = kwargs.get("channel")
+    if channel and preview_message:
+        try:
+            await channel.send(preview_message)
+            log.info(f"已发送图片生成预告消息: {preview_message[:50]}...")
+        except Exception as e:
+            log.warning(f"发送预告消息失败: {e}")
     
     try:
         # 验证宽高比
