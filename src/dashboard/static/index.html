@@ -85,6 +85,12 @@
                         <i data-lucide="smile" class="w-5 h-5"></i>
                         <span>表情管理</span>
                     </button>
+                    <button @click="currentTab = 'embedding'"
+                            :class="currentTab === 'embedding' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="search" class="w-5 h-5"></i>
+                        <span>向量嵌入</span>
+                    </button>
                     <button @click="currentTab = 'knowledge'"
                             :class="currentTab === 'knowledge' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
                             class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
@@ -299,8 +305,29 @@
             <div x-show="currentTab === 'imagen'" x-transition>
                 <h2 class="text-2xl font-bold mb-6">绘图设置</h2>
                 
-                <!-- API 配置区 -->
+                <!-- 服务状态卡片 -->
                 <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center"
+                                 :class="imagenForm.enabled && config.imagen?.service_available ? 'bg-green-500/20' : 'bg-red-500/20'">
+                                <i data-lucide="image" class="w-6 h-6"
+                                   :class="imagenForm.enabled && config.imagen?.service_available ? 'text-green-400' : 'text-red-400'"></i>
+                            </div>
+                            <div>
+                                <p class="font-medium">Gemini Imagen 服务</p>
+                                <p class="text-sm text-slate-400" x-text="imagenForm.enabled ? (config.imagen?.service_available ? '运行中' : '配置错误') : '已禁用'"></p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="imagenForm.enabled" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- API 配置区 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6" :class="!imagenForm.enabled && 'opacity-50'">
                     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
                         <i data-lucide="key" class="w-5 h-5 text-yellow-400"></i>
                         API 配置
@@ -560,6 +587,124 @@
                             </div>
                         </div>
                     </template>
+                </div>
+            </div>
+            
+            <!-- 向量嵌入设置 -->
+            <div x-show="currentTab === 'embedding'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">向量嵌入设置</h2>
+                
+                <div class="bg-gradient-to-r from-blue-900/30 to-purple-900/30 backdrop-blur rounded-xl p-6 border border-blue-500/30 mb-6">
+                    <h3 class="text-lg font-semibold mb-3 flex items-center gap-2">
+                        <i data-lucide="info" class="w-5 h-5 text-blue-400"></i>
+                        关于向量嵌入
+                    </h3>
+                    <p class="text-sm text-slate-300">
+                        向量嵌入用于将文本转换为数字向量，以便进行语义搜索和知识库检索。
+                        如果你使用的 AI API 代理不支持 Gemini 的嵌入接口，可以配置单独的嵌入服务，如硅基流动。
+                    </p>
+                </div>
+                
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="settings" class="w-5 h-5 text-purple-400"></i>
+                        嵌入服务配置
+                    </h3>
+                    <div class="space-y-6">
+                        <!-- 启用开关 -->
+                        <div class="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg">
+                            <div>
+                                <p class="font-medium">启用向量嵌入</p>
+                                <p class="text-sm text-slate-400">关闭后将禁用知识库语义搜索功能</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" x-model="embeddingForm.enabled" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                            </label>
+                        </div>
+                        
+                        <!-- 提供商选择 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">嵌入服务提供商</label>
+                            <div class="grid grid-cols-3 gap-3">
+                                <button @click="embeddingForm.provider = 'gemini'; updateEmbeddingDefaults()"
+                                        :class="embeddingForm.provider === 'gemini' ? 'bg-purple-600 border-purple-500' : 'bg-slate-700/50 border-slate-600 hover:border-purple-500'"
+                                        class="p-3 rounded-lg border-2 transition-all text-center">
+                                    <p class="font-medium">Gemini</p>
+                                    <p class="text-xs text-slate-400">Google 官方</p>
+                                </button>
+                                <button @click="embeddingForm.provider = 'openai'; updateEmbeddingDefaults()"
+                                        :class="embeddingForm.provider === 'openai' ? 'bg-purple-600 border-purple-500' : 'bg-slate-700/50 border-slate-600 hover:border-purple-500'"
+                                        class="p-3 rounded-lg border-2 transition-all text-center">
+                                    <p class="font-medium">OpenAI</p>
+                                    <p class="text-xs text-slate-400">兼容接口</p>
+                                </button>
+                                <button @click="embeddingForm.provider = 'siliconflow'; updateEmbeddingDefaults()"
+                                        :class="embeddingForm.provider === 'siliconflow' ? 'bg-purple-600 border-purple-500' : 'bg-slate-700/50 border-slate-600 hover:border-purple-500'"
+                                        class="p-3 rounded-lg border-2 transition-all text-center">
+                                    <p class="font-medium">硅基流动</p>
+                                    <p class="text-xs text-slate-400">SiliconFlow</p>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- API URL -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API Base URL</label>
+                            <input type="url" x-model="embeddingForm.api_url"
+                                   :placeholder="getEmbeddingUrlPlaceholder()"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1" x-text="getEmbeddingUrlHint()"></p>
+                        </div>
+                        
+                        <!-- API Key -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                API Key
+                                <span x-show="embeddingConfig.has_api_key" class="text-green-400 text-xs ml-2">✓ 已配置</span>
+                            </label>
+                            <div class="relative">
+                                <input :type="showEmbeddingApiKey ? 'text' : 'password'" x-model="embeddingForm.api_key"
+                                       :placeholder="embeddingConfig.api_key_masked || '输入 API Key...'"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <button @click="showEmbeddingApiKey = !showEmbeddingApiKey" type="button"
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                                    <i :data-lucide="showEmbeddingApiKey ? 'eye-off' : 'eye'" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">留空则使用主 AI API Key（仅 Gemini 模式）</p>
+                        </div>
+                        
+                        <!-- 模型选择 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">嵌入模型</label>
+                            <select x-model="embeddingForm.model"
+                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <template x-for="model in getEmbeddingModels()">
+                                    <option :value="model" x-text="model"></option>
+                                </template>
+                            </select>
+                            <p class="text-xs text-slate-500 mt-1">也可以输入自定义模型名称</p>
+                            <input type="text" x-model="embeddingForm.custom_model"
+                                   placeholder="或输入自定义模型名称..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 mt-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        
+                        <!-- 向量维度 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">向量维度</label>
+                            <input type="number" x-model="embeddingForm.dimensions" min="1" max="4096"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">不同模型输出维度不同，请参考模型文档</p>
+                        </div>
+                        
+                        <button @click="saveEmbeddingConfig()"
+                                :disabled="saving"
+                                class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                            <i data-lucide="save" class="w-5 h-5"></i>
+                            <span x-text="saving ? '保存中...' : '保存设置'"></span>
+                        </button>
+                    </div>
                 </div>
             </div>
             
@@ -882,13 +1027,16 @@
                 
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini' },
-                imagenForm: { api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '' },
+                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '' },
+                embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
+                embeddingConfig: {},
                 
                 // Imagen 模型获取
                 fetchingImagenModels: false,
                 availableImagenModels: [],
                 showApiKey: false,
                 showImagenApiKey: false,
+                showEmbeddingApiKey: false,
                 coinForm: { daily_reward: 50, chat_reward: 10, max_loan: 1000 },
                 
                 // 模型获取
@@ -962,6 +1110,7 @@
                         this.aiForm.api_key = '';  // 不显示真实的key，只显示placeholder
                     }
                     if (this.config.imagen) {
+                        this.imagenForm.enabled = this.config.imagen.enabled || false;
                         this.imagenForm.api_url = this.config.imagen.api_url || '';
                         this.imagenForm.model = this.config.imagen.model;
                         this.imagenForm.default_images = this.config.imagen.default_images;
@@ -978,6 +1127,104 @@
                     // 加载知识库数据
                     this.loadKnowledgeDocuments();
                     this.loadKnowledgeStats();
+                    // 加载嵌入配置
+                    this.loadEmbeddingConfig();
+                },
+                
+                async loadEmbeddingConfig() {
+                    try {
+                        const response = await fetch('/api/config/embedding', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            this.embeddingConfig = await response.json();
+                            this.embeddingForm.enabled = this.embeddingConfig.enabled;
+                            this.embeddingForm.provider = this.embeddingConfig.provider || 'gemini';
+                            this.embeddingForm.api_url = this.embeddingConfig.api_url || '';
+                            this.embeddingForm.model = this.embeddingConfig.model || 'gemini-embedding-001';
+                            this.embeddingForm.dimensions = this.embeddingConfig.dimensions || 768;
+                        }
+                    } catch (e) {
+                        console.error('加载嵌入配置失败', e);
+                    }
+                },
+                
+                getEmbeddingModels() {
+                    const models = {
+                        'gemini': ['gemini-embedding-001', 'embedding-001'],
+                        'openai': ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'],
+                        'siliconflow': ['BAAI/bge-large-zh-v1.5', 'BAAI/bge-m3', 'Pro/BAAI/bge-m3']
+                    };
+                    return models[this.embeddingForm.provider] || [];
+                },
+                
+                getEmbeddingUrlPlaceholder() {
+                    const placeholders = {
+                        'gemini': 'https://generativelanguage.googleapis.com/v1beta',
+                        'openai': 'https://api.openai.com/v1',
+                        'siliconflow': 'https://api.siliconflow.cn/v1'
+                    };
+                    return placeholders[this.embeddingForm.provider] || '';
+                },
+                
+                getEmbeddingUrlHint() {
+                    const hints = {
+                        'gemini': '留空使用 Google 官方端点',
+                        'openai': 'OpenAI 兼容端点，支持各种中转服务',
+                        'siliconflow': '硅基流动 API 端点'
+                    };
+                    return hints[this.embeddingForm.provider] || '';
+                },
+                
+                updateEmbeddingDefaults() {
+                    const defaults = {
+                        'gemini': { model: 'gemini-embedding-001', dimensions: 768 },
+                        'openai': { model: 'text-embedding-3-small', dimensions: 1536 },
+                        'siliconflow': { model: 'BAAI/bge-large-zh-v1.5', dimensions: 1024 }
+                    };
+                    const def = defaults[this.embeddingForm.provider] || {};
+                    this.embeddingForm.model = def.model || '';
+                    this.embeddingForm.dimensions = def.dimensions || 768;
+                },
+                
+                async saveEmbeddingConfig() {
+                    this.saving = true;
+                    try {
+                        const payload = {
+                            enabled: this.embeddingForm.enabled,
+                            provider: this.embeddingForm.provider,
+                            model: this.embeddingForm.custom_model || this.embeddingForm.model,
+                            dimensions: parseInt(this.embeddingForm.dimensions)
+                        };
+                        
+                        if (this.embeddingForm.api_url) {
+                            payload.api_url = this.embeddingForm.api_url;
+                        }
+                        
+                        if (this.embeddingForm.api_key) {
+                            payload.api_key = this.embeddingForm.api_key;
+                        }
+                        
+                        const response = await fetch('/api/config/embedding', {
+                            method: 'PUT',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        if (response.ok) {
+                            this.showToast('向量嵌入设置已保存', 'success');
+                            await this.loadEmbeddingConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
                 },
                 
                 formatDate(isoString) {
@@ -1351,6 +1598,7 @@
                     try {
                         // 构建请求体
                         const payload = {
+                            enabled: this.imagenForm.enabled,
                             api_url: this.imagenForm.api_url,
                             model: this.imagenForm.custom_model || this.imagenForm.model,
                             default_images: parseInt(this.imagenForm.default_images),
