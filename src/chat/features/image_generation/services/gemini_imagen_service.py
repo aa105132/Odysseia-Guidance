@@ -177,8 +177,8 @@ class GeminiImagenService:
         使用 Gemini Imagen 生成图像
 
         Args:
-            prompt: 正面提示词
-            negative_prompt: 负面提示词（可选）
+            prompt: 正面提示词（支持中文自然语言）
+            negative_prompt: 负面提示词（可选，支持中文）
             aspect_ratio: 宽高比，支持 "1:1", "3:4", "4:3", "9:16", "16:9"
             number_of_images: 生成图片数量（1-4）
 

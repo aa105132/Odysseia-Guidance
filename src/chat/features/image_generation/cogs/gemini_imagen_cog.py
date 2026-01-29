@@ -10,9 +10,11 @@ import io
 import discord
 from discord import app_commands
 from discord.ext import commands
+from google import genai
 
-from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
+from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG, PROMPT_CONFIG
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
+from src.chat.config.emoji_config import replace_emotion_tags
 from ..services.gemini_imagen_service import gemini_imagen_service
 
 log = logging.getLogger(__name__)
@@ -87,28 +89,76 @@ class GeminiImagenCog(commands.Cog):
             return
 
         try:
-            # 3. 调用服务生成图片
+            # 3. 并行调用：生成图片 + AI 个性化回复
             log.info(
                 f"用户 {user_id} 请求 Gemini Imagen 生成图片, "
                 f"提示词: {prompt[:100]}..., 宽高比: {aspect_ratio}"
             )
             
-            image_data = await gemini_imagen_service.generate_single_image(
-                prompt=prompt,
-                negative_prompt=negative_prompt if negative_prompt else None,
-                aspect_ratio=aspect_ratio,
+            # 使用 asyncio.gather 并行执行图片生成和 AI 回复
+            import asyncio
+            
+            async def generate_ai_response():
+                """让 AI 根据用户请求生成个性化回复"""
+                try:
+                    from src.dashboard.service_registry import service_registry
+                    if service_registry.is_initialized and service_registry.gemini_service:
+                        client = service_registry.gemini_service._get_client()
+                        if client:
+                            response = await client.aio.models.generate_content(
+                                model=PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
+                                contents=f"""你是月月，一个傲娇的狐狸娘AI助手。用户请求你画一张图，提示词是："{prompt}"
+请用你的傲娇性格回应用户，简短地评价一下这个画图请求，可以用<表情>标签表达情绪。
+回复要简短（1-2句话），例如：
+- "这个我画起来完全没问题啦！<傲娇>"
+- "哼，你的品味还不错嘛~让我来画给你看！<得意>"
+- "这...这种可爱的东西，正好是我擅长的！<害羞>"
+只回复角色台词，不要解释。""",
+                                config={
+                                    "temperature": 1.0,
+                                    "max_output_tokens": 100,
+                                }
+                            )
+                            return response.text.strip() if response.text else None
+                except Exception as e:
+                    log.warning(f"生成 AI 回复失败: {e}")
+                return None
+            
+            # 并行执行
+            image_data, ai_response = await asyncio.gather(
+                gemini_imagen_service.generate_single_image(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt if negative_prompt else None,
+                    aspect_ratio=aspect_ratio,
+                ),
+                generate_ai_response(),
+                return_exceptions=True
             )
+            
+            # 处理可能的异常
+            if isinstance(image_data, Exception):
+                log.error(f"图片生成异常: {image_data}")
+                image_data = None
+            if isinstance(ai_response, Exception):
+                log.warning(f"AI 回复异常: {ai_response}")
+                ai_response = None
 
             # 4. 发送结果
             if image_data:
                 file = discord.File(io.BytesIO(image_data), filename="generated_image.png")
                 
-                # 构建响应消息
-                response_msg = (
-                    f"图片生成成功啦!<傲娇>\n"
-                    f"消耗 {self.image_cost} 月光币,剩余 {new_balance}。\n\n"
-                    f"**提示词:** {prompt[:200]}{'...' if len(prompt) > 200 else ''}"
-                )
+                # 使用 AI 生成的回复，如果没有则使用默认
+                if ai_response:
+                    # 替换表情标签
+                    ai_response = replace_emotion_tags(ai_response)
+                    response_msg = f"{ai_response}\n消耗 {self.image_cost} 月光币，剩余 {new_balance}。"
+                else:
+                    response_msg = (
+                        f"图片画好啦！\n"
+                        f"消耗 {self.image_cost} 月光币，剩余 {new_balance}。"
+                    )
+                
+                response_msg += f"\n\n**提示词:** {prompt[:200]}{'...' if len(prompt) > 200 else ''}"
                 if negative_prompt:
                     response_msg += f"\n**排除:** {negative_prompt[:100]}{'...' if len(negative_prompt) > 100 else ''}"
                 
@@ -119,8 +169,8 @@ class GeminiImagenCog(commands.Cog):
                     user_id, self.image_cost, "Gemini Imagen 生成失败返还"
                 )
                 await interaction.followup.send(
-                    "呜...图片生成失败了,已经把月光币还给你了。\n"
-                    "可能是提示词有问题,或者服务暂时不可用..."
+                    "呜...图片生成失败了，已经把月光币还给你了。\n"
+                    "可能是提示词有问题，或者服务暂时不可用..."
                 )
 
         except Exception as e:

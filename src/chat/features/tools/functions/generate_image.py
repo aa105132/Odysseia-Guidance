@@ -31,19 +31,34 @@ async def generate_image(
     可能是因为提示词包含不当内容。
     
     Args:
-        prompt: 图片描述提示词，需要用英文描述想要生成的图片内容。
-                例如："a cute fox girl with white fur, anime style, moonlight"
-        negative_prompt: 负面提示词（可选），描述不希望出现的内容。
-                例如："low quality, blurry, text, watermark"
-        aspect_ratio: 图片宽高比，支持 "1:1", "3:4", "4:3", "9:16", "16:9"。
-                默认为 "1:1"。
+        prompt: 图片描述提示词，直接使用中文自然语言描述即可。
+                你需要根据用户的请求，用中文详细描述想要生成的图片内容，
+                包括主体、风格、氛围、细节等。
+                
+                描述要点：
+                - 描述画面主体（人物、动物、场景等）
+                - 添加风格描述（二次元风格、写实风格、水彩画风格等）
+                - 添加氛围/光照（柔和的光线、夕阳、夜晚等）
+                - 添加细节描述（毛茸茸的、闪闪发光的、精致的等）
+                
+                例如用户说"画一只可爱的小猫"，你应该生成：
+                "一只可爱的小猫，毛茸茸的皮毛，大而圆的眼睛，二次元风格，柔和的光线，高画质，细节丰富"
+                
+        negative_prompt: 负面提示词（可选），用中文描述不希望出现的内容。
+                例如："低画质, 模糊, 文字水印, 变形"
+                
+        aspect_ratio: 图片宽高比，根据内容类型选择合适的比例：
+                - "1:1" 适合头像、图标
+                - "3:4" 或 "4:3" 适合人物立绘、风景
+                - "9:16" 适合手机壁纸
+                - "16:9" 适合电脑壁纸、场景图
+                
         preview_message: （必填）在生成图片前先发送给用户的预告消息。
                 根据用户的请求内容和你的性格特点，写一句有趣的话告诉用户你正在画图。
-                例如："哇，你想要一只可爱的狐狸女孩？让我来画~" 或 "这个我很拿手哦，稍等一下~"
+                例如："哇，你想要一只可爱的小猫？让我来画~" 或 "这个我很拿手哦，稍等一下~"
     
     Returns:
-        如果成功，返回包含 image_data 的字典，LLM会将图片展示给用户。
-        如果失败，返回错误信息字符串。
+        成功后图片会直接发送给用户，你需要用语言告诉用户图已经画好了。
     """
     from src.chat.features.image_generation.services.gemini_imagen_service import (
         gemini_imagen_service
@@ -147,13 +162,20 @@ async def generate_image(
                 except Exception as e:
                     log.error(f"扣除月光币失败: {e}")
             
-            # 返回图片数据，ToolService 会处理这个格式
+            # 直接发送图片到频道
+            if channel:
+                try:
+                    import io
+                    file = discord.File(io.BytesIO(image_bytes), filename="generated_image.png")
+                    await channel.send(file=file)
+                    log.info("图片已直接发送到频道")
+                except Exception as e:
+                    log.error(f"发送图片到频道失败: {e}")
+            
+            # 返回成功信息给 AI（不再返回图片数据，因为已经直接发送了）
             return {
-                "image_data": {
-                    "mime_type": "image/png",
-                    "data": image_bytes
-                },
-                "message": "图片生成成功！"
+                "success": True,
+                "message": "图片已成功生成并展示给用户了！请用自己的语气告诉用户你画好了。"
             }
         else:
             # 添加失败反应

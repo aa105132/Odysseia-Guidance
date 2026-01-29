@@ -1150,8 +1150,19 @@
                             this.embeddingForm.enabled = this.embeddingConfig.enabled;
                             this.embeddingForm.provider = this.embeddingConfig.provider || 'gemini';
                             this.embeddingForm.api_url = this.embeddingConfig.api_url || '';
-                            this.embeddingForm.model = this.embeddingConfig.model || 'gemini-embedding-001';
                             this.embeddingForm.dimensions = this.embeddingConfig.dimensions || 768;
+                            
+                            // 检查模型是否在预定义列表中
+                            const loadedModel = this.embeddingConfig.model || '';
+                            const presetModels = this.getEmbeddingModels();
+                            if (presetModels.includes(loadedModel)) {
+                                this.embeddingForm.model = loadedModel;
+                                this.embeddingForm.custom_model = '';
+                            } else {
+                                // 自定义模型，放到 custom_model 字段
+                                this.embeddingForm.model = presetModels[0] || '';
+                                this.embeddingForm.custom_model = loadedModel;
+                            }
                         }
                     } catch (e) {
                         console.error('加载嵌入配置失败', e);
