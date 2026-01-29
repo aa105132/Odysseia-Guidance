@@ -67,6 +67,8 @@ class AIConfigUpdate(BaseModel):
     model: Optional[str] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 class ShopItemUpdate(BaseModel):
@@ -164,16 +166,29 @@ async def get_all_config(token: str = Depends(verify_token)):
 @app.get("/api/config/ai")
 async def get_ai_config(token: str = Depends(verify_token)):
     """获取 AI 配置"""
+    # 获取当前 API URL 和 Key（部分隐藏）
+    api_url = os.getenv("GEMINI_API_BASE_URL", "")
+    api_key = os.getenv("GEMINI_API_KEYS", "")
+    
+    # 隐藏敏感信息
+    masked_url = api_url[:30] + "..." if len(api_url) > 30 else api_url
+    masked_key = api_key[:10] + "..." + api_key[-4:] if len(api_key) > 14 else "***"
+    
     return {
         "model": chat_config.PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
         "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
         "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
         "persona_name": "月月",
+        "api_url": api_url,
+        "api_url_masked": masked_url,
+        "api_key_masked": masked_key,
+        "has_api_key": bool(api_key),
         "available_models": [
             "gemini-2.0-flash",
             "gemini-2.0-flash-lite",
             "gemini-2.5-pro-preview-05-06",
             "gemini-2.5-flash-preview-05-20",
+            "gemini-3-pro-preview-custom",
         ]
     }
 
@@ -182,6 +197,7 @@ async def get_ai_config(token: str = Depends(verify_token)):
 async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_token)):
     """更新 AI 配置"""
     updated = {}
+    env_updates = {}
     
     if config.model is not None:
         chat_config.PROMPT_CONFIG["model"] = config.model
@@ -199,8 +215,64 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         chat_config.PROMPT_CONFIG["max_output_tokens"] = config.max_tokens
         updated["max_tokens"] = config.max_tokens
     
+    if config.api_url is not None:
+        # 更新环境变量
+        os.environ["GEMINI_API_BASE_URL"] = config.api_url
+        env_updates["GEMINI_API_BASE_URL"] = config.api_url
+        updated["api_url"] = config.api_url[:30] + "..." if len(config.api_url) > 30 else config.api_url
+    
+    if config.api_key is not None:
+        # 更新环境变量
+        os.environ["GEMINI_API_KEYS"] = config.api_key
+        env_updates["GEMINI_API_KEYS"] = config.api_key
+        updated["api_key"] = "已更新"
+    
+    # 如果有环境变量更新，尝试写入 .env 文件
+    if env_updates:
+        try:
+            update_env_file(env_updates)
+            log.info(f"环境变量已写入 .env 文件")
+        except Exception as e:
+            log.warning(f"无法写入 .env 文件: {e}")
+    
     log.info(f"AI 配置已更新: {updated}")
     return {"success": True, "updated": updated}
+
+
+def update_env_file(updates: Dict[str, str]):
+    """更新 .env 文件中的环境变量"""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+    
+    if not os.path.exists(env_path):
+        log.warning(f".env 文件不存在: {env_path}")
+        return
+    
+    # 读取现有内容
+    with open(env_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    
+    # 更新或添加变量
+    updated_keys = set()
+    new_lines = []
+    
+    for line in lines:
+        key_match = re.match(r'^([A-Z_][A-Z0-9_]*)=', line.strip())
+        if key_match:
+            key = key_match.group(1)
+            if key in updates:
+                new_lines.append(f'{key}="{updates[key]}"\n')
+                updated_keys.add(key)
+                continue
+        new_lines.append(line)
+    
+    # 添加新的变量
+    for key, value in updates.items():
+        if key not in updated_keys:
+            new_lines.append(f'{key}="{value}"\n')
+    
+    # 写入文件
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
 
 
 @app.get("/api/config/imagen")

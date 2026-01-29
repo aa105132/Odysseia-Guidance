@@ -189,16 +189,57 @@
             <div x-show="currentTab === 'ai'" x-transition>
                 <h2 class="text-2xl font-bold mb-6">AI 设置</h2>
                 
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="key" class="w-5 h-5 text-yellow-400"></i>
+                        API 配置
+                    </h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API Base URL</label>
+                            <input type="url" x-model="aiForm.api_url"
+                                   placeholder="https://your-api-gateway.com/v1beta/models"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">留空则使用 Google 官方 API 端点</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                API Key
+                                <span x-show="config.ai?.has_api_key" class="text-green-400 text-xs ml-2">✓ 已配置</span>
+                            </label>
+                            <div class="relative">
+                                <input :type="showApiKey ? 'text' : 'password'" x-model="aiForm.api_key"
+                                       :placeholder="config.ai?.api_key_masked || '输入新的 API Key...'"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <button @click="showApiKey = !showApiKey" type="button"
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                                    <i :data-lucide="showApiKey ? 'eye-off' : 'eye'" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">输入新 Key 会覆盖现有配置；留空保持不变</p>
+                        </div>
+                    </div>
+                </div>
+                
                 <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="sliders" class="w-5 h-5 text-purple-400"></i>
+                        模型参数
+                    </h3>
                     <div class="space-y-6">
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">AI 模型</label>
-                            <select x-model="aiForm.model" 
+                            <select x-model="aiForm.model"
                                     class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                                 <template x-for="model in config.ai?.available_models || []">
                                     <option :value="model" x-text="model"></option>
                                 </template>
                             </select>
+                            <p class="text-xs text-slate-500 mt-1">也可以输入自定义模型名称</p>
+                            <input type="text" x-model="aiForm.custom_model"
+                                   placeholder="或输入自定义模型名称..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 mt-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
                         
                         <div>
@@ -219,11 +260,11 @@
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
                         
-                        <button @click="saveAIConfig()" 
+                        <button @click="saveAIConfig()"
                                 :disabled="saving"
                                 class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
                             <i data-lucide="save" class="w-5 h-5"></i>
-                            <span x-text="saving ? '保存中...' : '保存设置'"></span>
+                            <span x-text="saving ? '保存中...' : '保存所有设置'"></span>
                         </button>
                     </div>
                 </div>

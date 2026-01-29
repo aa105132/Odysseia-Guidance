@@ -1,17 +1,15 @@
 services:
   bot_app:
-    restart: unless-stopped # 2. 设置重启策略
-    mem_limit: 1g # 1. 设置内存硬限制为 1GB (您可以根据VPS配置调整)
+    restart: unless-stopped
+    mem_limit: 1g
     env_file:
       - .env
     environment:
       - RUNNING_IN_DOCKER=true
-    #build:
-    #  context: .
-    #  dockerfile: .devcontainer/Dockerfile
-    #  network: host
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
     image: odysseia-guidance-bot_app:latest
-    pull_policy: never
     container_name: Odysseia_Guidance
     volumes:
       - .:/app
@@ -22,8 +20,9 @@ services:
     command: python3 -u -m src.main
     networks:
       - bot_network
-    depends_on:
-      - db
+    # 如果使用外部数据库，注释掉 depends_on
+    # depends_on:
+    #   - db
 
   dashboard:
     restart: unless-stopped
@@ -32,8 +31,10 @@ services:
       - .env
     environment:
       - RUNNING_IN_DOCKER=true
+    # dashboard 不需要单独构建，直接复用 bot_app 的镜像
     image: odysseia-guidance-bot_app:latest
-    pull_policy: never
+    depends_on:
+      - bot_app
     container_name: Odysseia_Dashboard
     volumes:
       - .:/app
@@ -42,29 +43,31 @@ services:
       - "${DASHBOARD_PORT:-8080}:8080"
     networks:
       - bot_network
-    depends_on:
-      - db
+    # 如果使用外部数据库，注释掉 depends_on
+    # depends_on:
+    #   - db
     command: python3 -u -c "import uvicorn; uvicorn.run('src.dashboard.api:app', host='0.0.0.0', port=8080)"
 
-  db:
-    # 使用官方打包好的 ParadeDB 镜像，它基于 PG16
-    image: paradedb/paradedb:latest-pg16
-    container_name: odysseia_pg_db # 保持与项目其余部分一致的命名
-    restart: unless-stopped # 保持与项目其余部分一致的重启策略
-    environment:
-      # 沿用 .env 文件中的变量，更加灵活和安全
-      POSTGRES_DB: ${POSTGRES_DB:-odysseia_db}
-      POSTGRES_USER: ${POSTGRES_USER:-user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-    #    ports:
-    #      # 沿用变量端口映射，方便在不同环境中部署
-    #      - "${DB_PORT:-5432}:5432"
-    volumes:
-      # 数据持久化到本地 ./pgdata 目录，并使用 PG16 的标准数据路径
-      - ./pgdata:/var/lib/postgresql/data
-    networks:
-      - bot_network
+  # ================================================================
+  # 如果你要使用内置的 ParadeDB 数据库，取消下面的注释
+  # 如果使用外部数据库（如1Panel的PostgreSQL），保持注释状态
+  # ================================================================
+  # db:
+  #   image: paradedb/paradedb:latest-pg16
+  #   container_name: odysseia_pg_db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: ${POSTGRES_DB:-odysseia_db}
+  #     POSTGRES_USER: ${POSTGRES_USER:-user}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+  #   volumes:
+  #     - ./pgdata:/var/lib/postgresql/data
+  #   networks:
+  #     - bot_network
 
 networks:
   bot_network:
-    driver: bridge
+    # 使用外部网络连接到1Panel的PostgreSQL容器
+    # 如果1Panel的PostgreSQL在 1panel-network 中，使用 external
+    external: true
+    name: 1panel-network  # 改成你1Panel使用的网络名称

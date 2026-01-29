@@ -12,25 +12,31 @@ log = logging.getLogger(__name__)
 
 def get_parade_db_connection() -> Optional[psycopg2.extensions.connection]:
     """
-    为管理面板创建一个同步的 psycopg2 数据库连接到 Parade DB。
+    为管理面板创建一个同步的 psycopg2 数据库连接到 PostgreSQL。
+    支持通过 DATABASE_URL 或分别设置的环境变量连接。
     """
     try:
-        if os.getenv("RUNNING_IN_DOCKER"):
-            db_host = "odysseia_pg_db"
-        else:
-            db_host = "localhost"
+        # 优先使用 DB_HOST 环境变量，其次根据运行环境决定
+        db_host = os.getenv("DB_HOST")
+        
+        if not db_host:
+            if os.getenv("RUNNING_IN_DOCKER"):
+                # Docker 内部优先使用用户指定的外部数据库容器名
+                db_host = os.getenv("EXTERNAL_DB_HOST", "odysseia_pg_db")
+            else:
+                db_host = "localhost"
 
         conn = psycopg2.connect(
-            dbname=os.getenv("POSTGRES_DB", "braingirl_db"),
-            user=os.getenv("POSTGRES_USER", "user"),
+            dbname=os.getenv("POSTGRES_DB", "yueyue"),
+            user=os.getenv("POSTGRES_USER", "postgres"),
             password=os.getenv("POSTGRES_PASSWORD", "password"),
             host=db_host,
             port=os.getenv("DB_PORT", "5432"),
         )
-        # conn.cursor_factory is deprecated, use conn.cursor(cursor_factory=...)
+        log.info(f"成功连接到 PostgreSQL 数据库: {db_host}")
         return conn
     except psycopg2.Error as e:
-        log.error(f"无法连接到 Parade DB 数据库: {e}")
+        log.error(f"无法连接到 PostgreSQL 数据库: {e}")
         return None
 
 

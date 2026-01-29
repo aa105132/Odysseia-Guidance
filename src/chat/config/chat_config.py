@@ -28,6 +28,14 @@ UNRESTRICTED_CHANNEL_IDS = _parse_ids("UNRESTRICTED_CHANNEL_IDS")
 # 定义要使用的 Gemini 模型名称
 GEMINI_MODEL = "gemini-2.5-flash"
 
+# --- AI 模型参数配置 ---
+# 用于 Dashboard 动态修改
+PROMPT_CONFIG = {
+    "model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+    "temperature": float(os.getenv("GEMINI_TEMPERATURE", "1.0")),
+    "max_output_tokens": int(os.getenv("GEMINI_MAX_TOKENS", "8192")),
+}
+
 # 用于个人记忆摘要的模型。
 SUMMARY_MODEL = "gemini-2.5-flash-lite"
 
@@ -170,6 +178,14 @@ MODEL_GENERATION_CONFIG = {
     },
     # 你可以在这里为其他模型添加更多自定义配置
     # "gemini-2.5-pro-custom": { ... },
+}
+
+# --- 月光币配置 ---
+COIN_CONFIG = {
+    "DAILY_CHECKIN_REWARD": int(os.getenv("DAILY_CHECKIN_REWARD", "50")),
+    "DAILY_CHAT_REWARD": int(os.getenv("DAILY_CHAT_REWARD", "10")),
+    "MAX_LOAN_AMOUNT": int(os.getenv("MAX_LOAN_AMOUNT", "1000")),
+    "CURRENCY_NAME": "月光币",
 }
 
 # --- 消息设置 ---
