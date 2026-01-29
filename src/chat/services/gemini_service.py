@@ -1681,17 +1681,24 @@ class GeminiService:
     ):
         """记录 API 调用的 Token 使用情况到数据库。"""
         try:
-            # 分别计算输入和输出的 Token
-            # 使用 type: ignore 来抑制 Pylance 无法推断 client.aio.models 的错误
-            input_token_response = await client.aio.models.count_tokens(  # type: ignore
-                model=model_name, contents=input_contents
-            )
-            output_token_response = await client.aio.models.count_tokens(  # type: ignore
-                model=model_name, contents=[output_text]
-            )
-
-            input_tokens = input_token_response.total_tokens
-            output_tokens = output_token_response.total_tokens
+            # 尝试使用 count_tokens API，如果不支持则使用估算
+            try:
+                input_token_response = await client.aio.models.count_tokens(  # type: ignore
+                    model=model_name, contents=input_contents
+                )
+                output_token_response = await client.aio.models.count_tokens(  # type: ignore
+                    model=model_name, contents=[output_text]
+                )
+                input_tokens = input_token_response.total_tokens
+                output_tokens = output_token_response.total_tokens
+            except Exception as count_error:
+                # 代理站可能不支持 count_tokens，使用估算
+                # 中文约每字符 1.5 token，英文约每 4 字符 1 token
+                log.debug(f"count_tokens API 不可用，使用估算: {count_error}")
+                input_text = str(input_contents)
+                input_tokens = self._estimate_tokens(input_text)
+                output_tokens = self._estimate_tokens(output_text)
+            
             total_tokens = input_tokens + output_tokens
 
             # 获取当前日期并更新数据库
@@ -1721,6 +1728,30 @@ class GeminiService:
             )
         except Exception as e:
             log.error(f"Failed to record token usage: {e}", exc_info=True)
+
+    def _estimate_tokens(self, text: str) -> int:
+        """估算文本的 token 数量。
+        
+        当 count_tokens API 不可用时使用此方法。
+        中文约每字符 1.5 token，英文约每 4 字符 1 token。
+        """
+        if not text:
+            return 0
+        
+        # 统计中文字符和非中文字符
+        chinese_chars = 0
+        other_chars = 0
+        for char in text:
+            if '\u4e00' <= char <= '\u9fff':
+                chinese_chars += 1
+            else:
+                other_chars += 1
+        
+        # 估算 token 数
+        chinese_tokens = int(chinese_chars * 1.5)
+        other_tokens = int(other_chars / 4) + 1
+        
+        return chinese_tokens + other_tokens
 
 
 # 全局实例

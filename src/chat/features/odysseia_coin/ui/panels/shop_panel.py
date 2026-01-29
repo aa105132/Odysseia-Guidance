@@ -14,9 +14,9 @@ class ShopPanel(BasePanel["SimpleShopView"]):
         如果提供了 category，则显示该类别下的商品提示。
         否则，显示所有商品类别列表。
         """
-        description = "欢迎来到类脑商店！请选择你想要购买的商品。"
+        description = "欢迎来到月月商店！请选择你想要购买的商品。"
         embed = discord.Embed(
-            title="类脑商店", description=description, color=discord.Color.gold()
+            title="🌙 月月商店", description=description, color=discord.Color.gold()
         )
 
         if category:

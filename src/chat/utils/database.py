@@ -314,6 +314,26 @@ class ChatDatabaseManager:
                 )
                 log.info("已向 user_coins 表添加 thread_cooldown_limit 列。")
 
+            # 签到功能相关列
+            if "last_checkin_date" not in columns_coins:
+                cursor.execute(
+                    "ALTER TABLE user_coins ADD COLUMN last_checkin_date TEXT;"
+                )
+                log.info("已向 user_coins 表添加 last_checkin_date 列。")
+
+            if "checkin_streak" not in columns_coins:
+                cursor.execute(
+                    "ALTER TABLE user_coins ADD COLUMN checkin_streak INTEGER DEFAULT 0;"
+                )
+                log.info("已向 user_coins 表添加 checkin_streak 列。")
+
+            # 破产补助功能相关列
+            if "last_bankruptcy_claim" not in columns_coins:
+                cursor.execute(
+                    "ALTER TABLE user_coins ADD COLUMN last_bankruptcy_claim TEXT;"
+                )
+                log.info("已向 user_coins 表添加 last_bankruptcy_claim 列。")
+
             # 个人记忆功能的'memory_feature_unlocked'列已迁移至'users'表，此处不再需要
             # 保留此注释以作记录
 
