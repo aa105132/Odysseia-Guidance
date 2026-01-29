@@ -296,3 +296,40 @@ FACTION_EMOJI_MAPPINGS = {
         ],
     },
 }
+
+
+def replace_emotion_tags(text: str, event_id: str = None, faction_id: str = None) -> str:
+    """
+    替换文本中的表情标签为 Discord 自定义表情符号
+    
+    Args:
+        text: 包含表情标签的文本，如 <傲娇>、<害羞> 等
+        event_id: 活动ID，用于使用活动专属表情（可选）
+        faction_id: 派系ID，用于使用派系专属表情（可选）
+        
+    Returns:
+        替换后的文本
+    """
+    import random
+    
+    if not text:
+        return text
+    
+    # 确定使用哪个表情映射
+    emoji_mappings = EMOJI_MAPPINGS  # 默认使用基础表情
+    
+    # 如果指定了活动和派系，尝试使用对应的表情
+    if event_id and faction_id:
+        event_emojis = FACTION_EMOJI_MAPPINGS.get(event_id, {})
+        faction_emojis = event_emojis.get(faction_id)
+        if faction_emojis:
+            emoji_mappings = faction_emojis
+    
+    # 替换表情标签
+    result = text
+    for pattern, emoji_list in emoji_mappings:
+        # 从列表中随机选择一个表情
+        emoji = random.choice(emoji_list)
+        result = pattern.sub(emoji, result)
+    
+    return result
