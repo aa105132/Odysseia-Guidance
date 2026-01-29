@@ -250,11 +250,12 @@ class GeminiService:
             # 设置基础日志记录器以捕获 httpx 的调试信息
             logging.basicConfig(level=logging.DEBUG)
         # --- 密钥轮换服务 ---
-        google_api_keys_str = os.getenv("GOOGLE_API_KEYS_LIST", "")
+        # 优先使用 GOOGLE_API_KEYS_LIST，其次使用 GEMINI_API_KEYS
+        google_api_keys_str = os.getenv("GOOGLE_API_KEYS_LIST", "") or os.getenv("GEMINI_API_KEYS", "")
         if not google_api_keys_str:
-            log.error("GOOGLE_API_KEYS_LIST 环境变量未设置！服务将无法运行。")
+            log.error("GOOGLE_API_KEYS_LIST 或 GEMINI_API_KEYS 环境变量未设置！服务将无法运行。")
             # 在这种严重配置错误下，抛出异常以阻止应用启动
-            raise ValueError("GOOGLE_API_KEYS_LIST is not set.")
+            raise ValueError("GOOGLE_API_KEYS_LIST or GEMINI_API_KEYS is not set.")
 
         # 先移除整个字符串两端的空格和引号，以支持 "key1,key2" 格式
         # 同时移除换行符和回车符，避免 header injection 问题
@@ -264,6 +265,9 @@ class GeminiService:
         log.info(
             f"GeminiService 初始化并由 KeyRotationService 管理 {len(api_keys)} 个密钥。"
         )
+        
+        # 保存原始密钥字符串以便热更新时比较
+        self._current_keys_hash = hash(google_api_keys_str)
 
         self.default_model_name = app_config.GEMINI_MODEL
         self.executor = ThreadPoolExecutor(
@@ -312,6 +316,50 @@ class GeminiService:
         self.tool_service.bot = bot
         self.last_called_tools: List[str] = []
         log.info("Discord Bot 实例已成功注入 ToolService。")
+    
+    def reload_api_keys(self, new_keys_str: str = None) -> dict:
+        """
+        热更新 API 密钥。
+        
+        Args:
+            new_keys_str: 新的密钥字符串（逗号分隔），如果为 None 则从环境变量重新加载
+            
+        Returns:
+            dict: 包含更新状态的字典
+        """
+        try:
+            # 如果没有传入新密钥，尝试从环境变量重新加载
+            if new_keys_str is None:
+                # 重新读取 .env 文件
+                from dotenv import load_dotenv
+                load_dotenv(override=True)
+                new_keys_str = os.getenv("GOOGLE_API_KEYS_LIST", "") or os.getenv("GEMINI_API_KEYS", "")
+            
+            if not new_keys_str:
+                return {"success": False, "error": "未找到 API 密钥配置"}
+            
+            # 检查是否有变化
+            new_hash = hash(new_keys_str)
+            if new_hash == self._current_keys_hash:
+                return {"success": True, "message": "密钥未变化，无需更新", "count": len(self.key_rotation_service.keys)}
+            
+            # 清理并解析新密钥
+            processed_keys_str = new_keys_str.strip().strip('"').replace('\n', '').replace('\r', '')
+            api_keys = [key.strip().replace('\n', '').replace('\r', '') for key in processed_keys_str.split(",") if key.strip()]
+            
+            if not api_keys:
+                return {"success": False, "error": "解析后没有有效的 API 密钥"}
+            
+            # 更新密钥轮换服务
+            self.key_rotation_service = KeyRotationService(api_keys)
+            self._current_keys_hash = new_hash
+            
+            log.info(f"✅ API 密钥已热更新，共 {len(api_keys)} 个密钥")
+            return {"success": True, "message": f"已更新 {len(api_keys)} 个 API 密钥", "count": len(api_keys)}
+            
+        except Exception as e:
+            log.error(f"热更新 API 密钥失败: {e}")
+            return {"success": False, "error": str(e)}
 
     def _create_client_with_key(self, api_key: str):
         """使用给定的 API 密钥动态创建一个 Gemini 客户端实例。"""

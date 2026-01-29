@@ -2,6 +2,8 @@
 """
 Dashboard API - FastAPI 后端
 提供配置管理、状态监控等功能
+
+当与Bot在同一进程中运行时，可以直接访问Bot的服务实例。
 """
 
 import os
@@ -24,6 +26,7 @@ from psycopg2.extras import DictCursor
 from src.chat.config import chat_config
 from src.chat.config import emoji_config
 from src.chat.features.admin_panel.services.db_services import get_parade_db_connection
+from src.dashboard.service_registry import service_registry
 
 log = logging.getLogger(__name__)
 
@@ -231,6 +234,7 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
     """更新 AI 配置"""
     updated = {}
     env_updates = {}
+    api_keys_changed = False
     
     if config.model is not None:
         chat_config.PROMPT_CONFIG["model"] = config.model
@@ -259,6 +263,7 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         os.environ["GEMINI_API_KEYS"] = config.api_key
         env_updates["GEMINI_API_KEYS"] = config.api_key
         updated["api_key"] = "已更新"
+        api_keys_changed = True
     
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:
@@ -267,6 +272,23 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
             log.info(f"环境变量已写入 .env 文件")
         except Exception as e:
             log.warning(f"无法写入 .env 文件: {e}")
+    
+    # 如果 API 密钥有变化，尝试热更新 GeminiService
+    if api_keys_changed and service_registry.is_initialized:
+        try:
+            reload_result = service_registry.gemini_service.reload_api_keys(config.api_key)
+            if reload_result.get("success"):
+                updated["api_keys_reloaded"] = True
+                log.info(f"✅ API 密钥已热更新到 GeminiService: {reload_result.get('message')}")
+            else:
+                log.warning(f"API 密钥热更新失败: {reload_result.get('error')}")
+                updated["api_keys_reload_error"] = reload_result.get("error")
+        except Exception as e:
+            log.error(f"调用 GeminiService.reload_api_keys 失败: {e}")
+            updated["api_keys_reload_error"] = str(e)
+    elif api_keys_changed:
+        log.warning("GeminiService 未初始化，无法热更新 API 密钥。密钥将在下次重启时生效。")
+        updated["api_keys_pending_restart"] = True
     
     log.info(f"AI 配置已更新: {updated}")
     return {"success": True, "updated": updated}
@@ -500,12 +522,54 @@ async def list_available_models(request: ModelListRequest, token: str = Depends(
 @app.get("/api/status")
 async def get_status(token: str = Depends(verify_token)):
     """获取系统状态"""
+    # 从 ServiceRegistry 获取实际的 Bot 状态
+    bot_info = service_registry.get_bot_status()
+    
     return {
-        "bot_status": "running",
-        "uptime": "N/A",  # 需要从 bot 实例获取
+        "bot_status": bot_info.get("status", "unknown"),
+        "bot_user": bot_info.get("user"),
+        "bot_user_id": bot_info.get("user_id"),
+        "guilds_count": bot_info.get("guilds", 0),
+        "latency_ms": bot_info.get("latency_ms"),
+        "gemini_service_available": service_registry.is_initialized,
         "config_loaded": True,
         "timestamp": datetime.utcnow().isoformat(),
+        "integrated_mode": True,  # 标识Dashboard与Bot运行在同一进程
     }
+
+
+@app.post("/api/config/reload-api-keys")
+async def reload_api_keys(token: str = Depends(verify_token)):
+    """
+    热重载 API 密钥（从环境变量重新加载）
+    这个端点可以在不重启Bot的情况下更新API密钥
+    """
+    if not service_registry.is_initialized:
+        raise HTTPException(
+            status_code=503,
+            detail="GeminiService 尚未初始化，请稍后再试"
+        )
+    
+    try:
+        result = service_registry.gemini_service.reload_api_keys()
+        if result.get("success"):
+            log.info(f"✅ API 密钥热重载成功: {result.get('message')}")
+            return {
+                "success": True,
+                "message": result.get("message"),
+                "key_count": result.get("count", 0)
+            }
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "热重载失败")
+            )
+    except Exception as e:
+        log.error(f"API 密钥热重载失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"热重载失败: {str(e)}"
+        )
 
 
 @app.get("/api/config/emoji")

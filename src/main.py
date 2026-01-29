@@ -6,6 +6,7 @@ import sys
 import discord
 import time
 import requests
+import threading
 from discord.ext import commands
 from dotenv import load_dotenv
 from datetime import datetime, timezone
@@ -36,6 +37,9 @@ from src.chat.services.review_service import initialize_review_service
 from src.chat.features.work_game.services.work_db_service import WorkDBService
 from src.chat.utils.command_sync import sync_commands
 from src.chat.config import chat_config
+
+# 导入服务注册表，用于在Bot和Dashboard之间共享服务实例
+from src.dashboard.service_registry import service_registry
 
 current_script_path = os.path.abspath(__file__)
 current_dir = os.path.dirname(current_script_path)
@@ -411,6 +415,33 @@ def handle_async_exception(loop, context):
         log.critical(f"捕获到未处理的 asyncio 异常: {message}")
 
 
+def _run_dashboard_server(host: str, port: int):
+    """
+    在独立线程中运行 Dashboard FastAPI 服务器。
+    使用 uvicorn 作为 ASGI 服务器。
+    """
+    import uvicorn
+    from src.dashboard.api import app
+    
+    log = logging.getLogger("DashboardServer")
+    log.info(f"正在启动 Dashboard 服务器: {host}:{port}")
+    
+    # 配置 uvicorn，禁用 reload 功能（因为我们在线程中运行）
+    config = uvicorn.Config(
+        app=app,
+        host=host,
+        port=port,
+        log_level="info",
+        access_log=True,
+        # 在线程中运行时不能使用 reload
+        reload=False,
+    )
+    server = uvicorn.Server(config)
+    
+    # 运行服务器（这会阻塞当前线程）
+    server.run()
+
+
 async def main():
     """主函数，用于设置和运行机器人"""
     # 0. 设置同步代码的全局异常处理器
@@ -467,6 +498,11 @@ async def main():
     # 在机器人启动时，将 bot 实例注入到 GeminiService 中
     # 这是确保工具能够访问 Discord API 的关键步骤
     gemini_service.set_bot(bot)
+    
+    # 5. 注册服务到 ServiceRegistry，使 Dashboard 可以访问
+    service_registry.gemini_service = gemini_service
+    service_registry.bot = bot
+    log.info("✅ 服务已注册到 ServiceRegistry，Dashboard 可以访问")
     # 为 context_service_test 注入 bot 实例，使其能够访问缓存
     # 为 context_service_test 注入 bot 实例，使其能够访问缓存
     from src.chat.services.context_service_test import initialize_context_service_test
@@ -481,6 +517,24 @@ async def main():
     if not token:
         log.critical("错误: DISCORD_TOKEN 未在 .env 文件中设置！")
         return
+
+    # 6. 启动 Dashboard FastAPI 服务器（在后台线程中运行）
+    dashboard_enabled = os.getenv("DASHBOARD_ENABLED", "true").lower() == "true"
+    if dashboard_enabled:
+        dashboard_host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+        dashboard_port = int(os.getenv("DASHBOARD_PORT", "8080"))
+        
+        # 在单独的线程中启动 Dashboard
+        dashboard_thread = threading.Thread(
+            target=_run_dashboard_server,
+            args=(dashboard_host, dashboard_port),
+            daemon=True,
+            name="DashboardServer"
+        )
+        dashboard_thread.start()
+        log.info(f"🦊 Dashboard 服务器已在后台启动: http://{dashboard_host}:{dashboard_port}")
+    else:
+        log.info("Dashboard 已禁用 (DASHBOARD_ENABLED=false)")
 
     try:
         await bot.start(token)

@@ -1,4 +1,6 @@
 services:
+  # Bot 和 Dashboard 整合在同一容器中运行
+  # Dashboard 作为后台线程与 Bot 一起启动
   bot_app:
     restart: unless-stopped
     mem_limit: 1g
@@ -6,6 +8,10 @@ services:
       - .env
     environment:
       - RUNNING_IN_DOCKER=true
+      # Dashboard 配置
+      - DASHBOARD_ENABLED=true
+      - DASHBOARD_HOST=0.0.0.0
+      - DASHBOARD_PORT=8080
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
@@ -15,6 +21,9 @@ services:
       - .:/app
       - ./data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
+    # Dashboard 端口映射（与 Bot 在同一容器中）
+    ports:
+      - "${DASHBOARD_PORT:-8080}:8080"
     # --- DEV请 取消 注释下面的command:sleep命令并且 注释 掉command: python ---
     #command: sleep infinity
     command: python3 -u -m src.main
@@ -24,29 +33,11 @@ services:
     # depends_on:
     #   - db
 
-  dashboard:
-    restart: unless-stopped
-    mem_limit: 512m
-    env_file:
-      - .env
-    environment:
-      - RUNNING_IN_DOCKER=true
-    # dashboard 不需要单独构建，直接复用 bot_app 的镜像
-    image: odysseia-guidance-bot_app:latest
-    depends_on:
-      - bot_app
-    container_name: Odysseia_Dashboard
-    volumes:
-      - .:/app
-      - ./data:/app/data
-    ports:
-      - "${DASHBOARD_PORT:-8080}:8080"
-    networks:
-      - bot_network
-    # 如果使用外部数据库，注释掉 depends_on
-    # depends_on:
-    #   - db
-    command: python3 -u -c "import uvicorn; uvicorn.run('src.dashboard.api:app', host='0.0.0.0', port=8080)"
+  # ================================================================
+  # 注意：Dashboard 已整合到 bot_app 容器中
+  # 不再需要单独的 dashboard 服务
+  # 如需禁用 Dashboard，设置环境变量 DASHBOARD_ENABLED=false
+  # ================================================================
 
   # ================================================================
   # 如果你要使用内置的 ParadeDB 数据库，取消下面的注释
