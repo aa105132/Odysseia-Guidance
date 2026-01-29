@@ -66,10 +66,16 @@ CUSTOM_GEMINI_ENDPOINTS = {
 }
 
 # --- Gemini Imagen 图像生成配置 ---
+def _parse_bool_env(key: str, default: str = "False") -> bool:
+    """解析布尔类型的环境变量，处理可能的引号"""
+    value = os.getenv(key, default).strip().strip('"').strip("'").lower()
+    return value == "true"
+
+
 def _get_imagen_config():
     """获取 Imagen 配置，从环境变量读取"""
     return {
-        "ENABLED": os.getenv("GEMINI_IMAGEN_ENABLED", "False").lower() == "true",
+        "ENABLED": _parse_bool_env("GEMINI_IMAGEN_ENABLED", "False"),
         "API_KEY": os.getenv("GEMINI_IMAGEN_API_KEY"),  # 如果为空则使用默认的 Gemini API 密钥
         "BASE_URL": os.getenv("GEMINI_IMAGEN_BASE_URL"),  # 自定义端点 URL，留空使用默认
         "MODEL_NAME": os.getenv("GEMINI_IMAGEN_MODEL", "imagen-3.0-generate-002"),
@@ -97,7 +103,7 @@ def reload_imagen_config():
 # --- 向量嵌入 (Embedding) 配置 ---
 # 用于知识库检索和语义搜索功能
 EMBEDDING_CONFIG = {
-    "ENABLED": os.getenv("EMBEDDING_ENABLED", "True").lower() == "true",
+    "ENABLED": _parse_bool_env("EMBEDDING_ENABLED", "True"),
     # API 提供商类型: "gemini" (官方), "openai" (兼容), "siliconflow" (硅基流动)
     "PROVIDER": os.getenv("EMBEDDING_PROVIDER", "gemini"),
     # API 密钥 (如果为空则使用主 Gemini API 密钥)

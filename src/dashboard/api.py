@@ -255,18 +255,24 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
     
     if config.model is not None:
         chat_config.PROMPT_CONFIG["model"] = config.model
+        os.environ["GEMINI_MODEL"] = config.model
+        env_updates["GEMINI_MODEL"] = config.model
         updated["model"] = config.model
     
     if config.temperature is not None:
         if not 0.0 <= config.temperature <= 2.0:
             raise HTTPException(400, "温度必须在 0.0 到 2.0 之间")
         chat_config.PROMPT_CONFIG["temperature"] = config.temperature
+        os.environ["GEMINI_TEMPERATURE"] = str(config.temperature)
+        env_updates["GEMINI_TEMPERATURE"] = str(config.temperature)
         updated["temperature"] = config.temperature
     
     if config.max_tokens is not None:
         if not 1 <= config.max_tokens <= 65536:
             raise HTTPException(400, "最大令牌数必须在 1 到 65536 之间")
         chat_config.PROMPT_CONFIG["max_output_tokens"] = config.max_tokens
+        os.environ["GEMINI_MAX_TOKENS"] = str(config.max_tokens)
+        env_updates["GEMINI_MAX_TOKENS"] = str(config.max_tokens)
         updated["max_tokens"] = config.max_tokens
     
     if config.api_url is not None:
@@ -313,11 +319,26 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
 
 def update_env_file(updates: Dict[str, str]):
     """更新 .env 文件中的环境变量"""
-    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+    # 优先使用工作目录，其次使用相对路径
+    if os.path.exists("/app/.env"):
+        env_path = "/app/.env"
+    else:
+        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+    
+    log.info(f"尝试更新 .env 文件: {env_path}")
     
     if not os.path.exists(env_path):
-        log.warning(f".env 文件不存在: {env_path}")
-        return
+        log.warning(f".env 文件不存在: {env_path}，尝试创建")
+        # 如果不存在，创建一个新文件
+        try:
+            with open(env_path, "w", encoding="utf-8") as f:
+                for key, value in updates.items():
+                    f.write(f'{key}="{value}"\n')
+            log.info(f"已创建新的 .env 文件并写入配置")
+            return
+        except Exception as e:
+            log.error(f"创建 .env 文件失败: {e}")
+            return
     
     # 读取现有内容
     with open(env_path, "r", encoding="utf-8") as f:
@@ -350,13 +371,8 @@ def update_env_file(updates: Dict[str, str]):
 @app.get("/api/config/imagen")
 async def get_imagen_config(token: str = Depends(verify_token)):
     """获取 Imagen 配置"""
-    # 先尝试重新加载配置以获取最新值
-    try:
-        from src.chat.config.chat_config import reload_imagen_config
-        reload_imagen_config()
-    except Exception as e:
-        log.debug(f"重新加载 Imagen 配置失败: {e}")
-    
+    # 直接使用内存中的配置（可能已被 PUT 请求更新）
+    # 不调用 reload_imagen_config() 以避免覆盖内存中的更新
     config = chat_config.GEMINI_IMAGEN_CONFIG
     api_url = config.get("BASE_URL", "") or config.get("API_URL", "")
     api_key = config.get("API_KEY", "")

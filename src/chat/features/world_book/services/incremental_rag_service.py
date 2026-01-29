@@ -254,9 +254,9 @@ class IncrementalRAGService:
         """获取 Parade DB 连接"""
         if self.parade_conn is None:
             try:
-                if os.getenv("RUNNING_IN_DOCKER"):
-                    db_host = "odysseia_pg_db"
-                else:
+                # 优先使用 DB_HOST，其次使用 EXTERNAL_DB_HOST，最后根据运行环境决定
+                db_host = os.getenv("DB_HOST") or os.getenv("EXTERNAL_DB_HOST")
+                if not db_host:
                     db_host = "localhost"
 
                 self.parade_conn = psycopg2.connect(
@@ -266,7 +266,7 @@ class IncrementalRAGService:
                     host=db_host,
                     port=os.getenv("DB_PORT", "5432"),
                 )
-                log.debug("成功连接到 Parade DB")
+                log.debug(f"成功连接到 Parade DB (host: {db_host})")
             except Exception as e:
                 log.error(f"连接到 Parade DB 失败: {e}", exc_info=True)
                 return None

@@ -21,13 +21,15 @@ db_port = os.getenv("DB_PORT", "5432")
 db_host = os.getenv("DB_HOST")
 
 if not DATABASE_URL:
-    # 优先使用 DB_HOST 环境变量，其次根据运行环境决定
+    # 优先使用 DB_HOST 环境变量，其次使用 EXTERNAL_DB_HOST
     if not db_host:
-        if os.getenv("RUNNING_IN_DOCKER"):
-            # Docker 内部：优先使用用户指定的外部数据库容器名
-            # 如果没有指定，再尝试使用内部的 db 服务
-            db_host = os.getenv("EXTERNAL_DB_HOST", "odysseia_pg_db")
-            log.info(f"Running inside Docker, connecting to '{db_host}' host.")
+        db_host = os.getenv("EXTERNAL_DB_HOST")
+        if db_host:
+            log.info(f"Using EXTERNAL_DB_HOST: '{db_host}'")
+        elif os.getenv("RUNNING_IN_DOCKER"):
+            # Docker 内部但没有指定主机，使用默认值
+            db_host = "localhost"
+            log.warning("RUNNING_IN_DOCKER is set but DB_HOST/EXTERNAL_DB_HOST not specified, using 'localhost'")
         else:
             db_host = "localhost"
             log.info("Running on host machine, connecting to 'localhost'.")
