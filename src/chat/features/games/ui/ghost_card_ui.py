@@ -87,7 +87,7 @@ class GhostCardUI:
 
     @staticmethod
     def create_reaction_embed(game_id: str, reaction_text: str) -> discord.Embed:
-        """创建类脑娘反应嵌入消息"""
+        """创建月月反应嵌入消息"""
         game = ghost_card_service.get_game_state(game_id)
         if not game:
             return discord.Embed(
@@ -149,14 +149,14 @@ class GhostCardUI:
         elif game["winner"] == "player":
             win_text = "你的手牌已全部出完，恭喜获胜！"
             if bet_amount > 0:
-                win_text += f"\n\n你赢得了 **{winnings}** 类脑币！"
+                win_text += f"\n\n你赢得了 **{winnings}** 月光币！"
             embed.description = win_text
             embed.color = discord.Color.green()
         else:  # AI获胜
             embed.title = text_config.game_ui.ai_win_title
             lose_text = "你最后持有了 🃏，真遗憾，你输了！"
             if bet_amount > 0:
-                lose_text += f"\n\n你失去了 **{bet_amount}** 类脑币。"
+                lose_text += f"\n\n你失去了 **{bet_amount}** 月光币。"
             embed.description = lose_text
             embed.color = discord.Color.red()
             embed.set_thumbnail(url=text_config.static_urls.AI_WIN_THUMBNAIL)

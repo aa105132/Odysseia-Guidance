@@ -23,7 +23,7 @@ class GhostCardCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="抽鬼牌", description="和类脑娘玩一局抽鬼牌游戏")
+    @app_commands.command(name="抽鬼牌", description="和月月玩一局抽鬼牌游戏")
     async def play_ghost_card(self, interaction: discord.Interaction):
         """开始一局抽鬼牌游戏"""
         try:

@@ -28,7 +28,7 @@ class FeedingCog(commands.Cog):
         self.gemini_service = gemini_service  # 使用全局实例
         self.feeding_service = feeding_service
 
-    @app_commands.command(name="投喂", description="在吃饭?给类脑娘来一口怎么样")
+    @app_commands.command(name="投喂", description="在吃饭?给月月来一口怎么样")
     @app_commands.describe(image="拍一下你这顿饭是什么吧!")
     async def feed(self, interaction: discord.Interaction, image: discord.Attachment):
         # --- 交互可用性检查 ---
@@ -65,7 +65,7 @@ class FeedingCog(commands.Cog):
                 await interaction.response.send_message(message, ephemeral=False)
                 return
 
-        await interaction.response.send_message("类脑娘正在嚼嚼嚼...", ephemeral=False)
+        await interaction.response.send_message("月月正在嚼嚼嚼...", ephemeral=False)
 
         if not image.content_type.startswith("image/"):
             await interaction.edit_original_response(
@@ -76,7 +76,7 @@ class FeedingCog(commands.Cog):
         try:
             image_bytes = await image.read()
 
-            # 构建包含类脑娘人设的提示词
+            # 构建包含月月人设的提示词
             persona_part = extract_persona_prompt(
                 prompt_service.get_prompt("SYSTEM_PROMPT")
             )
@@ -114,7 +114,7 @@ class FeedingCog(commands.Cog):
 
             await self.affection_service.add_affection_points(user_id, affection_gain)
 
-            # 只有当 coin_gain 是正数时才增加类脑币
+            # 只有当 coin_gain 是正数时才增加月光币
             if coin_gain > 0:
                 await self.coin_service.add_coins(user_id, coin_gain, reason="投喂奖励")
 
@@ -124,7 +124,7 @@ class FeedingCog(commands.Cog):
             # 格式化系统提示，仅在获得奖励时显示
             system_message = ""
             if coin_gain > 0:
-                system_message = f"> 你获得了 {coin_gain} 枚类脑币！"
+                system_message = f"> 你获得了 {coin_gain} 枚月光币！"
 
             # 创建 Embed
             embed_description = evaluation_with_emojis
@@ -160,7 +160,7 @@ class FeedingCog(commands.Cog):
                     embed.set_image(url=sticker_url)
 
             # 添加页脚用于上下文识别
-            embed.set_footer(text="类脑娘对你的投喂做出回应...")
+            embed.set_footer(text="月月对你的投喂做出回应...")
 
             # 记录投喂事件
             await self.feeding_service.record_feeding(user_id)

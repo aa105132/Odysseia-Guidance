@@ -25,26 +25,26 @@ services:
     depends_on:
       - db
 
-  #  config_web:
-  #    build:
-  #      context: .
-  #      dockerfile: .devcontainer/Dockerfile
-  #    container_name: config_web
-  #    restart: unless-stopped
-  #    env_file:
-  #      - .env
-  #    ports:
-  #      - "${CONFIG_WEB_PORT:-8080}:80"
-  #    networks:
-  #      - bot_network
-  #    volumes:
-  #      - .:/app
-  #      - /var/run/docker.sock:/var/run/docker.sock
-  #    # --- DEV请 取失 注释下面的command: sleep命令并且 注释 掉command: gunicorn ---
-  #    #command: sleep infinity
-  #    command: gunicorn --chdir ./web --worker-class eventlet -w 1 --bind 0.0.0.0:80 "web-main:web_app"
-  #    depends_on:
-  #      - db
+  dashboard:
+    restart: unless-stopped
+    mem_limit: 512m
+    env_file:
+      - .env
+    environment:
+      - RUNNING_IN_DOCKER=true
+    image: odysseia-guidance-bot_app:latest
+    pull_policy: never
+    container_name: Odysseia_Dashboard
+    volumes:
+      - .:/app
+      - ./data:/app/data
+    ports:
+      - "${DASHBOARD_PORT:-8080}:8080"
+    networks:
+      - bot_network
+    depends_on:
+      - db
+    command: python3 -u -c "import uvicorn; uvicorn.run('src.dashboard.api:app', host='0.0.0.0', port=8080)"
 
   db:
     # 使用官方打包好的 ParadeDB 镜像，它基于 PG16

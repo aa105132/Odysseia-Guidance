@@ -43,7 +43,7 @@ class JumpToPageModal(discord.ui.Modal):
 
 
 class TransactionHistoryView(discord.ui.View):
-    """显示用户类脑币交易历史记录并提供分页的视图"""
+    """显示用户月光币交易历史记录并提供分页的视图"""
 
     def __init__(
         self,
@@ -134,7 +134,7 @@ class TransactionHistoryView(discord.ui.View):
         )
 
         embed = discord.Embed(
-            title=f"{self.target_user.display_name} 的类脑币流水",
+            title=f"{self.target_user.display_name} 的月光币流水",
             color=discord.Color.gold(),
         )
 

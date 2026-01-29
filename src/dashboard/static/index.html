@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>月月 Dashboard - 管理面板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#faf5ff',
+                            100: '#f3e8ff',
+                            200: '#e9d5ff',
+                            300: '#d8b4fe',
+                            400: '#c084fc',
+                            500: '#a855f7',
+                            600: '#9333ea',
+                            700: '#7e22ce',
+                            800: '#6b21a8',
+                            900: '#581c87',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 min-h-screen text-white">
+    <div x-data="dashboard()" x-init="init()" x-cloak>
+        <!-- 侧边栏 -->
+        <aside class="fixed left-0 top-0 h-full w-64 bg-slate-800/50 backdrop-blur-xl border-r border-slate-700/50 z-40">
+            <div class="p-6">
+                <div class="flex items-center gap-3 mb-8">
+                    <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                        <span class="text-xl">🦊</span>
+                    </div>
+                    <div>
+                        <h1 class="font-bold text-lg">月月</h1>
+                        <p class="text-xs text-slate-400">Dashboard</p>
+                    </div>
+                </div>
+                
+                <nav class="space-y-2">
+                    <button @click="currentTab = 'overview'" 
+                            :class="currentTab === 'overview' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+                        <span>总览</span>
+                    </button>
+                    <button @click="currentTab = 'ai'" 
+                            :class="currentTab === 'ai' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="brain" class="w-5 h-5"></i>
+                        <span>AI 设置</span>
+                    </button>
+                    <button @click="currentTab = 'imagen'" 
+                            :class="currentTab === 'imagen' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="image" class="w-5 h-5"></i>
+                        <span>绘图设置</span>
+                    </button>
+                    <button @click="currentTab = 'coin'"
+                            :class="currentTab === 'coin' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="coins" class="w-5 h-5"></i>
+                        <span>货币设置</span>
+                    </button>
+                    <button @click="currentTab = 'emoji'"
+                            :class="currentTab === 'emoji' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="smile" class="w-5 h-5"></i>
+                        <span>表情管理</span>
+                    </button>
+                    <button @click="currentTab = 'knowledge'"
+                            :class="currentTab === 'knowledge' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="book-open" class="w-5 h-5"></i>
+                        <span>知识库</span>
+                    </button>
+                </nav>
+            </div>
+            
+            <div class="absolute bottom-0 left-0 right-0 p-6 border-t border-slate-700/50">
+                <div class="flex items-center gap-2 text-sm text-slate-400">
+                    <span class="w-2 h-2 rounded-full" :class="connected ? 'bg-green-500' : 'bg-red-500'"></span>
+                    <span x-text="connected ? '已连接' : '未连接'"></span>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- 主内容区 -->
+        <main class="ml-64 p-8">
+            <!-- 认证模态框 -->
+            <div x-show="!authenticated" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+                <div class="bg-slate-800 rounded-2xl p-8 w-full max-w-md shadow-2xl border border-slate-700">
+                    <div class="text-center mb-6">
+                        <div class="w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full mx-auto mb-4 flex items-center justify-center">
+                            <span class="text-3xl">🦊</span>
+                        </div>
+                        <h2 class="text-2xl font-bold">欢迎回来</h2>
+                        <p class="text-slate-400 mt-2">请输入管理密钥继续</p>
+                    </div>
+                    <form @submit.prevent="login()">
+                        <input type="password" x-model="secretKey" 
+                               placeholder="输入 Dashboard 密钥..."
+                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 mb-4 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        <button type="submit" 
+                                class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-semibold py-3 rounded-lg transition-all">
+                            登录
+                        </button>
+                        <p x-show="loginError" class="text-red-400 text-sm mt-3 text-center" x-text="loginError"></p>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- 总览 -->
+            <div x-show="currentTab === 'overview'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">系统总览</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-slate-400">AI 模型</span>
+                            <i data-lucide="brain" class="w-5 h-5 text-purple-400"></i>
+                        </div>
+                        <p class="text-xl font-semibold" x-text="config.ai?.model || 'N/A'"></p>
+                    </div>
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-slate-400">绘图模型</span>
+                            <i data-lucide="image" class="w-5 h-5 text-pink-400"></i>
+                        </div>
+                        <p class="text-xl font-semibold" x-text="config.imagen?.model || 'N/A'"></p>
+                    </div>
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-slate-400">每日奖励</span>
+                            <i data-lucide="gift" class="w-5 h-5 text-yellow-400"></i>
+                        </div>
+                        <p class="text-xl font-semibold"><span x-text="config.coin?.daily_reward || 0"></span> 月光币</p>
+                    </div>
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-slate-400">系统状态</span>
+                            <i data-lucide="activity" class="w-5 h-5 text-green-400"></i>
+                        </div>
+                        <p class="text-xl font-semibold text-green-400">运行中</p>
+                    </div>
+                </div>
+                
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                    <h3 class="text-lg font-semibold mb-4">快速操作</h3>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <button @click="currentTab = 'ai'" class="bg-slate-700/50 hover:bg-slate-700 p-4 rounded-lg transition-all text-center">
+                            <i data-lucide="settings" class="w-6 h-6 mx-auto mb-2 text-purple-400"></i>
+                            <span class="text-sm">配置 AI</span>
+                        </button>
+                        <button @click="currentTab = 'imagen'" class="bg-slate-700/50 hover:bg-slate-700 p-4 rounded-lg transition-all text-center">
+                            <i data-lucide="palette" class="w-6 h-6 mx-auto mb-2 text-pink-400"></i>
+                            <span class="text-sm">配置绘图</span>
+                        </button>
+                        <button @click="testImagen()" class="bg-slate-700/50 hover:bg-slate-700 p-4 rounded-lg transition-all text-center">
+                            <i data-lucide="flask-conical" class="w-6 h-6 mx-auto mb-2 text-blue-400"></i>
+                            <span class="text-sm">测试绘图</span>
+                        </button>
+                        <button @click="refreshConfig()" class="bg-slate-700/50 hover:bg-slate-700 p-4 rounded-lg transition-all text-center">
+                            <i data-lucide="refresh-cw" class="w-6 h-6 mx-auto mb-2 text-green-400"></i>
+                            <span class="text-sm">刷新配置</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AI 设置 -->
+            <div x-show="currentTab === 'ai'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">AI 设置</h2>
+                
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl">
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">AI 模型</label>
+                            <select x-model="aiForm.model" 
+                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <template x-for="model in config.ai?.available_models || []">
+                                    <option :value="model" x-text="model"></option>
+                                </template>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                温度 (Temperature): <span x-text="aiForm.temperature"></span>
+                            </label>
+                            <input type="range" x-model="aiForm.temperature" min="0" max="2" step="0.1"
+                                   class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer">
+                            <div class="flex justify-between text-xs text-slate-500 mt-1">
+                                <span>精确 (0)</span>
+                                <span>创意 (2)</span>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">最大输出令牌</label>
+                            <input type="number" x-model="aiForm.max_tokens" min="1" max="65536"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        
+                        <button @click="saveAIConfig()" 
+                                :disabled="saving"
+                                class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                            <i data-lucide="save" class="w-5 h-5"></i>
+                            <span x-text="saving ? '保存中...' : '保存设置'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 绘图设置 -->
+            <div x-show="currentTab === 'imagen'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">绘图设置</h2>
+                
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl">
+                    <div class="space-y-6">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
+                            <input type="url" x-model="imagenForm.api_url" 
+                                   placeholder="https://your-imagen-api-url.com/..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">Gemini Imagen API 的完整 URL</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">模型</label>
+                            <input type="text" x-model="imagenForm.model" 
+                                   placeholder="imagen-3.0-generate-002"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">默认图片数量</label>
+                            <select x-model="imagenForm.default_images" 
+                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <option value="1">1 张</option>
+                                <option value="2">2 张</option>
+                                <option value="3">3 张</option>
+                                <option value="4">4 张</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">支持的宽高比</label>
+                            <div class="flex flex-wrap gap-2">
+                                <template x-for="ratio in Object.keys(config.imagen?.aspect_ratios || {})">
+                                    <span class="bg-slate-700/50 px-3 py-1 rounded-full text-sm" x-text="ratio"></span>
+                                </template>
+                            </div>
+                        </div>
+                        
+                        <div class="flex gap-4">
+                            <button @click="saveImagenConfig()" 
+                                    :disabled="saving"
+                                    class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                                <i data-lucide="save" class="w-5 h-5"></i>
+                                <span x-text="saving ? '保存中...' : '保存设置'"></span>
+                            </button>
+                            <button @click="testImagen()" 
+                                    :disabled="testing"
+                                    class="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-semibold py-3 px-6 rounded-lg transition-all flex items-center justify-center gap-2">
+                                <i data-lucide="flask-conical" class="w-5 h-5"></i>
+                                <span x-text="testing ? '测试中...' : '测试连接'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 货币设置 -->
+            <div x-show="currentTab === 'coin'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">货币设置</h2>
+                
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl">
+                    <div class="space-y-6">
+                        <div class="bg-slate-700/30 rounded-lg p-4 flex items-center gap-4">
+                            <div class="w-12 h-12 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full flex items-center justify-center">
+                                <i data-lucide="coins" class="w-6 h-6 text-white"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm text-slate-400">货币名称</p>
+                                <p class="text-xl font-bold">月光币</p>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">每日签到奖励</label>
+                            <input type="number" x-model="coinForm.daily_reward" min="0"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">每日聊天奖励</label>
+                            <input type="number" x-model="coinForm.chat_reward" min="0"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">最大贷款额度</label>
+                            <input type="number" x-model="coinForm.max_loan" min="0"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        
+                        <button @click="saveCoinConfig()"
+                                :disabled="saving"
+                                class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                            <i data-lucide="save" class="w-5 h-5"></i>
+                            <span x-text="saving ? '保存中...' : '保存设置'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 表情管理 -->
+            <div x-show="currentTab === 'emoji'" x-transition>
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-2xl font-bold">表情管理</h2>
+                    <button @click="showAddEmojiModal = true"
+                            class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-all">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        <span>添加表情</span>
+                    </button>
+                </div>
+                
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="smile" class="w-5 h-5 text-purple-400"></i>
+                        默认表情映射
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">
+                        AI 会在回复中使用 <code class="bg-slate-700 px-1 rounded">&lt;表情名&gt;</code> 占位符，系统会自动替换为对应的 Discord 表情。
+                    </p>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead>
+                                <tr class="text-left text-slate-400 border-b border-slate-700">
+                                    <th class="pb-3 pr-4">占位符</th>
+                                    <th class="pb-3 pr-4">Discord 表情</th>
+                                    <th class="pb-3 pr-4">预览</th>
+                                    <th class="pb-3">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="(mapping, index) in emojiMappings" :key="index">
+                                    <tr class="border-b border-slate-700/50">
+                                        <td class="py-3 pr-4">
+                                            <code class="bg-slate-700 px-2 py-1 rounded text-purple-300" x-text="mapping.placeholder"></code>
+                                        </td>
+                                        <td class="py-3 pr-4">
+                                            <div class="flex flex-wrap gap-1">
+                                                <template x-for="emoji in mapping.discord_emojis">
+                                                    <code class="bg-slate-700/50 px-1 rounded text-xs" x-text="emoji.substring(0, 30) + (emoji.length > 30 ? '...' : '')"></code>
+                                                </template>
+                                            </div>
+                                        </td>
+                                        <td class="py-3 pr-4">
+                                            <span x-html="mapping.preview" class="text-2xl"></span>
+                                        </td>
+                                        <td class="py-3">
+                                            <div class="flex gap-2">
+                                                <button @click="editEmoji(mapping)"
+                                                        class="text-slate-400 hover:text-purple-400 transition-colors">
+                                                    <i data-lucide="pencil" class="w-4 h-4"></i>
+                                                </button>
+                                                <button @click="deleteEmoji(mapping.placeholder)"
+                                                        class="text-slate-400 hover:text-red-400 transition-colors">
+                                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- 活动表情折叠面板 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="calendar" class="w-5 h-5 text-pink-400"></i>
+                        活动专属表情
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">
+                        这些表情会在特定活动期间替换默认表情。
+                    </p>
+                    
+                    <template x-for="(factions, eventId) in factionMappings" :key="eventId">
+                        <div class="mb-4">
+                            <button @click="toggleEvent(eventId)"
+                                    class="w-full flex items-center justify-between bg-slate-700/30 hover:bg-slate-700/50 px-4 py-3 rounded-lg transition-all">
+                                <span class="font-medium" x-text="eventId.replace('_', ' ').toUpperCase()"></span>
+                                <i data-lucide="chevron-down" class="w-4 h-4 transition-transform"
+                                   :class="expandedEvents[eventId] ? 'rotate-180' : ''"></i>
+                            </button>
+                            <div x-show="expandedEvents[eventId]" x-collapse class="mt-2 space-y-2 pl-4">
+                                <template x-for="(emojis, factionId) in factions" :key="factionId">
+                                    <div class="bg-slate-700/20 rounded-lg p-3">
+                                        <div class="font-medium text-purple-300 mb-2" x-text="factionId"></div>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-for="emoji in emojis">
+                                                <span class="bg-slate-700/50 px-2 py-1 rounded text-sm">
+                                                    <span x-text="emoji.placeholder"></span>
+                                                </span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            
+            <!-- 知识库管理 -->
+            <div x-show="currentTab === 'knowledge'" x-transition>
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-2xl font-bold">知识库管理</h2>
+                    <button @click="showAddKnowledgeModal = true"
+                            class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-all">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        <span>添加知识</span>
+                    </button>
+                </div>
+                
+                <!-- 使用指南 -->
+                <div class="bg-gradient-to-r from-blue-900/30 to-purple-900/30 backdrop-blur rounded-xl p-6 border border-blue-500/30 mb-6">
+                    <h3 class="text-lg font-semibold mb-3 flex items-center gap-2">
+                        <i data-lucide="lightbulb" class="w-5 h-5 text-yellow-400"></i>
+                        如何添加知识库
+                    </h3>
+                    <div class="space-y-3 text-sm text-slate-300">
+                        <p><strong class="text-purple-300">方法一：通过 Dashboard 添加</strong></p>
+                        <ol class="list-decimal list-inside space-y-1 ml-4">
+                            <li>点击上方的「添加知识」按钮</li>
+                            <li>填写标题和内容（支持 Markdown 格式）</li>
+                            <li>保存后，运行嵌入脚本生成向量：<code class="bg-slate-700 px-2 py-0.5 rounded">python scripts/re_embed_knowledge.py</code></li>
+                        </ol>
+                        
+                        <p class="mt-4"><strong class="text-purple-300">方法二：批量导入（推荐用于大量文档）</strong></p>
+                        <ol class="list-decimal list-inside space-y-1 ml-4">
+                            <li>准备 Markdown 文件，放入 <code class="bg-slate-700 px-2 py-0.5 rounded">data/knowledge/</code> 目录</li>
+                            <li>运行导入脚本：<code class="bg-slate-700 px-2 py-0.5 rounded">python scripts/migrate_knowledge_to_paradedb.py</code></li>
+                            <li>运行嵌入脚本生成向量</li>
+                        </ol>
+                        
+                        <p class="mt-4"><strong class="text-purple-300">方法三：通过 Discord 论坛</strong></p>
+                        <p class="ml-4">在指定的教程论坛频道发帖，Bot 会自动索引内容到教程知识库中。</p>
+                        
+                        <div class="mt-4 p-3 bg-slate-800/50 rounded-lg border border-slate-600/50">
+                            <p class="text-yellow-300 flex items-center gap-2">
+                                <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                                <strong>重要提示</strong>
+                            </p>
+                            <p class="mt-1">添加或修改文档后，必须运行嵌入脚本才能让 AI 在聊天中检索到新内容。嵌入过程会将文本切分成块并生成向量索引。</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 统计卡片 -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700/50">
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-400">文档总数</span>
+                            <i data-lucide="file-text" class="w-5 h-5 text-blue-400"></i>
+                        </div>
+                        <p class="text-2xl font-bold mt-2" x-text="knowledgeStats.total_documents || 0"></p>
+                    </div>
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700/50">
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-400">向量分块</span>
+                            <i data-lucide="puzzle" class="w-5 h-5 text-green-400"></i>
+                        </div>
+                        <p class="text-2xl font-bold mt-2" x-text="knowledgeStats.total_chunks || 0"></p>
+                    </div>
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700/50">
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-400">数据来源</span>
+                            <i data-lucide="database" class="w-5 h-5 text-purple-400"></i>
+                        </div>
+                        <p class="text-2xl font-bold mt-2" x-text="Object.keys(knowledgeStats.by_source || {}).length"></p>
+                    </div>
+                </div>
+                
+                <!-- 搜索栏 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-slate-700/50 mb-6">
+                    <div class="flex gap-4">
+                        <div class="flex-1 relative">
+                            <i data-lucide="search" class="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                            <input type="text" x-model="knowledgeSearch"
+                                   @keyup.enter="searchKnowledge()"
+                                   placeholder="搜索知识库..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg pl-10 pr-4 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        <button @click="searchKnowledge()"
+                                class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg transition-all">
+                            搜索
+                        </button>
+                        <button @click="knowledgeSearch = ''; loadKnowledgeDocuments()"
+                                class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg transition-all">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- 文档列表 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold flex items-center gap-2">
+                            <i data-lucide="folder-open" class="w-5 h-5 text-purple-400"></i>
+                            知识文档
+                        </h3>
+                        <button @click="loadKnowledgeDocuments()" class="text-slate-400 hover:text-white transition-colors">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                    
+                    <div x-show="knowledgeLoading" class="flex items-center justify-center py-12">
+                        <i data-lucide="loader-2" class="w-8 h-8 animate-spin text-purple-400"></i>
+                    </div>
+                    
+                    <div x-show="!knowledgeLoading && knowledgeDocs.length === 0" class="text-center py-12 text-slate-400">
+                        <i data-lucide="inbox" class="w-12 h-12 mx-auto mb-4 opacity-50"></i>
+                        <p>暂无知识文档</p>
+                        <p class="text-sm mt-2">点击「添加知识」开始构建你的知识库</p>
+                    </div>
+                    
+                    <div x-show="!knowledgeLoading && knowledgeDocs.length > 0" class="space-y-3">
+                        <template x-for="doc in knowledgeDocs" :key="doc.id">
+                            <div class="bg-slate-700/30 hover:bg-slate-700/50 rounded-lg p-4 transition-all">
+                                <div class="flex items-start justify-between">
+                                    <div class="flex-1 min-w-0">
+                                        <h4 class="font-medium text-white truncate" x-text="doc.title"></h4>
+                                        <p class="text-sm text-slate-400 mt-1 line-clamp-2" x-text="doc.preview"></p>
+                                        <div class="flex items-center gap-4 mt-2 text-xs text-slate-500">
+                                            <span x-show="doc.category" class="bg-purple-900/50 text-purple-300 px-2 py-0.5 rounded" x-text="doc.category"></span>
+                                            <span class="flex items-center gap-1">
+                                                <i data-lucide="clock" class="w-3 h-3"></i>
+                                                <span x-text="formatDate(doc.updated_at)"></span>
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-2 ml-4">
+                                        <button @click="viewKnowledgeDoc(doc.id)"
+                                                class="text-slate-400 hover:text-blue-400 transition-colors p-2">
+                                            <i data-lucide="eye" class="w-4 h-4"></i>
+                                        </button>
+                                        <button @click="editKnowledgeDoc(doc.id)"
+                                                class="text-slate-400 hover:text-purple-400 transition-colors p-2">
+                                            <i data-lucide="pencil" class="w-4 h-4"></i>
+                                        </button>
+                                        <button @click="deleteKnowledgeDoc(doc.id, doc.title)"
+                                                class="text-slate-400 hover:text-red-400 transition-colors p-2">
+                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    
+                    <!-- 分页 -->
+                    <div x-show="knowledgeTotalPages > 1" class="flex items-center justify-between mt-6 pt-4 border-t border-slate-700">
+                        <span class="text-sm text-slate-400">
+                            第 <span x-text="knowledgePage"></span> / <span x-text="knowledgeTotalPages"></span> 页，共 <span x-text="knowledgeTotal"></span> 条
+                        </span>
+                        <div class="flex gap-2">
+                            <button @click="knowledgePage > 1 && (knowledgePage--, loadKnowledgeDocuments())"
+                                    :disabled="knowledgePage <= 1"
+                                    class="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1 rounded transition-all">
+                                <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                            </button>
+                            <button @click="knowledgePage < knowledgeTotalPages && (knowledgePage++, loadKnowledgeDocuments())"
+                                    :disabled="knowledgePage >= knowledgeTotalPages"
+                                    class="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1 rounded transition-all">
+                                <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 添加知识模态框 -->
+            <div x-show="showAddKnowledgeModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50" x-transition>
+                <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-2xl shadow-2xl border border-slate-700 max-h-[90vh] overflow-y-auto" @click.away="showAddKnowledgeModal = false">
+                    <h3 class="text-xl font-bold mb-4" x-text="editingKnowledgeId ? '编辑知识文档' : '添加知识文档'"></h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">标题 *</label>
+                            <input type="text" x-model="newKnowledge.title"
+                                   placeholder="输入文档标题..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">分类（可选）</label>
+                            <input type="text" x-model="newKnowledge.category"
+                                   placeholder="例如: 教程、FAQ、规则..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">内容 * （支持 Markdown）</label>
+                            <textarea x-model="newKnowledge.content"
+                                      rows="12"
+                                      placeholder="输入知识内容...&#10;&#10;支持 Markdown 格式：&#10;# 标题&#10;## 二级标题&#10;- 列表项&#10;**粗体** *斜体*"
+                                      class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"></textarea>
+                        </div>
+                        <div class="bg-slate-700/30 rounded-lg p-3 text-sm text-slate-400">
+                            <p class="flex items-center gap-2">
+                                <i data-lucide="info" class="w-4 h-4"></i>
+                                提示：保存后需要运行嵌入脚本才能让 AI 检索到此内容
+                            </p>
+                        </div>
+                        <div class="flex gap-3 mt-6">
+                            <button @click="showAddKnowledgeModal = false; editingKnowledgeId = null; newKnowledge = {title: '', content: '', category: ''}"
+                                    class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg transition-all">
+                                取消
+                            </button>
+                            <button @click="saveKnowledge()"
+                                    :disabled="saving || !newKnowledge.title || !newKnowledge.content"
+                                    class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white py-3 rounded-lg transition-all">
+                                <span x-text="saving ? '保存中...' : (editingKnowledgeId ? '更新' : '添加')"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 查看知识详情模态框 -->
+            <div x-show="showViewKnowledgeModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50" x-transition>
+                <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-3xl shadow-2xl border border-slate-700 max-h-[90vh] overflow-y-auto" @click.away="showViewKnowledgeModal = false">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-xl font-bold" x-text="viewingKnowledge.title"></h3>
+                        <button @click="showViewKnowledgeModal = false" class="text-slate-400 hover:text-white">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="flex items-center gap-4 text-sm text-slate-400">
+                            <span x-show="viewingKnowledge.metadata?.category" class="bg-purple-900/50 text-purple-300 px-2 py-1 rounded" x-text="viewingKnowledge.metadata?.category"></span>
+                            <span class="flex items-center gap-1">
+                                <i data-lucide="puzzle" class="w-4 h-4"></i>
+                                <span x-text="viewingKnowledge.chunk_count + ' 个分块'"></span>
+                            </span>
+                            <span class="flex items-center gap-1">
+                                <i data-lucide="clock" class="w-4 h-4"></i>
+                                <span x-text="formatDate(viewingKnowledge.updated_at)"></span>
+                            </span>
+                        </div>
+                        <div class="bg-slate-700/30 rounded-lg p-4 max-h-96 overflow-y-auto">
+                            <pre class="whitespace-pre-wrap text-sm text-slate-300 font-mono" x-text="viewingKnowledge.content"></pre>
+                        </div>
+                        <div class="flex gap-3">
+                            <button @click="showViewKnowledgeModal = false; editKnowledgeDoc(viewingKnowledge.id)"
+                                    class="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                                <i data-lucide="pencil" class="w-4 h-4"></i>
+                                编辑
+                            </button>
+                            <button @click="showViewKnowledgeModal = false"
+                                    class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg transition-all">
+                                关闭
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 添加表情模态框 -->
+            <div x-show="showAddEmojiModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50" x-transition>
+                <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-700" @click.away="showAddEmojiModal = false">
+                    <h3 class="text-xl font-bold mb-4">添加表情映射</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">占位符</label>
+                            <input type="text" x-model="newEmoji.placeholder"
+                                   placeholder="例如: <开心>"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">格式: &lt;表情名&gt;</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">Discord 表情</label>
+                            <input type="text" x-model="newEmoji.discord_emoji"
+                                   placeholder="例如: <:emoji_name:123456789>"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">在 Discord 中输入 \:表情名: 获取完整格式</p>
+                        </div>
+                        <div class="flex gap-3 mt-6">
+                            <button @click="showAddEmojiModal = false"
+                                    class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg transition-all">
+                                取消
+                            </button>
+                            <button @click="addEmoji()"
+                                    :disabled="saving"
+                                    class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white py-3 rounded-lg transition-all">
+                                添加
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Toast 通知 -->
+            <div x-show="toast.show" 
+                 x-transition:enter="transition ease-out duration-300"
+                 x-transition:enter-start="opacity-0 transform translate-y-2"
+                 x-transition:enter-end="opacity-100 transform translate-y-0"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100"
+                 x-transition:leave-end="opacity-0"
+                 class="fixed bottom-8 right-8 z-50">
+                <div :class="toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'" 
+                     class="px-6 py-4 rounded-lg shadow-lg flex items-center gap-3">
+                    <i :data-lucide="toast.type === 'success' ? 'check-circle' : 'alert-circle'" class="w-5 h-5"></i>
+                    <span x-text="toast.message"></span>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script>
+        function dashboard() {
+            return {
+                authenticated: false,
+                secretKey: '',
+                loginError: '',
+                connected: false,
+                currentTab: 'overview',
+                config: {},
+                saving: false,
+                testing: false,
+                toast: { show: false, message: '', type: 'success' },
+                
+                // 表单数据
+                aiForm: { model: '', temperature: 1.0, max_tokens: 8192 },
+                imagenForm: { api_url: '', model: '', default_images: 1 },
+                coinForm: { daily_reward: 50, chat_reward: 10, max_loan: 1000 },
+                
+                // 表情数据
+                emojiMappings: [],
+                factionMappings: {},
+                showAddEmojiModal: false,
+                newEmoji: { placeholder: '', discord_emoji: '' },
+                expandedEvents: {},
+                
+                // 知识库数据
+                knowledgeDocs: [],
+                knowledgeStats: {},
+                knowledgePage: 1,
+                knowledgeTotal: 0,
+                knowledgeTotalPages: 1,
+                knowledgeSearch: '',
+                knowledgeLoading: false,
+                showAddKnowledgeModal: false,
+                showViewKnowledgeModal: false,
+                newKnowledge: { title: '', content: '', category: '' },
+                editingKnowledgeId: null,
+                viewingKnowledge: {},
+                
+                async init() {
+                    // 检查是否有保存的密钥
+                    const savedKey = localStorage.getItem('dashboard_key');
+                    if (savedKey) {
+                        this.secretKey = savedKey;
+                        await this.login();
+                    }
+                    lucide.createIcons();
+                },
+                
+                toggleEvent(eventId) {
+                    this.expandedEvents[eventId] = !this.expandedEvents[eventId];
+                },
+                
+                async login() {
+                    try {
+                        const response = await fetch('/api/config/all', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        
+                        if (response.ok) {
+                            this.authenticated = true;
+                            this.connected = true;
+                            this.loginError = '';
+                            localStorage.setItem('dashboard_key', this.secretKey);
+                            this.config = await response.json();
+                            this.syncForms();
+                            this.$nextTick(() => lucide.createIcons());
+                        } else {
+                            this.loginError = '密钥无效，请重试';
+                            localStorage.removeItem('dashboard_key');
+                        }
+                    } catch (e) {
+                        this.loginError = '连接失败，请检查服务器状态';
+                    }
+                },
+                
+                syncForms() {
+                    if (this.config.ai) {
+                        this.aiForm.model = this.config.ai.model;
+                        this.aiForm.temperature = this.config.ai.temperature;
+                        this.aiForm.max_tokens = this.config.ai.max_tokens;
+                    }
+                    if (this.config.imagen) {
+                        this.imagenForm.api_url = this.config.imagen.api_url;
+                        this.imagenForm.model = this.config.imagen.model;
+                        this.imagenForm.default_images = this.config.imagen.default_images;
+                    }
+                    if (this.config.coin) {
+                        this.coinForm.daily_reward = this.config.coin.daily_reward;
+                        this.coinForm.chat_reward = this.config.coin.chat_reward;
+                        this.coinForm.max_loan = this.config.coin.max_loan;
+                    }
+                    // 加载表情配置
+                    this.loadEmojiConfig();
+                    // 加载知识库数据
+                    this.loadKnowledgeDocuments();
+                    this.loadKnowledgeStats();
+                },
+                
+                formatDate(isoString) {
+                    if (!isoString) return '未知';
+                    const date = new Date(isoString);
+                    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' });
+                },
+                
+                async loadKnowledgeDocuments() {
+                    this.knowledgeLoading = true;
+                    try {
+                        const params = new URLSearchParams({
+                            page: this.knowledgePage,
+                            page_size: 20
+                        });
+                        if (this.knowledgeSearch) {
+                            params.append('search', this.knowledgeSearch);
+                        }
+                        
+                        const response = await fetch(`/api/knowledge/documents?${params}`, {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.knowledgeDocs = data.documents;
+                            this.knowledgeTotal = data.total;
+                            this.knowledgeTotalPages = data.total_pages;
+                            this.$nextTick(() => lucide.createIcons());
+                        }
+                    } catch (e) {
+                        console.error('加载知识库失败', e);
+                    }
+                    this.knowledgeLoading = false;
+                },
+                
+                async loadKnowledgeStats() {
+                    try {
+                        const response = await fetch('/api/knowledge/stats', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            this.knowledgeStats = await response.json();
+                        }
+                    } catch (e) {
+                        console.error('加载知识库统计失败', e);
+                    }
+                },
+                
+                searchKnowledge() {
+                    this.knowledgePage = 1;
+                    this.loadKnowledgeDocuments();
+                },
+                
+                async viewKnowledgeDoc(id) {
+                    try {
+                        const response = await fetch(`/api/knowledge/documents/${id}`, {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            this.viewingKnowledge = await response.json();
+                            this.showViewKnowledgeModal = true;
+                            this.$nextTick(() => lucide.createIcons());
+                        }
+                    } catch (e) {
+                        this.showToast('获取文档失败', 'error');
+                    }
+                },
+                
+                async editKnowledgeDoc(id) {
+                    try {
+                        const response = await fetch(`/api/knowledge/documents/${id}`, {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const doc = await response.json();
+                            this.newKnowledge = {
+                                title: doc.title,
+                                content: doc.content,
+                                category: doc.metadata?.category || ''
+                            };
+                            this.editingKnowledgeId = id;
+                            this.showAddKnowledgeModal = true;
+                        }
+                    } catch (e) {
+                        this.showToast('获取文档失败', 'error');
+                    }
+                },
+                
+                async saveKnowledge() {
+                    if (!this.newKnowledge.title || !this.newKnowledge.content) {
+                        this.showToast('请填写标题和内容', 'error');
+                        return;
+                    }
+                    
+                    this.saving = true;
+                    try {
+                        let response;
+                        if (this.editingKnowledgeId) {
+                            response = await fetch(`/api/knowledge/documents/${this.editingKnowledgeId}`, {
+                                method: 'PUT',
+                                headers: {
+                                    'Authorization': `Bearer ${this.secretKey}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    title: this.newKnowledge.title,
+                                    content: this.newKnowledge.content
+                                })
+                            });
+                        } else {
+                            response = await fetch('/api/knowledge/documents', {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': `Bearer ${this.secretKey}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify(this.newKnowledge)
+                            });
+                        }
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.showToast(data.message || '保存成功', 'success');
+                            this.showAddKnowledgeModal = false;
+                            this.newKnowledge = { title: '', content: '', category: '' };
+                            this.editingKnowledgeId = null;
+                            await this.loadKnowledgeDocuments();
+                            await this.loadKnowledgeStats();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+                
+                async deleteKnowledgeDoc(id, title) {
+                    if (!confirm(`确定要删除「${title}」吗？此操作不可撤销。`)) return;
+                    
+                    try {
+                        const response = await fetch(`/api/knowledge/documents/${id}`, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.showToast(data.message || '删除成功', 'success');
+                            await this.loadKnowledgeDocuments();
+                            await this.loadKnowledgeStats();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '删除失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('删除失败', 'error');
+                    }
+                },
+                
+                async loadEmojiConfig() {
+                    try {
+                        const response = await fetch('/api/config/emoji', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.emojiMappings = data.default_mappings;
+                            this.factionMappings = data.faction_mappings;
+                            this.$nextTick(() => lucide.createIcons());
+                        }
+                    } catch (e) {
+                        console.error('加载表情配置失败', e);
+                    }
+                },
+                
+                async addEmoji() {
+                    if (!this.newEmoji.placeholder || !this.newEmoji.discord_emoji) {
+                        this.showToast('请填写完整信息', 'error');
+                        return;
+                    }
+                    
+                    this.saving = true;
+                    try {
+                        const response = await fetch('/api/config/emoji/add', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                placeholder: this.newEmoji.placeholder,
+                                discord_emojis: [this.newEmoji.discord_emoji]
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            this.showToast('表情添加成功！', 'success');
+                            this.showAddEmojiModal = false;
+                            this.newEmoji = { placeholder: '', discord_emoji: '' };
+                            await this.loadEmojiConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '添加失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('添加失败', 'error');
+                    }
+                    this.saving = false;
+                },
+                
+                editEmoji(mapping) {
+                    this.newEmoji.placeholder = mapping.placeholder;
+                    this.newEmoji.discord_emoji = mapping.discord_emojis[0] || '';
+                    this.showAddEmojiModal = true;
+                },
+                
+                async deleteEmoji(placeholder) {
+                    if (!confirm(`确定要删除 ${placeholder} 吗？`)) return;
+                    
+                    try {
+                        const response = await fetch(`/api/config/emoji/${encodeURIComponent(placeholder)}`, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        
+                        if (response.ok) {
+                            this.showToast('表情已删除', 'success');
+                            await this.loadEmojiConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '删除失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('删除失败', 'error');
+                    }
+                },
+                
+                async refreshConfig() {
+                    try {
+                        const response = await fetch('/api/config/all', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            this.config = await response.json();
+                            this.syncForms();
+                            this.showToast('配置已刷新', 'success');
+                        }
+                    } catch (e) {
+                        this.showToast('刷新失败', 'error');
+                    }
+                },
+                
+                async saveAIConfig() {
+                    this.saving = true;
+                    try {
+                        const response = await fetch('/api/config/ai', {
+                            method: 'PUT',
+                            headers: { 
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                model: this.aiForm.model,
+                                temperature: parseFloat(this.aiForm.temperature),
+                                max_tokens: parseInt(this.aiForm.max_tokens)
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            this.showToast('AI 设置已保存', 'success');
+                            await this.refreshConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+                
+                async saveImagenConfig() {
+                    this.saving = true;
+                    try {
+                        const response = await fetch('/api/config/imagen', {
+                            method: 'PUT',
+                            headers: { 
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                api_url: this.imagenForm.api_url,
+                                model: this.imagenForm.model,
+                                default_images: parseInt(this.imagenForm.default_images)
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            this.showToast('绘图设置已保存', 'success');
+                            await this.refreshConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+                
+                async saveCoinConfig() {
+                    this.saving = true;
+                    try {
+                        const response = await fetch('/api/config/coin', {
+                            method: 'PUT',
+                            headers: { 
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                daily_reward: parseInt(this.coinForm.daily_reward),
+                                chat_reward: parseInt(this.coinForm.chat_reward),
+                                max_loan: parseInt(this.coinForm.max_loan)
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            this.showToast('货币设置已保存', 'success');
+                            await this.refreshConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+                
+                async testImagen() {
+                    this.testing = true;
+                    try {
+                        const response = await fetch('/api/config/test-imagen', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            this.showToast('绘图 API 连接成功！', 'success');
+                        } else {
+                            this.showToast(`连接失败: ${data.error}`, 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('测试失败', 'error');
+                    }
+                    this.testing = false;
+                },
+                
+                showToast(message, type = 'success') {
+                    this.toast = { show: true, message, type };
+                    setTimeout(() => {
+                        this.toast.show = false;
+                    }, 3000);
+                    this.$nextTick(() => lucide.createIcons());
+                }
+            }
+        }
+    </script>
+</body>
+</html>

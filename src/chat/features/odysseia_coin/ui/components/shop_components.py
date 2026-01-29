@@ -144,7 +144,7 @@ class LoanModal(discord.ui.Modal, title="输入借款金额"):
         self.loan_view = loan_view
         self.amount_input = discord.ui.TextInput(
             label=f"借款金额 (最多 {chat_config.COIN_CONFIG['MAX_LOAN_AMOUNT']})",
-            placeholder="请输入你要借的类脑币数量",
+            placeholder="请输入你要借的月光币数量",
             style=discord.TextStyle.short,
             required=True,
         )
@@ -210,14 +210,14 @@ class LoanView(discord.ui.View):
         )
         if self.active_loan:
             desc = (
-                f"你当前有一笔 **{self.active_loan['amount']}** 类脑币的贷款尚未还清。"
+                f"你当前有一笔 **{self.active_loan['amount']}** 月光币的贷款尚未还清。"
             )
         else:
-            desc = f"你可以从类脑娘这里借款，最高可借 **{chat_config.COIN_CONFIG['MAX_LOAN_AMOUNT']}** 类脑币。"
+            desc = f"你可以从月月这里借款，最高可借 **{chat_config.COIN_CONFIG['MAX_LOAN_AMOUNT']}** 月光币。"
         embed = discord.Embed(
-            title="类脑币借贷中心", description=desc, color=discord.Color.blue()
+            title="月光币借贷中心", description=desc, color=discord.Color.blue()
         )
-        embed.set_footer(text=f"你的余额: {balance} 类脑币")
+        embed.set_footer(text=f"你的余额: {balance} 月光币")
         thumbnail_url = chat_config.COIN_CONFIG.get("LOAN_THUMBNAIL_URL")
         if thumbnail_url:
             embed.set_thumbnail(url=thumbnail_url)
@@ -292,7 +292,7 @@ class ItemSelect(ShopSelect["SimpleShopView"]):
             discord.SelectOption(
                 label=item["name"],
                 value=str(item["item_id"]),
-                description=f"{item['price']} 类脑币 - {item['description']}",
+                description=f"{item['price']} 月光币 - {item['description']}",
                 emoji="🛒",
             )
             for item in items
@@ -467,7 +467,7 @@ class PurchaseButton(ShopButton["SimpleShopView"]):
         current_balance = await coin_service.get_balance(interaction.user.id)
         if current_balance < item["price"]:
             await interaction.response.send_message(
-                f"你的余额不足！需要 {item['price']} 类脑币，但你只有 {current_balance}。",
+                f"你的余额不足！需要 {item['price']} 月光币，但你只有 {current_balance}。",
                 ephemeral=True,
             )
             return
@@ -486,7 +486,7 @@ class PurchaseButton(ShopButton["SimpleShopView"]):
         current_balance = await coin_service.get_balance(interaction.user.id)
         if current_balance < item["price"]:
             await interaction.response.send_message(
-                f"你的余额不足！需要 {item['price']} 类脑币，但你只有 {current_balance}。",
+                f"你的余额不足！需要 {item['price']} 月光币，但你只有 {current_balance}。",
                 ephemeral=True,
             )
             return
@@ -616,7 +616,7 @@ class PurchaseButton(ShopButton["SimpleShopView"]):
             view.add_item(button)
 
             await interaction.followup.send(
-                "请点击下方按钮来配置你的帖子或子区里类脑娘的活跃时间,默认是1分钟两次哦",
+                "请点击下方按钮来配置你的帖子或子区里月月的活跃时间,默认是1分钟两次哦",
                 view=view,
                 ephemeral=True,
             )

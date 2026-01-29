@@ -61,7 +61,7 @@ class ImageGenerationCog(commands.Cog):
         balance = await coin_service.get_balance(user_id)
         if balance < IMAGE_GENERATION_COST:
             await interaction.response.send_message(
-                f"你的类脑币余额不足哦！生成图片需要 {IMAGE_GENERATION_COST}，你当前只有 {balance}。",
+                f"你的月光币余额不足哦！生成图片需要 {IMAGE_GENERATION_COST}，你当前只有 {balance}。",
                 ephemeral=True,
             )
             return
@@ -86,7 +86,7 @@ class ImageGenerationCog(commands.Cog):
             if image_data:
                 file = discord.File(io.BytesIO(image_data), filename="image.png")
                 await interaction.followup.send(
-                    f"图片生成成功！消耗 {IMAGE_GENERATION_COST} 类脑币，剩余 {new_balance}。",
+                    f"图片生成成功！消耗 {IMAGE_GENERATION_COST} 月光币，剩余 {new_balance}。",
                     file=file,
                 )
             else:
@@ -95,7 +95,7 @@ class ImageGenerationCog(commands.Cog):
                     user_id, IMAGE_GENERATION_COST, "图像生成失败返还"
                 )
                 await interaction.followup.send(
-                    "抱歉，图片生成失败，已返还你的类脑币。"
+                    "抱歉，图片生成失败，已返还你的月光币。"
                 )
 
         except Exception as e:
@@ -105,7 +105,7 @@ class ImageGenerationCog(commands.Cog):
                 user_id, IMAGE_GENERATION_COST, "图像生成异常返还"
             )
             await interaction.followup.send(
-                "处理你的请求时发生了一个意料之外的错误，已返还你的类脑币。"
+                "处理你的请求时发生了一个意料之外的错误，已返还你的月光币。"
             )
 
 

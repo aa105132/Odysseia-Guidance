@@ -103,9 +103,9 @@ class SellBodyService:
             description += f"\n\n{outcome_description}"
 
         if reward > 0:
-            reward_text = f"你获得了 {reward} 类脑币。"
+            reward_text = f"你获得了 {reward} 月光币。"
         elif reward < 0:
-            reward_text = f"你损失了 {-reward} 类脑币！"
+            reward_text = f"你损失了 {-reward} 月光币！"
         else:
             reward_text = "你白忙活了一场，什么都没得到。"
 

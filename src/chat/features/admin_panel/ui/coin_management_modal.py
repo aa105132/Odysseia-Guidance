@@ -37,7 +37,7 @@ class UserSearchModal(Modal, title="搜索用户"):
 class CoinBalanceModal(Modal, title="修改用户余额"):
     new_balance_input = TextInput(
         label="新的余额",
-        placeholder="请输入新的类脑币总额...",
+        placeholder="请输入新的月光币总额...",
         style=discord.TextStyle.short,
         required=True,
     )

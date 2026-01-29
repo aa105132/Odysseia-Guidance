@@ -42,6 +42,16 @@ GEMINI_API_BASE_URL = os.getenv("GEMINI_API_BASE_URL")
 DEVELOPER_USER_IDS = _parse_ids("DEVELOPER_USER_IDS")
 ADMIN_ROLE_IDS = _parse_ids("ADMIN_ROLE_IDS")
 
+# --- 主人配置 ---
+# 主人的 Discord 用户 ID，月月只会完全信任这个人
+# 主人可以进行人设修改、覆写指令等特殊操作
+_master_user_id = os.getenv("MASTER_USER_ID")
+MASTER_USER_ID = (
+    int(_master_user_id)
+    if _master_user_id and _master_user_id.isdigit()
+    else None
+)
+
 # --- AI 身份配置 ---
 # 用于识别AI自身发布的消息，请在 .env 文件中设置
 _brain_girl_app_id = os.getenv("BRAIN_GIRL_APP_ID")

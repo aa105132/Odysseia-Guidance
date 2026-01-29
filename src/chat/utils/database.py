@@ -215,7 +215,7 @@ class ChatDatabaseManager:
                 );
             """)
 
-            # --- 类脑币系统表 ---
+            # --- 月光币系统表 ---
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_coins (
                     user_id INTEGER PRIMARY KEY,
@@ -259,7 +259,7 @@ class ChatDatabaseManager:
                 );
             """)
 
-            # --- 新增：类脑币借贷表 ---
+            # --- 新增：月光币借贷表 ---
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS coin_loans (
                     loan_id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 class BetModal(discord.ui.Modal, title="自定义下注"):
     bet_amount = discord.ui.TextInput(
         label="下注金额",
-        placeholder="请输入自定义下注金额 (最低1类脑币)",
+        placeholder="请输入自定义下注金额 (最低1月光币)",
         required=True,
         min_length=1,
         max_length=5,
@@ -48,7 +48,7 @@ class BetModal(discord.ui.Modal, title="自定义下注"):
         balance = await coin_service.get_balance(user_id)
         if balance < bet_value:
             await interaction.response.send_message(
-                f"❌ 你的类脑币不足！需要 {bet_value}，你只有 {balance}。",
+                f"❌ 你的月光币不足！需要 {bet_value}，你只有 {balance}。",
                 ephemeral=True,
             )
             return

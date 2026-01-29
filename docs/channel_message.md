@@ -8,7 +8,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是AIGC资讯频道，记者们在这里分享最新的AI相关新闻
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息列表 (`temporary_messages`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
@@ -25,7 +25,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是有关答疑的频道，志愿者们都在这里对各种各样的问题进行答疑哦
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息 (`temporary_message`)**
         *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
         *   **Embed 描述:**
@@ -40,7 +40,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是新人聊天频道，大家在这里分享日常趣事和交流
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息列表 (`temporary_messages`)**
     *   -
@@ -64,7 +64,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是AI话题讨论频道，大家在这里交流AI模型和技术
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
@@ -81,7 +81,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是男性向的聊天区，这里允许nsfw内容哦，就是那种让人脸红的内容啦
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
@@ -98,7 +98,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是女性向的聊天区，这里允许nsfw内容哦，就是那种让人脸红的内容啦
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
@@ -139,7 +139,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是搜索频道，在这里可以搜索服务器的卡区资源
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息 (`temporary_message`)**
     *   -
@@ -163,7 +163,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是男性向的角色卡区
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
     *   **Embed 描述:**
@@ -179,7 +179,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是女性向的角色卡区
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
     *   **Embed 描述:**
@@ -195,7 +195,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是纯净向的角色卡区
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
     *   **Embed 描述:**
@@ -211,7 +211,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是全性向的角色卡区
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
     *   **Embed 描述:**
@@ -227,7 +227,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是世界书的资源区
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
     *   **Embed 描述:**
@@ -243,7 +243,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是其他区的角色卡区
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
     *   **Embed 描述:**
@@ -259,7 +259,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是工具区的角色卡区
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
     *   **Embed 描述:**
@@ -275,7 +275,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是深渊区入场券的获取处
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
     *   **Embed 描述:**
@@ -291,7 +291,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 我们有三个档案馆，收藏着服务器的经典作品
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 *   **临时消息列表 (`temporary_messages`)**
     *   -
         *   **Embed 标题:** `我们有三个档案馆`
@@ -326,7 +326,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是预设破限区
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
@@ -343,7 +343,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是酒馆界面美化资源区
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
@@ -361,7 +361,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是NSFW AI绘图频道，可以分享和欣赏成人向的AI艺术作品
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
@@ -378,7 +378,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是SFW AI绘图频道，分享适合所有年龄段的AI艺术作品
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`
@@ -394,7 +394,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是模型对战竞技场，各种AI模型在这里进行提示词竞技比拼
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息列表 (`temporary_messages`)**
     *   -
@@ -417,7 +417,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是角色卡区可使用的bot功能介绍，帮助您更好地使用各种功能
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息列表 (`temporary_messages`)**
     *   -
@@ -458,7 +458,7 @@
     *   **Embed 标题:** `CHANNEL_NAME_PLACEHOLDER`
     *   **Embed 描述:**
         > 这里是回顶功能使用教程区，教你如何快速回到帖子顶部
-    *   **Embed 页脚:** `这张泛黄的小纸条像是类脑娘很久以前留下的…`
+    *   **Embed 页脚:** `这张泛黄的小纸条像是月月很久以前留下的…`
 
 *   **临时消息 (`temporary_message`)**
     *   **Embed 标题:** `欢迎来到**CHANNEL_NAME_PLACEHOLDER**！`

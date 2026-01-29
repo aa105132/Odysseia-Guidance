@@ -15,7 +15,7 @@ from src.chat.features.odysseia_coin.ui.transaction_history_ui import (
 
 class CoinManagementView(View):
     """
-    类脑币管理视图
+    月光币管理视图
     """
 
     def __init__(
@@ -109,22 +109,22 @@ class CoinManagementView(View):
             self.add_item(view_transactions_button)
 
     async def get_embed(self) -> discord.Embed:
-        """生成类脑币管理的 Embed"""
+        """生成月光币管理的 Embed"""
         if self.target_user:
-            description = f"正在管理用户 **{self.target_user.display_name}** (`{self.target_user_id}`) 的类脑币。"
+            description = f"正在管理用户 **{self.target_user.display_name}** (`{self.target_user_id}`) 的月光币。"
             color = root_config.EMBED_COLOR_SUCCESS
         else:
             description = "请使用下方按钮搜索您想管理的用户ID。"
             color = root_config.EMBED_COLOR_INFO
 
         embed = discord.Embed(
-            title="🪙 类脑币管理", description=description, color=color
+            title="🪙 月光币管理", description=description, color=color
         )
 
         if self.target_user or self.target_user_id:
             embed.add_field(
                 name="当前余额",
-                value=f"**{self.current_balance}** 类脑币",
+                value=f"**{self.current_balance}** 月光币",
                 inline=False,
             )
         if self.target_user_id and not self.target_user:

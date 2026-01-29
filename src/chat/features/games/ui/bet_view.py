@@ -27,7 +27,7 @@ class BetView(discord.ui.View):
         if new_balance is None:
             balance = await coin_service.get_balance(user_id)
             await interaction.response.send_message(
-                f"❌ 你的类脑币不足！需要 {bet_value}，你只有 {balance}。",
+                f"❌ 你的月光币不足！需要 {bet_value}，你只有 {balance}。",
                 ephemeral=True,
             )
             return

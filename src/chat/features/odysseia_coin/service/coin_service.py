@@ -1,6 +1,7 @@
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+import random
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Tuple, List, Dict, Any
 
 from src.chat.utils.database import chat_db_manager
 from src.chat.config.chat_config import COIN_CONFIG
@@ -22,13 +23,13 @@ VIEW_PERSONAL_MEMORY_ITEM_EFFECT_ID = "view_personal_memory"
 
 
 class CoinService:
-    """处理与类脑币相关的所有业务逻辑"""
+    """处理与月光币相关的所有业务逻辑"""
 
     def __init__(self):
         pass
 
     async def get_balance(self, user_id: int) -> int:
-        """获取用户的类脑币余额"""
+        """获取用户的月光币余额"""
         query = "SELECT balance FROM user_coins WHERE user_id = ?"
         result = await chat_db_manager._execute(
             chat_db_manager._db_transaction, query, (user_id,), fetch="one"
@@ -37,7 +38,7 @@ class CoinService:
 
     async def add_coins(self, user_id: int, amount: int, reason: str) -> int:
         """
-        为用户增加类脑币并记录交易。
+        为用户增加月光币并记录交易。
         返回新的余额。
         """
         if amount <= 0:
@@ -70,7 +71,7 @@ class CoinService:
         # 获取新余额
         new_balance = await self.get_balance(user_id)
         log.info(
-            f"用户 {user_id} 获得 {amount} 类脑币，原因: {reason}。新余额: {new_balance}"
+            f"用户 {user_id} 获得 {amount} 月光币，原因: {reason}。新余额: {new_balance}"
         )
         return new_balance
 
@@ -78,7 +79,7 @@ class CoinService:
         self, user_id: int, amount: int, reason: str
     ) -> Optional[int]:
         """
-        扣除用户的类脑币并记录交易。
+        扣除用户的月光币并记录交易。
         如果余额不足，则返回 None，否则返回新的余额。
         """
         if amount <= 0:
@@ -115,7 +116,7 @@ class CoinService:
         # 获取新余额
         new_balance = await self.get_balance(user_id)
         log.info(
-            f"用户 {user_id} 消费 {amount} 类脑币，原因: {reason}。新余额: {new_balance}"
+            f"用户 {user_id} 消费 {amount} 月光币，原因: {reason}。新余额: {new_balance}"
         )
         return new_balance
 
@@ -173,7 +174,7 @@ class CoinService:
             commit=True,
         )
 
-        log.info(f"用户 {user_id} 获得每日首次与AI对话奖励 ({reward_amount} 类脑币)。")
+        log.info(f"用户 {user_id} 获得每日首次与AI对话奖励 ({reward_amount} 月光币)。")
         return True
 
     async def add_item_to_shop(
@@ -243,7 +244,7 @@ class CoinService:
         if current_balance < total_cost:
             return (
                 False,
-                f"你的余额不足！需要 {total_cost} 类脑币，但你只有 {current_balance}。",
+                f"你的余额不足！需要 {total_cost} 月光币，但你只有 {current_balance}。",
                 None,
                 False,
                 False,
@@ -256,14 +257,14 @@ class CoinService:
             reason = f"购买 {quantity}x {item['name']}"
             new_balance = await self.remove_coins(user_id, total_cost, reason)
             if new_balance is None:
-                return False, "购买失败，无法扣除类脑币。", None, False, False, None
+                return False, "购买失败，无法扣除月光币。", None, False, False, None
 
         # 根据物品目标执行不同操作
         item_target = item["target"]
         item_effect = item["effect_id"]
 
         if item_target == "ai":
-            # --- 送给类脑娘的物品 ---
+            # --- 送给月月的物品 ---
             points_to_add = max(1, item["price"] // 10)
             (
                 gift_success,
@@ -281,7 +282,7 @@ class CoinService:
                     user_id, total_cost, f"送礼失败返还: {item['name']}"
                 )
                 log.warning(
-                    f"用户 {user_id} 送礼失败，已返还 {total_cost} 类脑币。原因: {gift_message}"
+                    f"用户 {user_id} 送礼失败，已返还 {total_cost} 月光币。原因: {gift_message}"
                 )
                 return False, gift_message, current_balance, False, False, None
 
@@ -296,7 +297,7 @@ class CoinService:
                 await personal_memory_service.clear_personal_memory(user_id)
                 return (
                     True,
-                    f"一道耀眼的闪光后，类脑娘关于 **{item['name']}** 的记忆...呃，不对，是类脑娘关于你的记忆被清除了。你们可以重新开始了。",
+                    f"一道耀眼的闪光后，月月关于 **{item['name']}** 的记忆...呃，不对，是月月关于你的记忆被清除了。你们可以重新开始了。",
                     new_balance,
                     False,
                     False,
@@ -315,7 +316,7 @@ class CoinService:
                 }
                 return (
                     True,
-                    "你与类脑娘进行了一次成功的“午后闲谈”。",
+                    "你与月月进行了一次成功的“午后闲谈”。",
                     new_balance,
                     False,
                     False,
@@ -329,11 +330,11 @@ class CoinService:
                 )
 
                 if has_personal_memory:
-                    # 用户已经拥有该功能，扣除10个类脑币作为更新费用
+                    # 用户已经拥有该功能，扣除10个月光币作为更新费用
                     # 用户已经拥有该功能，同样需要弹出模态框让他们编辑
                     return (
                         True,
-                        f"你花费了 {total_cost} 类脑币来更新你的个人档案。",
+                        f"你花费了 {total_cost} 月光币来更新你的个人档案。",
                         new_balance,
                         True,
                         False,
@@ -342,7 +343,7 @@ class CoinService:
                 else:
                     return (
                         True,
-                        f"你已成功解锁 **{item['name']}**！现在类脑娘将开始为你记录个人记忆。",
+                        f"你已成功解锁 **{item['name']}**！现在月月将开始为你记录个人记忆。",
                         new_balance,
                         True,
                         False,
@@ -352,7 +353,7 @@ class CoinService:
                 # 购买"知识纸条"商品，需要弹出模态窗口
                 return (
                     True,
-                    f"你花费了 {total_cost} 类脑币购买了 {quantity}x **{item['name']}**。",
+                    f"你花费了 {total_cost} 月光币购买了 {quantity}x **{item['name']}**。",
                     new_balance,
                     True,
                     False,
@@ -362,7 +363,7 @@ class CoinService:
                 # 购买"社区成员档案上传"商品，需要弹出模态窗口
                 return (
                     True,
-                    f"你花费了 {total_cost} 类脑币购买了 {quantity}x **{item['name']}**。",
+                    f"你花费了 {total_cost} 月光币购买了 {quantity}x **{item['name']}**。",
                     new_balance,
                     True,
                     False,
@@ -372,7 +373,7 @@ class CoinService:
                 # 购买“拉皮条”商品，需要弹出模态窗口
                 return (
                     True,
-                    f"你花费了 {total_cost} 类脑币购买了 {quantity}x **{item['name']}**。",
+                    f"你花费了 {total_cost} 月光币购买了 {quantity}x **{item['name']}**。",
                     new_balance,
                     True,
                     False,
@@ -383,7 +384,7 @@ class CoinService:
                 await self.set_warmup_preference(user_id, wants_warmup=False)
                 return (
                     True,
-                    f"你“购买”了 **{item['name']}**。从此，类脑娘将不再暖你的贴。",
+                    f"你“购买”了 **{item['name']}**。从此，月月将不再暖你的贴。",
                     new_balance,
                     False,
                     False,
@@ -400,7 +401,7 @@ class CoinService:
                 log.info(f"用户 {user_id} 购买了告示牌，已禁用帖子回复功能。")
                 return (
                     True,
-                    f"你举起了 **{item['name']}**，上面写着“禁止通行”。从此，类脑娘将不再进入你的帖子。",
+                    f"你举起了 **{item['name']}**，上面写着“禁止通行”。从此，月月将不再进入你的帖子。",
                     new_balance,
                     False,
                     False,
@@ -411,7 +412,7 @@ class CoinService:
                 await self.set_warmup_preference(user_id, wants_warmup=True)
                 return (
                     True,
-                    f"你使用了 **{item['name']}**，枯萎的向日葵恢复了生机。类脑娘现在会重新暖你的贴了。",
+                    f"你使用了 **{item['name']}**，枯萎的向日葵恢复了生机。月月现在会重新暖你的贴了。",
                     new_balance,
                     False,
                     False,
@@ -441,7 +442,7 @@ class CoinService:
                 )
                 return (
                     True,
-                    f"你使用了 **{item['name']}**，花费了 {total_cost} 类脑币。现在你创建的所有帖子将默认拥有 **60秒2次** 的发言许可，你也可以随时通过弹出的窗口自定义规则。",
+                    f"你使用了 **{item['name']}**，花费了 {total_cost} 月光币。现在你创建的所有帖子将默认拥有 **60秒2次** 的发言许可，你也可以随时通过弹出的窗口自定义规则。",
                     new_balance,
                     True,
                     False,
@@ -452,7 +453,7 @@ class CoinService:
                 await self._add_item_to_inventory(user_id, item_id, quantity)
                 return (
                     True,
-                    f"购买成功！你花费了 {total_cost} 类脑币购买了 {quantity}x **{item['name']}**，已放入你的背包。",
+                    f"购买成功！你花费了 {total_cost} 月光币购买了 {quantity}x **{item['name']}**，已放入你的背包。",
                     new_balance,
                     False,
                     False,
@@ -463,7 +464,7 @@ class CoinService:
             await self._add_item_to_inventory(user_id, item_id, quantity)
             return (
                 True,
-                f"购买成功！你花费了 {total_cost} 类脑币购买了 {quantity}x **{item['name']}**，已放入你的背包。",
+                f"购买成功！你花费了 {total_cost} 月光币购买了 {quantity}x **{item['name']}**，已放入你的背包。",
                 new_balance,
                 False,
                 False,
@@ -485,7 +486,7 @@ class CoinService:
         if current_balance < price:
             return (
                 False,
-                f"你的余额不足！需要 {price} 类脑币，但你只有 {current_balance}。",
+                f"你的余额不足！需要 {price} 月光币，但你只有 {current_balance}。",
                 None,
             )
 
@@ -495,7 +496,7 @@ class CoinService:
             reason = f"购买活动商品: {item_name}"
             new_balance = await self.remove_coins(user_id, price, reason)
             if new_balance is None:
-                return False, "购买失败，无法扣除类脑币。", None
+                return False, "购买失败，无法扣除月光币。", None
 
         return True, f"成功购买 {item_name}！", new_balance
 
@@ -605,11 +606,11 @@ class CoinService:
     #         )
     #
     #         log.info(
-    #             f"用户 {sender_id} 成功转账 {amount} 类脑币给用户 {receiver_id}，税费 {tax}。"
+    #             f"用户 {sender_id} 成功转账 {amount} 月光币给用户 {receiver_id}，税费 {tax}。"
     #         )
     #         return (
     #             True,
-    #             f"✅ 转账成功！你向 <@{receiver_id}> 转账了 **{amount}** 类脑币，并支付了 **{tax}** 的税费。",
+    #             f"✅ 转账成功！你向 <@{receiver_id}> 转账了 **{amount}** 月光币，并支付了 **{tax}** 的税费。",
     #             sender_new_balance,
     #         )
     #     except Exception as e:
@@ -635,13 +636,13 @@ class CoinService:
 
         max_loan = COIN_CONFIG["MAX_LOAN_AMOUNT"]
         if amount > max_loan:
-            return False, f"❌ 单次最多只能借 {max_loan} 类脑币。"
+            return False, f"❌ 单次最多只能借 {max_loan} 月光币。"
 
         active_loan = await self.get_active_loan(user_id)
         if active_loan:
             return (
                 False,
-                f"❌ 你还有一笔 **{active_loan['amount']}** 类脑币的借款尚未还清，请先还款。",
+                f"❌ 你还有一笔 **{active_loan['amount']}** 月光币的借款尚未还清，请先还款。",
             )
 
         try:
@@ -652,8 +653,8 @@ class CoinService:
                 chat_db_manager._db_transaction, query, (user_id, amount), commit=True
             )
 
-            log.info(f"用户 {user_id} 成功借款 {amount} 类脑币。")
-            return True, f"✅ 成功借款 **{amount}** 类脑币！"
+            log.info(f"用户 {user_id} 成功借款 {amount} 月光币。")
+            return True, f"✅ 成功借款 **{amount}** 月光币！"
         except Exception as e:
             log.error(f"用户 {user_id} 借款失败: {e}")
             return False, f"❌ 借款时发生未知错误: {e}"
@@ -676,7 +677,7 @@ class CoinService:
         try:
             new_balance = await self.remove_coins(user_id, loan_amount, "偿还系统贷款")
             if new_balance is None:
-                return False, "❌ 还款失败，无法扣除类脑币。"
+                return False, "❌ 还款失败，无法扣除月光币。"
 
             query = "UPDATE coin_loans SET status = 'paid', paid_at = CURRENT_TIMESTAMP WHERE loan_id = ?"
             await chat_db_manager._execute(
@@ -686,8 +687,8 @@ class CoinService:
                 commit=True,
             )
 
-            log.info(f"用户 {user_id} 成功偿还 {loan_amount} 类脑币的贷款。")
-            return True, f"✅ 成功偿还 **{loan_amount}** 类脑币的贷款！"
+            log.info(f"用户 {user_id} 成功偿还 {loan_amount} 月光币的贷款。")
+            return True, f"✅ 成功偿还 **{loan_amount}** 月光币的贷款！"
         except Exception as e:
             log.error(f"用户 {user_id} 还款失败: {e}")
             return False, f"❌ 还款时发生未知错误: {e}"
@@ -695,7 +696,7 @@ class CoinService:
     async def get_transaction_history(
         self, user_id: int, limit: int = 10, offset: int = 0
     ) -> list[dict]:
-        """获取用户最近的类脑币交易记录"""
+        """获取用户最近的月光币交易记录"""
         query = """
             SELECT timestamp, amount, reason
             FROM coin_transactions
@@ -718,6 +719,219 @@ class CoinService:
             chat_db_manager._db_transaction, query, (user_id,), fetch="one"
         )
         return result["count"] if result else 0
+
+    async def daily_checkin(self, user_id: int) -> Tuple[bool, str, int, int]:
+        """
+        处理每日签到。
+        返回: (success, message, reward_amount, current_streak)
+        """
+        # 使用北京时间
+        beijing_tz = timezone(timedelta(hours=8))
+        today = datetime.now(beijing_tz).date()
+        yesterday = today - timedelta(days=1)
+        
+        # 获取用户签到信息
+        query = """
+            SELECT last_checkin_date, checkin_streak
+            FROM user_coins WHERE user_id = ?
+        """
+        result = await chat_db_manager._execute(
+            chat_db_manager._db_transaction, query, (user_id,), fetch="one"
+        )
+        
+        last_checkin = None
+        current_streak = 0
+        
+        if result and result["last_checkin_date"]:
+            last_checkin = datetime.fromisoformat(result["last_checkin_date"]).date()
+            current_streak = result["checkin_streak"] or 0
+            
+            # 检查是否今天已签到
+            if last_checkin >= today:
+                return False, "你今天已经签到过了，明天再来吧！", 0, current_streak
+            
+            # 检查是否连续签到
+            if last_checkin == yesterday:
+                current_streak += 1
+            else:
+                # 断签，重置连续天数
+                current_streak = 1
+        else:
+            current_streak = 1
+        
+        # 计算奖励
+        base_reward = random.randint(
+            COIN_CONFIG["DAILY_CHECKIN_REWARD_MIN"],
+            COIN_CONFIG["DAILY_CHECKIN_REWARD_MAX"]
+        )
+        
+        # 连续签到奖励（每天+10，最多+50）
+        streak_bonus = min(
+            (current_streak - 1) * COIN_CONFIG["DAILY_CHECKIN_STREAK_BONUS"],
+            COIN_CONFIG["DAILY_CHECKIN_MAX_STREAK_BONUS"]
+        )
+        
+        total_reward = base_reward + streak_bonus
+        
+        # 更新数据库
+        update_query = """
+            INSERT INTO user_coins (user_id, balance, last_checkin_date, checkin_streak)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                balance = balance + ?,
+                last_checkin_date = excluded.last_checkin_date,
+                checkin_streak = excluded.checkin_streak;
+        """
+        await chat_db_manager._execute(
+            chat_db_manager._db_transaction,
+            update_query,
+            (user_id, total_reward, today.isoformat(), current_streak, total_reward),
+            commit=True,
+        )
+        
+        # 记录交易
+        transaction_query = """
+            INSERT INTO coin_transactions (user_id, amount, reason)
+            VALUES (?, ?, ?);
+        """
+        reason = f"每日签到 (连续{current_streak}天)"
+        if streak_bonus > 0:
+            reason += f" +{streak_bonus}连签奖励"
+        await chat_db_manager._execute(
+            chat_db_manager._db_transaction,
+            transaction_query,
+            (user_id, total_reward, reason),
+            commit=True,
+        )
+        
+        log.info(f"用户 {user_id} 签到成功，获得 {total_reward} 月光币，连续签到 {current_streak} 天")
+        
+        message = f"✨ 签到成功！获得 **{total_reward}** 月光币"
+        if streak_bonus > 0:
+            message += f"\n🔥 连续签到 **{current_streak}** 天，额外获得 **{streak_bonus}** 月光币！"
+        else:
+            message += f"\n📅 已连续签到 **{current_streak}** 天"
+        
+        return True, message, total_reward, current_streak
+
+    async def claim_bankruptcy_subsidy(self, user_id: int) -> Tuple[bool, str, int]:
+        """
+        领取破产补贴。
+        返回: (success, message, new_balance)
+        """
+        beijing_tz = timezone(timedelta(hours=8))
+        now = datetime.now(beijing_tz)
+        
+        balance = await self.get_balance(user_id)
+        
+        # 检查余额是否低于阈值
+        if balance >= COIN_CONFIG["BANKRUPTCY_THRESHOLD"]:
+            return (
+                False,
+                f"你还没有破产呢！余额必须低于 **{COIN_CONFIG['BANKRUPTCY_THRESHOLD']}** 月光币才能领取补贴。",
+                balance
+            )
+        
+        # 检查冷却时间
+        query = "SELECT last_bankruptcy_claim FROM user_coins WHERE user_id = ?"
+        result = await chat_db_manager._execute(
+            chat_db_manager._db_transaction, query, (user_id,), fetch="one"
+        )
+        
+        if result and result["last_bankruptcy_claim"]:
+            last_claim = datetime.fromisoformat(result["last_bankruptcy_claim"])
+            if last_claim.tzinfo is None:
+                last_claim = last_claim.replace(tzinfo=beijing_tz)
+            
+            cooldown_end = last_claim + timedelta(hours=COIN_CONFIG["BANKRUPTCY_COOLDOWN_HOURS"])
+            if now < cooldown_end:
+                remaining = cooldown_end - now
+                hours = int(remaining.total_seconds() // 3600)
+                minutes = int((remaining.total_seconds() % 3600) // 60)
+                return (
+                    False,
+                    f"破产补贴还在冷却中！请在 **{hours}小时{minutes}分钟** 后再来。",
+                    balance
+                )
+        
+        # 发放补贴
+        subsidy = COIN_CONFIG["BANKRUPTCY_SUBSIDY"]
+        
+        update_query = """
+            INSERT INTO user_coins (user_id, balance, last_bankruptcy_claim)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                balance = balance + ?,
+                last_bankruptcy_claim = excluded.last_bankruptcy_claim;
+        """
+        await chat_db_manager._execute(
+            chat_db_manager._db_transaction,
+            update_query,
+            (user_id, subsidy, now.isoformat(), subsidy),
+            commit=True,
+        )
+        
+        # 记录交易
+        transaction_query = """
+            INSERT INTO coin_transactions (user_id, amount, reason)
+            VALUES (?, ?, ?);
+        """
+        await chat_db_manager._execute(
+            chat_db_manager._db_transaction,
+            transaction_query,
+            (user_id, subsidy, "破产补贴"),
+            commit=True,
+        )
+        
+        new_balance = await self.get_balance(user_id)
+        log.info(f"用户 {user_id} 领取破产补贴 {subsidy} 月光币")
+        
+        return (
+            True,
+            f"💸 月月看你太可怜了，给你 **{subsidy}** 月光币救急！\n别再乱花钱了好吗...",
+            new_balance
+        )
+
+    async def get_leaderboard(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """获取月光币排行榜"""
+        query = """
+            SELECT user_id, balance
+            FROM user_coins
+            WHERE balance > 0
+            ORDER BY balance DESC
+            LIMIT ?
+        """
+        results = await chat_db_manager._execute(
+            chat_db_manager._db_transaction, query, (limit,), fetch="all"
+        )
+        return [dict(row) for row in results] if results else []
+
+    async def get_user_rank(self, user_id: int) -> Optional[int]:
+        """获取用户在排行榜中的排名"""
+        query = """
+            SELECT COUNT(*) + 1 as rank
+            FROM user_coins
+            WHERE balance > (
+                SELECT COALESCE(balance, 0) FROM user_coins WHERE user_id = ?
+            )
+        """
+        result = await chat_db_manager._execute(
+            chat_db_manager._db_transaction, query, (user_id,), fetch="one"
+        )
+        return result["rank"] if result else None
+
+    async def get_checkin_info(self, user_id: int) -> Tuple[Optional[str], int]:
+        """
+        获取用户签到信息。
+        返回: (last_checkin_date, checkin_streak)
+        """
+        query = "SELECT last_checkin_date, checkin_streak FROM user_coins WHERE user_id = ?"
+        result = await chat_db_manager._execute(
+            chat_db_manager._db_transaction, query, (user_id,), fetch="one"
+        )
+        if result:
+            return result["last_checkin_date"], result["checkin_streak"] or 0
+        return None, 0
 
 
 async def _setup_initial_items():

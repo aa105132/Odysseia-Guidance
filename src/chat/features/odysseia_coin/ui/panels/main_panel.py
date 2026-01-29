@@ -12,9 +12,9 @@ class MainPanel(BasePanel):
         )
 
         embed = discord.Embed(
-            title="🧠 类脑商店",
-            description=f"欢迎来到类脑商店，{self.view.user.mention}！\n"
-            f"你的当前余额: **{balance_str}** 类脑币",
+            title="🌙 月月商店",
+            description=f"欢迎来到月月商店，{self.view.user.mention}！\n"
+            f"你的当前余额: **{balance_str}** 月光币",
             color=discord.Color.blurple(),
         )
         embed.set_footer(text="使用下面的菜单浏览商店。")

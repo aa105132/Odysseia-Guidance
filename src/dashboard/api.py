@@ -1,0 +1,799 @@
+# -*- coding: utf-8 -*-
+"""
+Dashboard API - FastAPI 后端
+提供配置管理、状态监控等功能
+"""
+
+import os
+import re
+import json
+import logging
+import uuid
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException, Depends, status, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from psycopg2.extras import DictCursor
+
+from src.chat.config import chat_config
+from src.chat.config import emoji_config
+from src.chat.features.admin_panel.services.db_services import get_parade_db_connection
+
+log = logging.getLogger(__name__)
+
+# --- FastAPI 应用 ---
+app = FastAPI(
+    title="月月 Dashboard API",
+    description="管理面板后端 API",
+    version="1.0.0"
+)
+
+# CORS 配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 安全认证
+security = HTTPBearer(auto_error=False)
+DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "your-secret-key-change-in-production")
+
+
+# --- Pydantic 模型 ---
+class ConfigUpdate(BaseModel):
+    """配置更新请求"""
+    section: str
+    key: str
+    value: Any
+
+
+class ImagenConfigUpdate(BaseModel):
+    """Imagen 配置更新"""
+    api_url: Optional[str] = None
+    model: Optional[str] = None
+    default_images: Optional[int] = None
+
+
+class AIConfigUpdate(BaseModel):
+    """AI 配置更新"""
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+
+
+class ShopItemUpdate(BaseModel):
+    """商店物品更新"""
+    item_id: str
+    name: Optional[str] = None
+    price: Optional[int] = None
+    description: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class CoinConfigUpdate(BaseModel):
+    """货币配置更新"""
+    daily_reward: Optional[int] = None
+    chat_reward: Optional[int] = None
+    max_loan: Optional[int] = None
+
+
+class EmojiMapping(BaseModel):
+    """单个表情映射"""
+    placeholder: str  # 如 <微笑>
+    discord_emojis: List[str]  # Discord 表情列表
+
+
+class EmojiMappingUpdate(BaseModel):
+    """表情映射更新"""
+    mappings: List[EmojiMapping]
+
+
+class KnowledgeDocumentCreate(BaseModel):
+    """创建知识文档"""
+    title: str
+    content: str
+    category: Optional[str] = None
+
+
+class KnowledgeDocumentUpdate(BaseModel):
+    """更新知识文档"""
+    title: Optional[str] = None
+    content: Optional[str] = None
+
+
+# --- 认证依赖 ---
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """验证 API Token"""
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未提供认证令牌"
+        )
+    if credentials.credentials != DASHBOARD_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的认证令牌"
+        )
+    return credentials.credentials
+
+
+# --- API 端点 ---
+
+@app.get("/api/health")
+async def health_check():
+    """健康检查"""
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/api/config/all")
+async def get_all_config(token: str = Depends(verify_token)):
+    """获取所有配置"""
+    return {
+        "ai": {
+            "model": chat_config.PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
+            "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
+            "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
+            "persona_name": "月月",
+        },
+        "imagen": {
+            "api_url": chat_config.GEMINI_IMAGEN_CONFIG.get("API_URL", ""),
+            "model": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL", "imagen-3.0-generate-002"),
+            "default_images": chat_config.GEMINI_IMAGEN_CONFIG.get("DEFAULT_NUMBER_OF_IMAGES", 1),
+            "aspect_ratios": list(chat_config.GEMINI_IMAGEN_CONFIG.get("ASPECT_RATIOS", {}).keys()),
+        },
+        "coin": {
+            "daily_reward": chat_config.COIN_CONFIG.get("DAILY_CHECKIN_REWARD", 50),
+            "chat_reward": chat_config.COIN_CONFIG.get("DAILY_CHAT_REWARD", 10),
+            "max_loan": chat_config.COIN_CONFIG.get("MAX_LOAN_AMOUNT", 1000),
+            "currency_name": "月光币",
+        },
+        "shop": {
+            "items": chat_config.SHOP_ITEMS if hasattr(chat_config, 'SHOP_ITEMS') else [],
+        }
+    }
+
+
+@app.get("/api/config/ai")
+async def get_ai_config(token: str = Depends(verify_token)):
+    """获取 AI 配置"""
+    return {
+        "model": chat_config.PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
+        "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
+        "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
+        "persona_name": "月月",
+        "available_models": [
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-2.5-pro-preview-05-06",
+            "gemini-2.5-flash-preview-05-20",
+        ]
+    }
+
+
+@app.put("/api/config/ai")
+async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_token)):
+    """更新 AI 配置"""
+    updated = {}
+    
+    if config.model is not None:
+        chat_config.PROMPT_CONFIG["model"] = config.model
+        updated["model"] = config.model
+    
+    if config.temperature is not None:
+        if not 0.0 <= config.temperature <= 2.0:
+            raise HTTPException(400, "温度必须在 0.0 到 2.0 之间")
+        chat_config.PROMPT_CONFIG["temperature"] = config.temperature
+        updated["temperature"] = config.temperature
+    
+    if config.max_tokens is not None:
+        if not 1 <= config.max_tokens <= 65536:
+            raise HTTPException(400, "最大令牌数必须在 1 到 65536 之间")
+        chat_config.PROMPT_CONFIG["max_output_tokens"] = config.max_tokens
+        updated["max_tokens"] = config.max_tokens
+    
+    log.info(f"AI 配置已更新: {updated}")
+    return {"success": True, "updated": updated}
+
+
+@app.get("/api/config/imagen")
+async def get_imagen_config(token: str = Depends(verify_token)):
+    """获取 Imagen 配置"""
+    config = chat_config.GEMINI_IMAGEN_CONFIG
+    api_url = config.get("API_URL", "")
+    
+    # 隐藏部分 URL
+    masked_url = ""
+    if api_url and len(api_url) > 30:
+        masked_url = api_url[:20] + "..." + api_url[-10:]
+    elif api_url:
+        masked_url = api_url
+    
+    return {
+        "api_url": api_url,
+        "api_url_masked": masked_url,
+        "model": config.get("MODEL", "imagen-3.0-generate-002"),
+        "default_images": config.get("DEFAULT_NUMBER_OF_IMAGES", 1),
+        "aspect_ratios": config.get("ASPECT_RATIOS", {}),
+    }
+
+
+@app.put("/api/config/imagen")
+async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(verify_token)):
+    """更新 Imagen 配置"""
+    updated = {}
+    
+    if config.api_url is not None:
+        if config.api_url and not (config.api_url.startswith("http://") or config.api_url.startswith("https://")):
+            raise HTTPException(400, "API URL 必须以 http:// 或 https:// 开头")
+        chat_config.GEMINI_IMAGEN_CONFIG["API_URL"] = config.api_url
+        updated["api_url"] = config.api_url[:30] + "..." if len(config.api_url) > 30 else config.api_url
+    
+    if config.model is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["MODEL"] = config.model
+        updated["model"] = config.model
+    
+    if config.default_images is not None:
+        if not 1 <= config.default_images <= 4:
+            raise HTTPException(400, "默认图片数量必须在 1 到 4 之间")
+        chat_config.GEMINI_IMAGEN_CONFIG["DEFAULT_NUMBER_OF_IMAGES"] = config.default_images
+        updated["default_images"] = config.default_images
+    
+    log.info(f"Imagen 配置已更新: {updated}")
+    return {"success": True, "updated": updated}
+
+
+@app.get("/api/config/coin")
+async def get_coin_config(token: str = Depends(verify_token)):
+    """获取货币配置"""
+    config = chat_config.COIN_CONFIG
+    return {
+        "daily_reward": config.get("DAILY_CHECKIN_REWARD", 50),
+        "chat_reward": config.get("DAILY_CHAT_REWARD", 10),
+        "max_loan": config.get("MAX_LOAN_AMOUNT", 1000),
+        "currency_name": "月光币",
+        "tax_rate": config.get("TRANSFER_TAX_RATE", 0.05),
+    }
+
+
+@app.put("/api/config/coin")
+async def update_coin_config(config: CoinConfigUpdate, token: str = Depends(verify_token)):
+    """更新货币配置"""
+    updated = {}
+    
+    if config.daily_reward is not None:
+        if config.daily_reward < 0:
+            raise HTTPException(400, "每日奖励不能为负数")
+        chat_config.COIN_CONFIG["DAILY_CHECKIN_REWARD"] = config.daily_reward
+        updated["daily_reward"] = config.daily_reward
+    
+    if config.chat_reward is not None:
+        if config.chat_reward < 0:
+            raise HTTPException(400, "聊天奖励不能为负数")
+        chat_config.COIN_CONFIG["DAILY_CHAT_REWARD"] = config.chat_reward
+        updated["chat_reward"] = config.chat_reward
+    
+    if config.max_loan is not None:
+        if config.max_loan < 0:
+            raise HTTPException(400, "最大贷款额不能为负数")
+        chat_config.COIN_CONFIG["MAX_LOAN_AMOUNT"] = config.max_loan
+        updated["max_loan"] = config.max_loan
+    
+    log.info(f"货币配置已更新: {updated}")
+    return {"success": True, "updated": updated}
+
+
+@app.get("/api/status")
+async def get_status(token: str = Depends(verify_token)):
+    """获取系统状态"""
+    return {
+        "bot_status": "running",
+        "uptime": "N/A",  # 需要从 bot 实例获取
+        "config_loaded": True,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/api/config/emoji")
+async def get_emoji_config(token: str = Depends(verify_token)):
+    """获取表情配置"""
+    # 解析当前的表情映射
+    mappings = []
+    for pattern, emojis in emoji_config.EMOJI_MAPPINGS:
+        # 从正则表达式中提取占位符
+        placeholder = pattern.pattern.replace("\\<", "<").replace("\\>", ">")
+        mappings.append({
+            "placeholder": placeholder,
+            "discord_emojis": emojis,
+            "preview": emojis[0] if emojis else ""
+        })
+    
+    # 获取活动表情
+    faction_mappings = {}
+    for event_id, factions in emoji_config.FACTION_EMOJI_MAPPINGS.items():
+        faction_mappings[event_id] = {}
+        for faction_id, faction_emojis in factions.items():
+            faction_list = []
+            for pattern, emojis in faction_emojis:
+                placeholder = pattern.pattern.replace("\\<", "<").replace("\\>", ">")
+                faction_list.append({
+                    "placeholder": placeholder,
+                    "discord_emojis": emojis,
+                    "preview": emojis[0] if emojis else ""
+                })
+            faction_mappings[event_id][faction_id] = faction_list
+    
+    return {
+        "default_mappings": mappings,
+        "faction_mappings": faction_mappings,
+        "available_placeholders": [
+            "<微笑>", "<伤心>", "<生气>", "<乖巧>", "<傲娇>",
+            "<尴尬赞>", "<赞>", "<吃瓜>", "<偷笑>", "<无语>",
+            "<鬼脸>", "<鄙视>", "<思考>", "<害羞>"
+        ]
+    }
+
+
+@app.put("/api/config/emoji")
+async def update_emoji_config(config: EmojiMappingUpdate, token: str = Depends(verify_token)):
+    """更新表情映射（运行时）"""
+    updated = []
+    
+    for mapping in config.mappings:
+        placeholder = mapping.placeholder
+        discord_emojis = mapping.discord_emojis
+        
+        # 验证 Discord 表情格式
+        for emoji in discord_emojis:
+            if not re.match(r'^<a?:\w+:\d+>$', emoji):
+                raise HTTPException(400, f"无效的 Discord 表情格式: {emoji}")
+        
+        # 查找并更新现有映射
+        found = False
+        escaped_placeholder = placeholder.replace("<", "\\<").replace(">", "\\>")
+        for i, (pattern, _) in enumerate(emoji_config.EMOJI_MAPPINGS):
+            if pattern.pattern == escaped_placeholder:
+                emoji_config.EMOJI_MAPPINGS[i] = (pattern, discord_emojis)
+                found = True
+                updated.append(placeholder)
+                break
+        
+        # 如果不存在，添加新映射
+        if not found:
+            new_pattern = re.compile(escaped_placeholder)
+            emoji_config.EMOJI_MAPPINGS.append((new_pattern, discord_emojis))
+            updated.append(placeholder)
+    
+    log.info(f"表情映射已更新: {updated}")
+    return {"success": True, "updated": updated}
+
+
+@app.post("/api/config/emoji/add")
+async def add_emoji_mapping(mapping: EmojiMapping, token: str = Depends(verify_token)):
+    """添加新的表情映射"""
+    placeholder = mapping.placeholder
+    discord_emojis = mapping.discord_emojis
+    
+    # 验证占位符格式
+    if not re.match(r'^<\S+>$', placeholder):
+        raise HTTPException(400, "占位符格式必须为 <名称>")
+    
+    # 验证 Discord 表情格式
+    for emoji in discord_emojis:
+        if not re.match(r'^<a?:\w+:\d+>$', emoji):
+            raise HTTPException(400, f"无效的 Discord 表情格式: {emoji}")
+    
+    # 检查是否已存在
+    escaped_placeholder = placeholder.replace("<", "\\<").replace(">", "\\>")
+    for pattern, _ in emoji_config.EMOJI_MAPPINGS:
+        if pattern.pattern == escaped_placeholder:
+            raise HTTPException(400, f"占位符 {placeholder} 已存在")
+    
+    # 添加新映射
+    new_pattern = re.compile(escaped_placeholder)
+    emoji_config.EMOJI_MAPPINGS.append((new_pattern, discord_emojis))
+    
+    log.info(f"新增表情映射: {placeholder} -> {discord_emojis}")
+    return {"success": True, "message": f"已添加 {placeholder}"}
+
+
+@app.delete("/api/config/emoji/{placeholder}")
+async def delete_emoji_mapping(placeholder: str, token: str = Depends(verify_token)):
+    """删除表情映射"""
+    escaped_placeholder = placeholder.replace("<", "\\<").replace(">", "\\>")
+    
+    for i, (pattern, _) in enumerate(emoji_config.EMOJI_MAPPINGS):
+        if pattern.pattern == escaped_placeholder:
+            del emoji_config.EMOJI_MAPPINGS[i]
+            log.info(f"删除表情映射: {placeholder}")
+            return {"success": True, "message": f"已删除 {placeholder}"}
+    
+    raise HTTPException(404, f"找不到占位符 {placeholder}")
+
+
+@app.post("/api/config/test-imagen")
+async def test_imagen_connection(token: str = Depends(verify_token)):
+    """测试 Imagen API 连接"""
+    try:
+        from src.chat.features.image_generation.services.gemini_imagen_service import (
+            gemini_imagen_service
+        )
+        
+        result = await gemini_imagen_service.generate_single_image(
+            prompt="A simple test image of a white circle on black background",
+            aspect_ratio="1:1"
+        )
+        
+        if result.get("success"):
+            return {"success": True, "message": "连接测试成功"}
+        else:
+            return {"success": False, "error": result.get("error", "未知错误")}
+    except Exception as e:
+        log.error(f"Imagen API 测试失败: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+# --- 知识库管理 API ---
+
+@app.get("/api/knowledge/documents")
+async def list_knowledge_documents(
+    token: str = Depends(verify_token),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = None
+):
+    """获取知识库文档列表"""
+    conn = get_parade_db_connection()
+    if not conn:
+        raise HTTPException(500, "无法连接到数据库")
+    
+    try:
+        cursor = conn.cursor(cursor_factory=DictCursor)
+        offset = (page - 1) * page_size
+        
+        # 构建查询
+        if search:
+            count_query = """
+                SELECT COUNT(*) FROM general_knowledge.knowledge_documents
+                WHERE title ILIKE %s OR full_text ILIKE %s
+            """
+            search_pattern = f"%{search}%"
+            cursor.execute(count_query, (search_pattern, search_pattern))
+        else:
+            count_query = "SELECT COUNT(*) FROM general_knowledge.knowledge_documents"
+            cursor.execute(count_query)
+        
+        total = cursor.fetchone()[0]
+        
+        if search:
+            query = """
+                SELECT id, external_id, title,
+                       LEFT(full_text, 200) as preview,
+                       source_metadata,
+                       created_at, updated_at
+                FROM general_knowledge.knowledge_documents
+                WHERE title ILIKE %s OR full_text ILIKE %s
+                ORDER BY updated_at DESC
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(query, (search_pattern, search_pattern, page_size, offset))
+        else:
+            query = """
+                SELECT id, external_id, title,
+                       LEFT(full_text, 200) as preview,
+                       source_metadata,
+                       created_at, updated_at
+                FROM general_knowledge.knowledge_documents
+                ORDER BY updated_at DESC
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(query, (page_size, offset))
+        
+        documents = []
+        for row in cursor.fetchall():
+            doc = {
+                "id": row["id"],
+                "external_id": row["external_id"],
+                "title": row["title"] or "无标题",
+                "preview": row["preview"] + "..." if row["preview"] and len(row["preview"]) >= 200 else row["preview"],
+                "category": row["source_metadata"].get("category") if row["source_metadata"] else None,
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+            }
+            documents.append(doc)
+        
+        # 获取分块统计
+        cursor.execute("SELECT COUNT(*) FROM general_knowledge.knowledge_chunks")
+        total_chunks = cursor.fetchone()[0]
+        
+        return {
+            "documents": documents,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size,
+            "total_chunks": total_chunks
+        }
+    except Exception as e:
+        log.error(f"获取知识库列表失败: {e}", exc_info=True)
+        raise HTTPException(500, f"获取列表失败: {str(e)}")
+    finally:
+        conn.close()
+
+
+@app.get("/api/knowledge/documents/{doc_id}")
+async def get_knowledge_document(doc_id: int, token: str = Depends(verify_token)):
+    """获取单个知识文档详情"""
+    conn = get_parade_db_connection()
+    if not conn:
+        raise HTTPException(500, "无法连接到数据库")
+    
+    try:
+        cursor = conn.cursor(cursor_factory=DictCursor)
+        cursor.execute("""
+            SELECT id, external_id, title, full_text, source_metadata, created_at, updated_at
+            FROM general_knowledge.knowledge_documents
+            WHERE id = %s
+        """, (doc_id,))
+        
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "文档不存在")
+        
+        # 获取分块数量
+        cursor.execute("""
+            SELECT COUNT(*) FROM general_knowledge.knowledge_chunks WHERE document_id = %s
+        """, (doc_id,))
+        chunk_count = cursor.fetchone()[0]
+        
+        return {
+            "id": row["id"],
+            "external_id": row["external_id"],
+            "title": row["title"],
+            "content": row["full_text"],
+            "metadata": row["source_metadata"],
+            "chunk_count": chunk_count,
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"获取文档详情失败: {e}", exc_info=True)
+        raise HTTPException(500, f"获取文档失败: {str(e)}")
+    finally:
+        conn.close()
+
+
+@app.post("/api/knowledge/documents")
+async def create_knowledge_document(
+    doc: KnowledgeDocumentCreate,
+    token: str = Depends(verify_token)
+):
+    """创建新的知识文档"""
+    conn = get_parade_db_connection()
+    if not conn:
+        raise HTTPException(500, "无法连接到数据库")
+    
+    try:
+        cursor = conn.cursor(cursor_factory=DictCursor)
+        
+        # 生成唯一的 external_id
+        external_id = f"dashboard_{uuid.uuid4().hex[:12]}"
+        
+        # 准备元数据
+        metadata = {
+            "source": "dashboard",
+            "category": doc.category,
+            "created_via": "web_dashboard"
+        }
+        
+        cursor.execute("""
+            INSERT INTO general_knowledge.knowledge_documents
+            (external_id, title, full_text, source_metadata)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """, (external_id, doc.title, doc.content, json.dumps(metadata)))
+        
+        new_id = cursor.fetchone()[0]
+        conn.commit()
+        
+        log.info(f"通过 Dashboard 创建知识文档: id={new_id}, title={doc.title}")
+        
+        return {
+            "success": True,
+            "id": new_id,
+            "external_id": external_id,
+            "message": "文档创建成功。注意：需要运行嵌入脚本来生成向量分块才能用于 RAG 搜索。"
+        }
+    except Exception as e:
+        conn.rollback()
+        log.error(f"创建知识文档失败: {e}", exc_info=True)
+        raise HTTPException(500, f"创建失败: {str(e)}")
+    finally:
+        conn.close()
+
+
+@app.put("/api/knowledge/documents/{doc_id}")
+async def update_knowledge_document(
+    doc_id: int,
+    doc: KnowledgeDocumentUpdate,
+    token: str = Depends(verify_token)
+):
+    """更新知识文档"""
+    conn = get_parade_db_connection()
+    if not conn:
+        raise HTTPException(500, "无法连接到数据库")
+    
+    try:
+        cursor = conn.cursor(cursor_factory=DictCursor)
+        
+        # 检查文档是否存在
+        cursor.execute("SELECT id FROM general_knowledge.knowledge_documents WHERE id = %s", (doc_id,))
+        if not cursor.fetchone():
+            raise HTTPException(404, "文档不存在")
+        
+        updates = []
+        params = []
+        
+        if doc.title is not None:
+            updates.append("title = %s")
+            params.append(doc.title)
+        
+        if doc.content is not None:
+            updates.append("full_text = %s")
+            params.append(doc.content)
+        
+        if not updates:
+            raise HTTPException(400, "没有要更新的字段")
+        
+        updates.append("updated_at = NOW()")
+        params.append(doc_id)
+        
+        query = f"""
+            UPDATE general_knowledge.knowledge_documents
+            SET {', '.join(updates)}
+            WHERE id = %s
+        """
+        cursor.execute(query, params)
+        conn.commit()
+        
+        log.info(f"通过 Dashboard 更新知识文档: id={doc_id}")
+        
+        return {
+            "success": True,
+            "message": "文档更新成功。如果内容有改动，建议重新运行嵌入脚本更新向量。"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        log.error(f"更新知识文档失败: {e}", exc_info=True)
+        raise HTTPException(500, f"更新失败: {str(e)}")
+    finally:
+        conn.close()
+
+
+@app.delete("/api/knowledge/documents/{doc_id}")
+async def delete_knowledge_document(doc_id: int, token: str = Depends(verify_token)):
+    """删除知识文档及其所有分块"""
+    conn = get_parade_db_connection()
+    if not conn:
+        raise HTTPException(500, "无法连接到数据库")
+    
+    try:
+        cursor = conn.cursor(cursor_factory=DictCursor)
+        
+        # 检查文档是否存在
+        cursor.execute("SELECT title FROM general_knowledge.knowledge_documents WHERE id = %s", (doc_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "文档不存在")
+        
+        title = row["title"]
+        
+        # 删除分块 (级联删除应该自动处理，但手动确保)
+        cursor.execute("DELETE FROM general_knowledge.knowledge_chunks WHERE document_id = %s", (doc_id,))
+        deleted_chunks = cursor.rowcount
+        
+        # 删除文档
+        cursor.execute("DELETE FROM general_knowledge.knowledge_documents WHERE id = %s", (doc_id,))
+        conn.commit()
+        
+        log.info(f"通过 Dashboard 删除知识文档: id={doc_id}, title={title}, chunks={deleted_chunks}")
+        
+        return {
+            "success": True,
+            "message": f"已删除文档「{title}」及其 {deleted_chunks} 个分块"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        log.error(f"删除知识文档失败: {e}", exc_info=True)
+        raise HTTPException(500, f"删除失败: {str(e)}")
+    finally:
+        conn.close()
+
+
+@app.get("/api/knowledge/stats")
+async def get_knowledge_stats(token: str = Depends(verify_token)):
+    """获取知识库统计信息"""
+    conn = get_parade_db_connection()
+    if not conn:
+        raise HTTPException(500, "无法连接到数据库")
+    
+    try:
+        cursor = conn.cursor(cursor_factory=DictCursor)
+        
+        # 文档统计
+        cursor.execute("SELECT COUNT(*) FROM general_knowledge.knowledge_documents")
+        total_docs = cursor.fetchone()[0]
+        
+        # 分块统计
+        cursor.execute("SELECT COUNT(*) FROM general_knowledge.knowledge_chunks")
+        total_chunks = cursor.fetchone()[0]
+        
+        # 按来源分类统计
+        cursor.execute("""
+            SELECT
+                COALESCE(source_metadata->>'source', 'unknown') as source,
+                COUNT(*) as count
+            FROM general_knowledge.knowledge_documents
+            GROUP BY source_metadata->>'source'
+        """)
+        by_source = {row["source"]: row["count"] for row in cursor.fetchall()}
+        
+        # 最近添加的文档
+        cursor.execute("""
+            SELECT title, created_at
+            FROM general_knowledge.knowledge_documents
+            ORDER BY created_at DESC
+            LIMIT 5
+        """)
+        recent = [{"title": row["title"], "created_at": row["created_at"].isoformat()} for row in cursor.fetchall()]
+        
+        return {
+            "total_documents": total_docs,
+            "total_chunks": total_chunks,
+            "by_source": by_source,
+            "recent_documents": recent
+        }
+    except Exception as e:
+        log.error(f"获取知识库统计失败: {e}", exc_info=True)
+        raise HTTPException(500, f"获取统计失败: {str(e)}")
+    finally:
+        conn.close()
+
+
+# --- 静态文件服务 ---
+# 前端构建后的静态文件将从这里提供
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+async def serve_frontend():
+    """提供前端页面"""
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"message": "Dashboard API 正在运行。前端尚未构建。"}
+
+
+def run_dashboard(host: str = "0.0.0.0", port: int = 8080):
+    """启动 Dashboard 服务器"""
+    import uvicorn
+    uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    run_dashboard()

@@ -10,7 +10,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# --- 类脑币服务 ---
+# --- 月光币服务 ---
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
 from src.chat.features.games.config import blackjack_config
 from src.chat.features.games.services.blackjack_service import blackjack_service
@@ -212,7 +212,7 @@ async def exchange_code_for_token(request: TokenRequest):
 @app.get("/api/user")
 async def get_user_info(user_id: int = Depends(get_current_user_id)):
     """
-    API: 获取当前用户信息，包括类脑币余额。
+    API: 获取当前用户信息，包括月光币余额。
     """
     log.info(f"正在获取用户 {user_id} 的余额")
     try:

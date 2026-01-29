@@ -9,6 +9,7 @@ from .community_members_view import CommunityMembersView
 from .general_knowledge_view import GeneralKnowledgeView
 from .work_events_view import WorkEventsView
 from .vector_db_view import VectorDBView
+from .imagen_settings_view import ImagenSettingsView
 
 log = logging.getLogger(__name__)
 
@@ -49,11 +50,14 @@ class DBManagementView(discord.ui.View):
                 label="通用知识", value="general_knowledge", emoji="📚"
             ),
             discord.SelectOption(
-                label="类脑币管理", value="coin_management", emoji="🪙"
+                label="月光币管理", value="coin_management", emoji="🪙"
             ),
             discord.SelectOption(label="工作管理", value="work_events", emoji="💼"),
             discord.SelectOption(
                 label="向量库元数据", value="vector_db_metadata", emoji="🧠"
+            ),
+            discord.SelectOption(
+                label="绘图设置", value="imagen_settings", emoji="🎨"
             ),
         ]
         for option in options:
@@ -95,6 +99,8 @@ class DBManagementView(discord.ui.View):
             view = VectorDBView(self.author_id, self.message, self)
         elif selected_value == "coin_management":
             view = CoinManagementView(interaction, self.message)
+        elif selected_value == "imagen_settings":
+            view = ImagenSettingsView(interaction, self.message)
 
         if view and self.message:
             await view.update_view()

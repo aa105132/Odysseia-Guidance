@@ -13,9 +13,9 @@ from src.chat.utils.database import chat_db_manager
 
 async def generate_detailed_report():
     """
-    连接数据库，对用户类脑币进行详细统计分析，并生成报告文件。
+    连接数据库，对用户月光币进行详细统计分析，并生成报告文件。
     """
-    print("--- 正在生成类脑币经济分析报告 ---")
+    print("--- 正在生成月光币经济分析报告 ---")
 
     # 初始化数据库
     await chat_db_manager.init_async()
@@ -55,7 +55,7 @@ async def generate_detailed_report():
 
         # --- 生成 Markdown 报告 ---
         report_lines = []
-        report_lines.append(f"# 类脑币经济分析报告 (万圣节活动)")
+        report_lines.append(f"# 月光币经济分析报告 (万圣节活动)")
         report_lines.append(
             f"**生成时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         )
@@ -63,8 +63,8 @@ async def generate_detailed_report():
         report_lines.append("## 核心经济指标")
         report_lines.append("| 指标 | 数值 |")
         report_lines.append("|:---|:---|")
-        report_lines.append(f"| 持有类脑币的总用户数 | {total_users_with_coins} |")
-        report_lines.append(f"| 类脑币总流通量 | {total_coins_in_circulation} |")
+        report_lines.append(f"| 持有月光币的总用户数 | {total_users_with_coins} |")
+        report_lines.append(f"| 月光币总流通量 | {total_coins_in_circulation} |")
         report_lines.append(f"| 最高个人余额 | {max_balance} |")
         report_lines.append(f"| 最低个人余额 (非零) | {min_balance} |")
         report_lines.append(f"| **平均余额 (Mean)** | {mean_balance:.2f} |")

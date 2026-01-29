@@ -7,8 +7,8 @@ from .base_panel import BasePanel
 class DailyPanel(BasePanel):
     async def create_embed(self) -> discord.Embed:
         embed = discord.Embed(
-            title="📅 类脑娘日报",
-            description="欢迎查看今日类脑娘日报！",
+            title="📅 月月日报",
+            description="欢迎查看今日月月日报！",
             color=discord.Color.blue(),
         )
 
@@ -18,8 +18,8 @@ class DailyPanel(BasePanel):
 
             if not usage_today:
                 embed.add_field(
-                    name="今天类脑娘回了...",
-                    value="今天类脑娘还什么都没聊!",
+                    name="今天月月回了...",
+                    value="今天月月还什么都没聊!",
                     inline=False,
                 )
             else:
@@ -35,7 +35,7 @@ class DailyPanel(BasePanel):
                     comment = "聊了这么多！我们是把一年的话都说完了吗？"
 
                 stats_text = (
-                    f"类脑娘今天一共回复了 **{total_replies_today}** 句话！\n"
+                    f"月月今天一共回复了 **{total_replies_today}** 句话！\n"
                     f"_{comment}_"
                 )
 
@@ -95,18 +95,18 @@ class DailyPanel(BasePanel):
 
             if net_win_loss > 1000:
                 blackjack_comment = (
-                    f"今天赢麻了！从各位赌怪身上净赚 **{net_win_loss}** 枚类脑币！"
+                    f"今天赢麻了！从各位赌怪身上净赚 **{net_win_loss}** 枚月光币！"
                 )
             elif net_win_loss > 0:
                 blackjack_comment = (
-                    f"今天运气不错，小赚了 **{net_win_loss}** 枚类脑币。明天继续！"
+                    f"今天运气不错，小赚了 **{net_win_loss}** 枚月光币。明天继续！"
                 )
             elif net_win_loss == 0:
                 blackjack_comment = "今天赌场风平浪静，还没开张呢。"
             elif net_win_loss >= -1000:
-                blackjack_comment = f"可恶！今天竟然亏了 **{-net_win_loss}** 枚类脑币！你们这些赌怪别太嚣张了！"
+                blackjack_comment = f"可恶！今天竟然亏了 **{-net_win_loss}** 枚月光币！你们这些赌怪别太嚣张了！"
             else:
-                blackjack_comment = f"今天要破产了呜呜呜...竟然被大家卷走了 **{-net_win_loss}** 枚类脑币！"
+                blackjack_comment = f"今天要破产了呜呜呜...竟然被大家卷走了 **{-net_win_loss}** 枚月光币！"
 
             embed.add_field(name="赌场风云", value=blackjack_comment, inline=False)
 
@@ -131,7 +131,7 @@ class DailyPanel(BasePanel):
                 warning_comment = "今天社区里一派祥和，真是美好的一天！"
                 warning_stats_text = f"_{warning_comment}_"
 
-            embed.add_field(name="类脑娘出动", value=warning_stats_text, inline=False)
+            embed.add_field(name="月月出动", value=warning_stats_text, inline=False)
 
             # --- 获取并显示今日忏悔次数 ---
             confession_count = await chat_db_manager.get_confession_count_today()

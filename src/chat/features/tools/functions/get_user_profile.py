@@ -118,7 +118,7 @@ async def get_user_profile(
     if "balance" in query_set:
         try:
             balance = await coin_service.get_balance(target_id)
-            result["profile"]["balance"] = {"amount": balance, "name": "类脑币"}
+            result["profile"]["balance"] = {"amount": balance, "name": "月光币"}
             result["queries_successful"].append("balance")
             log.info(f"成功获取用户 {target_id} 的余额: {balance}")
         except Exception as e:

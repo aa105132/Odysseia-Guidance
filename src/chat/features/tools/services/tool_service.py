@@ -33,6 +33,7 @@ class ToolService:
         channel: Optional[discord.TextChannel] = None,
         user_id: Optional[int] = None,
         log_detailed: bool = False,
+        message: Optional[discord.Message] = None,
     ) -> types.Part:
         """
         执行单个工具调用，并以可发送回 Gemini 模型的格式返回结果。
@@ -118,6 +119,12 @@ class ToolService:
                     tool_args["thread_id"] = channel.id
                     if log_detailed:
                         log.info(f"检测到帖子上下文，已注入 'thread_id': {channel.id}")
+
+            # 注入 message 对象（用于添加反应等）
+            if message:
+                tool_args["message"] = message
+                if log_detailed:
+                    log.info(f"已注入 'message' (ID: {message.id}) 到 **kwargs。")
 
             # 步骤 4: 智能地传递 log_detailed 参数
             if "log_detailed" in sig.parameters:

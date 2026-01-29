@@ -156,7 +156,7 @@ class SimpleShopView(discord.ui.View):
         shop_embed_found = False
 
         for embed in current_embeds:
-            if embed.title == "类脑商店":
+            if embed.title in ["类脑商店", "🌙 月月商店", "月月商店"]:
                 new_embeds_list.append(new_shop_embed)
                 shop_embed_found = True
             else:

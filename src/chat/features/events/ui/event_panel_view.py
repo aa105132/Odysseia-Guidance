@@ -207,7 +207,7 @@ class EventItemSelect(discord.ui.Select):
                 discord.SelectOption(
                     label=item["item_name"],
                     value=item["item_id"],
-                    description=f"{item['price']} 类脑币 - {item['description']}"[:100],
+                    description=f"{item['price']} 月光币 - {item['description']}"[:100],
                     emoji="💖",
                 )
             )

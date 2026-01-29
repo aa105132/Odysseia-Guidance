@@ -31,7 +31,7 @@ class TestFeedingCog(unittest.IsolatedAsyncioTestCase):
         self.image_attachment.filename = "test.png"
 
     async def test_feed_with_positive_coins(self, mock_gemini_service):
-        """测试投喂获得正数类脑币奖励的情况"""
+        """测试投喂获得正数月光币奖励的情况"""
         # Arrange
         self.cog.feeding_service.can_feed.return_value = (True, "")
         mock_gemini_service.generate_text_with_image.return_value = "评价<affection:+5;coins:+50>"
@@ -47,11 +47,11 @@ class TestFeedingCog(unittest.IsolatedAsyncioTestCase):
         
         # 验证发送的消息包含奖励文本
         send_call_args = self.interaction.followup.send.call_args
-        self.assertIn("你获得了 50 枚类脑币！", send_call_args.kwargs['embed'].description)
+        self.assertIn("你获得了 50 枚月光币！", send_call_args.kwargs['embed'].description)
 
 
     async def test_feed_with_negative_coins(self, mock_gemini_service):
-        """测试投喂获得负数类脑币奖励的情况"""
+        """测试投喂获得负数月光币奖励的情况"""
         # Arrange
         self.cog.feeding_service.can_feed.return_value = (True, "")
         mock_gemini_service.generate_text_with_image.return_value = "评价<affection:-2;coins:-30>"
@@ -72,7 +72,7 @@ class TestFeedingCog(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_feed_with_zero_coins(self, mock_gemini_service):
-        """测试投喂获得零类脑币奖励的情况"""
+        """测试投喂获得零月光币奖励的情况"""
         # Arrange
         self.cog.feeding_service.can_feed.return_value = (True, "")
         mock_gemini_service.generate_text_with_image.return_value = "评价<affection:+1;coins:0>"

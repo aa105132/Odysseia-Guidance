@@ -307,7 +307,7 @@ class ReviewService:
         embed.add_field(name="描述", value=data.get("description", "N/A"), inline=False)
         embed.add_field(
             name="基础奖励",
-            value=f"{data.get('reward_range_min')} - {data.get('reward_range_max')} 类脑币",
+            value=f"{data.get('reward_range_min')} - {data.get('reward_range_max')} 月光币",
             inline=True,
         )
 
@@ -694,7 +694,7 @@ Discord ID: {profile_user_id}
                     amount=price,
                     reason=f"审核未通过自动退款 (审核ID: {entry['id']}, item_id: {item_id})",
                 )
-                log.info(f"已为用户 {user_id} 成功退款 {price} 类脑币。")
+                log.info(f"已为用户 {user_id} 成功退款 {price} 月光币。")
                 try:
                     user = await self.bot.fetch_user(user_id)
                     embed = discord.Embed(
@@ -704,7 +704,7 @@ Discord ID: {profile_user_id}
                     )
                     embed.add_field(
                         name="钱钱还你啦",
-                        value=f"买这个花掉的 **{price}** 类脑币，我已经偷偷塞回你的口袋里啦。",
+                        value=f"买这个花掉的 **{price}** 月光币，我已经偷偷塞回你的口袋里啦。",
                     )
                     embed.set_footer(text="下次再试试看嘛！")
                     await user.send(embed=embed)

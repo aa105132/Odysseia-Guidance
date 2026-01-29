@@ -512,6 +512,7 @@ class GeminiService:
         guild_name: str = "未知服务器",
         location_name: str = "未知位置",
         model_name: Optional[str] = None,
+        discord_message: Optional[Any] = None,  # Discord Message对象，用于工具调用时添加反应
     ) -> str:
         """
         AI 回复生成的分发器。
@@ -543,6 +544,7 @@ class GeminiService:
                         guild_name=guild_name,
                         location_name=location_name,
                         model_name=model_name,
+                        discord_message=discord_message,
                     )
                 except Exception as e:
                     last_exception = e
@@ -577,6 +579,7 @@ class GeminiService:
                 guild_name=guild_name,
                 location_name=location_name,
                 model_name=fallback_model_name,  # 关键：使用固定的回退模型
+                discord_message=discord_message,
             )
 
         # 对于非自定义模型或回退失败后的默认路径
@@ -599,6 +602,7 @@ class GeminiService:
             guild_name=guild_name,
             location_name=location_name,
             model_name=model_name,
+            discord_message=discord_message,
         )
 
     async def _generate_with_custom_endpoint(
@@ -618,6 +622,7 @@ class GeminiService:
         guild_name: str = "未知服务器",
         location_name: str = "未知位置",
         model_name: Optional[str] = None,
+        discord_message: Optional[Any] = None,
     ) -> str:
         """
         [新增] 使用自定义端点 (例如公益站) 生成 AI 回复。
@@ -701,6 +706,7 @@ class GeminiService:
             api_model_name=endpoint_config.get("model_name")
             or self.default_model_name,  # 传递用于调用 API 的真实模型名称
             client=client,
+            discord_message=discord_message,
         )
 
     @_api_key_handler
@@ -722,6 +728,7 @@ class GeminiService:
         location_name: str = "未知位置",
         model_name: Optional[str] = None,
         client: Any = None,
+        discord_message: Optional[Any] = None,
     ) -> str:
         """
         [重构] 使用官方 API 密钥池生成 AI 回复。
@@ -749,6 +756,7 @@ class GeminiService:
             prompt_model_name=model_name,  # 对于官方 API，prompt 和 api 模型名称相同
             api_model_name=model_name,
             client=client,
+            discord_message=discord_message,
         )
 
     async def _execute_generation_cycle(
@@ -770,6 +778,7 @@ class GeminiService:
         prompt_model_name: Optional[str],
         api_model_name: Optional[str],
         client: Any,
+        discord_message: Optional[Any] = None,
     ) -> str:
         """
         [新增] 核心的 AI 生成周期，包含上下文构建、工具调用循环和响应处理。
@@ -795,6 +804,7 @@ class GeminiService:
             location_name=location_name,
             model_name=prompt_model_name,
             channel=channel,  # 传递 channel 对象
+            user_id=user_id,  # 传递用户ID用于识别和主人验证
         )
 
         # 3. 准备 API 调用参数 (重构)
@@ -937,6 +947,7 @@ class GeminiService:
                     channel=channel,
                     user_id=user_id,
                     log_detailed=log_detailed,
+                    message=discord_message,
                 )
                 for call in function_calls
             ]
