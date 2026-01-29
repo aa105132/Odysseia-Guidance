@@ -191,12 +191,14 @@ async def get_all_config(token: str = Depends(verify_token)):
             ]
         },
         "imagen": {
-            "api_url": chat_config.GEMINI_IMAGEN_CONFIG.get("API_URL", ""),
-            "model": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL", "imagen-3.0-generate-002"),
+            "enabled": chat_config.GEMINI_IMAGEN_CONFIG.get("ENABLED", False),
+            "api_url": chat_config.GEMINI_IMAGEN_CONFIG.get("BASE_URL", "") or chat_config.GEMINI_IMAGEN_CONFIG.get("API_URL", ""),
+            "model": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME", "") or chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL", "imagen-3.0-generate-002"),
             "default_images": chat_config.GEMINI_IMAGEN_CONFIG.get("DEFAULT_NUMBER_OF_IMAGES", 1),
             "aspect_ratios": chat_config.GEMINI_IMAGEN_CONFIG.get("ASPECT_RATIOS", {}),
             "api_key_masked": imagen_masked_key,
             "has_api_key": bool(imagen_api_key),
+            "api_format": chat_config.GEMINI_IMAGEN_CONFIG.get("API_FORMAT", "gemini"),
         },
         "coin": {
             "daily_reward": chat_config.COIN_CONFIG.get("DAILY_CHECKIN_REWARD", 50),
@@ -344,6 +346,13 @@ def update_env_file(updates: Dict[str, str]):
 @app.get("/api/config/imagen")
 async def get_imagen_config(token: str = Depends(verify_token)):
     """获取 Imagen 配置"""
+    # 先尝试重新加载配置以获取最新值
+    try:
+        from src.chat.config.chat_config import reload_imagen_config
+        reload_imagen_config()
+    except Exception as e:
+        log.debug(f"重新加载 Imagen 配置失败: {e}")
+    
     config = chat_config.GEMINI_IMAGEN_CONFIG
     api_url = config.get("BASE_URL", "") or config.get("API_URL", "")
     api_key = config.get("API_KEY", "")
@@ -361,12 +370,16 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     elif api_key:
         masked_key = "***"
     
-    # 检查服务是否可用
-    try:
-        from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
-        service_available = gemini_imagen_service.is_available()
-    except Exception:
-        service_available = False
+    # 检查服务是否可用（安全导入，不阻塞）
+    service_available = False
+    if config.get("ENABLED", False):
+        try:
+            from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
+            service_available = gemini_imagen_service.is_available()
+        except ImportError:
+            log.debug("Imagen 服务模块未安装或不可用")
+        except Exception as e:
+            log.warning(f"检查 Imagen 服务状态时出错: {e}")
     
     return {
         "enabled": config.get("ENABLED", False),
@@ -440,23 +453,30 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         except Exception as e:
             log.warning(f"无法写入 .env 文件: {e}")
     
-    # 热重载 Imagen 服务
-    try:
-        from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
-        reload_result = gemini_imagen_service.update_config(
-            enabled=config.enabled,
-            api_key=config.api_key,
-            base_url=config.api_url,
-            model_name=config.model
-        )
-        updated["service_reloaded"] = reload_result.get("success", False)
-        updated["service_available"] = reload_result.get("available", False)
-        if not reload_result.get("success"):
-            updated["reload_error"] = reload_result.get("error", reload_result.get("message"))
-        log.info(f"Imagen 服务热重载结果: {reload_result}")
-    except Exception as e:
-        log.error(f"热重载 Imagen 服务失败: {e}")
-        updated["service_reload_error"] = str(e)
+    # 热重载 Imagen 服务（仅当启用时）
+    if config.enabled is True:
+        try:
+            from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
+            reload_result = gemini_imagen_service.update_config(
+                enabled=config.enabled,
+                api_key=config.api_key,
+                base_url=config.api_url,
+                model_name=config.model
+            )
+            updated["service_reloaded"] = reload_result.get("success", False)
+            updated["service_available"] = reload_result.get("available", False)
+            if not reload_result.get("success"):
+                updated["reload_error"] = reload_result.get("error", reload_result.get("message"))
+            log.info(f"Imagen 服务热重载结果: {reload_result}")
+        except ImportError as e:
+            log.warning(f"无法导入 Imagen 服务模块: {e}")
+            updated["service_reload_error"] = "Imagen 服务模块不可用"
+        except Exception as e:
+            log.error(f"热重载 Imagen 服务失败: {e}", exc_info=True)
+            updated["service_reload_error"] = str(e)
+    else:
+        # 禁用时直接更新配置，不需要热重载
+        log.info("Imagen 服务已禁用，跳过热重载")
     
     log.info(f"Imagen 配置已更新: {updated}")
     return {"success": True, "updated": updated}

@@ -66,17 +66,28 @@ CUSTOM_GEMINI_ENDPOINTS = {
 }
 
 # --- Gemini Imagen 图像生成配置 ---
-GEMINI_IMAGEN_CONFIG = {
-    "ENABLED": os.getenv("GEMINI_IMAGEN_ENABLED", "False").lower() == "true",
-    "API_KEY": os.getenv("GEMINI_IMAGEN_API_KEY"),  # 如果为空则使用默认的 Gemini API 密钥
-    "BASE_URL": os.getenv("GEMINI_IMAGEN_BASE_URL"),  # 自定义端点 URL，留空使用默认
-    "MODEL_NAME": os.getenv("GEMINI_IMAGEN_MODEL", "imagen-3.0-generate-002"),
-    "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "30")),  # 生成一张图片的月光币成本
-    "SAFETY_FILTER_LEVEL": os.getenv("GEMINI_IMAGEN_SAFETY_LEVEL", "BLOCK_LOW_AND_ABOVE"),
-    "PERSON_GENERATION": os.getenv("GEMINI_IMAGEN_PERSON_GEN", "ALLOW_ADULT"),
-    # 支持的宽高比: "1:1", "3:4", "4:3", "9:16", "16:9"
-    "DEFAULT_ASPECT_RATIO": os.getenv("GEMINI_IMAGEN_ASPECT_RATIO", "1:1"),
-}
+def _get_imagen_config():
+    """获取 Imagen 配置，从环境变量读取"""
+    return {
+        "ENABLED": os.getenv("GEMINI_IMAGEN_ENABLED", "False").lower() == "true",
+        "API_KEY": os.getenv("GEMINI_IMAGEN_API_KEY"),  # 如果为空则使用默认的 Gemini API 密钥
+        "BASE_URL": os.getenv("GEMINI_IMAGEN_BASE_URL"),  # 自定义端点 URL，留空使用默认
+        "MODEL_NAME": os.getenv("GEMINI_IMAGEN_MODEL", "imagen-3.0-generate-002"),
+        "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "30")),  # 生成一张图片的月光币成本
+        "SAFETY_FILTER_LEVEL": os.getenv("GEMINI_IMAGEN_SAFETY_LEVEL", "BLOCK_LOW_AND_ABOVE"),
+        "PERSON_GENERATION": os.getenv("GEMINI_IMAGEN_PERSON_GEN", "ALLOW_ADULT"),
+        # 支持的宽高比: "1:1", "3:4", "4:3", "9:16", "16:9"
+        "DEFAULT_ASPECT_RATIO": os.getenv("GEMINI_IMAGEN_ASPECT_RATIO", "1:1"),
+    }
+
+GEMINI_IMAGEN_CONFIG = _get_imagen_config()
+
+
+def reload_imagen_config():
+    """重新加载 Imagen 配置（从环境变量）"""
+    global GEMINI_IMAGEN_CONFIG
+    GEMINI_IMAGEN_CONFIG.update(_get_imagen_config())
+    return GEMINI_IMAGEN_CONFIG
 
 # --- 向量嵌入 (Embedding) 配置 ---
 # 用于知识库检索和语义搜索功能
