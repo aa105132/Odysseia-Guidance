@@ -128,6 +128,14 @@ class BackToTopCog(commands.Cog):
                 return
         
         try:
+            # 先给用户的请求消息打✅，表示已收到
+            try:
+                await message.add_reaction("✅")
+            except discord.Forbidden:
+                log.debug(f"无权限给消息添加反应")
+            except Exception as e:
+                log.debug(f"添加反应时出错: {e}")
+            
             # 随机选择一句傲娇台词
             tsundere_line = random.choice(TSUNDERE_RESPONSES)
             

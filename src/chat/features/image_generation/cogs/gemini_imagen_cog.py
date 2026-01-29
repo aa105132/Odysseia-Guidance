@@ -25,7 +25,7 @@ class GeminiImagenCog(commands.Cog):
         self.bot = bot
         self.image_cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_GENERATION_COST", 30)
 
-    @app_commands.command(name="paint", description="使用 Gemini Imagen AI 生成一张图片")
+    @app_commands.command(name="画图", description="使用 Gemini Imagen AI 生成一张图片")
     @app_commands.describe(
         prompt="描述你想要生成的图片内容",
         negative_prompt="你不希望在图片中出现的内容(可选)",

@@ -24,17 +24,17 @@ class BlackjackCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="blackjack", description="来一场紧张刺激的21点吧？")
+    @app_commands.command(name="二十一点", description="来一场紧张刺激的21点吧？")
     async def blackjack(self, interaction: discord.Interaction):
         """
         当用户输入 /blackjack 命令时被调用。
-        使用 ephemeral 消息，只有用户自己能看到，不会刷屏。
+        使用公开消息，3分钟后自动删除
         """
         from src.chat.config.chat_config import COIN_CONFIG
         
         user_id = interaction.user.id
         min_bet = COIN_CONFIG.get("BLACKJACK_MIN_BET", 10)
-        max_bet = COIN_CONFIG.get("BLACKJACK_MAX_BET", 500)
+        max_bet = COIN_CONFIG.get("BLACKJACK_MAX_BET", None)
         
         # 检查是否已有进行中的游戏
         if blackjack_sessions.has_active_session(user_id):
@@ -64,6 +64,12 @@ class BlackjackCog(commands.Cog):
             )
             return
         
+        # 构建下注范围显示
+        if max_bet is None:
+            bet_range = f"**{min_bet}** 月光币起，无上限"
+        else:
+            bet_range = f"**{min_bet}** - **{max_bet}** 月光币"
+        
         # 创建欢迎嵌入
         embed = discord.Embed(
             title="🎰 月月的21点牌桌",
@@ -77,7 +83,7 @@ class BlackjackCog(commands.Cog):
                 "• 加倍：只能在前两张牌时使用，加倍下注后只能再抽一张\n"
                 "• 投降：只能在前两张牌时使用，返还一半赌注\n\n"
                 f"💰 你的余额：**{balance}** 月光币\n"
-                f"📊 下注范围：**{min_bet}** - **{max_bet}** 月光币"
+                f"📊 下注范围：{bet_range}"
             ),
             color=discord.Color.gold()
         )
@@ -93,7 +99,7 @@ class BlackjackCog(commands.Cog):
         
         log.info(f"用户 {user_id} 打开了21点游戏")
 
-    @app_commands.command(name="blackjack_balance", description="查看你的月光币余额")
+    @app_commands.command(name="余额", description="查看你的月光币余额")
     async def blackjack_balance(self, interaction: discord.Interaction):
         """查看余额命令"""
         user_id = interaction.user.id

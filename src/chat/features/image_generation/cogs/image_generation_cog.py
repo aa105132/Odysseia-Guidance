@@ -27,7 +27,7 @@ class ImageGenerationCog(commands.Cog):
         else:
             log.warning("ComfyUI 服务已被禁用。")
 
-    @app_commands.command(name="draw", description="使用 AI 生成一张图片")
+    @app_commands.command(name="绘图", description="使用 AI 生成一张图片")
     @app_commands.describe(
         positive_prompt="你想要在图片中看到什么（正面提示词）",
         negative_prompt="你不希望在图片中看到什么（负面提示词）",

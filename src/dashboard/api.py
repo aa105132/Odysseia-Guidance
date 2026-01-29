@@ -9,6 +9,7 @@ import re
 import json
 import logging
 import uuid
+import aiohttp
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
@@ -60,6 +61,7 @@ class ImagenConfigUpdate(BaseModel):
     api_url: Optional[str] = None
     model: Optional[str] = None
     default_images: Optional[int] = None
+    api_key: Optional[str] = None
 
 
 class AIConfigUpdate(BaseModel):
@@ -69,6 +71,14 @@ class AIConfigUpdate(BaseModel):
     max_tokens: Optional[int] = None
     api_url: Optional[str] = None
     api_key: Optional[str] = None
+    api_format: Optional[str] = None  # 'gemini' 或 'openai'
+
+
+class ModelListRequest(BaseModel):
+    """获取模型列表请求"""
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
+    api_format: str = "gemini"  # 'gemini' 或 'openai'
 
 
 class ShopItemUpdate(BaseModel):
@@ -138,18 +148,39 @@ async def health_check():
 @app.get("/api/config/all")
 async def get_all_config(token: str = Depends(verify_token)):
     """获取所有配置"""
+    # 获取当前 API URL 和 Key（部分隐藏）
+    ai_api_url = os.getenv("GEMINI_API_BASE_URL", "")
+    ai_api_key = os.getenv("GEMINI_API_KEYS", "")
+    imagen_api_key = os.getenv("GEMINI_IMAGEN_API_KEY", "") or ai_api_key
+    
+    # 隐藏敏感信息
+    ai_masked_key = ai_api_key[:10] + "..." + ai_api_key[-4:] if len(ai_api_key) > 14 else ("***" if ai_api_key else "")
+    imagen_masked_key = imagen_api_key[:10] + "..." + imagen_api_key[-4:] if len(imagen_api_key) > 14 else ("***" if imagen_api_key else "")
+    
     return {
         "ai": {
             "model": chat_config.PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
             "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
             "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
             "persona_name": "月月",
+            "api_url": ai_api_url,
+            "api_key_masked": ai_masked_key,
+            "has_api_key": bool(ai_api_key),
+            "available_models": [
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-lite",
+                "gemini-2.5-pro-preview-05-06",
+                "gemini-2.5-flash-preview-05-20",
+                "gemini-exp-1206",
+            ]
         },
         "imagen": {
             "api_url": chat_config.GEMINI_IMAGEN_CONFIG.get("API_URL", ""),
             "model": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL", "imagen-3.0-generate-002"),
             "default_images": chat_config.GEMINI_IMAGEN_CONFIG.get("DEFAULT_NUMBER_OF_IMAGES", 1),
-            "aspect_ratios": list(chat_config.GEMINI_IMAGEN_CONFIG.get("ASPECT_RATIOS", {}).keys()),
+            "aspect_ratios": chat_config.GEMINI_IMAGEN_CONFIG.get("ASPECT_RATIOS", {}),
+            "api_key_masked": imagen_masked_key,
+            "has_api_key": bool(imagen_api_key),
         },
         "coin": {
             "daily_reward": chat_config.COIN_CONFIG.get("DAILY_CHECKIN_REWARD", 50),
@@ -301,6 +332,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
 async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(verify_token)):
     """更新 Imagen 配置"""
     updated = {}
+    env_updates = {}
     
     if config.api_url is not None:
         if config.api_url and not (config.api_url.startswith("http://") or config.api_url.startswith("https://")):
@@ -317,6 +349,20 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
             raise HTTPException(400, "默认图片数量必须在 1 到 4 之间")
         chat_config.GEMINI_IMAGEN_CONFIG["DEFAULT_NUMBER_OF_IMAGES"] = config.default_images
         updated["default_images"] = config.default_images
+    
+    if config.api_key is not None:
+        # 更新环境变量
+        os.environ["GEMINI_IMAGEN_API_KEY"] = config.api_key
+        env_updates["GEMINI_IMAGEN_API_KEY"] = config.api_key
+        updated["api_key"] = "已更新"
+    
+    # 如果有环境变量更新，尝试写入 .env 文件
+    if env_updates:
+        try:
+            update_env_file(env_updates)
+            log.info(f"Imagen 环境变量已写入 .env 文件")
+        except Exception as e:
+            log.warning(f"无法写入 .env 文件: {e}")
     
     log.info(f"Imagen 配置已更新: {updated}")
     return {"success": True, "updated": updated}
@@ -360,6 +406,80 @@ async def update_coin_config(config: CoinConfigUpdate, token: str = Depends(veri
     
     log.info(f"货币配置已更新: {updated}")
     return {"success": True, "updated": updated}
+
+
+@app.post("/api/models/list")
+async def list_available_models(request: ModelListRequest, token: str = Depends(verify_token)):
+    """从 API 获取可用模型列表"""
+    try:
+        # 使用请求中的 API Key 或环境变量中的
+        api_key = request.api_key or os.getenv("GEMINI_API_KEYS", "")
+        if not api_key:
+            raise HTTPException(400, "未配置 API Key")
+        
+        models = []
+        
+        if request.api_format == "openai":
+            # OpenAI 兼容格式
+            api_url = request.api_url or "https://api.openai.com/v1"
+            models_url = f"{api_url.rstrip('/')}/models"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    models_url,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        # OpenAI 格式返回 {data: [{id: "model-name", ...}, ...]}
+                        if "data" in data:
+                            models = [m.get("id") for m in data["data"] if m.get("id")]
+                    else:
+                        error_text = await response.text()
+                        log.warning(f"获取 OpenAI 模型列表失败: {response.status} - {error_text}")
+                        raise HTTPException(response.status, f"API 请求失败: {error_text[:100]}")
+        
+        else:
+            # Gemini 官方格式
+            api_url = request.api_url or "https://generativelanguage.googleapis.com/v1beta"
+            models_url = f"{api_url.rstrip('/')}/models?key={api_key}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    models_url,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        # Gemini 格式返回 {models: [{name: "models/gemini-pro", ...}, ...]}
+                        if "models" in data:
+                            for m in data["models"]:
+                                name = m.get("name", "")
+                                # 移除 "models/" 前缀
+                                if name.startswith("models/"):
+                                    name = name[7:]
+                                if name:
+                                    models.append(name)
+                    else:
+                        error_text = await response.text()
+                        log.warning(f"获取 Gemini 模型列表失败: {response.status} - {error_text}")
+                        raise HTTPException(response.status, f"API 请求失败: {error_text[:100]}")
+        
+        # 排序模型列表
+        models.sort()
+        
+        log.info(f"成功获取 {len(models)} 个可用模型")
+        return {"models": models, "count": len(models)}
+    
+    except aiohttp.ClientError as e:
+        log.error(f"获取模型列表网络错误: {e}")
+        raise HTTPException(500, f"网络请求失败: {str(e)}")
+    except Exception as e:
+        log.error(f"获取模型列表失败: {e}", exc_info=True)
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(500, f"获取模型列表失败: {str(e)}")
 
 
 @app.get("/api/status")

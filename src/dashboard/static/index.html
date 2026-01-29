@@ -196,11 +196,28 @@
                     </h3>
                     <div class="space-y-4">
                         <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API 格式</label>
+                            <div class="flex gap-4">
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" x-model="aiForm.api_format" value="gemini"
+                                           class="w-4 h-4 text-purple-500 bg-slate-700 border-slate-600 focus:ring-purple-500">
+                                    <span class="text-sm">Gemini 官方</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" x-model="aiForm.api_format" value="openai"
+                                           class="w-4 h-4 text-purple-500 bg-slate-700 border-slate-600 focus:ring-purple-500">
+                                    <span class="text-sm">OpenAI 兼容</span>
+                                </label>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">选择 API 接口格式，OpenAI 兼容格式适用于各种中转服务</p>
+                        </div>
+                        
+                        <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">API Base URL</label>
                             <input type="url" x-model="aiForm.api_url"
-                                   placeholder="https://your-api-gateway.com/v1beta/models"
+                                   :placeholder="aiForm.api_format === 'openai' ? 'https://api.openai.com/v1' : 'https://generativelanguage.googleapis.com/v1beta'"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
-                            <p class="text-xs text-slate-500 mt-1">留空则使用 Google 官方 API 端点</p>
+                            <p class="text-xs text-slate-500 mt-1" x-text="aiForm.api_format === 'openai' ? 'OpenAI 兼容端点，如 /v1/chat/completions' : '留空则使用 Google 官方 API 端点'"></p>
                         </div>
                         
                         <div>
@@ -229,10 +246,18 @@
                     </h3>
                     <div class="space-y-6">
                         <div>
-                            <label class="block text-sm font-medium text-slate-300 mb-2">AI 模型</label>
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block text-sm font-medium text-slate-300">AI 模型</label>
+                                <button @click="fetchAvailableModels()"
+                                        :disabled="fetchingModels"
+                                        class="text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-purple-300 px-3 py-1 rounded-lg transition-all flex items-center gap-1">
+                                    <i data-lucide="refresh-cw" class="w-3 h-3" :class="fetchingModels ? 'animate-spin' : ''"></i>
+                                    <span x-text="fetchingModels ? '获取中...' : '获取可用模型'"></span>
+                                </button>
+                            </div>
                             <select x-model="aiForm.model"
                                     class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
-                                <template x-for="model in config.ai?.available_models || []">
+                                <template x-for="model in availableModels.length > 0 ? availableModels : (config.ai?.available_models || [])">
                                     <option :value="model" x-text="model"></option>
                                 </template>
                             </select>
@@ -274,26 +299,57 @@
             <div x-show="currentTab === 'imagen'" x-transition>
                 <h2 class="text-2xl font-bold mb-6">绘图设置</h2>
                 
-                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl">
-                    <div class="space-y-6">
+                <!-- API 配置区 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="key" class="w-5 h-5 text-yellow-400"></i>
+                        API 配置
+                    </h3>
+                    <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
-                            <input type="url" x-model="imagenForm.api_url" 
+                            <input type="url" x-model="imagenForm.api_url"
                                    placeholder="https://your-imagen-api-url.com/..."
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                             <p class="text-xs text-slate-500 mt-1">Gemini Imagen API 的完整 URL</p>
                         </div>
                         
                         <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                API Key
+                                <span x-show="config.imagen?.has_api_key" class="text-green-400 text-xs ml-2">✓ 已配置</span>
+                            </label>
+                            <div class="relative">
+                                <input :type="showImagenApiKey ? 'text' : 'password'" x-model="imagenForm.api_key"
+                                       :placeholder="config.imagen?.api_key_masked || '输入新的 API Key...'"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <button @click="showImagenApiKey = !showImagenApiKey" type="button"
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                                    <i :data-lucide="showImagenApiKey ? 'eye-off' : 'eye'" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">留空则使用 AI 的同一个 API Key；输入新值会覆盖现有配置</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 模型设置区 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="sliders" class="w-5 h-5 text-purple-400"></i>
+                        模型设置
+                    </h3>
+                    <div class="space-y-6">
+                        <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">模型</label>
-                            <input type="text" x-model="imagenForm.model" 
+                            <input type="text" x-model="imagenForm.model"
                                    placeholder="imagen-3.0-generate-002"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">默认图片数量</label>
-                            <select x-model="imagenForm.default_images" 
+                            <select x-model="imagenForm.default_images"
                                     class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                                 <option value="1">1 张</option>
                                 <option value="2">2 张</option>
@@ -312,13 +368,13 @@
                         </div>
                         
                         <div class="flex gap-4">
-                            <button @click="saveImagenConfig()" 
+                            <button @click="saveImagenConfig()"
                                     :disabled="saving"
                                     class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
                                 <i data-lucide="save" class="w-5 h-5"></i>
                                 <span x-text="saving ? '保存中...' : '保存设置'"></span>
                             </button>
-                            <button @click="testImagen()" 
+                            <button @click="testImagen()"
                                     :disabled="testing"
                                     class="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-semibold py-3 px-6 rounded-lg transition-all flex items-center justify-center gap-2">
                                 <i data-lucide="flask-conical" class="w-5 h-5"></i>
@@ -793,9 +849,15 @@
                 toast: { show: false, message: '', type: 'success' },
                 
                 // 表单数据
-                aiForm: { model: '', temperature: 1.0, max_tokens: 8192 },
-                imagenForm: { api_url: '', model: '', default_images: 1 },
+                aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini' },
+                imagenForm: { api_url: '', model: '', default_images: 1, api_key: '' },
+                showApiKey: false,
+                showImagenApiKey: false,
                 coinForm: { daily_reward: 50, chat_reward: 10, max_loan: 1000 },
+                
+                // 模型获取
+                fetchingModels: false,
+                availableModels: [],
                 
                 // 表情数据
                 emojiMappings: [],
@@ -860,11 +922,14 @@
                         this.aiForm.model = this.config.ai.model;
                         this.aiForm.temperature = this.config.ai.temperature;
                         this.aiForm.max_tokens = this.config.ai.max_tokens;
+                        this.aiForm.api_url = this.config.ai.api_url || '';
+                        this.aiForm.api_key = '';  // 不显示真实的key，只显示placeholder
                     }
                     if (this.config.imagen) {
-                        this.imagenForm.api_url = this.config.imagen.api_url;
+                        this.imagenForm.api_url = this.config.imagen.api_url || '';
                         this.imagenForm.model = this.config.imagen.model;
                         this.imagenForm.default_images = this.config.imagen.default_images;
+                        this.imagenForm.api_key = '';  // 不显示真实的key
                     }
                     if (this.config.coin) {
                         this.coinForm.daily_reward = this.config.coin.daily_reward;
@@ -1130,20 +1195,69 @@
                     }
                 },
                 
-                async saveAIConfig() {
-                    this.saving = true;
+                async fetchAvailableModels() {
+                    this.fetchingModels = true;
                     try {
-                        const response = await fetch('/api/config/ai', {
-                            method: 'PUT',
-                            headers: { 
+                        const response = await fetch('/api/models/list', {
+                            method: 'POST',
+                            headers: {
                                 'Authorization': `Bearer ${this.secretKey}`,
                                 'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({
-                                model: this.aiForm.model,
-                                temperature: parseFloat(this.aiForm.temperature),
-                                max_tokens: parseInt(this.aiForm.max_tokens)
+                                api_url: this.aiForm.api_url,
+                                api_key: this.aiForm.api_key || null,
+                                api_format: this.aiForm.api_format
                             })
+                        });
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.availableModels = data.models || [];
+                            if (this.availableModels.length > 0) {
+                                this.showToast(`成功获取 ${this.availableModels.length} 个可用模型`, 'success');
+                            } else {
+                                this.showToast('未找到可用模型', 'error');
+                            }
+                            this.$nextTick(() => lucide.createIcons());
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '获取模型列表失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('获取模型列表失败: ' + e.message, 'error');
+                    }
+                    this.fetchingModels = false;
+                },
+                
+                async saveAIConfig() {
+                    this.saving = true;
+                    try {
+                        // 构建请求体，只发送有值的字段
+                        const payload = {
+                            model: this.aiForm.custom_model || this.aiForm.model,
+                            temperature: parseFloat(this.aiForm.temperature),
+                            max_tokens: parseInt(this.aiForm.max_tokens),
+                            api_format: this.aiForm.api_format
+                        };
+                        
+                        // 只有填写了才发送API URL
+                        if (this.aiForm.api_url) {
+                            payload.api_url = this.aiForm.api_url;
+                        }
+                        
+                        // 只有填写了新的API Key才发送
+                        if (this.aiForm.api_key) {
+                            payload.api_key = this.aiForm.api_key;
+                        }
+                        
+                        const response = await fetch('/api/config/ai', {
+                            method: 'PUT',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(payload)
                         });
                         
                         if (response.ok) {
@@ -1162,17 +1276,25 @@
                 async saveImagenConfig() {
                     this.saving = true;
                     try {
+                        // 构建请求体
+                        const payload = {
+                            api_url: this.imagenForm.api_url,
+                            model: this.imagenForm.model,
+                            default_images: parseInt(this.imagenForm.default_images)
+                        };
+                        
+                        // 只有填写了新的API Key才发送
+                        if (this.imagenForm.api_key) {
+                            payload.api_key = this.imagenForm.api_key;
+                        }
+                        
                         const response = await fetch('/api/config/imagen', {
                             method: 'PUT',
-                            headers: { 
+                            headers: {
                                 'Authorization': `Bearer ${this.secretKey}`,
                                 'Content-Type': 'application/json'
                             },
-                            body: JSON.stringify({
-                                api_url: this.imagenForm.api_url,
-                                model: this.imagenForm.model,
-                                default_images: parseInt(this.imagenForm.default_images)
-                            })
+                            body: JSON.stringify(payload)
                         });
                         
                         if (response.ok) {

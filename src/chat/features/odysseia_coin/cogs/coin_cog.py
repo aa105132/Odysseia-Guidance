@@ -90,7 +90,7 @@ class CoinCog(commands.Cog):
             else:
                 await interaction.response.send_message(error_message, ephemeral=True)
 
-    @app_commands.command(name="类脑商店", description="打开商店，购买商品。")
+    @app_commands.command(name="月光商店", description="打开商店，购买商品。")
     async def shop(self, interaction: discord.Interaction):
         """斜杠命令：打开商店"""
         try:

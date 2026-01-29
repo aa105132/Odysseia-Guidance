@@ -186,6 +186,10 @@ COIN_CONFIG = {
     "DAILY_CHAT_REWARD": int(os.getenv("DAILY_CHAT_REWARD", "10")),
     "MAX_LOAN_AMOUNT": int(os.getenv("MAX_LOAN_AMOUNT", "1000")),
     "CURRENCY_NAME": "月光币",
+    # 21点游戏配置
+    "BLACKJACK_MIN_BET": int(os.getenv("BLACKJACK_MIN_BET", "10")),
+    "BLACKJACK_MAX_BET": None,  # None 表示无上限，只受余额限制
+    "BLACKJACK_MESSAGE_DELETE_DELAY": 180,  # 3分钟后删除消息（秒）
 }
 
 # --- 消息设置 ---

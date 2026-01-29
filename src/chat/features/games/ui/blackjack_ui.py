@@ -29,6 +29,11 @@ class BetModal(ui.Modal, title="下注金额"):
         required=True
     )
     
+    def __init__(self, original_interaction: discord.Interaction = None):
+        super().__init__()
+        # 保存原始交互，用于编辑消息而不是发送新消息
+        self.original_interaction = original_interaction
+    
     async def on_submit(self, interaction: discord.Interaction):
         """处理下注提交"""
         from src.chat.config.chat_config import COIN_CONFIG
@@ -36,7 +41,7 @@ class BetModal(ui.Modal, title="下注金额"):
         try:
             bet_amount = int(self.bet_input.value)
             min_bet = COIN_CONFIG.get("BLACKJACK_MIN_BET", 10)
-            max_bet = COIN_CONFIG.get("BLACKJACK_MAX_BET", 500)
+            max_bet = COIN_CONFIG.get("BLACKJACK_MAX_BET", None)  # None表示无上限
             
             if bet_amount < min_bet:
                 await interaction.response.send_message(
@@ -44,7 +49,8 @@ class BetModal(ui.Modal, title="下注金额"):
                 )
                 return
             
-            if bet_amount > max_bet:
+            # 只有设置了max_bet才检查上限
+            if max_bet is not None and bet_amount > max_bet:
                 await interaction.response.send_message(
                     f"❌ 下注金额太多！最高下注 **{max_bet}** 月光币。\n月月可不想被你赢太多！", ephemeral=True
                 )
@@ -92,9 +98,20 @@ class BetModal(ui.Modal, title="下注金额"):
             else:
                 view = GamePlayView(game)
             
-            await interaction.response.send_message(
-                embed=embed, view=view, ephemeral=True
-            )
+            # 如果有原始交互（从"再来一局"来的），编辑那条消息
+            if self.original_interaction:
+                try:
+                    await interaction.response.defer()
+                    await self.original_interaction.edit_original_response(
+                        embed=embed, view=view
+                    )
+                except Exception as e:
+                    log.warning(f"编辑原消息失败，发送新消息: {e}")
+                    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            else:
+                await interaction.response.send_message(
+                    embed=embed, view=view, ephemeral=True
+                )
             
         except ValueError:
             await interaction.response.send_message(
@@ -281,8 +298,8 @@ class GameEndView(ui.View):
         # 清理旧会话
         blackjack_sessions.remove_session(self.game.player_id)
         
-        # 显示下注模态框
-        modal = BetModal()
+        # 显示下注模态框，传入原始交互用于编辑同一条消息
+        modal = BetModal(original_interaction=interaction)
         await interaction.response.send_modal(modal)
     
     @ui.button(label="结束游戏", style=discord.ButtonStyle.secondary, emoji="🚪")
