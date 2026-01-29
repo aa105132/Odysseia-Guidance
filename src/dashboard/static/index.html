@@ -339,7 +339,12 @@
                                 <label class="flex items-center gap-2 cursor-pointer">
                                     <input type="radio" x-model="imagenForm.api_format" value="gemini"
                                            class="w-4 h-4 text-purple-500 bg-slate-700 border-slate-600 focus:ring-purple-500">
-                                    <span class="text-sm">Gemini 官方</span>
+                                    <span class="text-sm">Gemini 专用接口</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" x-model="imagenForm.api_format" value="gemini_chat"
+                                           class="w-4 h-4 text-purple-500 bg-slate-700 border-slate-600 focus:ring-purple-500">
+                                    <span class="text-sm">Gemini 多模态聊天</span>
                                 </label>
                                 <label class="flex items-center gap-2 cursor-pointer">
                                     <input type="radio" x-model="imagenForm.api_format" value="openai"
@@ -347,7 +352,11 @@
                                     <span class="text-sm">OpenAI 兼容</span>
                                 </label>
                             </div>
-                            <p class="text-xs text-slate-500 mt-1">选择图像生成 API 格式，OpenAI 兼容格式支持 DALL-E 等服务</p>
+                            <p class="text-xs text-slate-500 mt-1">
+                                <span x-show="imagenForm.api_format === 'gemini'">使用 Gemini generateImages 专用 API（官方端点）</span>
+                                <span x-show="imagenForm.api_format === 'gemini_chat'">使用 Gemini 多模态聊天 API 生成图像（推荐用于代理站）</span>
+                                <span x-show="imagenForm.api_format === 'openai'">使用 OpenAI 兼容的 chat/completions API</span>
+                            </p>
                         </div>
                         
                         <div>

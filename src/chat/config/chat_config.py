@@ -78,6 +78,11 @@ def _get_imagen_config():
         "PERSON_GENERATION": os.getenv("GEMINI_IMAGEN_PERSON_GEN", "ALLOW_ADULT"),
         # 支持的宽高比: "1:1", "3:4", "4:3", "9:16", "16:9"
         "DEFAULT_ASPECT_RATIO": os.getenv("GEMINI_IMAGEN_ASPECT_RATIO", "1:1"),
+        # API 格式:
+        # - "gemini": 使用 Gemini SDK 的 generateImages 专用接口（官方 API）
+        # - "gemini_chat": 使用 Gemini SDK 的 generate_content 多模态聊天接口（适用于支持图像生成的代理）
+        # - "openai": 使用 OpenAI 兼容的 chat/completions 接口
+        "API_FORMAT": os.getenv("GEMINI_IMAGEN_API_FORMAT", "gemini_chat"),
     }
 
 GEMINI_IMAGEN_CONFIG = _get_imagen_config()

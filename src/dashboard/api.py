@@ -66,7 +66,11 @@ class ImagenConfigUpdate(BaseModel):
     model: Optional[str] = None
     default_images: Optional[int] = None
     api_key: Optional[str] = None
-    api_format: Optional[str] = None  # 'gemini' 或 'openai'
+    # API 格式:
+    # - 'gemini': Gemini 原生 generateImages 接口（官方 API）
+    # - 'gemini_chat': Gemini 多模态聊天接口（支持图像生成的代理）
+    # - 'openai': OpenAI 兼容的 chat/completions 接口
+    api_format: Optional[str] = None
 
 
 class EmbeddingConfigUpdate(BaseModel):
@@ -440,9 +444,11 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         updated["api_key"] = "已更新"
     
     if config.api_format is not None:
-        if config.api_format not in ["gemini", "openai"]:
-            raise HTTPException(400, "API 格式必须是 'gemini' 或 'openai'")
+        if config.api_format not in ["gemini", "gemini_chat", "openai"]:
+            raise HTTPException(400, "API 格式必须是 'gemini', 'gemini_chat' 或 'openai'")
         chat_config.GEMINI_IMAGEN_CONFIG["API_FORMAT"] = config.api_format
+        os.environ["GEMINI_IMAGEN_API_FORMAT"] = config.api_format
+        env_updates["GEMINI_IMAGEN_API_FORMAT"] = config.api_format
         updated["api_format"] = config.api_format
     
     # 如果有环境变量更新，尝试写入 .env 文件
