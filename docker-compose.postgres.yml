@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: paradedb/paradedb:latest
+    container_name: yueyue-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: yueyue
+      POSTGRES_PASSWORD: a123456
+      POSTGRES_DB: yueyue
+    ports:
+      - "5432:5432"
+    volumes:
+      - yueyue_pgdata_v2:/var/lib/postgresql/data
+    networks:
+      - 1panel-network
+
+volumes:
+  yueyue_pgdata_v2:
+
+networks:
+  1panel-network:
+    external: true

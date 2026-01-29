@@ -307,11 +307,28 @@
                     </h3>
                     <div class="space-y-4">
                         <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API 格式</label>
+                            <div class="flex gap-4">
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" x-model="imagenForm.api_format" value="gemini"
+                                           class="w-4 h-4 text-purple-500 bg-slate-700 border-slate-600 focus:ring-purple-500">
+                                    <span class="text-sm">Gemini 官方</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="radio" x-model="imagenForm.api_format" value="openai"
+                                           class="w-4 h-4 text-purple-500 bg-slate-700 border-slate-600 focus:ring-purple-500">
+                                    <span class="text-sm">OpenAI 兼容</span>
+                                </label>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">选择图像生成 API 格式，OpenAI 兼容格式支持 DALL-E 等服务</p>
+                        </div>
+                        
+                        <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
                             <input type="url" x-model="imagenForm.api_url"
-                                   placeholder="https://your-imagen-api-url.com/..."
+                                   :placeholder="imagenForm.api_format === 'openai' ? 'https://api.openai.com/v1' : 'https://generativelanguage.googleapis.com/v1beta'"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
-                            <p class="text-xs text-slate-500 mt-1">Gemini Imagen API 的完整 URL</p>
+                            <p class="text-xs text-slate-500 mt-1" x-text="imagenForm.api_format === 'openai' ? 'OpenAI 兼容端点，如 /v1/images/generations' : 'Gemini Imagen API 的完整 URL'"></p>
                         </div>
                         
                         <div>
@@ -341,10 +358,25 @@
                     </h3>
                     <div class="space-y-6">
                         <div>
-                            <label class="block text-sm font-medium text-slate-300 mb-2">模型</label>
-                            <input type="text" x-model="imagenForm.model"
-                                   placeholder="imagen-3.0-generate-002"
-                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block text-sm font-medium text-slate-300">模型</label>
+                                <button @click="fetchImagenModels()"
+                                        :disabled="fetchingImagenModels"
+                                        class="text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-purple-300 px-3 py-1 rounded-lg transition-all flex items-center gap-1">
+                                    <i data-lucide="refresh-cw" class="w-3 h-3" :class="fetchingImagenModels ? 'animate-spin' : ''"></i>
+                                    <span x-text="fetchingImagenModels ? '获取中...' : '获取可用模型'"></span>
+                                </button>
+                            </div>
+                            <select x-model="imagenForm.model"
+                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <template x-for="model in availableImagenModels.length > 0 ? availableImagenModels : (config.imagen?.available_models || ['imagen-3.0-generate-002'])">
+                                    <option :value="model" x-text="model"></option>
+                                </template>
+                            </select>
+                            <p class="text-xs text-slate-500 mt-1">也可以输入自定义模型名称</p>
+                            <input type="text" x-model="imagenForm.custom_model"
+                                   :placeholder="imagenForm.api_format === 'openai' ? 'dall-e-3' : 'imagen-3.0-generate-002'"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 mt-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
                         
                         <div>
@@ -850,7 +882,11 @@
                 
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini' },
-                imagenForm: { api_url: '', model: '', default_images: 1, api_key: '' },
+                imagenForm: { api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '' },
+                
+                // Imagen 模型获取
+                fetchingImagenModels: false,
+                availableImagenModels: [],
                 showApiKey: false,
                 showImagenApiKey: false,
                 coinForm: { daily_reward: 50, chat_reward: 10, max_loan: 1000 },
@@ -930,6 +966,7 @@
                         this.imagenForm.model = this.config.imagen.model;
                         this.imagenForm.default_images = this.config.imagen.default_images;
                         this.imagenForm.api_key = '';  // 不显示真实的key
+                        this.imagenForm.api_format = this.config.imagen.api_format || 'gemini';
                     }
                     if (this.config.coin) {
                         this.coinForm.daily_reward = this.config.coin.daily_reward;
@@ -1230,6 +1267,42 @@
                     this.fetchingModels = false;
                 },
                 
+                async fetchImagenModels() {
+                    this.fetchingImagenModels = true;
+                    try {
+                        const response = await fetch('/api/models/list', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                api_url: this.imagenForm.api_url,
+                                api_key: this.imagenForm.api_key || null,
+                                api_format: this.imagenForm.api_format,
+                                model_type: 'imagen'
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.availableImagenModels = data.models || [];
+                            if (this.availableImagenModels.length > 0) {
+                                this.showToast(`成功获取 ${this.availableImagenModels.length} 个可用模型`, 'success');
+                            } else {
+                                this.showToast('未找到可用模型', 'error');
+                            }
+                            this.$nextTick(() => lucide.createIcons());
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '获取模型列表失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('获取模型列表失败: ' + e.message, 'error');
+                    }
+                    this.fetchingImagenModels = false;
+                },
+                
                 async saveAIConfig() {
                     this.saving = true;
                     try {
@@ -1279,8 +1352,9 @@
                         // 构建请求体
                         const payload = {
                             api_url: this.imagenForm.api_url,
-                            model: this.imagenForm.model,
-                            default_images: parseInt(this.imagenForm.default_images)
+                            model: this.imagenForm.custom_model || this.imagenForm.model,
+                            default_images: parseInt(this.imagenForm.default_images),
+                            api_format: this.imagenForm.api_format
                         };
                         
                         // 只有填写了新的API Key才发送

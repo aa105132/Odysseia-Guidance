@@ -13,15 +13,15 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# 始终读取这些变量用于日志显示
+db_user = os.getenv("POSTGRES_USER", "postgres")
+db_password = os.getenv("POSTGRES_PASSWORD", "password")
+db_name = os.getenv("POSTGRES_DB", "yueyue")
+db_port = os.getenv("DB_PORT", "5432")
+db_host = os.getenv("DB_HOST")
+
 if not DATABASE_URL:
-    # Fallback: construct URL from individual components
-    db_user = os.getenv("POSTGRES_USER", "postgres")
-    db_password = os.getenv("POSTGRES_PASSWORD", "password")
-    db_name = os.getenv("POSTGRES_DB", "yueyue")
-    db_port = os.getenv("DB_PORT", "5432")
     # 优先使用 DB_HOST 环境变量，其次根据运行环境决定
-    db_host = os.getenv("DB_HOST")
-    
     if not db_host:
         if os.getenv("RUNNING_IN_DOCKER"):
             # Docker 内部：优先使用用户指定的外部数据库容器名
@@ -35,8 +35,9 @@ if not DATABASE_URL:
     DATABASE_URL = (
         f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
     )
-
-log.info(f"Database URL: postgresql+asyncpg://{db_user}:***@{db_host}:{db_port}/{db_name}")
+    log.info(f"Database URL: postgresql+asyncpg://{db_user}:***@{db_host}:{db_port}/{db_name}")
+else:
+    log.info(f"Using DATABASE_URL from environment (user: {db_user}, host: {db_host or 'from URL'})")
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 AsyncSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)

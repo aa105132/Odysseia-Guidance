@@ -62,6 +62,7 @@ class ImagenConfigUpdate(BaseModel):
     model: Optional[str] = None
     default_images: Optional[int] = None
     api_key: Optional[str] = None
+    api_format: Optional[str] = None  # 'gemini' 或 'openai'
 
 
 class AIConfigUpdate(BaseModel):
@@ -79,6 +80,7 @@ class ModelListRequest(BaseModel):
     api_url: Optional[str] = None
     api_key: Optional[str] = None
     api_format: str = "gemini"  # 'gemini' 或 'openai'
+    model_type: str = "chat"  # 'chat' 或 'imagen'
 
 
 class ShopItemUpdate(BaseModel):
@@ -325,6 +327,13 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "model": config.get("MODEL", "imagen-3.0-generate-002"),
         "default_images": config.get("DEFAULT_NUMBER_OF_IMAGES", 1),
         "aspect_ratios": config.get("ASPECT_RATIOS", {}),
+        "api_format": config.get("API_FORMAT", "gemini"),
+        "available_models": [
+            "imagen-3.0-generate-002",
+            "imagen-3.0-fast-generate-001",
+            "dall-e-3",
+            "dall-e-2",
+        ]
     }
 
 
@@ -355,6 +364,12 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         os.environ["GEMINI_IMAGEN_API_KEY"] = config.api_key
         env_updates["GEMINI_IMAGEN_API_KEY"] = config.api_key
         updated["api_key"] = "已更新"
+    
+    if config.api_format is not None:
+        if config.api_format not in ["gemini", "openai"]:
+            raise HTTPException(400, "API 格式必须是 'gemini' 或 'openai'")
+        chat_config.GEMINI_IMAGEN_CONFIG["API_FORMAT"] = config.api_format
+        updated["api_format"] = config.api_format
     
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:
