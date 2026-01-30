@@ -7,11 +7,78 @@ from src import config
 from src.chat.config import chat_config
 
 
+import logging
+
+log = logging.getLogger(__name__)
+
+
 class ChatSettingsService:
     """封装聊天设置相关的所有业务逻辑。"""
 
     def __init__(self):
         self.db_manager = chat_db_manager
+    
+    async def load_config_from_database(self):
+        """
+        启动时从数据库加载持久化的配置到内存中。
+        这确保 Dashboard 保存的配置在重启后生效。
+        """
+        log.info("正在从数据库加载持久化配置...")
+        
+        # --- AI 配置 ---
+        db_model = await self.db_manager.get_global_setting("ai_model")
+        if db_model:
+            chat_config.GEMINI_MODEL = db_model
+            chat_config.PROMPT_CONFIG["model"] = db_model
+            log.info(f"  ✅ AI 模型: {db_model}")
+        
+        db_temperature = await self.db_manager.get_global_setting("ai_temperature")
+        if db_temperature:
+            chat_config.PROMPT_CONFIG["temperature"] = float(db_temperature)
+            log.info(f"  ✅ Temperature: {db_temperature}")
+        
+        db_max_tokens = await self.db_manager.get_global_setting("ai_max_tokens")
+        if db_max_tokens:
+            chat_config.PROMPT_CONFIG["max_output_tokens"] = int(db_max_tokens)
+            log.info(f"  ✅ Max Tokens: {db_max_tokens}")
+        
+        db_summary_model = await self.db_manager.get_global_setting("summary_model")
+        if db_summary_model:
+            chat_config.SUMMARY_MODEL = db_summary_model
+            log.info(f"  ✅ 摘要模型: {db_summary_model}")
+        
+        db_query_model = await self.db_manager.get_global_setting("query_model")
+        if db_query_model:
+            chat_config.QUERY_REWRITING_MODEL = db_query_model
+            log.info(f"  ✅ 查询重写模型: {db_query_model}")
+        
+        # --- Imagen 配置 ---
+        db_imagen_enabled = await self.db_manager.get_global_setting("imagen_enabled")
+        if db_imagen_enabled:
+            chat_config.GEMINI_IMAGEN_CONFIG["ENABLED"] = db_imagen_enabled == "true"
+            log.info(f"  ✅ Imagen 启用状态: {db_imagen_enabled}")
+        
+        db_imagen_url = await self.db_manager.get_global_setting("imagen_api_url")
+        if db_imagen_url:
+            chat_config.GEMINI_IMAGEN_CONFIG["BASE_URL"] = db_imagen_url
+            log.info(f"  ✅ Imagen API URL: {db_imagen_url[:30]}...")
+        
+        db_imagen_key = await self.db_manager.get_global_setting("imagen_api_key")
+        if db_imagen_key:
+            chat_config.GEMINI_IMAGEN_CONFIG["API_KEY"] = db_imagen_key
+            log.info(f"  ✅ Imagen API Key: 已加载")
+        
+        db_imagen_model = await self.db_manager.get_global_setting("imagen_model")
+        if db_imagen_model:
+            chat_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = db_imagen_model
+            log.info(f"  ✅ Imagen 模型: {db_imagen_model}")
+        
+        db_imagen_format = await self.db_manager.get_global_setting("imagen_api_format")
+        if db_imagen_format:
+            chat_config.GEMINI_IMAGEN_CONFIG["API_FORMAT"] = db_imagen_format
+            log.info(f"  ✅ Imagen API 格式: {db_imagen_format}")
+        
+        log.info("数据库配置加载完成。")
 
     async def set_entity_settings(
         self,

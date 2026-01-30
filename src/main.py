@@ -271,6 +271,14 @@ class GuidanceBot(commands.Bot):
         我们在这里加载所有的 cogs。
         """
         log = logging.getLogger(__name__)
+        
+        # 0. 从数据库加载 Dashboard 保存的持久化配置
+        try:
+            from src.chat.features.chat_settings.services.chat_settings_service import chat_settings_service
+            await chat_settings_service.load_config_from_database()
+            log.info("✅ 已从数据库加载持久化配置")
+        except Exception as e:
+            log.warning(f"从数据库加载配置失败（可能是首次启动）: {e}")
 
         # 1. 重新加载持久化视图
         # 这必须在加载 Cogs 之前完成，因为 Cogs 可能依赖于这些视图

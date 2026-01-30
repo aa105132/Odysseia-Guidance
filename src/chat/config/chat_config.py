@@ -63,6 +63,17 @@ CUSTOM_GEMINI_ENDPOINTS = {
         "api_key": os.getenv("CUSTOM_GEMINI_API_KEY"),
         "model_name": "gemini-3-flash-preview",
     },
+    # GCLI 自定义端点模型（无思维链版本）
+    "gcli-gemini-3-flash-preview-nothinking": {
+        "base_url": os.getenv("GCLI_GEMINI_URL") or os.getenv("CUSTOM_GEMINI_URL"),
+        "api_key": os.getenv("GCLI_GEMINI_API_KEY") or os.getenv("CUSTOM_GEMINI_API_KEY"),
+        "model_name": "gemini-3-flash-preview",
+    },
+    "gcli-gemini-3-flash-preview": {
+        "base_url": os.getenv("GCLI_GEMINI_URL") or os.getenv("CUSTOM_GEMINI_URL"),
+        "api_key": os.getenv("GCLI_GEMINI_API_KEY") or os.getenv("CUSTOM_GEMINI_API_KEY"),
+        "model_name": "gemini-3-flash-preview",
+    },
 }
 
 # --- Gemini Imagen 图像生成配置 ---

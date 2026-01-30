@@ -222,27 +222,47 @@ async def get_all_config(token: str = Depends(verify_token)):
 
 @app.get("/api/config/ai")
 async def get_ai_config(token: str = Depends(verify_token)):
-    """获取 AI 配置"""
-    # 获取当前 API URL 和 Key（部分隐藏）
-    api_url = os.getenv("GEMINI_API_BASE_URL", "")
-    api_key = os.getenv("GEMINI_API_KEYS", "")
+    """获取 AI 配置 - 优先从数据库读取持久化设置"""
+    from src.chat.utils.database import chat_db_manager
+    
+    # 从数据库读取持久化设置（Dashboard 保存的配置）
+    db_model = await chat_db_manager.get_global_setting("ai_model")
+    db_temperature = await chat_db_manager.get_global_setting("ai_temperature")
+    db_max_tokens = await chat_db_manager.get_global_setting("ai_max_tokens")
+    db_summary_model = await chat_db_manager.get_global_setting("summary_model")
+    db_query_model = await chat_db_manager.get_global_setting("query_model")
+    db_api_url = await chat_db_manager.get_global_setting("gemini_api_url")
+    db_api_key = await chat_db_manager.get_global_setting("gemini_api_key")
+    
+    # 优先使用数据库值，否则回退到环境变量/内存配置
+    model = db_model or chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL
+    temperature = float(db_temperature) if db_temperature else chat_config.PROMPT_CONFIG.get("temperature", 1.0)
+    max_tokens = int(db_max_tokens) if db_max_tokens else chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192)
+    summary_model = db_summary_model or chat_config.SUMMARY_MODEL
+    query_model = db_query_model or getattr(chat_config, 'QUERY_REWRITING_MODEL', 'gemini-2.5-flash-lite')
+    
+    # API URL 和 Key：优先数据库，其次环境变量
+    api_url = db_api_url or os.getenv("GEMINI_API_BASE_URL", "")
+    api_key = db_api_key or os.getenv("GEMINI_API_KEYS", "")
     
     # 隐藏敏感信息
     masked_url = api_url[:30] + "..." if len(api_url) > 30 else api_url
     masked_key = api_key[:10] + "..." + api_key[-4:] if len(api_key) > 14 else "***"
     
     return {
-        "model": chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL,
-        "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
-        "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
-        "summary_model": chat_config.SUMMARY_MODEL,
-        "query_model": chat_config.QUERY_REWRITING_MODEL,
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "summary_model": summary_model,
+        "query_model": query_model,
         "persona_name": "月月",
         "api_url": api_url,
         "api_url_masked": masked_url,
         "api_key_masked": masked_key,
         "has_api_key": bool(api_key),
         "available_models": [
+            "gcli-gemini-3-flash-preview-nothinking",
+            "gcli-gemini-3-flash-preview",
             "gemini-3-flash-custom",
             "gemini-3-pro-preview-custom",
             "gemini-2.5-flash-custom",
@@ -254,7 +274,9 @@ async def get_ai_config(token: str = Depends(verify_token)):
 
 @app.put("/api/config/ai")
 async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_token)):
-    """更新 AI 配置"""
+    """更新 AI 配置 - 所有配置都写入数据库以持久化"""
+    from src.chat.utils.database import chat_db_manager
+    
     updated = {}
     env_updates = {}
     api_keys_changed = False
@@ -271,14 +293,9 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
             service_registry.gemini_service.default_model_name = config.model
             log.info(f"✅ GeminiService 默认模型已更新为: {config.model}")
         
-        # 同步写入数据库（这是 chat_service 实际读取的位置）
-        try:
-            from src.chat.features.chat_settings.services.chat_settings_service import chat_settings_service
-            import asyncio
-            asyncio.create_task(chat_settings_service.set_ai_model(config.model))
-            log.info(f"✅ AI 模型已同步写入数据库: {config.model}")
-        except Exception as e:
-            log.warning(f"无法同步 AI 模型到数据库: {e}")
+        # 写入数据库持久化
+        await chat_db_manager.set_global_setting("ai_model", config.model)
+        log.info(f"✅ AI 模型已写入数据库: {config.model}")
     
     if config.temperature is not None:
         if not 0.0 <= config.temperature <= 2.0:
@@ -287,6 +304,8 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         os.environ["GEMINI_TEMPERATURE"] = str(config.temperature)
         env_updates["GEMINI_TEMPERATURE"] = str(config.temperature)
         updated["temperature"] = config.temperature
+        # 写入数据库
+        await chat_db_manager.set_global_setting("ai_temperature", str(config.temperature))
     
     if config.max_tokens is not None:
         if not 1 <= config.max_tokens <= 65536:
@@ -295,33 +314,41 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         os.environ["GEMINI_MAX_TOKENS"] = str(config.max_tokens)
         env_updates["GEMINI_MAX_TOKENS"] = str(config.max_tokens)
         updated["max_tokens"] = config.max_tokens
+        # 写入数据库
+        await chat_db_manager.set_global_setting("ai_max_tokens", str(config.max_tokens))
     
     if config.api_url is not None:
-        # 更新环境变量
         os.environ["GEMINI_API_BASE_URL"] = config.api_url
         env_updates["GEMINI_API_BASE_URL"] = config.api_url
         updated["api_url"] = config.api_url[:30] + "..." if len(config.api_url) > 30 else config.api_url
+        # 写入数据库
+        await chat_db_manager.set_global_setting("gemini_api_url", config.api_url)
     
     if config.api_key is not None:
-        # 更新环境变量
         os.environ["GEMINI_API_KEYS"] = config.api_key
         env_updates["GEMINI_API_KEYS"] = config.api_key
         updated["api_key"] = "已更新"
         api_keys_changed = True
+        # 写入数据库
+        await chat_db_manager.set_global_setting("gemini_api_key", config.api_key)
     
     if config.summary_model is not None:
         chat_config.SUMMARY_MODEL = config.summary_model
         os.environ["GEMINI_SUMMARY_MODEL"] = config.summary_model
         env_updates["GEMINI_SUMMARY_MODEL"] = config.summary_model
         updated["summary_model"] = config.summary_model
+        # 写入数据库
+        await chat_db_manager.set_global_setting("summary_model", config.summary_model)
     
     if config.query_model is not None:
         chat_config.QUERY_REWRITING_MODEL = config.query_model
         os.environ["GEMINI_QUERY_MODEL"] = config.query_model
         env_updates["GEMINI_QUERY_MODEL"] = config.query_model
         updated["query_model"] = config.query_model
+        # 写入数据库
+        await chat_db_manager.set_global_setting("query_model", config.query_model)
     
-    # 如果有环境变量更新，尝试写入 .env 文件
+    # 如果有环境变量更新，尝试写入 .env 文件（作为备份）
     if env_updates:
         try:
             update_env_file(env_updates)
@@ -346,7 +373,7 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         log.warning("GeminiService 未初始化，无法热更新 API 密钥。密钥将在下次重启时生效。")
         updated["api_keys_pending_restart"] = True
     
-    log.info(f"AI 配置已更新: {updated}")
+    log.info(f"AI 配置已更新并持久化到数据库: {updated}")
     return {"success": True, "updated": updated}
 
 
@@ -403,12 +430,25 @@ def update_env_file(updates: Dict[str, str]):
 
 @app.get("/api/config/imagen")
 async def get_imagen_config(token: str = Depends(verify_token)):
-    """获取 Imagen 配置"""
-    # 直接使用内存中的配置（可能已被 PUT 请求更新）
-    # 不调用 reload_imagen_config() 以避免覆盖内存中的更新
+    """获取 Imagen 配置 - 优先从数据库读取持久化设置"""
+    from src.chat.utils.database import chat_db_manager
+    
+    # 从数据库读取持久化设置
+    db_enabled = await chat_db_manager.get_global_setting("imagen_enabled")
+    db_api_url = await chat_db_manager.get_global_setting("imagen_api_url")
+    db_api_key = await chat_db_manager.get_global_setting("imagen_api_key")
+    db_model = await chat_db_manager.get_global_setting("imagen_model")
+    db_api_format = await chat_db_manager.get_global_setting("imagen_api_format")
+    
+    # 内存配置作为回退
     config = chat_config.GEMINI_IMAGEN_CONFIG
-    api_url = config.get("BASE_URL", "") or config.get("API_URL", "")
-    api_key = config.get("API_KEY", "")
+    
+    # 优先使用数据库值
+    enabled = db_enabled == "true" if db_enabled else config.get("ENABLED", False)
+    api_url = db_api_url or config.get("BASE_URL", "") or config.get("API_URL", "")
+    api_key = db_api_key or config.get("API_KEY", "")
+    model = db_model or config.get("MODEL_NAME") or config.get("MODEL") or "imagen-3.0-generate-002"
+    api_format = db_api_format or config.get("API_FORMAT", "gemini")
     
     # 隐藏部分信息
     masked_url = ""
@@ -425,7 +465,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     
     # 检查服务是否可用（安全导入，不阻塞）
     service_available = False
-    if config.get("ENABLED", False):
+    if enabled:
         try:
             from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
             service_available = gemini_imagen_service.is_available()
@@ -435,15 +475,15 @@ async def get_imagen_config(token: str = Depends(verify_token)):
             log.warning(f"检查 Imagen 服务状态时出错: {e}")
     
     return {
-        "enabled": config.get("ENABLED", False),
+        "enabled": enabled,
         "api_url": api_url,
         "api_url_masked": masked_url,
         "api_key_masked": masked_key,
         "has_api_key": bool(api_key),
-        "model": config.get("MODEL_NAME") or config.get("MODEL") or "imagen-3.0-generate-002",
+        "model": model,
         "default_images": config.get("DEFAULT_NUMBER_OF_IMAGES", 1),
         "aspect_ratios": config.get("ASPECT_RATIOS", {}),
-        "api_format": config.get("API_FORMAT", "gemini"),
+        "api_format": api_format,
         "service_available": service_available,
         "available_models": [
             "imagen-3.0-generate-002",
@@ -456,7 +496,9 @@ async def get_imagen_config(token: str = Depends(verify_token)):
 
 @app.put("/api/config/imagen")
 async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(verify_token)):
-    """更新 Imagen 配置并热重载服务"""
+    """更新 Imagen 配置并热重载服务 - 所有配置写入数据库持久化"""
+    from src.chat.utils.database import chat_db_manager
+    
     updated = {}
     env_updates = {}
     
@@ -465,6 +507,8 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         os.environ["GEMINI_IMAGEN_ENABLED"] = str(config.enabled).lower()
         env_updates["GEMINI_IMAGEN_ENABLED"] = str(config.enabled).lower()
         updated["enabled"] = config.enabled
+        # 写入数据库
+        await chat_db_manager.set_global_setting("imagen_enabled", str(config.enabled).lower())
     
     if config.api_url is not None:
         if config.api_url and not (config.api_url.startswith("http://") or config.api_url.startswith("https://")):
@@ -473,12 +517,16 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         os.environ["GEMINI_IMAGEN_BASE_URL"] = config.api_url
         env_updates["GEMINI_IMAGEN_BASE_URL"] = config.api_url
         updated["api_url"] = config.api_url[:30] + "..." if len(config.api_url) > 30 else config.api_url
+        # 写入数据库
+        await chat_db_manager.set_global_setting("imagen_api_url", config.api_url)
     
     if config.model is not None:
         chat_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = config.model
         os.environ["GEMINI_IMAGEN_MODEL"] = config.model
         env_updates["GEMINI_IMAGEN_MODEL"] = config.model
         updated["model"] = config.model
+        # 写入数据库
+        await chat_db_manager.set_global_setting("imagen_model", config.model)
     
     if config.default_images is not None:
         if not 1 <= config.default_images <= 4:
@@ -491,6 +539,8 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         os.environ["GEMINI_IMAGEN_API_KEY"] = config.api_key
         env_updates["GEMINI_IMAGEN_API_KEY"] = config.api_key
         updated["api_key"] = "已更新"
+        # 写入数据库
+        await chat_db_manager.set_global_setting("imagen_api_key", config.api_key)
     
     if config.api_format is not None:
         if config.api_format not in ["gemini", "gemini_chat", "openai"]:
@@ -499,6 +549,8 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         os.environ["GEMINI_IMAGEN_API_FORMAT"] = config.api_format
         env_updates["GEMINI_IMAGEN_API_FORMAT"] = config.api_format
         updated["api_format"] = config.api_format
+        # 写入数据库
+        await chat_db_manager.set_global_setting("imagen_api_format", config.api_format)
     
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:
