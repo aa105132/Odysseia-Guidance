@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from src.chat.utils.database import chat_db_manager
 from src.chat.services.event_service import event_service
 from src import config
+from src.chat.config import chat_config
 
 
 class ChatSettingsService:
@@ -261,9 +262,18 @@ class ChatSettingsService:
         return config.AVAILABLE_AI_MODELS
 
     async def get_current_ai_model(self) -> str:
-        """获取当前设置的全局AI模型。"""
+        """获取当前设置的全局AI模型。
+        
+        优先级：
+        1. 数据库中保存的设置（Dashboard 更新的）
+        2. .env 中的 GEMINI_MODEL 设置
+        3. 可用模型列表的第一个
+        """
         model = await self.db_manager.get_global_setting("ai_model")
-        return model if model else config.AVAILABLE_AI_MODELS[0]
+        if model:
+            return model
+        # 回退到 .env 配置，而不是硬编码的可用模型列表
+        return chat_config.GEMINI_MODEL or config.AVAILABLE_AI_MODELS[0]
 
     async def set_ai_model(self, model: str) -> None:
         """设置全局AI模型。"""

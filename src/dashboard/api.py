@@ -270,6 +270,15 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         if service_registry.is_initialized and service_registry.gemini_service:
             service_registry.gemini_service.default_model_name = config.model
             log.info(f"✅ GeminiService 默认模型已更新为: {config.model}")
+        
+        # 同步写入数据库（这是 chat_service 实际读取的位置）
+        try:
+            from src.chat.features.chat_settings.services.chat_settings_service import chat_settings_service
+            import asyncio
+            asyncio.create_task(chat_settings_service.set_ai_model(config.model))
+            log.info(f"✅ AI 模型已同步写入数据库: {config.model}")
+        except Exception as e:
+            log.warning(f"无法同步 AI 模型到数据库: {e}")
     
     if config.temperature is not None:
         if not 0.0 <= config.temperature <= 2.0:

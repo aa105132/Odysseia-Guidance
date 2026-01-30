@@ -86,11 +86,12 @@ EMBED_COLOR_PRIMARY = 0x49989A  # 主要 Embed 颜色
 RAG_QUERY_REWRITING_ENABLED = int(os.getenv("RAG_QUERY_REWRITING_ENABLED", 1))
 
 # --- 可用 AI 模型 ---
+# 第一个模型是默认值（当数据库中没有设置时使用）
 AVAILABLE_AI_MODELS = [
+    "gemini-3-flash-custom",  # 默认模型
+    "gemini-3-pro-preview-custom",
+    "gemini-2.5-flash-custom",
+    "gemini-2.5-pro-custom",
     "gemini-2.5-flash",
     "gemini-flash-latest",
-    "gemini-2.5-flash-custom",
-    "gemini-3-pro-preview-custom",
-    "gemini-2.5-pro-custom",
-    "gemini-3-flash-custom",
 ]
