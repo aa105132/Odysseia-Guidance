@@ -1740,7 +1740,6 @@ class GeminiService:
             return response.text.strip()
         return None
 
-    @_api_key_handler
     async def generate_simple_response(
         self,
         prompt: str,
@@ -1750,7 +1749,11 @@ class GeminiService:
     ) -> Optional[str]:
         """
         一个用于单次、非对话式文本生成的方法，允许传入完整的生成配置和可选的模型名称。
-        非常适合用于如“礼物回应”、“投喂”等需要自定义生成参数的一次性任务。
+        非常适合用于如"礼物回应"、"投喂"、"个人记忆摘要"、"查询重写"等需要自定义生成参数的一次性任务。
+
+        此方法会自动检测 Dashboard 配置的 API 格式：
+        - 如果是 "openai" 格式，使用 OpenAI 兼容 API
+        - 如果是 "gemini" 格式，使用 Gemini SDK
 
         Args:
             prompt: 提供给模型的完整输入提示。
@@ -1760,6 +1763,98 @@ class GeminiService:
         Returns:
             生成的文本字符串，如果失败则返回 None。
         """
+        # 获取 API 格式配置
+        api_format = getattr(app_config, '_db_api_format', None) or "gemini"
+        api_url = getattr(app_config, '_db_api_url', None) or os.getenv("GEMINI_API_BASE_URL", "")
+        api_key = getattr(app_config, '_db_api_key', None) or os.getenv("GEMINI_API_KEYS", "")
+        
+        final_model_name = model_name or self.default_model_name
+        
+        # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
+        if api_format == "openai" and api_url and api_key:
+            log.info(f"generate_simple_response 使用 OpenAI 兼容 API: {api_url[:30]}..., 模型: {final_model_name}")
+            return await self._generate_simple_with_openai_compatible(
+                prompt=prompt,
+                generation_config=generation_config,
+                model_name=final_model_name,
+                api_url=api_url,
+                api_key=api_key,
+            )
+        
+        # 使用 Gemini SDK，优先使用 Dashboard 配置的 URL 和 Key
+        if api_url and api_key:
+            log.info(f"generate_simple_response 使用 Gemini SDK (自定义端点): {api_url[:30]}..., 模型: {final_model_name}")
+            return await self._generate_simple_with_gemini_custom(
+                prompt=prompt,
+                generation_config=generation_config,
+                model_name=final_model_name,
+                api_url=api_url,
+                api_key=api_key,
+            )
+        
+        # 回退：如果没有 Dashboard 配置，使用 key rotation
+        log.info(f"generate_simple_response 使用 Gemini SDK (Key Rotation), 模型: {final_model_name}")
+        return await self._generate_simple_with_gemini_key_rotation(
+            prompt=prompt,
+            generation_config=generation_config,
+            model_name=final_model_name,
+        )
+    
+    async def _generate_simple_with_gemini_custom(
+        self,
+        prompt: str,
+        generation_config: Dict,
+        model_name: str,
+        api_url: str,
+        api_key: str,
+    ) -> Optional[str]:
+        """
+        使用 Gemini SDK 和自定义端点生成简单响应（内部方法）。
+        使用 Dashboard 配置的 API URL 和 API Key。
+        """
+        try:
+            # 创建使用自定义端点的客户端
+            http_options = types.HttpOptions(base_url=api_url)
+            client = genai.Client(api_key=api_key, http_options=http_options)
+            
+            loop = asyncio.get_event_loop()
+            gen_config = types.GenerateContentConfig(
+                **generation_config, safety_settings=self.safety_settings
+            )
+
+            response = await loop.run_in_executor(
+                self.executor,
+                lambda: client.models.generate_content(
+                    model=model_name, contents=[prompt], config=gen_config
+                ),
+            )
+
+            if response.parts:
+                return response.text.strip()
+
+            log.warning(f"_generate_simple_with_gemini_custom 未能生成有效内容。API 响应: {response}")
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                log.warning(
+                    f"请求可能被安全策略阻止，原因: {response.prompt_feedback.block_reason}"
+                )
+
+            return None
+        except Exception as e:
+            log.error(f"Gemini SDK (自定义端点) 调用失败: {e}", exc_info=True)
+            return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+    
+    @_api_key_handler
+    async def _generate_simple_with_gemini_key_rotation(
+        self,
+        prompt: str,
+        generation_config: Dict,
+        model_name: str,
+        client: Any = None,
+    ) -> Optional[str]:
+        """
+        使用 Gemini SDK 和 Key Rotation 生成简单响应（内部方法）。
+        仅在没有 Dashboard 配置时作为回退方案使用。
+        """
         if not client:
             raise ValueError("装饰器未能提供客户端实例。")
 
@@ -1767,25 +1862,97 @@ class GeminiService:
         gen_config = types.GenerateContentConfig(
             **generation_config, safety_settings=self.safety_settings
         )
-        final_model_name = model_name or self.default_model_name
 
         response = await loop.run_in_executor(
             self.executor,
             lambda: client.models.generate_content(
-                model=final_model_name, contents=[prompt], config=gen_config
+                model=model_name, contents=[prompt], config=gen_config
             ),
         )
 
         if response.parts:
             return response.text.strip()
 
-        log.warning(f"generate_simple_response 未能生成有效内容。API 响应: {response}")
+        log.warning(f"_generate_simple_with_gemini_key_rotation 未能生成有效内容。API 响应: {response}")
         if response.prompt_feedback and response.prompt_feedback.block_reason:
             log.warning(
                 f"请求可能被安全策略阻止，原因: {response.prompt_feedback.block_reason}"
             )
 
         return None
+    
+    async def _generate_simple_with_openai_compatible(
+        self,
+        prompt: str,
+        generation_config: Dict,
+        model_name: str,
+        api_url: str,
+        api_key: str,
+    ) -> Optional[str]:
+        """
+        使用 OpenAI 兼容 API 生成简单响应（内部方法）。
+        用于摘要、查询重写等简单任务。
+        """
+        temperature = generation_config.get("temperature", 0.5)
+        max_tokens = generation_config.get("max_output_tokens", 2000)
+        
+        # 构建简单的消息格式
+        messages = [
+            {"role": "user", "content": prompt}
+        ]
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        # 智能处理 URL 路径
+        api_url = api_url.rstrip("/")
+        if not api_url.endswith("/chat/completions"):
+            if "/v1" in api_url and not api_url.endswith("/v1"):
+                api_url = api_url + "/chat/completions"
+            elif api_url.endswith("/v1"):
+                api_url = api_url + "/chat/completions"
+            else:
+                api_url = api_url + "/v1/chat/completions"
+        
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    api_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=120)
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        log.error(f"OpenAI 兼容 API (简单响应) 返回错误 {response.status}: {error_text}")
+                        return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+                    
+                    result = await response.json()
+                    
+                    if "choices" in result and len(result["choices"]) > 0:
+                        content = result["choices"][0].get("message", {}).get("content", "")
+                        if "usage" in result:
+                            usage = result["usage"]
+                            log.info(f"OpenAI API (简单响应) Token 使用: 输入={usage.get('prompt_tokens', 0)}, 输出={usage.get('completion_tokens', 0)}")
+                        return content.strip() if content else None
+                    else:
+                        log.warning(f"OpenAI 兼容 API (简单响应) 返回空响应: {result}")
+                        return None
+        except asyncio.TimeoutError:
+            log.error("OpenAI 兼容 API (简单响应) 请求超时")
+            return "抱歉，AI服务响应超时，请稍后再试。"
+        except Exception as e:
+            log.error(f"OpenAI 兼容 API (简单响应) 调用失败: {e}", exc_info=True)
+            return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
 
     @_api_key_handler
     async def generate_thread_praise(
