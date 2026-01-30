@@ -101,25 +101,22 @@ class GeminiImagenCog(commands.Cog):
             async def generate_ai_response():
                 """让 AI 根据用户请求生成个性化回复"""
                 try:
-                    from src.dashboard.service_registry import service_registry
-                    if service_registry.is_initialized and service_registry.gemini_service:
-                        client = service_registry.gemini_service._get_client()
-                        if client:
-                            response = await client.aio.models.generate_content(
-                                model=PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
-                                contents=f"""你是月月，一个傲娇的狐狸娘AI助手。用户请求你画一张图，提示词是："{prompt}"
+                    from src.chat.services.gemini_service import gemini_service as gs
+                    if gs.is_available():
+                        response = await gs.generate_simple_response(
+                            prompt=f"""你是月月，一个傲娇的狐狸娘AI助手。用户请求你画一张图，提示词是："{prompt}"
 请用你的傲娇性格回应用户，简短地评价一下这个画图请求，可以用<表情>标签表达情绪。
 回复要简短（1-2句话），例如：
 - "这个我画起来完全没问题啦！<傲娇>"
 - "哼，你的品味还不错嘛~让我来画给你看！<得意>"
 - "这...这种可爱的东西，正好是我擅长的！<害羞>"
 只回复角色台词，不要解释。""",
-                                config={
-                                    "temperature": 1.0,
-                                    "max_output_tokens": 100,
-                                }
-                            )
-                            return response.text.strip() if response.text else None
+                            generation_config={
+                                "temperature": 1.0,
+                                "max_output_tokens": 100,
+                            }
+                        )
+                        return response.strip() if response else None
                 except Exception as e:
                     log.warning(f"生成 AI 回复失败: {e}")
                 return None
@@ -279,25 +276,22 @@ class GeminiImagenCog(commands.Cog):
             async def generate_ai_response():
                 """让 AI 根据用户请求生成个性化回复"""
                 try:
-                    from src.dashboard.service_registry import service_registry
-                    if service_registry.is_initialized and service_registry.gemini_service:
-                        client = service_registry.gemini_service._get_client()
-                        if client:
-                            response = await client.aio.models.generate_content(
-                                model=PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
-                                contents=f"""你是月月，一个傲娇的狐狸娘AI助手。用户请求你修改一张图，编辑指令是："{edit_prompt}"
+                    from src.chat.services.gemini_service import gemini_service as gs
+                    if gs.is_available():
+                        response = await gs.generate_simple_response(
+                            prompt=f"""你是月月，一个傲娇的狐狸娘AI助手。用户请求你修改一张图，编辑指令是："{edit_prompt}"
 请用你的傲娇性格回应用户，简短地评价一下这个图片修改请求，可以用<表情>标签表达情绪。
 回复要简短（1-2句话），例如：
 - "帮你改一改？可以是可以...让我看看！<傲娇>"
 - "这种修改对我来说小菜一碟！<得意>"
 - "好、好的，我来试试看...不要期待太高哦！<害羞>"
 只回复角色台词，不要解释。""",
-                                config={
-                                    "temperature": 1.0,
-                                    "max_output_tokens": 100,
-                                }
-                            )
-                            return response.text.strip() if response.text else None
+                            generation_config={
+                                "temperature": 1.0,
+                                "max_output_tokens": 100,
+                            }
+                        )
+                        return response.strip() if response else None
                 except Exception as e:
                     log.warning(f"生成 AI 回复失败: {e}")
                 return None

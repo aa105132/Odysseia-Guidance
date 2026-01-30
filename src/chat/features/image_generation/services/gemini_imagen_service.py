@@ -535,8 +535,10 @@ class GeminiImagenService:
             return None
         
         config = app_config.GEMINI_IMAGEN_CONFIG
-        # 图生图需要使用支持多模态图像生成的模型
-        model_name = config.get("EDIT_MODEL_NAME") or config.get("MODEL_NAME", "gemini-2.0-flash-exp")
+        # 图生图使用与普通画图相同的模型配置
+        # 优先使用配置的编辑专用模型，否则使用绘图模型
+        model_name = config.get("EDIT_MODEL_NAME") or config.get("MODEL_NAME", "imagen-3.0-generate-002")
+        log.info(f"图生图使用模型: {model_name}")
         
         # 根据 API 格式选择不同的编辑方法
         if self._api_format == "openai":
