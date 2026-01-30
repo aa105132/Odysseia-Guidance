@@ -291,6 +291,26 @@
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
                         
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                摘要模型
+                                <span class="text-xs text-slate-500 ml-2">用于个人记忆摘要</span>
+                            </label>
+                            <input type="text" x-model="aiForm.summary_model"
+                                   placeholder="gemini-2.5-flash-lite"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                查询重写模型
+                                <span class="text-xs text-slate-500 ml-2">用于 RAG 查询优化</span>
+                            </label>
+                            <input type="text" x-model="aiForm.query_model"
+                                   placeholder="gemini-2.5-flash-lite"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        
                         <button @click="saveAIConfig()"
                                 :disabled="saving"
                                 class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
@@ -1035,7 +1055,7 @@
                 toast: { show: false, message: '', type: 'success' },
                 
                 // 表单数据
-                aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini' },
+                aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
                 imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '' },
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
@@ -1117,6 +1137,8 @@
                         this.aiForm.max_tokens = this.config.ai.max_tokens;
                         this.aiForm.api_url = this.config.ai.api_url || '';
                         this.aiForm.api_key = '';  // 不显示真实的key，只显示placeholder
+                        this.aiForm.summary_model = this.config.ai.summary_model || '';
+                        this.aiForm.query_model = this.config.ai.query_model || '';
                     }
                     if (this.config.imagen) {
                         this.imagenForm.enabled = this.config.imagen.enabled || false;
@@ -1589,6 +1611,16 @@
                         // 只有填写了新的API Key才发送
                         if (this.aiForm.api_key) {
                             payload.api_key = this.aiForm.api_key;
+                        }
+                        
+                        // 发送摘要模型配置
+                        if (this.aiForm.summary_model) {
+                            payload.summary_model = this.aiForm.summary_model;
+                        }
+                        
+                        // 发送查询重写模型配置
+                        if (this.aiForm.query_model) {
+                            payload.query_model = this.aiForm.query_model;
                         }
                         
                         const response = await fetch('/api/config/ai', {

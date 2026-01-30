@@ -16,20 +16,20 @@ from typing import List, Dict
 class EmotionImageUrls:
     """统一管理所有代表情绪反应的图片URL资源"""
 
-    HAPPY = "https://cdn.discordapp.com/attachments/1403347767912562728/1409907183445082154/3_939688768317938_00001_.png?ex=68c4d6a3&is=68c38523&hm=caa79173ec60012b70cc950e649ed94b0c396293fc36187fa568e2c0cd5028f2&"
-    SAD = "https://cdn.discordapp.com/attachments/1403347767912562728/1409917341365440574/3_451085634559344_00002_.png?ex=68b26b19&is=68b11999&hm=c45246bede3f33468b2bd052363934d756ab69336519f725b4d54e6aba19a0e5&"
-    NEUTRAL = "https://cdn.discordapp.com/attachments/1403347767912562728/1404427400842051715/ComfyUI_temp_rppad_00173_.png?ex=68b238b1&is=68b0e731&hm=23627fcc462eb5b6e4e71dc52db1009e073a7b51f2f6501aa2eaed18120d6abe&"
-    SUPER_WIN = "https://cdn.discordapp.com/attachments/1403347767912562728/1409907279158837258/3_225867758893608_00001_.png?ex=68b261ba&is=68b1103a&hm=6d63c60e8b3c4041c8dff0ac235146ba959e57a1f67cd2821da6d2a51b072959&"
+    HAPPY = "https://cdn.discordapp.com/attachments/1466427893809680560/1466713444177936436/1769761540347.png?ex=697dbed7&is=697c6d57&hm=11c31861ee887dca2aded88a2ee0293a678662fb87aedaddc232e02f0e7e1fb9&"
+    SAD = "https://cdn.discordapp.com/attachments/1466427893809680560/1466713838941638767/1769761551080.png?ex=697dbf35&is=697c6db5&hm=f2673b3d04703c2295c400f44700534c589da3814ec6b90264cad32d7e650c3b&"
+    NEUTRAL = "https://cdn.discordapp.com/attachments/1466427893809680560/1466714010815823975/1769761543424.png?ex=697dbf5e&is=697c6dde&hm=da73ed38f061025cd4713f2c4a5147f2aba55204f7cb820037b843a69712dc72&"
+    SUPER_WIN = "https://cdn.discordapp.com/attachments/1466427893809680560/1466714560764575838/6_1769762394108.png?ex=697dbfe1&is=697c6e61&hm=8f05cf7e0df45fee944db5809710654fea9482080c04a2ac97d16831f7cfdb81&"
 
 
 class StaticUrls:
     """管理静态的、非情绪化的URL，如AI策略图和游戏结束图"""
 
-    AI_THUMBNAIL_LOW = "https://cdn.discordapp.com/attachments/1403347767912562728/1404427399453741126/ComfyUI_temp_rppad_00478_.png?ex=68b238b1&is=68b0e731&hm=f17cdc9169bcb89d14254ed4290c9aae1ec50f06c41f9ee3de0e6e7a2edf97c0&"
-    AI_THUMBNAIL_MEDIUM = "https://cdn.discordapp.com/attachments/1403347767912562728/1404427400842051715/ComfyUI_temp_rppad_00173_.png?ex=68b238b1&is=68b0e731&hm=23627fcc462eb5b6e4e71dc52db1009e073a7b51f2f6501aa2eaed18120d6abe&"
-    AI_THUMBNAIL_HIGH = "https://cdn.discordapp.com/attachments/1403347767912562728/1409917341365440574/3_451085634559344_00002_.png?ex=68b26b19&is=68b11999&hm=c45246bede3f33468b2bd052363934d756ab69336519f725b4d54e6aba19a0e5&"
-    AI_THUMBNAIL_SUPER = "https://cdn.discordapp.com/attachments/1403347767912562728/1409907279158837258/3_225867758893608_00001_.png?ex=68b261ba&is=68b1103a&hm=6d63c60e8b3c4041c8dff0ac235146ba959e57a1f67cd2821da6d2a51b072959&"
-    AI_WIN_THUMBNAIL = "https://cdn.discordapp.com/attachments/1403347767912562728/1410260648063012914/3_354199679133851_00001_.png"
+    AI_THUMBNAIL_LOW = "https://cdn.discordapp.com/attachments/1466427893809680560/1466714795490410640/cc8ee9da86b68f7e.png?ex=697dc019&is=697c6e99&hm=7785c0143391f83f114a62fd838257b9ddca657645d22919438e8cbc6536ddb0&"
+    AI_THUMBNAIL_MEDIUM = "https://cdn.discordapp.com/attachments/1466427893809680560/1466714010815823975/1769761543424.png?ex=697dbf5e&is=697c6dde&hm=da73ed38f061025cd4713f2c4a5147f2aba55204f7cb820037b843a69712dc72&"
+    AI_THUMBNAIL_HIGH = "https://cdn.discordapp.com/attachments/1466427893809680560/1466713838941638767/1769761551080.png?ex=697dbf35&is=697c6db5&hm=f2673b3d04703c2295c400f44700534c589da3814ec6b90264cad32d7e650c3b&"
+    AI_THUMBNAIL_SUPER = "https://cdn.discordapp.com/attachments/1466427893809680560/1466714560764575838/6_1769762394108.png?ex=697dbfe1&is=697c6e61&hm=8f05cf7e0df45fee944db5809710654fea9482080c04a2ac97d16831f7cfdb81&"
+    AI_WIN_THUMBNAIL = "https://cdn.discordapp.com/attachments/1466427893809680560/1466715224328507463/1769761542908.png?ex=697dc07f&is=697c6eff&hm=75aabeda0ec41012bba387a5b79150d4b600b21a33e92a1c535f02aa9e621f0b&"
 
 
 # -----------------------------------------------------------------------------

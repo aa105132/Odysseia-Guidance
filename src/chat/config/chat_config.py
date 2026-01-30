@@ -25,19 +25,19 @@ UNRESTRICTED_CHANNEL_IDS = _parse_ids("UNRESTRICTED_CHANNEL_IDS")
 
 
 # --- Gemini AI 配置 ---
-# 定义要使用的 Gemini 模型名称
-GEMINI_MODEL = "gemini-2.5-flash"
+# 定义要使用的 Gemini 模型名称（从环境变量读取）
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # --- AI 模型参数配置 ---
 # 用于 Dashboard 动态修改
 PROMPT_CONFIG = {
-    "model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+    "model": GEMINI_MODEL,
     "temperature": float(os.getenv("GEMINI_TEMPERATURE", "1.0")),
     "max_output_tokens": int(os.getenv("GEMINI_MAX_TOKENS", "8192")),
 }
 
-# 用于个人记忆摘要的模型。
-SUMMARY_MODEL = "gemini-2.5-flash-lite"
+# 用于个人记忆摘要的模型（从环境变量读取）
+SUMMARY_MODEL = os.getenv("GEMINI_SUMMARY_MODEL", "gemini-2.5-flash-lite")
 
 # --- 自定义 Gemini 端点配置 ---
 # 用于通过自定义 URL (例如公益站) 调用模型
@@ -153,8 +153,8 @@ TAROT_CONFIG = {
 }
 
 # --- RAG (Retrieval-Augmented Generation) 配置 ---
-# 用于查询重写的模型。通常可以使用一个更小、更快的模型来降低成本和延迟。
-QUERY_REWRITING_MODEL = "gemini-2.5-flash-lite"
+# 用于查询重写的模型（从环境变量读取）。通常可以使用一个更小、更快的模型来降低成本和延迟。
+QUERY_REWRITING_MODEL = os.getenv("GEMINI_QUERY_MODEL", "gemini-2.5-flash-lite")
 
 # RAG 搜索返回的结果数量
 RAG_N_RESULTS_DEFAULT = 5  # 普通聊天的默认值
@@ -352,7 +352,7 @@ COIN_CONFIG = {
     "BANKRUPTCY_COOLDOWN_HOURS": 24,  # 破产补贴冷却时间（小时）
     # --- 21点游戏配置 ---
     "BLACKJACK_MIN_BET": 10,  # 21点最低下注
-    "BLACKJACK_MAX_BET": 500,  # 21点最高下注（防止经济膨胀）
+    "BLACKJACK_MAX_BET": 1000000,  # 21点最高下注（防止经济膨胀）
 }
 
 # --- 个人记忆功能 ---

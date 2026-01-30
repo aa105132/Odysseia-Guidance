@@ -608,9 +608,9 @@ class GeminiService:
                 f"自定义端点 '{model_name}' 的所有 {max_attempts} 次尝试均失败。最终错误: {last_exception}. "
                 f"将回退到官方 API。"
             )
-            # --- [新逻辑] 回退时固定使用 gemini-2.5-flash 模型 ---
-            fallback_model_name = "gemini-2.5-flash"
-            log.info(f"回退到官方 API，固定使用模型 '{fallback_model_name}'。")
+            # --- [新逻辑] 回退时使用默认模型 ---
+            fallback_model_name = self.default_model_name
+            log.info(f"回退到官方 API，使用默认模型 '{fallback_model_name}'。")
 
             return await self._generate_with_official_api(
                 user_id=user_id,

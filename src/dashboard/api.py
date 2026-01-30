@@ -91,6 +91,8 @@ class AIConfigUpdate(BaseModel):
     api_url: Optional[str] = None
     api_key: Optional[str] = None
     api_format: Optional[str] = None  # 'gemini' 或 'openai'
+    summary_model: Optional[str] = None  # 摘要模型
+    query_model: Optional[str] = None  # 查询重写模型
 
 
 class ModelListRequest(BaseModel):
@@ -231,6 +233,8 @@ async def get_ai_config(token: str = Depends(verify_token)):
         "model": chat_config.PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
         "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
         "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
+        "summary_model": chat_config.SUMMARY_MODEL,
+        "query_model": chat_config.QUERY_REWRITING_MODEL,
         "persona_name": "月月",
         "api_url": api_url,
         "api_url_masked": masked_url,
@@ -239,6 +243,7 @@ async def get_ai_config(token: str = Depends(verify_token)):
         "available_models": [
             "gemini-2.0-flash",
             "gemini-2.0-flash-lite",
+            "gemini-2.5-flash-lite",
             "gemini-2.5-pro-preview-05-06",
             "gemini-2.5-flash-preview-05-20",
             "gemini-3-pro-preview-custom",
@@ -255,9 +260,15 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
     
     if config.model is not None:
         chat_config.PROMPT_CONFIG["model"] = config.model
+        chat_config.GEMINI_MODEL = config.model  # 同步更新全局变量
         os.environ["GEMINI_MODEL"] = config.model
         env_updates["GEMINI_MODEL"] = config.model
         updated["model"] = config.model
+        
+        # 同步更新 GeminiService 的默认模型
+        if service_registry.is_initialized and service_registry.gemini_service:
+            service_registry.gemini_service.default_model_name = config.model
+            log.info(f"✅ GeminiService 默认模型已更新为: {config.model}")
     
     if config.temperature is not None:
         if not 0.0 <= config.temperature <= 2.0:
@@ -287,6 +298,18 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         env_updates["GEMINI_API_KEYS"] = config.api_key
         updated["api_key"] = "已更新"
         api_keys_changed = True
+    
+    if config.summary_model is not None:
+        chat_config.SUMMARY_MODEL = config.summary_model
+        os.environ["GEMINI_SUMMARY_MODEL"] = config.summary_model
+        env_updates["GEMINI_SUMMARY_MODEL"] = config.summary_model
+        updated["summary_model"] = config.summary_model
+    
+    if config.query_model is not None:
+        chat_config.QUERY_REWRITING_MODEL = config.query_model
+        os.environ["GEMINI_QUERY_MODEL"] = config.query_model
+        env_updates["GEMINI_QUERY_MODEL"] = config.query_model
+        updated["query_model"] = config.query_model
     
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:
