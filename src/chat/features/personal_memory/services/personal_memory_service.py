@@ -38,9 +38,12 @@ class PersonalMemoryService:
                 # 如果用户没有档案，自动创建一个基础档案
                 if not profile:
                     log.info(f"用户 {user_id} 没有个人档案，正在自动创建...")
+                    import uuid
                     profile = CommunityMemberProfile(
+                        external_id=f"auto_{user_id}_{uuid.uuid4().hex[:8]}",  # 生成唯一的 external_id
                         discord_id=str(user_id),
-                        nickname=user_name,
+                        title=user_name,  # 使用 title 字段存储昵称
+                        full_text=f"用户 {user_name} 的自动创建档案",  # full_text 是必需字段
                         personal_message_count=0,
                         history=[],
                     )
