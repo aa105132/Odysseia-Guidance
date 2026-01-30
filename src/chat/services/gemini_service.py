@@ -567,8 +567,18 @@ class GeminiService:
         AI 回复生成的分发器。
         如果选择了自定义模型，则优先尝试自定义端点；如果失败，则自动回退到官方 API。
         """
-        # 如果选择了自定义模型，则尝试使用它，并准备好回退
+        # 判断是否应该使用自定义端点：
+        # 1. 模型名在预定义的 CUSTOM_GEMINI_ENDPOINTS 中
+        # 2. 或者 Dashboard 配置了全局 API URL（存储在 _db_api_url）
+        use_custom_endpoint = False
         if model_name and model_name in app_config.CUSTOM_GEMINI_ENDPOINTS:
+            use_custom_endpoint = True
+        elif hasattr(app_config, '_db_api_url') and app_config._db_api_url:
+            # Dashboard 配置了自定义 API URL，所有模型都使用自定义端点
+            use_custom_endpoint = True
+            log.info(f"检测到 Dashboard 配置的自定义 API URL，将为模型 '{model_name}' 使用自定义端点。")
+        
+        if use_custom_endpoint:
             log.info(f"检测到自定义模型 '{model_name}'，将优先尝试使用自定义端点。")
             max_attempts = 2  # 1次主尝试 + 1次重试
             last_exception = None
@@ -680,16 +690,37 @@ class GeminiService:
         """
         if not model_name:
             raise ValueError("调用自定义端点时需要提供 model_name。")
-        endpoint_config = app_config.CUSTOM_GEMINI_ENDPOINTS.get(model_name)
-        if not endpoint_config or not all(
-            [endpoint_config.get("base_url"), endpoint_config.get("api_key")]
-        ):
+        
+        endpoint_config = app_config.CUSTOM_GEMINI_ENDPOINTS.get(model_name, {}).copy()
+        
+        # 从 chat_config 中获取 Dashboard 保存的全局配置
+        global_api_url = getattr(app_config, '_db_api_url', None) or os.getenv("GEMINI_API_BASE_URL", "")
+        global_api_key = getattr(app_config, '_db_api_key', None) or os.getenv("GEMINI_API_KEYS", "")
+        
+        # 如果端点配置为空（模型名不在预定义列表中），创建一个使用全局配置的端点
+        if not endpoint_config:
+            log.info(f"模型 '{model_name}' 不在预定义端点列表中，将使用 Dashboard 全局配置。")
+            endpoint_config = {
+                "base_url": global_api_url,
+                "api_key": global_api_key,
+                "model_name": model_name,  # 直接使用用户指定的模型名
+            }
+        else:
+            # 如果端点配置中缺少 base_url 或 api_key，从全局配置补充
+            if not endpoint_config.get("base_url") and global_api_url:
+                endpoint_config["base_url"] = global_api_url
+                log.info(f"  - 使用全局 API URL: {global_api_url[:30]}...")
+            if not endpoint_config.get("api_key") and global_api_key:
+                endpoint_config["api_key"] = global_api_key
+                log.info(f"  - 使用全局 API Key")
+        
+        # 再次检查配置是否完整
+        if not endpoint_config.get("base_url") or not endpoint_config.get("api_key"):
             error_msg = (
-                f"模型 '{model_name}' 的自定义端点配置不完整或未找到。"
-                "请检查 CUSTOM_GEMINI_URL_* 和 CUSTOM_GEMINI_API_KEY_* 环境变量。"
+                f"模型 '{model_name}' 的自定义端点配置不完整。"
+                "请在 Dashboard 中设置 API URL 和 API Key，或设置环境变量。"
             )
             log.error(error_msg)
-            # 抛出异常以触发回退逻辑
             raise ValueError(error_msg)
 
         # --- 关键：为自定义端点单独创建客户端，不使用全局的 _create_client_with_key ---

@@ -52,6 +52,17 @@ class ChatSettingsService:
             chat_config.QUERY_REWRITING_MODEL = db_query_model
             log.info(f"  ✅ 查询重写模型: {db_query_model}")
         
+        # API URL 和 Key（用于自定义端点）
+        db_api_url = await self.db_manager.get_global_setting("gemini_api_url")
+        if db_api_url:
+            chat_config._db_api_url = db_api_url
+            log.info(f"  ✅ API URL: {db_api_url[:30]}...")
+        
+        db_api_key = await self.db_manager.get_global_setting("gemini_api_key")
+        if db_api_key:
+            chat_config._db_api_key = db_api_key
+            log.info(f"  ✅ API Key: 已加载")
+        
         # --- Imagen 配置 ---
         db_imagen_enabled = await self.db_manager.get_global_setting("imagen_enabled")
         if db_imagen_enabled:
