@@ -1898,7 +1898,6 @@ class GeminiService:
             log.error(f"OpenAI 兼容嵌入请求失败: {e}")
             return None
 
-    @_api_key_handler
     async def generate_text(
         self,
         prompt: str,
@@ -1909,7 +1908,9 @@ class GeminiService:
         """
         一个用于简单文本生成的精简方法。
         不涉及对话历史或上下文，仅根据输入提示生成文本。
-        非常适合用于如“查询重写”等内部任务。
+        非常适合用于如"查询重写"等内部任务。
+
+        此方法会自动检测 Dashboard 配置的 API 格式并使用相应的 API。
 
         Args:
             prompt: 提供给模型的输入提示。
@@ -1919,28 +1920,19 @@ class GeminiService:
         Returns:
             生成的文本字符串，如果失败则返回 None。
         """
-        if not client:
-            raise ValueError("装饰器未能提供客户端实例。")
-
-        loop = asyncio.get_event_loop()
+        # 构建生成配置
         gen_config_params = app_config.GEMINI_TEXT_GEN_CONFIG.copy()
         if temperature is not None:
             gen_config_params["temperature"] = temperature
-        gen_config = types.GenerateContentConfig(
-            **gen_config_params, safety_settings=self.safety_settings
-        )
+        
         final_model_name = model_name or self.default_model_name
-
-        response = await loop.run_in_executor(
-            self.executor,
-            lambda: client.models.generate_content(
-                model=final_model_name, contents=[prompt], config=gen_config
-            ),
+        
+        # 使用 generate_simple_response 统一处理 API 选择
+        return await self.generate_simple_response(
+            prompt=prompt,
+            generation_config=gen_config_params,
+            model_name=final_model_name,
         )
-
-        if response.parts:
-            return response.text.strip()
-        return None
 
     async def generate_simple_response(
         self,
@@ -1971,6 +1963,9 @@ class GeminiService:
         api_key = getattr(app_config, '_db_api_key', None) or os.getenv("GEMINI_API_KEYS", "")
         
         final_model_name = model_name or self.default_model_name
+        
+        # 调试日志
+        log.debug(f"generate_simple_response 配置检查: api_format={api_format}, api_url={'已配置' if api_url else '未配置'}, api_key={'已配置' if api_key else '未配置'}, model={final_model_name}")
         
         # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
         if api_format == "openai" and api_url and api_key:

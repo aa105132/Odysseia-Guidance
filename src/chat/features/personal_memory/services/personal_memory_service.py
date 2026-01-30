@@ -4,12 +4,7 @@ from sqlalchemy.future import select
 from sqlalchemy import update
 from src.database.database import AsyncSessionLocal
 from src.database.models import CommunityMemberProfile
-from src.chat.config.chat_config import (
-    PROMPT_CONFIG,
-    SUMMARY_MODEL,
-    GEMINI_SUMMARY_GEN_CONFIG,
-    PERSONAL_MEMORY_CONFIG,
-)
+from src.chat.config import chat_config
 from src.chat.services.gemini_service import gemini_service
 
 log = logging.getLogger(__name__)
@@ -65,7 +60,7 @@ class PersonalMemoryService:
 
                 log.debug(f"用户 {user_id} 的消息计数更新为: {new_count}")
 
-                if new_count >= PERSONAL_MEMORY_CONFIG["summary_threshold"]:
+                if new_count >= chat_config.PERSONAL_MEMORY_CONFIG["summary_threshold"]:
                     log.info(f"用户 {user_id} 达到阈值，准备总结。")
                     history_to_summarize = list(new_history)
                     setattr(profile, "personal_message_count", 0)
@@ -95,7 +90,7 @@ class PersonalMemoryService:
             return
 
         # 3. 构建 Prompt 并调用 AI 生成新摘要
-        prompt_template = PROMPT_CONFIG.get("personal_memory_summary")
+        prompt_template = chat_config.PROMPT_CONFIG.get("personal_memory_summary")
         if not prompt_template:
             log.error("未找到 'personal_memory_summary' 的 prompt 模板。")
             return
@@ -112,8 +107,8 @@ class PersonalMemoryService:
 
         new_summary = await gemini_service.generate_simple_response(
             prompt=final_prompt,
-            generation_config=GEMINI_SUMMARY_GEN_CONFIG,
-            model_name=SUMMARY_MODEL,
+            generation_config=chat_config.GEMINI_SUMMARY_GEN_CONFIG,
+            model_name=chat_config.SUMMARY_MODEL,
         )
 
         # 4. 将新摘要保存到数据库

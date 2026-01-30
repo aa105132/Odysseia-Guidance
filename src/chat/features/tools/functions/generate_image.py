@@ -9,6 +9,8 @@ import logging
 import discord
 from typing import Optional
 
+from src.chat.utils.prompt_utils import replace_emojis
+
 log = logging.getLogger(__name__)
 
 # 图片生成相关的emoji
@@ -125,7 +127,9 @@ async def generate_image(
     channel = kwargs.get("channel")
     if channel and preview_message:
         try:
-            await channel.send(preview_message)
+            # 替换表情占位符为实际表情
+            processed_message = replace_emojis(preview_message)
+            await channel.send(processed_message)
             log.info(f"已发送图片生成预告消息: {preview_message[:50]}...")
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
