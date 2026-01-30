@@ -233,6 +233,7 @@ async def get_ai_config(token: str = Depends(verify_token)):
     db_query_model = await chat_db_manager.get_global_setting("query_model")
     db_api_url = await chat_db_manager.get_global_setting("gemini_api_url")
     db_api_key = await chat_db_manager.get_global_setting("gemini_api_key")
+    db_api_format = await chat_db_manager.get_global_setting("ai_api_format")
     
     # 优先使用数据库值，否则回退到环境变量/内存配置
     model = db_model or chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL
@@ -244,10 +245,22 @@ async def get_ai_config(token: str = Depends(verify_token)):
     # API URL 和 Key：优先数据库，其次环境变量
     api_url = db_api_url or os.getenv("GEMINI_API_BASE_URL", "")
     api_key = db_api_key or os.getenv("GEMINI_API_KEYS", "")
+    api_format = db_api_format or "gemini"
     
     # 隐藏敏感信息
     masked_url = api_url[:30] + "..." if len(api_url) > 30 else api_url
     masked_key = api_key[:10] + "..." + api_key[-4:] if len(api_key) > 14 else "***"
+    
+    # 构建可用模型列表，确保当前选择的模型在列表中
+    available_models = [
+        "codex-gpt-5.2",
+        "gcli-gemini-3-flash-preview-nothinking",
+        "gcli-gemini-3-flash-preview",
+        "gemini-2.5-flash-lite",
+    ]
+    # 如果当前模型不在列表中，添加到开头
+    if model and model not in available_models:
+        available_models.insert(0, model)
     
     return {
         "model": model,
@@ -260,15 +273,8 @@ async def get_ai_config(token: str = Depends(verify_token)):
         "api_url_masked": masked_url,
         "api_key_masked": masked_key,
         "has_api_key": bool(api_key),
-        "available_models": [
-            "gcli-gemini-3-flash-preview-nothinking",
-            "gcli-gemini-3-flash-preview",
-            "gemini-3-flash-custom",
-            "gemini-3-pro-preview-custom",
-            "gemini-2.5-flash-custom",
-            "gemini-2.5-pro-custom",
-            "gemini-2.5-flash-lite",
-        ]
+        "api_format": api_format,
+        "available_models": available_models
     }
 
 
@@ -347,6 +353,15 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         updated["query_model"] = config.query_model
         # 写入数据库
         await chat_db_manager.set_global_setting("query_model", config.query_model)
+    
+    if config.api_format is not None:
+        if config.api_format not in ["gemini", "openai"]:
+            raise HTTPException(400, "API 格式必须是 'gemini' 或 'openai'")
+        chat_config._db_api_format = config.api_format
+        # 写入数据库
+        await chat_db_manager.set_global_setting("ai_api_format", config.api_format)
+        updated["api_format"] = config.api_format
+        log.info(f"✅ API 格式已保存: {config.api_format}")
     
     # 如果有环境变量更新，尝试写入 .env 文件（作为备份）
     if env_updates:

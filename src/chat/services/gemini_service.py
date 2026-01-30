@@ -11,6 +11,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import re
 import base64
+import aiohttp
 
 from PIL import Image
 import io
@@ -723,8 +724,34 @@ class GeminiService:
             log.error(error_msg)
             raise ValueError(error_msg)
 
-        # --- 关键：为自定义端点单独创建客户端，不使用全局的 _create_client_with_key ---
-        log.info(f"正在为自定义端点创建客户端: {endpoint_config['base_url']}")
+        # 获取 API 格式配置
+        api_format = getattr(app_config, '_db_api_format', None) or "gemini"
+        log.info(f"正在为自定义端点创建客户端: {endpoint_config['base_url']} (格式: {api_format})")
+        
+        # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
+        if api_format == "openai":
+            return await self._generate_with_openai_compatible(
+                user_id=user_id,
+                guild_id=guild_id,
+                message=message,
+                channel=channel,
+                replied_message=replied_message,
+                images=images,
+                user_name=user_name,
+                channel_context=channel_context,
+                world_book_entries=world_book_entries,
+                personal_summary=personal_summary,
+                affection_status=affection_status,
+                user_profile_data=user_profile_data,
+                guild_name=guild_name,
+                location_name=location_name,
+                model_name=endpoint_config.get("model_name") or model_name,
+                discord_message=discord_message,
+                api_url=endpoint_config["base_url"],
+                api_key=endpoint_config["api_key"],
+            )
+        
+        # Gemini 格式：使用 Gemini SDK
         http_options = types.HttpOptions(base_url=endpoint_config["base_url"])
         client = genai.Client(
             api_key=endpoint_config["api_key"], http_options=http_options
@@ -1249,6 +1276,137 @@ class GeminiService:
             return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？✨"
         return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？✨"
 
+    async def _generate_with_openai_compatible(
+        self,
+        user_id: int,
+        guild_id: int,
+        message: str,
+        channel: Optional[Any] = None,
+        replied_message: Optional[str] = None,
+        images: Optional[List[Dict]] = None,
+        user_name: str = "用户",
+        channel_context: Optional[List[Dict]] = None,
+        world_book_entries: Optional[List[Dict]] = None,
+        personal_summary: Optional[str] = None,
+        affection_status: Optional[Dict[str, Any]] = None,
+        user_profile_data: Optional[Dict[str, Any]] = None,
+        guild_name: str = "未知服务器",
+        location_name: str = "未知位置",
+        model_name: Optional[str] = None,
+        discord_message: Optional[Any] = None,
+        api_url: str = "",
+        api_key: str = "",
+    ) -> str:
+        """
+        使用 OpenAI 兼容的 API 生成回复。
+        用于支持 OpenAI 格式的第三方服务（如 tc.chenbufan.cloud）。
+        """
+        log.info(f"使用 OpenAI 兼容 API 生成回复: {api_url}, 模型: {model_name}")
+        
+        # 构建完整的对话提示
+        final_conversation = prompt_service.build_chat_prompt(
+            user_name=user_name,
+            message=message,
+            replied_message=replied_message,
+            images=images,
+            channel_context=channel_context,
+            world_book_entries=world_book_entries,
+            affection_status=affection_status,
+            personal_summary=personal_summary,
+            user_profile_data=user_profile_data,
+            guild_name=guild_name,
+            location_name=location_name,
+            model_name=model_name,
+            channel=channel,
+            user_id=user_id,
+        )
+        
+        # 转换为 OpenAI 格式的 messages
+        messages = []
+        for turn in final_conversation:
+            role = turn.get("role")
+            parts = turn.get("parts", [])
+            
+            # OpenAI 使用 "assistant" 而不是 "model"
+            if role == "model":
+                role = "assistant"
+            
+            # 合并所有 parts 为一个字符串
+            content_parts = []
+            for part in parts:
+                if isinstance(part, str):
+                    content_parts.append(part)
+                elif isinstance(part, Image.Image):
+                    # 图片需要 base64 编码（简化处理）
+                    buffered = io.BytesIO()
+                    part.save(buffered, format="PNG")
+                    img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                    content_parts.append(f"[图片已省略]")
+            
+            content = "\n".join(content_parts)
+            if content:
+                messages.append({"role": role, "content": content})
+        
+        # 获取生成参数
+        model_key = model_name or "default"
+        gen_config = app_config.MODEL_GENERATION_CONFIG.get(
+            model_key, app_config.MODEL_GENERATION_CONFIG.get("default", {})
+        )
+        temperature = gen_config.get("temperature", 1.0)
+        max_tokens = gen_config.get("max_output_tokens", 8192)
+        
+        # 调用 OpenAI 兼容 API
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        # 确保 URL 正确
+        if not api_url.endswith("/chat/completions"):
+            if api_url.endswith("/"):
+                api_url = api_url + "chat/completions"
+            else:
+                api_url = api_url + "/chat/completions"
+        
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(api_url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        log.error(f"OpenAI 兼容 API 返回错误 {response.status}: {error_text}")
+                        raise Exception(f"API 返回 {response.status}: {error_text}")
+                    
+                    result = await response.json()
+                    
+                    # 提取回复内容
+                    if "choices" in result and len(result["choices"]) > 0:
+                        raw_response = result["choices"][0].get("message", {}).get("content", "")
+                        
+                        # 记录 Token 使用
+                        if "usage" in result:
+                            usage = result["usage"]
+                            log.info(f"OpenAI API Token 使用: 输入={usage.get('prompt_tokens', 0)}, 输出={usage.get('completion_tokens', 0)}")
+                        
+                        # 后处理
+                        final_response = await self._post_process_response(raw_response, user_id, guild_id)
+                        return final_response
+                    else:
+                        log.warning(f"OpenAI 兼容 API 返回空响应: {result}")
+                        return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？"
+        except asyncio.TimeoutError:
+            log.error("OpenAI 兼容 API 请求超时")
+            return "呜哇，思考得太久了，脑子要转不动了…再试一次吧！"
+        except Exception as e:
+            log.error(f"OpenAI 兼容 API 调用失败: {e}", exc_info=True)
+            raise  # 重新抛出异常让调用方处理回退逻辑
+    
     async def generate_embedding(
         self,
         text: str,

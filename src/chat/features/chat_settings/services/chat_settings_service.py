@@ -63,6 +63,11 @@ class ChatSettingsService:
             chat_config._db_api_key = db_api_key
             log.info(f"  ✅ API Key: 已加载")
         
+        db_api_format = await self.db_manager.get_global_setting("ai_api_format")
+        if db_api_format:
+            chat_config._db_api_format = db_api_format
+            log.info(f"  ✅ API 格式: {db_api_format}")
+        
         # --- Imagen 配置 ---
         db_imagen_enabled = await self.db_manager.get_global_setting("imagen_enabled")
         if db_imagen_enabled:

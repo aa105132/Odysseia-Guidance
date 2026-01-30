@@ -1135,7 +1135,19 @@
                 
                 syncForms() {
                     if (this.config.ai) {
-                        this.aiForm.model = this.config.ai.model;
+                        const loadedModel = this.config.ai.model || '';
+                        const presetModels = this.config.ai.available_models || [];
+                        
+                        // 检查加载的模型是否在预设列表中
+                        if (presetModels.includes(loadedModel)) {
+                            this.aiForm.model = loadedModel;
+                            this.aiForm.custom_model = '';
+                        } else {
+                            // 自定义模型，放到 custom_model 字段显示
+                            this.aiForm.model = presetModels[0] || '';
+                            this.aiForm.custom_model = loadedModel;
+                        }
+                        
                         this.aiForm.temperature = this.config.ai.temperature;
                         this.aiForm.max_tokens = this.config.ai.max_tokens;
                         this.aiForm.api_url = this.config.ai.api_url || '';
