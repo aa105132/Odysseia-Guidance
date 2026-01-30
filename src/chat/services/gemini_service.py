@@ -1280,6 +1280,107 @@ class GeminiService:
             return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？✨"
         return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？✨"
 
+    def _convert_tools_to_openai_format(self) -> List[Dict]:
+        """
+        将 Gemini 格式的工具转换为 OpenAI 格式。
+        使用函数的签名和文档字符串自动生成 OpenAI 工具定义。
+        """
+        import inspect
+        from typing import get_type_hints, get_origin, get_args, Union
+        from pydantic import BaseModel
+        
+        openai_tools = []
+        
+        for func in self.available_tools:
+            try:
+                # 获取函数签名和文档字符串
+                sig = inspect.signature(func)
+                doc = inspect.getdoc(func) or ""
+                
+                # 构建参数模式
+                properties = {}
+                required = []
+                
+                # 尝试获取类型提示
+                try:
+                    hints = get_type_hints(func)
+                except Exception:
+                    hints = {}
+                
+                for param_name, param in sig.parameters.items():
+                    # 跳过特殊参数
+                    if param_name in ('kwargs', 'args', 'bot', 'channel', 'message'):
+                        continue
+                    
+                    param_type = hints.get(param_name, param.annotation)
+                    
+                    # 确定参数类型
+                    param_schema = {"type": "string"}  # 默认类型
+                    
+                    if param_type != inspect.Parameter.empty:
+                        origin = get_origin(param_type)
+                        
+                        if param_type == str:
+                            param_schema = {"type": "string"}
+                        elif param_type == int:
+                            param_schema = {"type": "integer"}
+                        elif param_type == float:
+                            param_schema = {"type": "number"}
+                        elif param_type == bool:
+                            param_schema = {"type": "boolean"}
+                        elif origin == list or param_type == list:
+                            param_schema = {"type": "array", "items": {"type": "string"}}
+                        elif origin == Union:
+                            # 处理 Optional 类型
+                            args = get_args(param_type)
+                            non_none_args = [a for a in args if a is not type(None)]
+                            if non_none_args:
+                                first_arg = non_none_args[0]
+                                if first_arg == str:
+                                    param_schema = {"type": "string"}
+                                elif first_arg == int:
+                                    param_schema = {"type": "integer"}
+                                elif hasattr(first_arg, '__mro__') and BaseModel in first_arg.__mro__:
+                                    # Pydantic 模型
+                                    try:
+                                        param_schema = first_arg.model_json_schema()
+                                    except:
+                                        param_schema = {"type": "object"}
+                        elif hasattr(param_type, '__mro__') and BaseModel in param_type.__mro__:
+                            # Pydantic 模型
+                            try:
+                                param_schema = param_type.model_json_schema()
+                            except:
+                                param_schema = {"type": "object"}
+                    
+                    properties[param_name] = param_schema
+                    
+                    # 检查是否为必需参数
+                    if param.default == inspect.Parameter.empty:
+                        required.append(param_name)
+                
+                # 构建 OpenAI 工具定义
+                tool_def = {
+                    "type": "function",
+                    "function": {
+                        "name": func.__name__,
+                        "description": doc.split("\n")[0] if doc else f"调用 {func.__name__} 工具",
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required,
+                        }
+                    }
+                }
+                
+                openai_tools.append(tool_def)
+                
+            except Exception as e:
+                log.warning(f"转换工具 {func.__name__} 到 OpenAI 格式时出错: {e}")
+                continue
+        
+        return openai_tools
+
     async def _generate_with_openai_compatible(
         self,
         user_id: int,
@@ -1304,6 +1405,7 @@ class GeminiService:
         """
         使用 OpenAI 兼容的 API 生成回复。
         用于支持 OpenAI 格式的第三方服务（如 Claude API 代理）。
+        支持工具调用循环。
         """
         log.info(f"使用 OpenAI 兼容 API 生成回复: {api_url}, 模型: {model_name}")
         
@@ -1326,7 +1428,166 @@ class GeminiService:
         )
         
         # 转换为 OpenAI 格式的 messages
-        # 关键：正确处理 system/user/assistant 角色
+        messages = self._convert_conversation_to_openai_messages(final_conversation)
+        
+        # 确保消息顺序正确
+        messages = self._fix_message_order_for_openai(messages)
+        
+        # 获取生成参数
+        model_key = model_name or "default"
+        gen_config = app_config.MODEL_GENERATION_CONFIG.get(
+            model_key, app_config.MODEL_GENERATION_CONFIG.get("default", {})
+        )
+        temperature = gen_config.get("temperature", 1.0)
+        max_tokens = gen_config.get("max_output_tokens", 8192)
+        
+        # 转换工具定义
+        openai_tools = self._convert_tools_to_openai_format()
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        # 智能处理 URL 路径
+        base_api_url = api_url.rstrip("/")
+        if not base_api_url.endswith("/chat/completions"):
+            if "/v1" in base_api_url and not base_api_url.endswith("/v1"):
+                base_api_url = base_api_url + "/chat/completions"
+            elif base_api_url.endswith("/v1"):
+                base_api_url = base_api_url + "/chat/completions"
+            else:
+                base_api_url = base_api_url + "/v1/chat/completions"
+        
+        # 工具调用循环
+        max_tool_calls = 5
+        called_tool_names = []
+        
+        for iteration in range(max_tool_calls):
+            payload = {
+                "model": model_name,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            
+            # 添加工具定义（如果有的话）
+            if openai_tools:
+                payload["tools"] = openai_tools
+                payload["tool_choice"] = "auto"
+            
+            # 调试日志
+            if app_config.DEBUG_CONFIG.get("LOG_AI_FULL_CONTEXT", False):
+                log.info(f"OpenAI API 请求 URL: {base_api_url}")
+                log.info(f"OpenAI API 消息数量: {len(messages)}, 迭代: {iteration + 1}")
+                if openai_tools:
+                    log.info(f"OpenAI API 工具数量: {len(openai_tools)}")
+            
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        base_api_url,
+                        headers=headers,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=180)
+                    ) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            log.error(f"OpenAI 兼容 API 返回错误 {response.status}: {error_text}")
+                            try:
+                                error_json = json.loads(error_text)
+                                error_msg = error_json.get("error", {}).get("message", error_text)
+                            except:
+                                error_msg = error_text
+                            raise Exception(f"API 返回 {response.status}: {error_msg}")
+                        
+                        result = await response.json()
+                        
+                        if "choices" not in result or len(result["choices"]) == 0:
+                            log.warning(f"OpenAI 兼容 API 返回空响应: {result}")
+                            return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？"
+                        
+                        choice = result["choices"][0]
+                        message_response = choice.get("message", {})
+                        
+                        # 记录 Token 使用
+                        if "usage" in result:
+                            usage = result["usage"]
+                            log.info(f"OpenAI API Token 使用: 输入={usage.get('prompt_tokens', 0)}, 输出={usage.get('completion_tokens', 0)}")
+                        
+                        # 检查是否有工具调用
+                        tool_calls = message_response.get("tool_calls", [])
+                        
+                        if tool_calls:
+                            log.info(f"OpenAI API 返回 {len(tool_calls)} 个工具调用")
+                            
+                            # 将助手消息添加到对话历史
+                            messages.append({
+                                "role": "assistant",
+                                "content": message_response.get("content") or "",
+                                "tool_calls": tool_calls
+                            })
+                            
+                            # 执行每个工具调用
+                            for tool_call in tool_calls:
+                                tool_name = tool_call.get("function", {}).get("name", "")
+                                tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
+                                tool_call_id = tool_call.get("id", "")
+                                
+                                called_tool_names.append(tool_name)
+                                log.info(f"执行工具: {tool_name}, 参数: {tool_args_str}")
+                                
+                                try:
+                                    tool_args = json.loads(tool_args_str)
+                                except json.JSONDecodeError:
+                                    tool_args = {}
+                                
+                                # 执行工具
+                                tool_result = await self._execute_openai_tool_call(
+                                    tool_name=tool_name,
+                                    tool_args=tool_args,
+                                    channel=channel,
+                                    user_id=user_id,
+                                    discord_message=discord_message,
+                                )
+                                
+                                # 将工具结果添加到对话历史
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "content": json.dumps(tool_result, ensure_ascii=False) if isinstance(tool_result, (dict, list)) else str(tool_result)
+                                })
+                            
+                            # 继续循环以获取最终响应
+                            continue
+                        
+                        # 没有工具调用，返回最终响应
+                        raw_response = message_response.get("content", "")
+                        
+                        # 记录调用的工具
+                        if called_tool_names:
+                            self.last_called_tools = called_tool_names
+                            log.info(f"OpenAI 工具调用循环完成，共调用了 {len(called_tool_names)} 个工具: {called_tool_names}")
+                        
+                        # 后处理
+                        final_response = await self._post_process_response(raw_response, user_id, guild_id)
+                        return final_response
+                        
+            except asyncio.TimeoutError:
+                log.error("OpenAI 兼容 API 请求超时")
+                return "呜哇，思考得太久了，脑子要转不动了…再试一次吧！"
+            except Exception as e:
+                log.error(f"OpenAI 兼容 API 调用失败: {e}", exc_info=True)
+                raise
+        
+        # 达到最大工具调用次数
+        log.warning(f"OpenAI 工具调用循环达到最大次数 {max_tool_calls}")
+        return "呜...思考太多次了，脑子有点转不过来，请重新问一下吧！"
+    
+    def _convert_conversation_to_openai_messages(self, final_conversation: List[Dict]) -> List[Dict]:
+        """
+        将内部对话格式转换为 OpenAI 消息格式。
+        """
         messages = []
         system_content_parts = []
         
@@ -1334,7 +1595,6 @@ class GeminiService:
             role = turn.get("role")
             parts = turn.get("parts", [])
             
-            # 合并所有 parts 为一个字符串或多模态内容
             content_parts = []
             image_parts = []
             
@@ -1342,10 +1602,8 @@ class GeminiService:
                 if isinstance(part, str):
                     content_parts.append(part)
                 elif isinstance(part, Image.Image):
-                    # 图片需要 base64 编码
                     try:
                         buffered = io.BytesIO()
-                        # 转换为 RGB 模式（处理 RGBA 等情况）
                         if part.mode in ('RGBA', 'LA', 'P'):
                             part = part.convert('RGB')
                         part.save(buffered, format="JPEG", quality=85)
@@ -1360,7 +1618,6 @@ class GeminiService:
                         log.warning(f"处理图片时出错: {img_error}")
                         content_parts.append("[图片处理失败]")
                 elif isinstance(part, dict):
-                    # 处理已经是字典格式的图片数据
                     if "data" in part or "bytes" in part:
                         try:
                             img_bytes = part.get("data") or part.get("bytes")
@@ -1378,128 +1635,73 @@ class GeminiService:
             
             text_content = "\n".join(content_parts) if content_parts else ""
             
-            # 处理角色转换
             if role == "model":
                 role = "assistant"
             elif role == "system":
-                # 收集所有系统消息内容
                 if text_content:
                     system_content_parts.append(text_content)
-                continue  # 不直接添加，稍后统一处理
+                continue
             
             if not text_content and not image_parts:
                 continue
             
-            # 构建消息内容
             if image_parts:
-                # 多模态消息格式
                 content = []
                 if text_content:
                     content.append({"type": "text", "text": text_content})
                 content.extend(image_parts)
                 messages.append({"role": role, "content": content})
             else:
-                # 纯文本消息
                 messages.append({"role": role, "content": text_content})
         
-        # 如果有系统消息，插入到开头
         if system_content_parts:
             system_content = "\n\n".join(system_content_parts)
             messages.insert(0, {"role": "system", "content": system_content})
         
-        # 确保消息顺序正确（user 和 assistant 交替，首条必须是 user 或 system）
-        messages = self._fix_message_order_for_openai(messages)
+        return messages
+    
+    async def _execute_openai_tool_call(
+        self,
+        tool_name: str,
+        tool_args: Dict,
+        channel: Optional[Any] = None,
+        user_id: Optional[int] = None,
+        discord_message: Optional[Any] = None,
+    ) -> Any:
+        """
+        执行 OpenAI 格式的工具调用。
+        """
+        tool_function = self.tool_map.get(tool_name)
         
-        # 获取生成参数
-        model_key = model_name or "default"
-        gen_config = app_config.MODEL_GENERATION_CONFIG.get(
-            model_key, app_config.MODEL_GENERATION_CONFIG.get("default", {})
-        )
-        temperature = gen_config.get("temperature", 1.0)
-        max_tokens = gen_config.get("max_output_tokens", 8192)
-        
-        # 调用 OpenAI 兼容 API
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        
-        # 智能处理 URL 路径
-        # 移除尾部斜杠并检查是否已包含完整路径
-        api_url = api_url.rstrip("/")
-        if not api_url.endswith("/chat/completions"):
-            # 检查是否已经有 /v1 前缀
-            if "/v1" in api_url and not api_url.endswith("/v1"):
-                # URL 类似 https://api.example.com/v1 -> 添加 /chat/completions
-                api_url = api_url + "/chat/completions"
-            elif api_url.endswith("/v1"):
-                api_url = api_url + "/chat/completions"
-            else:
-                # 没有 /v1，尝试添加完整路径
-                api_url = api_url + "/v1/chat/completions"
-        
-        payload = {
-            "model": model_name,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        
-        # 调试日志
-        if app_config.DEBUG_CONFIG.get("LOG_AI_FULL_CONTEXT", False):
-            log.info(f"OpenAI API 请求 URL: {api_url}")
-            log.info(f"OpenAI API 消息数量: {len(messages)}")
-            for i, msg in enumerate(messages[:3]):  # 只打印前3条
-                role = msg.get("role")
-                content = msg.get("content")
-                if isinstance(content, str):
-                    preview = content[:200] + "..." if len(content) > 200 else content
-                else:
-                    preview = f"[多模态内容: {len(content)} 部分]"
-                log.info(f"  消息 {i}: role={role}, content={preview}")
+        if not tool_function:
+            log.error(f"找不到工具 '{tool_name}' 的实现。")
+            return {"error": f"Tool '{tool_name}' not found."}
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=180)
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        log.error(f"OpenAI 兼容 API 返回错误 {response.status}: {error_text}")
-                        # 尝试解析错误详情
-                        try:
-                            error_json = json.loads(error_text)
-                            error_msg = error_json.get("error", {}).get("message", error_text)
-                        except:
-                            error_msg = error_text
-                        raise Exception(f"API 返回 {response.status}: {error_msg}")
-                    
-                    result = await response.json()
-                    
-                    # 提取回复内容
-                    if "choices" in result and len(result["choices"]) > 0:
-                        raw_response = result["choices"][0].get("message", {}).get("content", "")
-                        
-                        # 记录 Token 使用
-                        if "usage" in result:
-                            usage = result["usage"]
-                            log.info(f"OpenAI API Token 使用: 输入={usage.get('prompt_tokens', 0)}, 输出={usage.get('completion_tokens', 0)}")
-                        
-                        # 后处理
-                        final_response = await self._post_process_response(raw_response, user_id, guild_id)
-                        return final_response
-                    else:
-                        log.warning(f"OpenAI 兼容 API 返回空响应: {result}")
-                        return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？"
-        except asyncio.TimeoutError:
-            log.error("OpenAI 兼容 API 请求超时")
-            return "呜哇，思考得太久了，脑子要转不动了…再试一次吧！"
+            # 注入上下文
+            tool_args["bot"] = self.bot
+            if user_id is not None:
+                tool_args["user_id"] = str(user_id)
+            if channel is not None:
+                tool_args["channel"] = channel
+            if discord_message is not None:
+                tool_args["message"] = discord_message
+            
+            # 执行工具
+            result = await tool_function(**tool_args)
+            
+            # 处理结果
+            if isinstance(result, (dict, list, str, int, float, bool)):
+                return result
+            elif hasattr(result, 'function_response') and result.function_response:
+                # Gemini 格式的 Part 响应
+                return result.function_response.response
+            else:
+                return str(result)
+                
         except Exception as e:
-            log.error(f"OpenAI 兼容 API 调用失败: {e}", exc_info=True)
-            raise  # 重新抛出异常让调用方处理回退逻辑
+            log.error(f"执行工具 '{tool_name}' 时发生错误: {e}", exc_info=True)
+            return {"error": str(e)}
     
     def _fix_message_order_for_openai(self, messages: List[Dict]) -> List[Dict]:
         """
