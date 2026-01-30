@@ -15,8 +15,9 @@ from pgvector.sqlalchemy import HALFVEC
 
 # --- 全局配置 ---
 # 向量维度：必须与 Dashboard 中配置的 EMBEDDING_DIMENSIONS 一致
-# 常用值：768 (Gemini), 1024 (BGE-M3), 3072, 4096 (Qwen3-Embedding)
-EMBEDDING_DIMENSION = 4096  # 修改为你使用的嵌入模型的维度
+# 注意：PostgreSQL HNSW 索引最大支持 4000 维
+# 常用值：768 (Gemini), 1024 (BGE), 2560 (Qwen3-Embedding-4B), 3072 (text-embedding-3)
+EMBEDDING_DIMENSION = 2560  # Qwen3-Embedding-4B
 
 # --- Schema 名称 ---
 TUTORIALS_SCHEMA = "tutorials"
