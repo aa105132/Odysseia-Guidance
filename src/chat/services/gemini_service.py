@@ -507,11 +507,15 @@ class GeminiService:
         )
         # formatted = regex_service.clean_ai_output(formatted)
 
-        # 2. Remove old Discord emoji codes
+        # 2. Remove old Discord emoji codes (like :emoji_name:)
         discord_emoji_pattern = re.compile(r":\w+:")
         formatted = discord_emoji_pattern.sub("", formatted)
 
-        # 3. Replace custom emoji placeholders using the centralized function
+        # 3. 清理 AI 错误输出的纯数字ID格式 <123456789>
+        # 注意：保留完整的 Discord 表情格式 <:name:id> 和 <a:name:id>，因为用户可能让 AI 发送指定表情
+        formatted = re.sub(r"<\d{15,}>", "", formatted)  # 只移除纯数字ID（Discord ID 至少15位）
+
+        # 4. Replace custom emoji placeholders using the centralized function
         formatted = replace_emojis(formatted)
 
         return formatted
@@ -1299,7 +1303,7 @@ class GeminiService:
     ) -> str:
         """
         使用 OpenAI 兼容的 API 生成回复。
-        用于支持 OpenAI 格式的第三方服务（如 tc.chenbufan.cloud）。
+        用于支持 OpenAI 格式的第三方服务（如 Claude API 代理）。
         """
         log.info(f"使用 OpenAI 兼容 API 生成回复: {api_url}, 模型: {model_name}")
         
@@ -1322,30 +1326,89 @@ class GeminiService:
         )
         
         # 转换为 OpenAI 格式的 messages
+        # 关键：正确处理 system/user/assistant 角色
         messages = []
+        system_content_parts = []
+        
         for turn in final_conversation:
             role = turn.get("role")
             parts = turn.get("parts", [])
             
-            # OpenAI 使用 "assistant" 而不是 "model"
-            if role == "model":
-                role = "assistant"
-            
-            # 合并所有 parts 为一个字符串
+            # 合并所有 parts 为一个字符串或多模态内容
             content_parts = []
+            image_parts = []
+            
             for part in parts:
                 if isinstance(part, str):
                     content_parts.append(part)
                 elif isinstance(part, Image.Image):
-                    # 图片需要 base64 编码（简化处理）
-                    buffered = io.BytesIO()
-                    part.save(buffered, format="PNG")
-                    img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-                    content_parts.append(f"[图片已省略]")
+                    # 图片需要 base64 编码
+                    try:
+                        buffered = io.BytesIO()
+                        # 转换为 RGB 模式（处理 RGBA 等情况）
+                        if part.mode in ('RGBA', 'LA', 'P'):
+                            part = part.convert('RGB')
+                        part.save(buffered, format="JPEG", quality=85)
+                        img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                        image_parts.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{img_base64}"
+                            }
+                        })
+                    except Exception as img_error:
+                        log.warning(f"处理图片时出错: {img_error}")
+                        content_parts.append("[图片处理失败]")
+                elif isinstance(part, dict):
+                    # 处理已经是字典格式的图片数据
+                    if "data" in part or "bytes" in part:
+                        try:
+                            img_bytes = part.get("data") or part.get("bytes")
+                            img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+                            mime_type = part.get("mime_type", "image/jpeg")
+                            image_parts.append({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{img_base64}"
+                                }
+                            })
+                        except Exception as img_error:
+                            log.warning(f"处理图片字典时出错: {img_error}")
+                            content_parts.append("[图片处理失败]")
             
-            content = "\n".join(content_parts)
-            if content:
+            text_content = "\n".join(content_parts) if content_parts else ""
+            
+            # 处理角色转换
+            if role == "model":
+                role = "assistant"
+            elif role == "system":
+                # 收集所有系统消息内容
+                if text_content:
+                    system_content_parts.append(text_content)
+                continue  # 不直接添加，稍后统一处理
+            
+            if not text_content and not image_parts:
+                continue
+            
+            # 构建消息内容
+            if image_parts:
+                # 多模态消息格式
+                content = []
+                if text_content:
+                    content.append({"type": "text", "text": text_content})
+                content.extend(image_parts)
                 messages.append({"role": role, "content": content})
+            else:
+                # 纯文本消息
+                messages.append({"role": role, "content": text_content})
+        
+        # 如果有系统消息，插入到开头
+        if system_content_parts:
+            system_content = "\n\n".join(system_content_parts)
+            messages.insert(0, {"role": "system", "content": system_content})
+        
+        # 确保消息顺序正确（user 和 assistant 交替，首条必须是 user 或 system）
+        messages = self._fix_message_order_for_openai(messages)
         
         # 获取生成参数
         model_key = model_name or "default"
@@ -1361,12 +1424,19 @@ class GeminiService:
             "Content-Type": "application/json",
         }
         
-        # 确保 URL 正确
+        # 智能处理 URL 路径
+        # 移除尾部斜杠并检查是否已包含完整路径
+        api_url = api_url.rstrip("/")
         if not api_url.endswith("/chat/completions"):
-            if api_url.endswith("/"):
-                api_url = api_url + "chat/completions"
-            else:
+            # 检查是否已经有 /v1 前缀
+            if "/v1" in api_url and not api_url.endswith("/v1"):
+                # URL 类似 https://api.example.com/v1 -> 添加 /chat/completions
                 api_url = api_url + "/chat/completions"
+            elif api_url.endswith("/v1"):
+                api_url = api_url + "/chat/completions"
+            else:
+                # 没有 /v1，尝试添加完整路径
+                api_url = api_url + "/v1/chat/completions"
         
         payload = {
             "model": model_name,
@@ -1375,13 +1445,37 @@ class GeminiService:
             "max_tokens": max_tokens,
         }
         
+        # 调试日志
+        if app_config.DEBUG_CONFIG.get("LOG_AI_FULL_CONTEXT", False):
+            log.info(f"OpenAI API 请求 URL: {api_url}")
+            log.info(f"OpenAI API 消息数量: {len(messages)}")
+            for i, msg in enumerate(messages[:3]):  # 只打印前3条
+                role = msg.get("role")
+                content = msg.get("content")
+                if isinstance(content, str):
+                    preview = content[:200] + "..." if len(content) > 200 else content
+                else:
+                    preview = f"[多模态内容: {len(content)} 部分]"
+                log.info(f"  消息 {i}: role={role}, content={preview}")
+        
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as response:
+                async with session.post(
+                    api_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=180)
+                ) as response:
                     if response.status != 200:
                         error_text = await response.text()
                         log.error(f"OpenAI 兼容 API 返回错误 {response.status}: {error_text}")
-                        raise Exception(f"API 返回 {response.status}: {error_text}")
+                        # 尝试解析错误详情
+                        try:
+                            error_json = json.loads(error_text)
+                            error_msg = error_json.get("error", {}).get("message", error_text)
+                        except:
+                            error_msg = error_text
+                        raise Exception(f"API 返回 {response.status}: {error_msg}")
                     
                     result = await response.json()
                     
@@ -1406,6 +1500,64 @@ class GeminiService:
         except Exception as e:
             log.error(f"OpenAI 兼容 API 调用失败: {e}", exc_info=True)
             raise  # 重新抛出异常让调用方处理回退逻辑
+    
+    def _fix_message_order_for_openai(self, messages: List[Dict]) -> List[Dict]:
+        """
+        修复消息顺序以符合 OpenAI/Claude API 要求。
+        - system 消息必须在开头
+        - user 和 assistant 消息必须交替
+        - 不能有连续的相同角色消息
+        """
+        if not messages:
+            return messages
+        
+        fixed = []
+        system_msgs = []
+        other_msgs = []
+        
+        # 分离 system 消息和其他消息
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_msgs.append(msg)
+            else:
+                other_msgs.append(msg)
+        
+        # 合并所有 system 消息为一条
+        if system_msgs:
+            combined_system = "\n\n".join(
+                msg.get("content", "") if isinstance(msg.get("content"), str)
+                else "[系统消息]"
+                for msg in system_msgs
+            )
+            fixed.append({"role": "system", "content": combined_system})
+        
+        # 处理其他消息，合并连续相同角色的消息
+        prev_role = None
+        for msg in other_msgs:
+            role = msg.get("role")
+            content = msg.get("content")
+            
+            if role == prev_role and fixed:
+                # 合并到上一条消息
+                last_msg = fixed[-1]
+                if isinstance(last_msg.get("content"), str) and isinstance(content, str):
+                    last_msg["content"] = last_msg["content"] + "\n\n" + content
+                elif isinstance(content, str):
+                    # 上一条是多模态，当前是文本
+                    if isinstance(last_msg.get("content"), list):
+                        last_msg["content"].append({"type": "text", "text": content})
+                # 其他情况保持原样
+            else:
+                fixed.append(msg)
+                prev_role = role
+        
+        # 确保第一条非系统消息是 user
+        non_system_start = 1 if fixed and fixed[0].get("role") == "system" else 0
+        if len(fixed) > non_system_start and fixed[non_system_start].get("role") == "assistant":
+            # 在 assistant 前插入一个空的 user 消息
+            fixed.insert(non_system_start, {"role": "user", "content": "[对话开始]"})
+        
+        return fixed
     
     async def generate_embedding(
         self,

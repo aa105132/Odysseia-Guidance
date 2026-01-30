@@ -22,6 +22,7 @@ class PersonalMemoryService:
         """
         核心入口：更新对话历史和计数，并在达到阈值时触发总结。
         所有数据库操作都在ParadeDB中完成。
+        如果用户没有档案，会自动创建一个。
         """
         history_to_summarize = None
         async with AsyncSessionLocal() as session:
@@ -34,11 +35,20 @@ class PersonalMemoryService:
                 result = await session.execute(stmt)
                 profile = result.scalars().first()
 
+                # 如果用户没有档案，自动创建一个基础档案
                 if not profile:
-                    log.warning(f"用户 {user_id} 没有个人档案，无法记录记忆。")
-                    return
+                    log.info(f"用户 {user_id} 没有个人档案，正在自动创建...")
+                    profile = CommunityMemberProfile(
+                        discord_id=str(user_id),
+                        nickname=user_name,
+                        personal_message_count=0,
+                        history=[],
+                    )
+                    session.add(profile)
+                    await session.flush()  # 确保 profile 被写入数据库
+                    log.info(f"已为用户 {user_id} 自动创建个人档案。")
 
-                current_count = getattr(profile, "personal_message_count", 0)
+                current_count = getattr(profile, "personal_message_count", 0) or 0
                 new_count = current_count + 1
                 setattr(profile, "personal_message_count", new_count)
 
