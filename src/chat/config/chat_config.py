@@ -26,7 +26,7 @@ UNRESTRICTED_CHANNEL_IDS = _parse_ids("UNRESTRICTED_CHANNEL_IDS")
 
 # --- Gemini AI 配置 ---
 # 定义要使用的 Gemini 模型名称（从环境变量读取）
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-custom")
 
 # --- AI 模型参数配置 ---
 # 用于 Dashboard 动态修改
