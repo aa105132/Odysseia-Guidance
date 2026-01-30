@@ -184,6 +184,8 @@ async def get_all_config(token: str = Depends(verify_token)):
             "model": chat_config.PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
             "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
             "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
+            "summary_model": chat_config.SUMMARY_MODEL,
+            "query_model": chat_config.QUERY_REWRITING_MODEL,
             "persona_name": "月月",
             "api_url": ai_api_url,
             "api_key_masked": ai_masked_key,
@@ -191,6 +193,7 @@ async def get_all_config(token: str = Depends(verify_token)):
             "available_models": [
                 "gemini-2.0-flash",
                 "gemini-2.0-flash-lite",
+                "gemini-2.5-flash-lite",
                 "gemini-2.5-pro-preview-05-06",
                 "gemini-2.5-flash-preview-05-20",
                 "gemini-exp-1206",
