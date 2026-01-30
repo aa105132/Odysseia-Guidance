@@ -79,8 +79,9 @@ def _get_imagen_config():
         "API_KEY": os.getenv("GEMINI_IMAGEN_API_KEY"),  # 如果为空则使用默认的 Gemini API 密钥
         "BASE_URL": os.getenv("GEMINI_IMAGEN_BASE_URL"),  # 自定义端点 URL，留空使用默认
         "MODEL_NAME": os.getenv("GEMINI_IMAGEN_MODEL", "imagen-3.0-generate-002"),
-        # 图生图使用的模型（需要支持多模态图像生成，如 gemini-2.0-flash-exp）
-        "EDIT_MODEL_NAME": os.getenv("GEMINI_IMAGEN_EDIT_MODEL", "gemini-2.0-flash-exp"),
+        # 图生图使用的模型（需要支持多模态图像生成）
+        # 如果未设置，将自动使用普通绘图模型 MODEL_NAME
+        "EDIT_MODEL_NAME": os.getenv("GEMINI_IMAGEN_EDIT_MODEL") or None,
         "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "30")),  # 生成一张图片的月光币成本
         "IMAGE_EDIT_COST": int(os.getenv("GEMINI_IMAGEN_EDIT_COST", "40")),  # 图生图的月光币成本（略高）
         "SAFETY_FILTER_LEVEL": os.getenv("GEMINI_IMAGEN_SAFETY_LEVEL", "BLOCK_LOW_AND_ABOVE"),

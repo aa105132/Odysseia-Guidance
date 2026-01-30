@@ -181,7 +181,7 @@ async def get_all_config(token: str = Depends(verify_token)):
     
     return {
         "ai": {
-            "model": chat_config.PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
+            "model": chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL,
             "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
             "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
             "summary_model": chat_config.SUMMARY_MODEL,
@@ -191,18 +191,17 @@ async def get_all_config(token: str = Depends(verify_token)):
             "api_key_masked": ai_masked_key,
             "has_api_key": bool(ai_api_key),
             "available_models": [
-                "gemini-2.0-flash",
-                "gemini-2.0-flash-lite",
+                "gemini-3-flash-custom",
+                "gemini-3-pro-preview-custom",
+                "gemini-2.5-flash-custom",
+                "gemini-2.5-pro-custom",
                 "gemini-2.5-flash-lite",
-                "gemini-2.5-pro-preview-05-06",
-                "gemini-2.5-flash-preview-05-20",
-                "gemini-exp-1206",
             ]
         },
         "imagen": {
             "enabled": chat_config.GEMINI_IMAGEN_CONFIG.get("ENABLED", False),
             "api_url": chat_config.GEMINI_IMAGEN_CONFIG.get("BASE_URL", "") or chat_config.GEMINI_IMAGEN_CONFIG.get("API_URL", ""),
-            "model": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME", "") or chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL", "imagen-3.0-generate-002"),
+            "model": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME") or chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL") or "imagen-3.0-generate-002",
             "default_images": chat_config.GEMINI_IMAGEN_CONFIG.get("DEFAULT_NUMBER_OF_IMAGES", 1),
             "aspect_ratios": chat_config.GEMINI_IMAGEN_CONFIG.get("ASPECT_RATIOS", {}),
             "api_key_masked": imagen_masked_key,
@@ -233,7 +232,7 @@ async def get_ai_config(token: str = Depends(verify_token)):
     masked_key = api_key[:10] + "..." + api_key[-4:] if len(api_key) > 14 else "***"
     
     return {
-        "model": chat_config.PROMPT_CONFIG.get("model", "gemini-2.0-flash"),
+        "model": chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL,
         "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
         "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
         "summary_model": chat_config.SUMMARY_MODEL,
@@ -244,12 +243,11 @@ async def get_ai_config(token: str = Depends(verify_token)):
         "api_key_masked": masked_key,
         "has_api_key": bool(api_key),
         "available_models": [
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-2.5-flash-lite",
-            "gemini-2.5-pro-preview-05-06",
-            "gemini-2.5-flash-preview-05-20",
+            "gemini-3-flash-custom",
             "gemini-3-pro-preview-custom",
+            "gemini-2.5-flash-custom",
+            "gemini-2.5-pro-custom",
+            "gemini-2.5-flash-lite",
         ]
     }
 
@@ -433,7 +431,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "api_url_masked": masked_url,
         "api_key_masked": masked_key,
         "has_api_key": bool(api_key),
-        "model": config.get("MODEL_NAME", "") or config.get("MODEL", "imagen-3.0-generate-002"),
+        "model": config.get("MODEL_NAME") or config.get("MODEL") or "imagen-3.0-generate-002",
         "default_images": config.get("DEFAULT_NUMBER_OF_IMAGES", 1),
         "aspect_ratios": config.get("ASPECT_RATIOS", {}),
         "api_format": config.get("API_FORMAT", "gemini"),
