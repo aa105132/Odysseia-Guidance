@@ -7,9 +7,6 @@ from datetime import datetime
 from collections import Counter
 
 from src.chat.utils.database import chat_db_manager
-from src.chat.features.personal_memory.services.personal_memory_service import (
-    personal_memory_service,
-)
 from src import config as app_config
 
 log = logging.getLogger(__name__)
@@ -324,6 +321,10 @@ async def _get_user_summary_data(user_id: int, year: int) -> Dict[str, Any] | No
         user_profile = await chat_db_manager.get_user_profile(user_id)
         if user_profile and user_profile["has_personal_memory"]:
             summary_data["has_personal_profile"] = True
+            # 延迟导入以避免循环依赖
+            from src.chat.features.personal_memory.services.personal_memory_service import (
+                personal_memory_service,
+            )
             summary_data[
                 "memory_summary"
             ] = await personal_memory_service.get_memory_summary(user_id)
