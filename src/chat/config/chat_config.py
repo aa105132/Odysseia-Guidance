@@ -79,7 +79,10 @@ def _get_imagen_config():
         "API_KEY": os.getenv("GEMINI_IMAGEN_API_KEY"),  # 如果为空则使用默认的 Gemini API 密钥
         "BASE_URL": os.getenv("GEMINI_IMAGEN_BASE_URL"),  # 自定义端点 URL，留空使用默认
         "MODEL_NAME": os.getenv("GEMINI_IMAGEN_MODEL", "imagen-3.0-generate-002"),
+        # 图生图使用的模型（需要支持多模态图像生成，如 gemini-2.0-flash-exp）
+        "EDIT_MODEL_NAME": os.getenv("GEMINI_IMAGEN_EDIT_MODEL", "gemini-2.0-flash-exp"),
         "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "30")),  # 生成一张图片的月光币成本
+        "IMAGE_EDIT_COST": int(os.getenv("GEMINI_IMAGEN_EDIT_COST", "40")),  # 图生图的月光币成本（略高）
         "SAFETY_FILTER_LEVEL": os.getenv("GEMINI_IMAGEN_SAFETY_LEVEL", "BLOCK_LOW_AND_ABOVE"),
         "PERSON_GENERATION": os.getenv("GEMINI_IMAGEN_PERSON_GEN", "ALLOW_ADULT"),
         # 支持的宽高比: "1:1", "3:4", "4:3", "9:16", "16:9"
@@ -325,13 +328,13 @@ AFFECTION_CONFIG = {
 # --- 投喂功能 ---
 FEEDING_CONFIG = {
     "COOLDOWN_SECONDS": 10800,  # 5 minutes
-    "RESPONSE_IMAGE_URL": "https://cdn.discordapp.com/attachments/1403347767912562728/1418576178326802524/3_632830043818943_00001_.png",  # 投喂回应的默认图片URL
+    "RESPONSE_IMAGE_URL": "https://cdn.discordapp.com/attachments/1466427893809680560/1466712053413839032/1769761543935.png",  # 投喂回应的默认图片URL
 }
 
 # --- 忏悔功能 ---
 CONFESSION_CONFIG = {
     "COOLDOWN_SECONDS": 10800,  # 10 minutes
-    "RESPONSE_IMAGE_URL": "https://cdn.discordapp.com/attachments/1403347767912562728/1419992658067325008/3_1124796593853479_00001_.png",  # 忏悔回应的默认图片URL
+    "RESPONSE_IMAGE_URL": "https://cdn.discordapp.com/attachments/1466427893809680560/1466711713977208842/1769761549044.png",  # 忏悔回应的默认图片URL
 }
 
 # --- 月光币系统 ---
@@ -340,7 +343,7 @@ COIN_CONFIG = {
     "FORUM_POST_REWARD": 200,  # 在指定论坛频道发帖获得的月光币奖励
     "MAX_LOAN_AMOUNT": 1000,  # 单次最大可借金额
     "TRANSFER_TAX_RATE": 0.05,  # 转账税率 (5%)
-    "LOAN_THUMBNAIL_URL": "https://cdn.discordapp.com/attachments/1403347767912562728/1429130259541917716/3_229109312468835_00001_.png",  # 借贷中心缩略图URL
+    "LOAN_THUMBNAIL_URL": "https://media.discordapp.net/attachments/1466427893809680560/1466712205008306274/1769761550578.png",  # 借贷中心缩略图URL
     # --- 每日签到配置 ---
     "DAILY_CHECKIN_REWARD_MIN": 30,  # 每日签到最小奖励
     "DAILY_CHECKIN_REWARD_MAX": 80,  # 每日签到最大奖励

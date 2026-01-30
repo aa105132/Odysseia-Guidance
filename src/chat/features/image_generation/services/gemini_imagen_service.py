@@ -511,6 +511,264 @@ class GeminiImagenService:
             return images[-1]
         return None
 
+    async def edit_image(
+        self,
+        reference_image: bytes,
+        edit_prompt: str,
+        reference_mime_type: str = "image/png",
+        aspect_ratio: str = "1:1",
+    ) -> Optional[bytes]:
+        """
+        使用 Gemini 多模态接口进行图生图（图像编辑）
+        
+        Args:
+            reference_image: 参考图像的字节数据
+            edit_prompt: 编辑指令，描述希望如何修改图像
+            reference_mime_type: 参考图像的 MIME 类型
+            aspect_ratio: 输出图像的宽高比
+            
+        Returns:
+            成功时返回生成的图像字节数据，失败时返回 None
+        """
+        if not self.is_available():
+            log.error("Gemini Imagen 服务不可用")
+            return None
+        
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        # 图生图需要使用支持多模态图像生成的模型
+        model_name = config.get("EDIT_MODEL_NAME") or config.get("MODEL_NAME", "gemini-2.0-flash-exp")
+        
+        # 根据 API 格式选择不同的编辑方法
+        if self._api_format == "openai":
+            return await self._edit_image_openai_format(
+                reference_image=reference_image,
+                edit_prompt=edit_prompt,
+                reference_mime_type=reference_mime_type,
+                aspect_ratio=aspect_ratio,
+                model_name=model_name,
+            )
+        else:
+            # 使用 Gemini 多模态聊天接口（gemini 或 gemini_chat 格式都使用这个）
+            return await self._edit_image_gemini_chat_format(
+                reference_image=reference_image,
+                edit_prompt=edit_prompt,
+                reference_mime_type=reference_mime_type,
+                aspect_ratio=aspect_ratio,
+                model_name=model_name,
+            )
+    
+    async def _edit_image_gemini_chat_format(
+        self,
+        reference_image: bytes,
+        edit_prompt: str,
+        reference_mime_type: str,
+        aspect_ratio: str,
+        model_name: str,
+    ) -> Optional[bytes]:
+        """
+        使用 Gemini SDK 的 generate_content 多模态聊天接口进行图像编辑
+        """
+        try:
+            from google.genai import types
+            
+            loop = asyncio.get_event_loop()
+            
+            # 构建编辑提示词
+            full_prompt = f"请根据以下指令修改这张图片：{edit_prompt}"
+            if aspect_ratio != "1:1":
+                full_prompt += f"\n\n输出图片的宽高比应为：{aspect_ratio}"
+            
+            log.info(f"[Gemini Chat 图生图] 正在使用 {model_name} 编辑图像, 指令: {edit_prompt[:100]}...")
+            
+            # 构建多模态请求内容
+            contents = [
+                types.Part(
+                    inline_data=types.Blob(
+                        mime_type=reference_mime_type,
+                        data=reference_image
+                    )
+                ),
+                types.Part(text=full_prompt),
+            ]
+            
+            # 使用 generate_content 多模态接口
+            def _sync_generate():
+                # 配置生成参数，请求返回图像
+                gen_config = types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],  # 请求返回图像
+                )
+                
+                response = self._client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=gen_config,
+                )
+                return response
+            
+            response = await loop.run_in_executor(self.executor, _sync_generate)
+            
+            # 解析响应，提取图像
+            images = []
+            if response and hasattr(response, 'candidates'):
+                for candidate in response.candidates:
+                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                        for part in candidate.content.parts:
+                            # 检查是否是图像数据
+                            if hasattr(part, 'inline_data') and part.inline_data:
+                                inline_data = part.inline_data
+                                if hasattr(inline_data, 'data') and inline_data.data:
+                                    # 如果是 base64 编码的字符串
+                                    if isinstance(inline_data.data, str):
+                                        images.append(base64.b64decode(inline_data.data))
+                                    else:
+                                        # 如果已经是字节数据
+                                        images.append(inline_data.data)
+            
+            # 也检查 response.parts（某些版本的 SDK）
+            if not images and hasattr(response, 'parts'):
+                for part in response.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        inline_data = part.inline_data
+                        if hasattr(inline_data, 'data') and inline_data.data:
+                            if isinstance(inline_data.data, str):
+                                images.append(base64.b64decode(inline_data.data))
+                            else:
+                                images.append(inline_data.data)
+            
+            if images:
+                log.info(f"图生图成功，生成了 {len(images)} 张图像")
+                return images[-1]  # 返回最后一张图片
+            else:
+                log.warning("图生图 API 返回成功但没有找到图像数据")
+                if response:
+                    log.debug(f"响应类型: {type(response)}")
+                    if hasattr(response, 'text'):
+                        log.debug(f"响应文本: {response.text[:500] if response.text else 'None'}")
+                return None
+                
+        except Exception as e:
+            log.error(f"Gemini Chat 图生图时发生错误: {e}", exc_info=True)
+            return None
+    
+    async def _edit_image_openai_format(
+        self,
+        reference_image: bytes,
+        edit_prompt: str,
+        reference_mime_type: str,
+        aspect_ratio: str,
+        model_name: str,
+    ) -> Optional[bytes]:
+        """
+        使用 OpenAI 兼容的 chat/completions API 进行图像编辑
+        """
+        try:
+            base_url = self._client["base_url"].rstrip("/")
+            api_key = self._client["api_key"]
+            
+            # 将参考图像转换为 base64
+            image_b64 = base64.b64encode(reference_image).decode('utf-8')
+            
+            # 构建提示词
+            full_prompt = f"请根据以下指令修改这张图片：{edit_prompt}"
+            if aspect_ratio != "1:1":
+                full_prompt += f"\n输出图片的宽高比应为：{aspect_ratio}"
+            
+            log.info(f"[OpenAI格式 图生图] 正在使用 {model_name} 编辑图像, 指令: {edit_prompt[:100]}...")
+            
+            # 构建请求
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{reference_mime_type};base64,{image_b64}"
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": full_prompt
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 4096,
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=180)
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        log.error(f"OpenAI 图生图 API 返回错误 {response.status}: {error_text[:500]}")
+                        return None
+                    
+                    data = await response.json()
+                    
+                    # 解析响应，提取图像
+                    images = []
+                    if "choices" in data:
+                        for choice in data["choices"]:
+                            message = choice.get("message", {})
+                            content = message.get("content")
+                            
+                            # 检查是否有 inline_data（Gemini 格式的图像）
+                            if isinstance(content, list):
+                                for part in content:
+                                    if isinstance(part, dict):
+                                        # 检查 inline_data 格式
+                                        inline_data = part.get("inline_data") or part.get("inlineData")
+                                        if inline_data:
+                                            image_b64 = inline_data.get("data")
+                                            if image_b64:
+                                                images.append(base64.b64decode(image_b64))
+                                        # 检查 image_url 格式
+                                        elif "image_url" in part:
+                                            url_data = part["image_url"]
+                                            if isinstance(url_data, dict) and "url" in url_data:
+                                                url = url_data["url"]
+                                                # 如果是 data URL
+                                                if url.startswith("data:image"):
+                                                    b64_data = url.split(",", 1)[1]
+                                                    images.append(base64.b64decode(b64_data))
+                            
+                            # 检查 parts 字段（某些代理的格式）
+                            parts = message.get("parts", [])
+                            for part in parts:
+                                if isinstance(part, dict):
+                                    inline_data = part.get("inline_data") or part.get("inlineData")
+                                    if inline_data:
+                                        image_b64 = inline_data.get("data")
+                                        if image_b64:
+                                            images.append(base64.b64decode(image_b64))
+                    
+                    if images:
+                        log.info(f"图生图成功，生成了 {len(images)} 张图像")
+                        return images[-1]
+                    else:
+                        log.warning("OpenAI 图生图 API 返回成功但没有找到图像数据")
+                        log.debug(f"响应内容: {json.dumps(data, ensure_ascii=False)[:1000]}")
+                        return None
+        
+        except asyncio.TimeoutError:
+            log.error("OpenAI 图生图 API 请求超时")
+            return None
+        except Exception as e:
+            log.error(f"OpenAI 格式图生图时发生错误: {e}", exc_info=True)
+            return None
+
 
 # 全局单例实例
 gemini_imagen_service = GeminiImagenService()
