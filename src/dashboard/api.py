@@ -329,6 +329,9 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         updated["api_url"] = config.api_url[:30] + "..." if len(config.api_url) > 30 else config.api_url
         # 写入数据库
         await chat_db_manager.set_global_setting("gemini_api_url", config.api_url)
+        # 同时设置内存变量供 GeminiService 使用
+        chat_config._db_api_url = config.api_url
+        log.info(f"✅ API URL 已保存到内存: {config.api_url[:30]}...")
     
     if config.api_key is not None:
         os.environ["GEMINI_API_KEYS"] = config.api_key
@@ -337,6 +340,8 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         api_keys_changed = True
         # 写入数据库
         await chat_db_manager.set_global_setting("gemini_api_key", config.api_key)
+        # 同时设置内存变量供 GeminiService 使用
+        chat_config._db_api_key = config.api_key
     
     if config.summary_model is not None:
         chat_config.SUMMARY_MODEL = config.summary_model
