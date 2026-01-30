@@ -15,7 +15,9 @@ from src.backup.backup_manager import backup_databases
 
 # 在所有其他导入之前，尽早加载环境变量
 # 这样可以确保所有模块在加载时都能访问到 .env 文件中定义的配置
-load_dotenv()
+# 使用 override=True 确保 .env 文件中的配置会覆盖 Docker compose 的 env_file 设置
+# 这样 Dashboard 修改的配置才能在重启后生效
+load_dotenv(override=True)
 
 # 从我们自己的模块中导入
 from src import config

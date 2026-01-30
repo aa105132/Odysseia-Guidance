@@ -175,7 +175,9 @@ async def generate_image(
             # 返回成功信息给 AI（不再返回图片数据，因为已经直接发送了）
             return {
                 "success": True,
-                "message": "图片已成功生成并展示给用户了！请用自己的语气告诉用户你画好了。"
+                "prompt_used": prompt,  # 返回原始中文提示词
+                "cost": cost,
+                "message": "图片已成功生成并展示给用户了！请用自己的语气告诉用户画好了，并展示使用的中文提示词（不要翻译成英文）。"
             }
         else:
             # 添加失败反应

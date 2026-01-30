@@ -32,7 +32,7 @@ class GeminiImagenService:
     """
 
     def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=5)
+        self.executor = ThreadPoolExecutor(max_workers=20)
         self._client = None
         self._api_format = "gemini"  # 默认使用 gemini 格式
         self._initialize_client()
