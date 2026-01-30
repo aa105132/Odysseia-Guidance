@@ -989,34 +989,36 @@
                 </div>
             </div>
             
-            <!-- 添加表情模态框 -->
+            <!-- 添加/编辑表情模态框 -->
             <div x-show="showAddEmojiModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50" x-transition>
-                <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-700" @click.away="showAddEmojiModal = false">
-                    <h3 class="text-xl font-bold mb-4">添加表情映射</h3>
+                <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-700" @click.away="closeEmojiModal()">
+                    <h3 class="text-xl font-bold mb-4" x-text="editingEmojiPlaceholder ? '编辑表情映射' : '添加表情映射'"></h3>
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">占位符</label>
                             <input type="text" x-model="newEmoji.placeholder"
-                                   placeholder="例如: <开心>"
+                                   placeholder="例如: <傲娇>"
+                                   :disabled="editingEmojiPlaceholder"
+                                   :class="editingEmojiPlaceholder ? 'opacity-60 cursor-not-allowed' : ''"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                             <p class="text-xs text-slate-500 mt-1">格式: &lt;表情名&gt;</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">Discord 表情</label>
                             <input type="text" x-model="newEmoji.discord_emoji"
-                                   placeholder="例如: <:emoji_name:123456789>"
+                                   placeholder="例如: <:aojiao:123456789>"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                             <p class="text-xs text-slate-500 mt-1">在 Discord 中输入 \:表情名: 获取完整格式</p>
                         </div>
                         <div class="flex gap-3 mt-6">
-                            <button @click="showAddEmojiModal = false"
+                            <button @click="closeEmojiModal()"
                                     class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg transition-all">
                                 取消
                             </button>
                             <button @click="addEmoji()"
                                     :disabled="saving"
                                     class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white py-3 rounded-lg transition-all">
-                                添加
+                                <span x-text="editingEmojiPlaceholder ? '保存' : '添加'"></span>
                             </button>
                         </div>
                     </div>
@@ -1077,6 +1079,7 @@
                 factionMappings: {},
                 showAddEmojiModal: false,
                 newEmoji: { placeholder: '', discord_emoji: '' },
+                editingEmojiPlaceholder: null,  // 编辑模式时存储原占位符
                 expandedEvents: {},
                 
                 // 知识库数据
@@ -1452,37 +1455,64 @@
                     
                     this.saving = true;
                     try {
-                        const response = await fetch('/api/config/emoji/add', {
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${this.secretKey}`,
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                                placeholder: this.newEmoji.placeholder,
-                                discord_emojis: [this.newEmoji.discord_emoji]
-                            })
-                        });
+                        let response;
+                        if (this.editingEmojiPlaceholder) {
+                            // 编辑模式：使用 PUT 更新
+                            response = await fetch('/api/config/emoji', {
+                                method: 'PUT',
+                                headers: {
+                                    'Authorization': `Bearer ${this.secretKey}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    mappings: [{
+                                        placeholder: this.newEmoji.placeholder,
+                                        discord_emojis: [this.newEmoji.discord_emoji]
+                                    }]
+                                })
+                            });
+                        } else {
+                            // 添加模式：使用 POST 添加
+                            response = await fetch('/api/config/emoji/add', {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': `Bearer ${this.secretKey}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    placeholder: this.newEmoji.placeholder,
+                                    discord_emojis: [this.newEmoji.discord_emoji]
+                                })
+                            });
+                        }
                         
                         if (response.ok) {
-                            this.showToast('表情添加成功！', 'success');
+                            this.showToast(this.editingEmojiPlaceholder ? '表情更新成功！' : '表情添加成功！', 'success');
                             this.showAddEmojiModal = false;
                             this.newEmoji = { placeholder: '', discord_emoji: '' };
+                            this.editingEmojiPlaceholder = null;
                             await this.loadEmojiConfig();
                         } else {
                             const data = await response.json();
-                            this.showToast(data.detail || '添加失败', 'error');
+                            this.showToast(data.detail || '操作失败', 'error');
                         }
                     } catch (e) {
-                        this.showToast('添加失败', 'error');
+                        this.showToast('操作失败', 'error');
                     }
                     this.saving = false;
                 },
                 
                 editEmoji(mapping) {
+                    this.editingEmojiPlaceholder = mapping.placeholder;
                     this.newEmoji.placeholder = mapping.placeholder;
                     this.newEmoji.discord_emoji = mapping.discord_emojis[0] || '';
                     this.showAddEmojiModal = true;
+                },
+                
+                closeEmojiModal() {
+                    this.showAddEmojiModal = false;
+                    this.newEmoji = { placeholder: '', discord_emoji: '' };
+                    this.editingEmojiPlaceholder = null;
                 },
                 
                 async deleteEmoji(placeholder) {
