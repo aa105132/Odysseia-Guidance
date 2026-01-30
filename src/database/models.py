@@ -14,7 +14,9 @@ from sqlalchemy.orm import declarative_base, relationship, Mapped, mapped_column
 from pgvector.sqlalchemy import HALFVEC
 
 # --- 全局配置 ---
-EMBEDDING_DIMENSION = 3072  # 所有RAG统一使用3072维度
+# 向量维度：必须与 Dashboard 中配置的 EMBEDDING_DIMENSIONS 一致
+# 常用值：768 (Gemini), 1024 (BGE-M3), 3072, 4096 (Qwen3-Embedding)
+EMBEDDING_DIMENSION = 4096  # 修改为你使用的嵌入模型的维度
 
 # --- Schema 名称 ---
 TUTORIALS_SCHEMA = "tutorials"
