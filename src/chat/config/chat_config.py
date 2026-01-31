@@ -89,10 +89,19 @@ def _get_imagen_config():
         "ENABLED": _parse_bool_env("GEMINI_IMAGEN_ENABLED", "False"),
         "API_KEY": os.getenv("GEMINI_IMAGEN_API_KEY"),  # 如果为空则使用默认的 Gemini API 密钥
         "BASE_URL": os.getenv("GEMINI_IMAGEN_BASE_URL"),  # 自定义端点 URL，留空使用默认
-        "MODEL_NAME": os.getenv("GEMINI_IMAGEN_MODEL", "imagen-3.0-generate-002"),
+        "MODEL_NAME": os.getenv("GEMINI_IMAGEN_MODEL", "agy-gemini-3-pro-image"),
         # 图生图使用的模型（需要支持多模态图像生成）
         # 如果未设置，将自动使用普通绘图模型 MODEL_NAME
         "EDIT_MODEL_NAME": os.getenv("GEMINI_IMAGEN_EDIT_MODEL") or None,
+        # --- 分辨率模型配置 ---
+        # 2K 分辨率使用的模型（如果未设置，使用默认模型）
+        "MODEL_NAME_2K": os.getenv("GEMINI_IMAGEN_MODEL_2K", "agy-gemini-3-pro-image-2k"),
+        # 4K 分辨率使用的模型（如果未设置，使用默认模型）
+        "MODEL_NAME_4K": os.getenv("GEMINI_IMAGEN_MODEL_4K", "agy-gemini-3-pro-image-4k"),
+        # 2K 图生图使用的模型
+        "EDIT_MODEL_NAME_2K": os.getenv("GEMINI_IMAGEN_EDIT_MODEL_2K", "agy-gemini-3-pro-image-2k"),
+        # 4K 图生图使用的模型
+        "EDIT_MODEL_NAME_4K": os.getenv("GEMINI_IMAGEN_EDIT_MODEL_4K", "agy-gemini-3-pro-image-4k"),
         "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "1")),  # 生成一张图片的月光币成本
         "IMAGE_EDIT_COST": int(os.getenv("GEMINI_IMAGEN_EDIT_COST", "1")),  # 图生图的月光币成本
         "MAX_IMAGES_PER_REQUEST": int(os.getenv("GEMINI_IMAGEN_MAX_IMAGES", "20")),  # 单次请求最多生成图片数量

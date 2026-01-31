@@ -75,6 +75,11 @@ class ImagenConfigUpdate(BaseModel):
     generation_cost: Optional[int] = None  # 文生图成本
     edit_cost: Optional[int] = None  # 图生图成本
     max_images: Optional[int] = None  # 单次最大图片数量
+    # 分辨率模型配置
+    model_2k: Optional[str] = None  # 2K 分辨率绘图模型
+    model_4k: Optional[str] = None  # 4K 分辨率绘图模型
+    edit_model_2k: Optional[str] = None  # 2K 分辨率图生图模型
+    edit_model_4k: Optional[str] = None  # 4K 分辨率图生图模型
 
 
 class EmbeddingConfigUpdate(BaseModel):
@@ -212,12 +217,17 @@ async def get_all_config(token: str = Depends(verify_token)):
         "imagen": {
             "enabled": chat_config.GEMINI_IMAGEN_CONFIG.get("ENABLED", False),
             "api_url": chat_config.GEMINI_IMAGEN_CONFIG.get("BASE_URL", "") or chat_config.GEMINI_IMAGEN_CONFIG.get("API_URL", ""),
-            "model": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME") or chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL") or "imagen-3.0-generate-002",
+            "model": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME", "agy-gemini-3-pro-image"),
             "default_images": chat_config.GEMINI_IMAGEN_CONFIG.get("DEFAULT_NUMBER_OF_IMAGES", 1),
             "aspect_ratios": chat_config.GEMINI_IMAGEN_CONFIG.get("ASPECT_RATIOS", {}),
             "api_key_masked": imagen_masked_key,
             "has_api_key": bool(imagen_api_key),
             "api_format": chat_config.GEMINI_IMAGEN_CONFIG.get("API_FORMAT", "gemini"),
+            # 分辨率模型配置
+            "model_2k": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME_2K", "agy-gemini-3-pro-image-2k"),
+            "model_4k": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME_4K", "agy-gemini-3-pro-image-4k"),
+            "edit_model_2k": chat_config.GEMINI_IMAGEN_CONFIG.get("EDIT_MODEL_NAME_2K", "agy-gemini-3-pro-image-2k"),
+            "edit_model_4k": chat_config.GEMINI_IMAGEN_CONFIG.get("EDIT_MODEL_NAME_4K", "agy-gemini-3-pro-image-4k"),
         },
         "coin": {
             "daily_reward": chat_config.COIN_CONFIG.get("DAILY_CHECKIN_REWARD", 50),
@@ -618,6 +628,35 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         chat_config.GEMINI_IMAGEN_CONFIG["MAX_IMAGES_PER_REQUEST"] = config.max_images
         updated["max_images"] = config.max_images
         await chat_db_manager.set_global_setting("imagen_max_images", str(config.max_images))
+    
+    # 分辨率模型配置
+    if config.model_2k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME_2K"] = config.model_2k
+        os.environ["GEMINI_IMAGEN_MODEL_2K"] = config.model_2k
+        env_updates["GEMINI_IMAGEN_MODEL_2K"] = config.model_2k
+        updated["model_2k"] = config.model_2k
+        await chat_db_manager.set_global_setting("imagen_model_2k", config.model_2k)
+    
+    if config.model_4k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME_4K"] = config.model_4k
+        os.environ["GEMINI_IMAGEN_MODEL_4K"] = config.model_4k
+        env_updates["GEMINI_IMAGEN_MODEL_4K"] = config.model_4k
+        updated["model_4k"] = config.model_4k
+        await chat_db_manager.set_global_setting("imagen_model_4k", config.model_4k)
+    
+    if config.edit_model_2k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["EDIT_MODEL_NAME_2K"] = config.edit_model_2k
+        os.environ["GEMINI_IMAGEN_EDIT_MODEL_2K"] = config.edit_model_2k
+        env_updates["GEMINI_IMAGEN_EDIT_MODEL_2K"] = config.edit_model_2k
+        updated["edit_model_2k"] = config.edit_model_2k
+        await chat_db_manager.set_global_setting("imagen_edit_model_2k", config.edit_model_2k)
+    
+    if config.edit_model_4k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["EDIT_MODEL_NAME_4K"] = config.edit_model_4k
+        os.environ["GEMINI_IMAGEN_EDIT_MODEL_4K"] = config.edit_model_4k
+        env_updates["GEMINI_IMAGEN_EDIT_MODEL_4K"] = config.edit_model_4k
+        updated["edit_model_4k"] = config.edit_model_4k
+        await chat_db_manager.set_global_setting("imagen_edit_model_4k", config.edit_model_4k)
     
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:

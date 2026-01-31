@@ -172,6 +172,7 @@ class GeminiImagenService:
         negative_prompt: Optional[str] = None,
         aspect_ratio: str = "1:1",
         number_of_images: int = 1,
+        resolution: str = "default",
     ) -> Optional[List[bytes]]:
         """
         使用 Gemini Imagen 生成图像
@@ -181,6 +182,7 @@ class GeminiImagenService:
             negative_prompt: 负面提示词（可选，支持中文）
             aspect_ratio: 宽高比，支持 "1:1", "3:4", "4:3", "9:16", "16:9"
             number_of_images: 生成图片数量（1-4）
+            resolution: 分辨率 ("default", "2k", "4k")
 
         Returns:
             成功时返回图像字节数据列表，失败时返回 None
@@ -190,7 +192,9 @@ class GeminiImagenService:
             return None
 
         config = app_config.GEMINI_IMAGEN_CONFIG
-        model_name = config.get("MODEL_NAME", "imagen-3.0-generate-002")
+        # 根据分辨率选择模型
+        model_name = self._get_model_for_resolution(resolution=resolution, is_edit=False)
+        log.info(f"使用模型 {model_name} 生成图像 (分辨率: {resolution})")
 
         # 根据 API 格式选择不同的生成方法
         # gemini_chat: 使用 Gemini SDK 的 generate_content 多模态聊天接口
@@ -503,11 +507,41 @@ class GeminiImagenService:
             log.error(f"OpenAI 格式生成图像时发生错误: {e}", exc_info=True)
             return None
 
+    def _get_model_for_resolution(self, resolution: str = "default", is_edit: bool = False) -> str:
+        """
+        根据分辨率选择合适的模型
+        
+        Args:
+            resolution: 分辨率选项 ("default", "2k", "4k")
+            is_edit: 是否为图像编辑（图生图）
+            
+        Returns:
+            选定的模型名称
+        """
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        
+        if is_edit:
+            # 图生图模型选择
+            if resolution == "2k" and config.get("EDIT_MODEL_NAME_2K"):
+                return config["EDIT_MODEL_NAME_2K"]
+            elif resolution == "4k" and config.get("EDIT_MODEL_NAME_4K"):
+                return config["EDIT_MODEL_NAME_4K"]
+            # 默认使用编辑专用模型，如果没有则使用普通绘图模型
+            return config.get("EDIT_MODEL_NAME") or config.get("MODEL_NAME", "agy-gemini-3-pro-image")
+        else:
+            # 普通绘图模型选择
+            if resolution == "2k" and config.get("MODEL_NAME_2K"):
+                return config["MODEL_NAME_2K"]
+            elif resolution == "4k" and config.get("MODEL_NAME_4K"):
+                return config["MODEL_NAME_4K"]
+            return config.get("MODEL_NAME", "agy-gemini-3-pro-image")
+
     async def generate_single_image(
         self,
         prompt: str,
         negative_prompt: Optional[str] = None,
         aspect_ratio: str = "1:1",
+        resolution: str = "default",
     ) -> Optional[bytes]:
         """
         生成单张图像的便捷方法
@@ -516,6 +550,7 @@ class GeminiImagenService:
             prompt: 正面提示词
             negative_prompt: 负面提示词（可选）
             aspect_ratio: 宽高比
+            resolution: 分辨率 ("default", "2k", "4k")
 
         Returns:
             成功时返回图像字节数据，失败时返回 None
@@ -525,6 +560,7 @@ class GeminiImagenService:
             negative_prompt=negative_prompt,
             aspect_ratio=aspect_ratio,
             number_of_images=1,
+            resolution=resolution,
         )
         
         if images and len(images) > 0:
@@ -538,6 +574,7 @@ class GeminiImagenService:
         edit_prompt: str,
         reference_mime_type: str = "image/png",
         aspect_ratio: str = "1:1",
+        resolution: str = "default",
     ) -> Optional[bytes]:
         """
         使用 Gemini 多模态接口进行图生图（图像编辑）
@@ -547,6 +584,7 @@ class GeminiImagenService:
             edit_prompt: 编辑指令，描述希望如何修改图像
             reference_mime_type: 参考图像的 MIME 类型
             aspect_ratio: 输出图像的宽高比
+            resolution: 分辨率 ("default", "2k", "4k")
             
         Returns:
             成功时返回生成的图像字节数据，失败时返回 None
@@ -555,11 +593,9 @@ class GeminiImagenService:
             log.error("Gemini Imagen 服务不可用")
             return None
         
-        config = app_config.GEMINI_IMAGEN_CONFIG
-        # 图生图使用与普通画图相同的模型配置
-        # 优先使用配置的编辑专用模型（如有），否则使用普通绘图模型
-        model_name = config.get("EDIT_MODEL_NAME") or config.get("MODEL_NAME") or "imagen-3.0-generate-002"
-        log.info(f"图生图使用模型: {model_name}")
+        # 根据分辨率选择编辑模型
+        model_name = self._get_model_for_resolution(resolution=resolution, is_edit=True)
+        log.info(f"图生图使用模型: {model_name} (分辨率: {resolution})")
         
         # 根据 API 格式选择不同的编辑方法
         if self._api_format == "openai":

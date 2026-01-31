@@ -441,6 +441,41 @@
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 mt-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
                         
+                        <!-- 分辨率模型配置 -->
+                        <div class="border-t border-slate-700 pt-4 mt-2">
+                            <h4 class="text-sm font-medium text-slate-300 mb-3 flex items-center gap-2">
+                                <i data-lucide="scaling" class="w-4 h-4 text-blue-400"></i>
+                                分辨率模型配置
+                            </h4>
+                            <p class="text-xs text-slate-400 mb-4">为不同分辨率配置专用模型，用户使用 /画图 或 /图生图 命令时可选择分辨率</p>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">2K 绘图模型</label>
+                                    <input type="text" x-model="imagenForm.model_2k"
+                                           placeholder="agy-gemini-3-pro-image-2k"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">4K 绘图模型</label>
+                                    <input type="text" x-model="imagenForm.model_4k"
+                                           placeholder="agy-gemini-3-pro-image-4k"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">2K 图生图模型</label>
+                                    <input type="text" x-model="imagenForm.edit_model_2k"
+                                           placeholder="agy-gemini-3-pro-image-2k"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">4K 图生图模型</label>
+                                    <input type="text" x-model="imagenForm.edit_model_4k"
+                                           placeholder="agy-gemini-3-pro-image-4k"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                            </div>
+                        </div>
+                        
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">默认图片数量</label>
                             <select x-model="imagenForm.default_images"
@@ -1156,7 +1191,7 @@
                 
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
-                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20 },
+                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '' },
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
                 
@@ -1264,6 +1299,11 @@
                         this.imagenForm.generation_cost = this.config.imagen.generation_cost ?? 1;
                         this.imagenForm.edit_cost = this.config.imagen.edit_cost ?? 1;
                         this.imagenForm.max_images = this.config.imagen.max_images ?? 20;
+                        // 分辨率模型配置
+                        this.imagenForm.model_2k = this.config.imagen.model_2k || '';
+                        this.imagenForm.model_4k = this.config.imagen.model_4k || '';
+                        this.imagenForm.edit_model_2k = this.config.imagen.edit_model_2k || '';
+                        this.imagenForm.edit_model_4k = this.config.imagen.edit_model_4k || '';
                     }
                     if (this.config.coin) {
                         this.coinForm.daily_reward = this.config.coin.daily_reward;
@@ -1861,7 +1901,12 @@
                             api_format: this.imagenForm.api_format,
                             generation_cost: parseInt(this.imagenForm.generation_cost) || 1,
                             edit_cost: parseInt(this.imagenForm.edit_cost) || 1,
-                            max_images: parseInt(this.imagenForm.max_images) || 20
+                            max_images: parseInt(this.imagenForm.max_images) || 20,
+                            // 分辨率模型配置
+                            model_2k: this.imagenForm.model_2k || null,
+                            model_4k: this.imagenForm.model_4k || null,
+                            edit_model_2k: this.imagenForm.edit_model_2k || null,
+                            edit_model_4k: this.imagenForm.edit_model_4k || null
                         };
                         
                         // 只有填写了新的API Key才发送

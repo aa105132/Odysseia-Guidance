@@ -33,12 +33,14 @@ class GeminiImagenCog(commands.Cog):
         negative_prompt="你不希望在图片中出现的内容(可选)",
         aspect_ratio="图片宽高比",
         count="生成图片数量 (1-20张)",
+        resolution="图片分辨率 (默认/2K/4K，高分辨率需要更多月光币)",
     )
     @app_commands.rename(
         prompt="提示词",
         negative_prompt="排除内容",
         aspect_ratio="宽高比",
         count="数量",
+        resolution="分辨率",
     )
     @app_commands.choices(
         aspect_ratio=[
@@ -47,6 +49,11 @@ class GeminiImagenCog(commands.Cog):
             app_commands.Choice(name="4:3 (横版)", value="4:3"),
             app_commands.Choice(name="9:16 (手机竖屏)", value="9:16"),
             app_commands.Choice(name="16:9 (宽屏)", value="16:9"),
+        ],
+        resolution=[
+            app_commands.Choice(name="默认", value="default"),
+            app_commands.Choice(name="2K 高清", value="2k"),
+            app_commands.Choice(name="4K 超清", value="4k"),
         ]
     )
     async def paint(
@@ -56,6 +63,7 @@ class GeminiImagenCog(commands.Cog):
         negative_prompt: str = "",
         aspect_ratio: str = None,
         count: int = 1,
+        resolution: str = "default",
     ):
         """/paint 命令的实现"""
         # 检查服务是否可用
@@ -129,6 +137,7 @@ class GeminiImagenCog(commands.Cog):
                     prompt=prompt,
                     negative_prompt=negative_prompt if negative_prompt else None,
                     aspect_ratio=aspect_ratio,
+                    resolution=resolution,
                 )
                 for _ in range(count)
             ]
@@ -221,12 +230,14 @@ class GeminiImagenCog(commands.Cog):
         edit_prompt="描述你想要如何修改这张图片",
         aspect_ratio="输出图片的宽高比",
         count="生成图片数量 (1-20)",
+        resolution="图片分辨率 (默认/2K/4K，高分辨率需要更多月光币)",
     )
     @app_commands.rename(
         image="参考图片",
         edit_prompt="修改指令",
         aspect_ratio="宽高比",
         count="数量",
+        resolution="分辨率",
     )
     @app_commands.choices(
         aspect_ratio=[
@@ -235,6 +246,11 @@ class GeminiImagenCog(commands.Cog):
             app_commands.Choice(name="4:3 (横版)", value="4:3"),
             app_commands.Choice(name="9:16 (手机竖屏)", value="9:16"),
             app_commands.Choice(name="16:9 (宽屏)", value="16:9"),
+        ],
+        resolution=[
+            app_commands.Choice(name="默认", value="default"),
+            app_commands.Choice(name="2K 高清", value="2k"),
+            app_commands.Choice(name="4K 超清", value="4k"),
         ]
     )
     async def image_to_image(
@@ -244,6 +260,7 @@ class GeminiImagenCog(commands.Cog):
         edit_prompt: str,
         aspect_ratio: str = None,
         count: int = 1,
+        resolution: str = "default",
     ):
         """/图生图 命令的实现"""
         # 检查附件是否是图片
@@ -337,6 +354,7 @@ class GeminiImagenCog(commands.Cog):
                     edit_prompt=edit_prompt,
                     reference_mime_type=reference_mime_type,
                     aspect_ratio=aspect_ratio,
+                    resolution=resolution,
                 )
                 for _ in range(count)
             ]
