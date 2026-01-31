@@ -71,6 +71,10 @@ class ImagenConfigUpdate(BaseModel):
     # - 'gemini_chat': Gemini 多模态聊天接口（支持图像生成的代理）
     # - 'openai': OpenAI 兼容的 chat/completions 接口
     api_format: Optional[str] = None
+    # 月光币成本配置
+    generation_cost: Optional[int] = None  # 文生图成本
+    edit_cost: Optional[int] = None  # 图生图成本
+    max_images: Optional[int] = None  # 单次最大图片数量
 
 
 class EmbeddingConfigUpdate(BaseModel):
@@ -459,6 +463,9 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     db_api_key = await chat_db_manager.get_global_setting("imagen_api_key")
     db_model = await chat_db_manager.get_global_setting("imagen_model")
     db_api_format = await chat_db_manager.get_global_setting("imagen_api_format")
+    db_generation_cost = await chat_db_manager.get_global_setting("imagen_generation_cost")
+    db_edit_cost = await chat_db_manager.get_global_setting("imagen_edit_cost")
+    db_max_images = await chat_db_manager.get_global_setting("imagen_max_images")
     
     # 内存配置作为回退
     config = chat_config.GEMINI_IMAGEN_CONFIG
@@ -469,6 +476,9 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     api_key = db_api_key or config.get("API_KEY", "")
     model = db_model or config.get("MODEL_NAME") or config.get("MODEL") or "imagen-3.0-generate-002"
     api_format = db_api_format or config.get("API_FORMAT", "gemini")
+    generation_cost = int(db_generation_cost) if db_generation_cost else config.get("IMAGE_GENERATION_COST", 1)
+    edit_cost = int(db_edit_cost) if db_edit_cost else config.get("IMAGE_EDIT_COST", 1)
+    max_images = int(db_max_images) if db_max_images else config.get("MAX_IMAGES_PER_REQUEST", 20)
     
     # 隐藏部分信息
     masked_url = ""
@@ -505,6 +515,9 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "aspect_ratios": config.get("ASPECT_RATIOS", {}),
         "api_format": api_format,
         "service_available": service_available,
+        "generation_cost": generation_cost,
+        "edit_cost": edit_cost,
+        "max_images": max_images,
         "available_models": [
             "imagen-3.0-generate-002",
             "imagen-3.0-fast-generate-001",
@@ -571,6 +584,28 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         updated["api_format"] = config.api_format
         # 写入数据库
         await chat_db_manager.set_global_setting("imagen_api_format", config.api_format)
+    
+    # 月光币成本配置
+    if config.generation_cost is not None:
+        if config.generation_cost < 0:
+            raise HTTPException(400, "文生图成本不能为负数")
+        chat_config.GEMINI_IMAGEN_CONFIG["IMAGE_GENERATION_COST"] = config.generation_cost
+        updated["generation_cost"] = config.generation_cost
+        await chat_db_manager.set_global_setting("imagen_generation_cost", str(config.generation_cost))
+    
+    if config.edit_cost is not None:
+        if config.edit_cost < 0:
+            raise HTTPException(400, "图生图成本不能为负数")
+        chat_config.GEMINI_IMAGEN_CONFIG["IMAGE_EDIT_COST"] = config.edit_cost
+        updated["edit_cost"] = config.edit_cost
+        await chat_db_manager.set_global_setting("imagen_edit_cost", str(config.edit_cost))
+    
+    if config.max_images is not None:
+        if not 1 <= config.max_images <= 50:
+            raise HTTPException(400, "单次最大图片数量必须在 1 到 50 之间")
+        chat_config.GEMINI_IMAGEN_CONFIG["MAX_IMAGES_PER_REQUEST"] = config.max_images
+        updated["max_images"] = config.max_images
+        await chat_db_manager.set_global_setting("imagen_max_images", str(config.max_images))
     
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:

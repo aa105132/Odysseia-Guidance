@@ -454,6 +454,31 @@
                                 </template>
                             </div>
                         </div>
+
+                        <!-- 月光币成本配置 -->
+                        <div class="col-span-2 border-t border-slate-700 pt-4 mt-2">
+                            <h4 class="text-sm font-medium text-slate-300 mb-3 flex items-center gap-2">
+                                <i data-lucide="coins" class="w-4 h-4 text-yellow-400"></i>
+                                月光币成本配置
+                            </h4>
+                            <div class="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">文生图 (每张)</label>
+                                    <input type="number" x-model.number="imagenForm.generation_cost" min="0" max="1000"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">图生图 (每张)</label>
+                                    <input type="number" x-model.number="imagenForm.edit_cost" min="0" max="1000"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">单次最大数量</label>
+                                    <input type="number" x-model.number="imagenForm.max_images" min="1" max="50"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                            </div>
+                        </div>
                         
                         <div class="flex gap-4">
                             <button @click="saveImagenConfig()"
@@ -1058,7 +1083,7 @@
                 
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
-                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '' },
+                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20 },
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
                 
@@ -1162,6 +1187,9 @@
                         this.imagenForm.default_images = this.config.imagen.default_images;
                         this.imagenForm.api_key = '';  // 不显示真实的key
                         this.imagenForm.api_format = this.config.imagen.api_format || 'gemini';
+                        this.imagenForm.generation_cost = this.config.imagen.generation_cost ?? 1;
+                        this.imagenForm.edit_cost = this.config.imagen.edit_cost ?? 1;
+                        this.imagenForm.max_images = this.config.imagen.max_images ?? 20;
                     }
                     if (this.config.coin) {
                         this.coinForm.daily_reward = this.config.coin.daily_reward;
@@ -1696,7 +1724,10 @@
                             api_url: this.imagenForm.api_url,
                             model: this.imagenForm.custom_model || this.imagenForm.model,
                             default_images: parseInt(this.imagenForm.default_images),
-                            api_format: this.imagenForm.api_format
+                            api_format: this.imagenForm.api_format,
+                            generation_cost: parseInt(this.imagenForm.generation_cost) || 1,
+                            edit_cost: parseInt(this.imagenForm.edit_cost) || 1,
+                            max_images: parseInt(this.imagenForm.max_images) || 20
                         };
                         
                         // 只有填写了新的API Key才发送

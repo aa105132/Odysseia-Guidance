@@ -96,7 +96,7 @@ def _get_imagen_config():
         "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "1")),  # 生成一张图片的月光币成本
         "IMAGE_EDIT_COST": int(os.getenv("GEMINI_IMAGEN_EDIT_COST", "1")),  # 图生图的月光币成本
         "MAX_IMAGES_PER_REQUEST": int(os.getenv("GEMINI_IMAGEN_MAX_IMAGES", "20")),  # 单次请求最多生成图片数量
-        "SAFETY_FILTER_LEVEL": os.getenv("GEMINI_IMAGEN_SAFETY_LEVEL", "BLOCK_LOW_AND_ABOVE"),
+        "SAFETY_FILTER_LEVEL": os.getenv("GEMINI_IMAGEN_SAFETY_LEVEL", "BLOCK_ONLY_HIGH"),
         "PERSON_GENERATION": os.getenv("GEMINI_IMAGEN_PERSON_GEN", "ALLOW_ADULT"),
         # 支持的宽高比: "1:1", "3:4", "4:3", "9:16", "16:9"
         "DEFAULT_ASPECT_RATIO": os.getenv("GEMINI_IMAGEN_ASPECT_RATIO", "1:1"),

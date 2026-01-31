@@ -317,8 +317,29 @@ class GeminiImagenService:
             # 使用 generate_content 多模态接口
             def _sync_generate():
                 # 配置生成参数，请求返回图像
+                # 设置宽松的安全过滤级别
+                safety_settings = [
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HATE_SPEECH",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HARASSMENT",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                ]
+                
                 config = types.GenerateContentConfig(
                     response_modalities=["IMAGE", "TEXT"],  # 请求返回图像
+                    safety_settings=safety_settings,
                 )
                 
                 response = self._client.models.generate_content(
