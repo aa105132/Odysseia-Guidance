@@ -32,7 +32,7 @@ class GeminiImagenCog(commands.Cog):
         prompt="描述你想要生成的图片内容",
         negative_prompt="你不希望在图片中出现的内容(可选)",
         aspect_ratio="图片宽高比",
-        count="生成图片数量 (1-20)",
+        count="生成图片数量 (1-20张)",
     )
     @app_commands.rename(
         prompt="提示词",
