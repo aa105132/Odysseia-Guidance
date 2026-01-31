@@ -123,6 +123,13 @@ class CoinConfigUpdate(BaseModel):
     max_loan: Optional[int] = None
 
 
+class ModerationConfigUpdate(BaseModel):
+    """管理配置更新（警告与拉黑设置）"""
+    warning_threshold: Optional[int] = None  # 警告次数阈值
+    ban_duration_min: Optional[int] = None  # 拉黑时长最小值（分钟）
+    ban_duration_max: Optional[int] = None  # 拉黑时长最大值（分钟）
+
+
 class EmojiMapping(BaseModel):
     """单个表情映射"""
     placeholder: str  # 如 <微笑>
@@ -217,6 +224,11 @@ async def get_all_config(token: str = Depends(verify_token)):
             "chat_reward": chat_config.COIN_CONFIG.get("DAILY_CHAT_REWARD", 10),
             "max_loan": chat_config.COIN_CONFIG.get("MAX_LOAN_AMOUNT", 1000),
             "currency_name": "月光币",
+        },
+        "moderation": {
+            "warning_threshold": chat_config.BLACKLIST_WARNING_THRESHOLD,
+            "ban_duration_min": chat_config.BLACKLIST_BAN_DURATION_MINUTES[0],
+            "ban_duration_max": chat_config.BLACKLIST_BAN_DURATION_MINUTES[1],
         },
         "shop": {
             "items": chat_config.SHOP_ITEMS if hasattr(chat_config, 'SHOP_ITEMS') else [],
@@ -913,6 +925,73 @@ async def reload_api_keys(token: str = Depends(verify_token)):
             status_code=500,
             detail=f"热重载失败: {str(e)}"
         )
+
+
+@app.get("/api/config/moderation")
+async def get_moderation_config(token: str = Depends(verify_token)):
+    """获取管理配置（警告与拉黑设置）- 优先从数据库读取"""
+    from src.chat.utils.database import chat_db_manager
+    
+    # 从数据库读取持久化设置
+    db_warning_threshold = await chat_db_manager.get_global_setting("warning_threshold")
+    db_ban_duration_min = await chat_db_manager.get_global_setting("ban_duration_min")
+    db_ban_duration_max = await chat_db_manager.get_global_setting("ban_duration_max")
+    
+    # 优先使用数据库值，否则回退到内存配置
+    warning_threshold = int(db_warning_threshold) if db_warning_threshold else chat_config.BLACKLIST_WARNING_THRESHOLD
+    ban_duration_min = int(db_ban_duration_min) if db_ban_duration_min else chat_config.BLACKLIST_BAN_DURATION_MINUTES[0]
+    ban_duration_max = int(db_ban_duration_max) if db_ban_duration_max else chat_config.BLACKLIST_BAN_DURATION_MINUTES[1]
+    
+    return {
+        "warning_threshold": warning_threshold,
+        "ban_duration_min": ban_duration_min,
+        "ban_duration_max": ban_duration_max,
+    }
+
+
+@app.put("/api/config/moderation")
+async def update_moderation_config(config: ModerationConfigUpdate, token: str = Depends(verify_token)):
+    """更新管理配置（警告与拉黑设置）- 持久化到数据库"""
+    from src.chat.utils.database import chat_db_manager
+    
+    updated = {}
+    
+    if config.warning_threshold is not None:
+        if not 1 <= config.warning_threshold <= 100:
+            raise HTTPException(400, "警告阈值必须在 1 到 100 之间")
+        chat_config.BLACKLIST_WARNING_THRESHOLD = config.warning_threshold
+        await chat_db_manager.set_global_setting("warning_threshold", str(config.warning_threshold))
+        updated["warning_threshold"] = config.warning_threshold
+        log.info(f"✅ 警告阈值已更新为: {config.warning_threshold}")
+    
+    if config.ban_duration_min is not None or config.ban_duration_max is not None:
+        current_min = chat_config.BLACKLIST_BAN_DURATION_MINUTES[0]
+        current_max = chat_config.BLACKLIST_BAN_DURATION_MINUTES[1]
+        
+        new_min = config.ban_duration_min if config.ban_duration_min is not None else current_min
+        new_max = config.ban_duration_max if config.ban_duration_max is not None else current_max
+        
+        if not 1 <= new_min <= 1440:
+            raise HTTPException(400, "拉黑时长最小值必须在 1 到 1440 分钟之间")
+        if not 1 <= new_max <= 1440:
+            raise HTTPException(400, "拉黑时长最大值必须在 1 到 1440 分钟之间")
+        if new_min > new_max:
+            raise HTTPException(400, "拉黑时长最小值不能大于最大值")
+        
+        chat_config.BLACKLIST_BAN_DURATION_MINUTES = (new_min, new_max)
+        
+        if config.ban_duration_min is not None:
+            await chat_db_manager.set_global_setting("ban_duration_min", str(new_min))
+            updated["ban_duration_min"] = new_min
+        
+        if config.ban_duration_max is not None:
+            await chat_db_manager.set_global_setting("ban_duration_max", str(new_max))
+            updated["ban_duration_max"] = new_max
+        
+        log.info(f"✅ 拉黑时长已更新为: ({new_min}, {new_max}) 分钟")
+    
+    log.info(f"管理配置已更新: {updated}")
+    return {"success": True, "updated": updated}
 
 
 @app.get("/api/config/emoji")

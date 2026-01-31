@@ -79,6 +79,12 @@
                         <i data-lucide="coins" class="w-5 h-5"></i>
                         <span>货币设置</span>
                     </button>
+                    <button @click="currentTab = 'moderation'"
+                            :class="currentTab === 'moderation' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="shield-alert" class="w-5 h-5"></i>
+                        <span>管理设置</span>
+                    </button>
                     <button @click="currentTab = 'emoji'"
                             :class="currentTab === 'emoji' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
                             class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
@@ -533,6 +539,73 @@
                         </div>
                         
                         <button @click="saveCoinConfig()"
+                                :disabled="saving"
+                                class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                            <i data-lucide="save" class="w-5 h-5"></i>
+                            <span x-text="saving ? '保存中...' : '保存设置'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 管理设置 -->
+            <div x-show="currentTab === 'moderation'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">管理设置</h2>
+                
+                <div class="bg-gradient-to-r from-orange-900/30 to-red-900/30 backdrop-blur rounded-xl p-6 border border-orange-500/30 mb-6 max-w-2xl">
+                    <h3 class="text-lg font-semibold mb-3 flex items-center gap-2">
+                        <i data-lucide="alert-triangle" class="w-5 h-5 text-orange-400"></i>
+                        关于警告与拉黑
+                    </h3>
+                    <p class="text-sm text-slate-300">
+                        当用户行为不当时，AI 可以通过 <code class="bg-slate-700 px-1 rounded">issue_user_warning</code> 工具发出警告。
+                        当警告次数达到阈值后，用户将被自动拉黑一段时间。
+                    </p>
+                </div>
+                
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl">
+                    <div class="space-y-6">
+                        <div class="bg-slate-700/30 rounded-lg p-4 flex items-center gap-4">
+                            <div class="w-12 h-12 bg-gradient-to-br from-orange-400 to-red-500 rounded-full flex items-center justify-center">
+                                <i data-lucide="shield-alert" class="w-6 h-6 text-white"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm text-slate-400">当前警告阈值</p>
+                                <p class="text-xl font-bold"><span x-text="moderationForm.warning_threshold"></span> 次警告后拉黑</p>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                警告次数阈值
+                                <span class="text-xs text-slate-500 ml-2">用户累积多少次警告后被拉黑</span>
+                            </label>
+                            <input type="number" x-model.number="moderationForm.warning_threshold" min="1" max="100"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">建议设置为 5-15 次，太低可能误伤正常用户</p>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">
+                                    拉黑时长最小值
+                                    <span class="text-xs text-slate-500 block">（分钟）</span>
+                                </label>
+                                <input type="number" x-model.number="moderationForm.ban_duration_min" min="1" max="1440"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">
+                                    拉黑时长最大值
+                                    <span class="text-xs text-slate-500 block">（分钟）</span>
+                                </label>
+                                <input type="number" x-model.number="moderationForm.ban_duration_max" min="1" max="1440"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+                        <p class="text-xs text-slate-500">拉黑时长会在最小值和最大值之间随机选择。1440 分钟 = 24 小时</p>
+                        
+                        <button @click="saveModerationConfig()"
                                 :disabled="saving"
                                 class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
                             <i data-lucide="save" class="w-5 h-5"></i>
@@ -1094,6 +1167,7 @@
                 showImagenApiKey: false,
                 showEmbeddingApiKey: false,
                 coinForm: { daily_reward: 50, chat_reward: 10, max_loan: 1000 },
+                moderationForm: { warning_threshold: 10, ban_duration_min: 15, ban_duration_max: 30 },
                 
                 // 模型获取
                 fetchingModels: false,
@@ -1196,6 +1270,11 @@
                         this.coinForm.chat_reward = this.config.coin.chat_reward;
                         this.coinForm.max_loan = this.config.coin.max_loan;
                     }
+                    if (this.config.moderation) {
+                        this.moderationForm.warning_threshold = this.config.moderation.warning_threshold;
+                        this.moderationForm.ban_duration_min = this.config.moderation.ban_duration_min;
+                        this.moderationForm.ban_duration_max = this.config.moderation.ban_duration_max;
+                    }
                     // 加载表情配置
                     this.loadEmojiConfig();
                     // 加载知识库数据
@@ -1203,6 +1282,8 @@
                     this.loadKnowledgeStats();
                     // 加载嵌入配置
                     this.loadEmbeddingConfig();
+                    // 加载管理配置
+                    this.loadModerationConfig();
                 },
                 
                 async loadEmbeddingConfig() {
@@ -1302,6 +1383,59 @@
                         if (response.ok) {
                             this.showToast('向量嵌入设置已保存', 'success');
                             await this.loadEmbeddingConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+                
+                async loadModerationConfig() {
+                    try {
+                        const response = await fetch('/api/config/moderation', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.moderationForm.warning_threshold = data.warning_threshold;
+                            this.moderationForm.ban_duration_min = data.ban_duration_min;
+                            this.moderationForm.ban_duration_max = data.ban_duration_max;
+                        }
+                    } catch (e) {
+                        console.error('加载管理配置失败', e);
+                    }
+                },
+                
+                async saveModerationConfig() {
+                    // 验证输入
+                    if (this.moderationForm.ban_duration_min > this.moderationForm.ban_duration_max) {
+                        this.showToast('拉黑时长最小值不能大于最大值', 'error');
+                        return;
+                    }
+                    
+                    this.saving = true;
+                    try {
+                        const payload = {
+                            warning_threshold: parseInt(this.moderationForm.warning_threshold),
+                            ban_duration_min: parseInt(this.moderationForm.ban_duration_min),
+                            ban_duration_max: parseInt(this.moderationForm.ban_duration_max)
+                        };
+                        
+                        const response = await fetch('/api/config/moderation', {
+                            method: 'PUT',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        if (response.ok) {
+                            this.showToast('管理设置已保存', 'success');
+                            await this.loadModerationConfig();
                         } else {
                             const data = await response.json();
                             this.showToast(data.detail || '保存失败', 'error');

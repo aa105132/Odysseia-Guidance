@@ -295,6 +295,10 @@ COOLDOWN_RATES = {
 # (min, max) 分钟
 BLACKLIST_BAN_DURATION_MINUTES = (15, 30)
 
+# --- 警告与拉黑配置 ---
+# 用户警告次数达到此阈值后将被拉黑
+BLACKLIST_WARNING_THRESHOLD = int(os.getenv("BLACKLIST_WARNING_THRESHOLD", "10"))
+
 # --- API 并发与密钥配置 ---
 MAX_CONCURRENT_REQUESTS = 50  # 同时处理的最大API请求数
 

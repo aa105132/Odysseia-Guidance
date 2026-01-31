@@ -937,9 +937,9 @@ class ChatDatabaseManager:
         )
 
         # 检查是否达到拉黑阈值
-        if current_warnings >= 1:
+        if current_warnings >= chat_config.BLACKLIST_WARNING_THRESHOLD:
             log.info(
-                f"用户 {user_id} 在服务器 {guild_id} 达到3次警告，将被加入黑名单。"
+                f"用户 {user_id} 在服务器 {guild_id} 达到{chat_config.BLACKLIST_WARNING_THRESHOLD}次警告，将被加入黑名单。"
             )
             # --- 扣除好感度 ---
             penalty = chat_config.AFFECTION_CONFIG["BLACKLIST_PENALTY"]
