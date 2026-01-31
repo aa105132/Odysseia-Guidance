@@ -24,8 +24,8 @@ class GeminiImagenCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.image_cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_GENERATION_COST", 30)
-        self.edit_cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 40)  # 图生图成本略高
+        self.image_cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_GENERATION_COST", 1)
+        self.edit_cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 1)
 
     @app_commands.command(name="画图", description="使用 Gemini Imagen AI 生成图片")
     @app_commands.describe(
