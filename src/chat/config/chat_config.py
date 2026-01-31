@@ -93,8 +93,9 @@ def _get_imagen_config():
         # 图生图使用的模型（需要支持多模态图像生成）
         # 如果未设置，将自动使用普通绘图模型 MODEL_NAME
         "EDIT_MODEL_NAME": os.getenv("GEMINI_IMAGEN_EDIT_MODEL") or None,
-        "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "30")),  # 生成一张图片的月光币成本
-        "IMAGE_EDIT_COST": int(os.getenv("GEMINI_IMAGEN_EDIT_COST", "40")),  # 图生图的月光币成本（略高）
+        "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "1")),  # 生成一张图片的月光币成本
+        "IMAGE_EDIT_COST": int(os.getenv("GEMINI_IMAGEN_EDIT_COST", "1")),  # 图生图的月光币成本
+        "MAX_IMAGES_PER_REQUEST": int(os.getenv("GEMINI_IMAGEN_MAX_IMAGES", "20")),  # 单次请求最多生成图片数量
         "SAFETY_FILTER_LEVEL": os.getenv("GEMINI_IMAGEN_SAFETY_LEVEL", "BLOCK_LOW_AND_ABOVE"),
         "PERSON_GENERATION": os.getenv("GEMINI_IMAGEN_PERSON_GEN", "ALLOW_ADULT"),
         # 支持的宽高比: "1:1", "3:4", "4:3", "9:16", "16:9"
