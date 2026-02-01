@@ -117,6 +117,7 @@ async def edit_image(
     
     # 1. 尝试获取用户发送的图片
     reference_image = None
+    user_id = kwargs.get("user_id")  # 获取当前用户ID
     
     # 首先检查当前消息的附件
     if message:
@@ -149,6 +150,24 @@ async def edit_image(
                                 break
             except Exception as e:
                 log.warning(f"获取回复消息失败: {e}")
+        
+        # 如果还是没有找到图片，检查频道的最近消息（用户可能先发图片再请求修改）
+        if not reference_image and channel:
+            try:
+                log.info("未在当前消息或回复中找到图片，正在搜索频道最近消息...")
+                # 获取最近的 5 条消息（包含所有用户，让AI自行判断上下文）
+                async for hist_msg in channel.history(limit=5):
+                    # 跳过当前消息
+                    if hist_msg.id == message.id:
+                        continue
+                    # 搜索所有用户发送的图片
+                    found_image = await extract_image_from_message(hist_msg)
+                    if found_image:
+                        log.info(f"在最近消息中找到图片 (消息 ID: {hist_msg.id}, 发送者: {hist_msg.author})")
+                        reference_image = found_image
+                        break
+            except Exception as e:
+                log.warning(f"搜索频道历史消息失败: {e}")
     
     # 如果还是没有找到图片，返回错误
     if not reference_image:
