@@ -7,7 +7,7 @@
 
 import logging
 import discord
-from typing import Optional
+from typing import Optional, List
 
 from src.chat.utils.prompt_utils import replace_emojis
 
@@ -233,6 +233,9 @@ async def generate_image(
             if channel:
                 try:
                     import io
+                    # 构建提示词显示内容（代码块格式）
+                    prompt_text = f"**提示词：**\n```\n{prompt}\n```"
+                    
                     # 将图片分批，每批最多10张（Discord上限）
                     MAX_FILES_PER_MESSAGE = 10
                     for batch_start in range(0, len(images_list), MAX_FILES_PER_MESSAGE):
@@ -242,14 +245,17 @@ async def generate_image(
                             batch_files.append(
                                 discord.File(
                                     io.BytesIO(images_list[idx]),
-                                    filename=f"SPOILER_generated_image_{idx+1}.png"
+                                    filename=f"generated_image_{idx+1}.png",
+                                    spoiler=True  # 添加遮罩
                                 )
                             )
-                        # 发送图片和提示词（带遮罩）
-                        prompt_text = f"```\n{prompt}\n```"
-                        await channel.send(content=prompt_text, files=batch_files)
+                        # 只在第一批图片时附带提示词
+                        if batch_start == 0:
+                            await channel.send(content=prompt_text, files=batch_files)
+                        else:
+                            await channel.send(files=batch_files)
                     
-                    log.info(f"已发送 {len(images_list)} 张图片到频道（每条消息最多10张，带遮罩）")
+                    log.info(f"已发送 {len(images_list)} 张图片到频道（每条消息最多10张）")
                 except Exception as e:
                     log.error(f"发送图片到频道失败: {e}")
             
@@ -264,7 +270,7 @@ async def generate_image(
                     "requested": number_of_images,
                     "images_generated": actual_count,
                     "cost": actual_cost,
-                    "message": f"只成功生成了 {actual_count}/{number_of_images} 张图片（部分失败）。请告诉用户画好了一部分，有些没成功。"
+                    "message": f"只成功生成了 {actual_count}/{number_of_images} 张图片（部分失败）。请告诉用户画好了一部分，有些没成功（提示词已经显示在图片消息里了，不需要再重复）。"
                 }
             else:
                 return {
@@ -272,7 +278,7 @@ async def generate_image(
                     "prompt_used": prompt,
                     "images_generated": actual_count,
                     "cost": actual_cost,
-                    "message": f"已成功生成 {actual_count} 张图片并展示给用户！请用自己的语气告诉用户画好了（不需要重复提示词，提示词已经随图片一起展示了）。"
+                    "message": f"已成功生成 {actual_count} 张图片并展示给用户！请用自己的语气告诉用户画好了（提示词已经显示在图片消息里了，不需要再重复）。"
                 }
         else:
             # 添加失败反应
@@ -292,6 +298,272 @@ async def generate_image(
         await add_reaction(FAILED_EMOJI)
         
         log.error(f"图片生成工具执行错误: {e}", exc_info=True)
+        return {
+            "generation_failed": True,
+            "reason": "system_error",
+            "hint": f"图片生成时发生了系统错误。请用自己的语气安慰用户，告诉他们稍后再试。"
+        }
+
+
+async def generate_images_batch(
+    prompts: List[str],
+    negative_prompt: Optional[str] = None,
+    aspect_ratio: str = "1:1",
+    resolution: str = "default",
+    preview_message: Optional[str] = None,
+    **kwargs
+) -> dict:
+    """
+    批量生成多张不同主题的图片。当用户要求生成多张不同内容的图片时使用此工具。
+    
+    **重要：当用户说"画N张图"且没有特别说明要用同一个提示词时，应该使用此工具！**
+    
+    使用场景：
+    - 用户说"给我画5张不同的猫咪图片" → 传入5个不同的猫咪提示词
+    - 用户说"画几张风景图" → 传入多个不同风景的提示词
+    - 用户说"画一组表情包" → 传入多个不同表情的提示词
+    
+    不使用此工具的场景：
+    - 用户说"用这个描述画5张" → 使用 generate_image 的 number_of_images 参数
+    - 用户只要一张图 → 使用 generate_image
+    
+    Args:
+        prompts: 提示词列表，每个提示词生成一张图片。
+                 你需要根据用户的请求，创作多个不同的提示词。
+                 
+                 创意变化维度：
+                 - 角度（正面、侧面、背面、仰拍、俯拍）
+                 - 姿势（站立、坐姿、躺姿、动态姿势）
+                 - 表情（微笑、害羞、得意、调皮）
+                 - 场景（室内、室外、不同时间段）
+                 - 风格（写实、二次元、水彩、油画）
+                 
+                 例如用户说"画5张猫咪"，你应该传入：
+                 [
+                     "可爱的小猫，正面视角，微笑表情，二次元风格",
+                     "优雅的猫咪，侧面视角，慵懒姿态，写实风格",
+                     "毛茸茸的猫，仰拍角度，玩耍动作，温暖光线",
+                     "小猫咪，俯视角度，蜷缩睡觉，柔和光线",
+                     "调皮的猫，跳跃姿态，动态效果，活泼场景"
+                 ]
+                 
+        negative_prompt: 负面提示词（可选），应用于所有图片。
+                 
+        aspect_ratio: 图片宽高比，应用于所有图片。
+                 
+        resolution: 图片分辨率，应用于所有图片。
+                 
+        preview_message: （必填）预告消息。
+    
+    Returns:
+        所有图片会在一条消息中发送给用户，附带所有提示词。
+    """
+    import asyncio
+    import io
+    from src.chat.features.image_generation.services.gemini_imagen_service import (
+        gemini_imagen_service
+    )
+    from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
+    from src.chat.features.odysseia_coin.service.coin_service import coin_service
+    
+    # 获取消息对象
+    message: Optional[discord.Message] = kwargs.get("message")
+    channel = kwargs.get("channel")
+    
+    # 辅助函数
+    async def add_reaction(emoji: str):
+        if message:
+            try:
+                await message.add_reaction(emoji)
+            except Exception as e:
+                log.warning(f"添加反应失败: {e}")
+    
+    async def remove_reaction(emoji: str):
+        if message:
+            try:
+                bot = kwargs.get("bot")
+                if bot and bot.user:
+                    await message.remove_reaction(emoji, bot.user)
+            except Exception as e:
+                log.warning(f"移除反应失败: {e}")
+    
+    # 检查服务是否可用
+    if not gemini_imagen_service.is_available():
+        log.warning("Gemini Imagen 服务不可用")
+        return {
+            "generation_failed": True,
+            "reason": "service_unavailable",
+            "hint": "图片生成服务当前不可用。请用自己的语气告诉用户这个功能暂时用不了。"
+        }
+    
+    # 验证并限制图片数量
+    max_images = GEMINI_IMAGEN_CONFIG.get("MAX_IMAGES_PER_REQUEST", 10)
+    if len(prompts) > max_images:
+        prompts = prompts[:max_images]
+    
+    number_of_images = len(prompts)
+    
+    # 获取用户ID用于扣费
+    user_id = kwargs.get("user_id")
+    cost_per_image = GEMINI_IMAGEN_CONFIG.get("IMAGE_GENERATION_COST", 1)
+    total_cost = cost_per_image * number_of_images
+    
+    # 检查用户余额
+    if user_id and total_cost > 0:
+        try:
+            user_id_int = int(user_id)
+            balance = await coin_service.get_balance(user_id_int)
+            if balance < total_cost:
+                return {
+                    "generation_failed": True,
+                    "reason": "insufficient_balance",
+                    "cost": total_cost,
+                    "balance": balance,
+                    "hint": f"用户月光币不足（需要{total_cost}，只有{balance}）。请用自己的语气告诉用户余额不够。"
+                }
+        except (ValueError, TypeError):
+            log.warning(f"无法解析用户ID: {user_id}")
+    
+    log.info(f"调用批量图片生成工具，共 {number_of_images} 个提示词")
+    
+    # 添加"正在生成"反应
+    await add_reaction(GENERATING_EMOJI)
+    
+    # 发送预告消息
+    if channel and preview_message:
+        try:
+            processed_message = replace_emojis(preview_message)
+            await channel.send(processed_message)
+        except Exception as e:
+            log.warning(f"发送预告消息失败: {e}")
+    
+    try:
+        # 验证宽高比
+        valid_ratios = ["1:1", "3:4", "4:3", "9:16", "16:9"]
+        if aspect_ratio not in valid_ratios:
+            aspect_ratio = "1:1"
+        
+        # 为每个提示词创建一个生成任务
+        tasks = [
+            gemini_imagen_service.generate_single_image(
+                prompt=p,
+                negative_prompt=negative_prompt,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+            )
+            for p in prompts
+        ]
+        
+        # 并发执行所有请求
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 收集成功的结果（保持与提示词的对应关系）
+        successful_images = []  # [(image_bytes, prompt), ...]
+        failed_count = 0
+        
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                failed_count += 1
+                log.warning(f"图片生成失败 (提示词 {idx+1}): {result}")
+            elif result:
+                successful_images.append((result, prompts[idx]))
+            else:
+                failed_count += 1
+        
+        if failed_count > 0:
+            log.warning(f"共 {number_of_images} 个请求，{failed_count} 个失败")
+        
+        # 移除"正在生成"反应
+        await remove_reaction(GENERATING_EMOJI)
+        
+        if successful_images:
+            # 添加成功反应
+            await add_reaction(SUCCESS_EMOJI)
+            
+            actual_count = len(successful_images)
+            actual_cost = cost_per_image * actual_count
+            
+            # 扣除月光币
+            if user_id and actual_cost > 0:
+                try:
+                    user_id_int = int(user_id)
+                    await coin_service.remove_coins(
+                        user_id_int, actual_cost, f"AI批量图片生成x{actual_count}"
+                    )
+                    log.info(f"用户 {user_id_int} 批量生成 {actual_count} 张图片，扣除 {actual_cost} 月光币")
+                except Exception as e:
+                    log.error(f"扣除月光币失败: {e}")
+            
+            # 发送图片到频道（一条消息包含所有图片和提示词）
+            if channel:
+                try:
+                    # 构建提示词列表（代码块格式）
+                    prompt_lines = []
+                    for idx, (_, prompt) in enumerate(successful_images, 1):
+                        prompt_lines.append(f"**图{idx}：**\n```\n{prompt}\n```")
+                    prompt_text = "\n".join(prompt_lines)
+                    
+                    # 将图片分批，每批最多10张（Discord上限）
+                    MAX_FILES_PER_MESSAGE = 10
+                    all_images = [img for img, _ in successful_images]
+                    
+                    for batch_start in range(0, len(all_images), MAX_FILES_PER_MESSAGE):
+                        batch_end = min(batch_start + MAX_FILES_PER_MESSAGE, len(all_images))
+                        batch_files = []
+                        for idx in range(batch_start, batch_end):
+                            batch_files.append(
+                                discord.File(
+                                    io.BytesIO(all_images[idx]),
+                                    filename=f"generated_image_{idx+1}.png",
+                                    spoiler=True  # 添加遮罩
+                                )
+                            )
+                        # 只在第一批图片时附带所有提示词
+                        if batch_start == 0:
+                            await channel.send(content=prompt_text, files=batch_files)
+                        else:
+                            await channel.send(files=batch_files)
+                    
+                    log.info(f"已发送 {len(all_images)} 张图片到频道")
+                except Exception as e:
+                    log.error(f"发送图片到频道失败: {e}")
+            
+            # 返回成功信息
+            partial_failure = actual_count < number_of_images
+            if partial_failure:
+                return {
+                    "success": True,
+                    "partial_failure": True,
+                    "prompts_used": [p for _, p in successful_images],
+                    "requested": number_of_images,
+                    "images_generated": actual_count,
+                    "cost": actual_cost,
+                    "message": f"成功生成了 {actual_count}/{number_of_images} 张图片。请告诉用户画好了一部分（提示词已经显示在图片消息里了，不需要再重复）。"
+                }
+            else:
+                return {
+                    "success": True,
+                    "prompts_used": [p for _, p in successful_images],
+                    "images_generated": actual_count,
+                    "cost": actual_cost,
+                    "message": f"已成功生成 {actual_count} 张不同主题的图片！请用自己的语气告诉用户画好了（提示词已经显示在图片消息里了，不需要再重复）。"
+                }
+        else:
+            # 添加失败反应
+            await add_reaction(FAILED_EMOJI)
+            
+            log.warning(f"批量图片生成全部失败")
+            return {
+                "generation_failed": True,
+                "reason": "generation_failed",
+                "hint": "图片生成失败了。请用自己的语气告诉用户生成失败了，建议稍后再试。"
+            }
+            
+    except Exception as e:
+        await remove_reaction(GENERATING_EMOJI)
+        await add_reaction(FAILED_EMOJI)
+        
+        log.error(f"批量图片生成工具执行错误: {e}", exc_info=True)
         return {
             "generation_failed": True,
             "reason": "system_error",

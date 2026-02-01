@@ -236,15 +236,15 @@ async def edit_image(
                 except Exception as e:
                     log.error(f"扣除月光币失败: {e}")
             
-            # 直接发送图片到频道
+            # 直接发送图片到频道（附带编辑提示词）
             if channel:
                 try:
                     import io
-                    file = discord.File(io.BytesIO(edited_image_bytes), filename="SPOILER_edited_image.png")
-                    # 发送图片和提示词（带遮罩）
-                    prompt_text = f"```\n{edit_prompt}\n```"
+                    # 构建提示词显示内容（代码块格式）
+                    prompt_text = f"**编辑提示词：**\n```\n{edit_prompt}\n```"
+                    file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
                     await channel.send(content=prompt_text, file=file)
-                    log.info("修改后的图片已直接发送到频道（带遮罩）")
+                    log.info("修改后的图片已直接发送到频道（附带提示词）")
                 except Exception as e:
                     log.error(f"发送图片到频道失败: {e}")
             
@@ -253,7 +253,7 @@ async def edit_image(
                 "success": True,
                 "edit_prompt_used": edit_prompt,
                 "cost": cost,
-                "message": "图片已成功修改并展示给用户了！请用自己的语气告诉用户图片已经改好了。"
+                "message": "图片已成功修改并展示给用户了！请用自己的语气告诉用户图片已经改好了（提示词已经显示在图片消息里了，不需要再重复）。"
             }
         else:
             # 添加失败反应
