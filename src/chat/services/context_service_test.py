@@ -187,8 +187,19 @@ class ContextServiceTest:
                     if ref_msg and ref_msg.author:
                         reply_info = f"[回复 {ref_msg.author.display_name}]"
 
+                # 处理图片附件信息
+                attachment_info = ""
+                if msg.attachments:
+                    image_attachments = [
+                        att for att in msg.attachments
+                        if att.content_type and att.content_type.startswith("image/")
+                    ]
+                    if image_attachments:
+                        # 标记用户发送了图片，让 AI 知道可以使用 edit_image 工具
+                        attachment_info = f"[发送了{len(image_attachments)}张图片]"
+
                 # 强制在元信息（用户名和回复）后添加冒号，清晰地分割内容
-                user_meta = f"[{msg.author.display_name}]{reply_info}"
+                user_meta = f"[{msg.author.display_name}]{attachment_info}{reply_info}"
                 final_part = f"{user_meta}: {clean_content}"
                 history_parts.append(final_part)
 

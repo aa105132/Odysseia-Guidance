@@ -242,10 +242,21 @@ class ContextService:
                         )
                         model_messages_buffer = []
 
+                    # 处理图片附件信息
+                    attachment_info = ""
+                    if msg.attachments:
+                        image_attachments = [
+                            att for att in msg.attachments
+                            if att.content_type and att.content_type.startswith("image/")
+                        ]
+                        if image_attachments:
+                            # 标记用户发送了图片，让 AI 知道可以使用 edit_image 工具
+                            attachment_info = f"[发送了{len(image_attachments)}张图片] "
+
                     # 格式化用户消息，符合用户期望的 [用户名]:xxxx 或 [用户名][回复xxx]:xxxx
                     # 恢复旧版格式，冒号始终在用户名后
                     formatted_message = (
-                        f"[{msg.author.display_name}]: {reply_info}{clean_content}"
+                        f"[{msg.author.display_name}]: {attachment_info}{reply_info}{clean_content}"
                     )
                     user_messages_buffer.append(formatted_message)
 
