@@ -24,6 +24,7 @@ async def generate_image(
     negative_prompt: Optional[str] = None,
     aspect_ratio: str = "1:1",
     number_of_images: int = 1,
+    resolution: str = "default",
     preview_message: Optional[str] = None,
     **kwargs
 ) -> dict:
@@ -67,6 +68,12 @@ async def generate_image(
         number_of_images: 生成图片数量，默认1张，最多20张。
                 用户想要多张不同效果的图片时增加数量。
                 例如用户说"给我画3张"就设为3，"画10张"就设为10。
+                
+        resolution: 图片分辨率，根据用户需求选择：
+                - "default" 默认分辨率（最快）
+                - "2k" 2K高清（用户明确要求高清、2K时使用）
+                - "4k" 4K超高清（用户明确要求超高清、4K时使用）
+                如果用户没有特别要求分辨率，使用 "default"
                 
         preview_message: （必填）在生成图片前先发送给用户的预告消息。
                 根据用户的请求内容和你的性格特点，写一句有趣的话告诉用户你正在画图。
@@ -169,6 +176,7 @@ async def generate_image(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
                 aspect_ratio=aspect_ratio,
+                resolution=resolution,
             )
             if result:
                 images_list = [result]
@@ -179,6 +187,7 @@ async def generate_image(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                     aspect_ratio=aspect_ratio,
+                    resolution=resolution,
                 )
                 for _ in range(number_of_images)
             ]
@@ -233,12 +242,14 @@ async def generate_image(
                             batch_files.append(
                                 discord.File(
                                     io.BytesIO(images_list[idx]),
-                                    filename=f"generated_image_{idx+1}.png"
+                                    filename=f"SPOILER_generated_image_{idx+1}.png"
                                 )
                             )
-                        await channel.send(files=batch_files)
+                        # 发送图片和提示词（带遮罩）
+                        prompt_text = f"```\n{prompt}\n```"
+                        await channel.send(content=prompt_text, files=batch_files)
                     
-                    log.info(f"已发送 {len(images_list)} 张图片到频道（每条消息最多10张）")
+                    log.info(f"已发送 {len(images_list)} 张图片到频道（每条消息最多10张，带遮罩）")
                 except Exception as e:
                     log.error(f"发送图片到频道失败: {e}")
             

@@ -22,6 +22,7 @@ FAILED_EMOJI = "❌"       # 生成失败
 async def edit_image(
     edit_prompt: str,
     aspect_ratio: str = "1:1",
+    resolution: str = "default",
     preview_message: Optional[str] = None,
     **kwargs
 ) -> dict:
@@ -55,6 +56,12 @@ async def edit_image(
                 - "9:16" 手机壁纸比例
                 - "16:9" 电脑壁纸比例
                 如果用户没有特别要求，建议保持原图的大致比例。
+                
+        resolution: 图片分辨率，根据用户需求选择：
+                - "default" 默认分辨率（最快）
+                - "2k" 2K高清（用户明确要求高清、2K时使用）
+                - "4k" 4K超高清（用户明确要求超高清、4K时使用）
+                如果用户没有特别要求分辨率，使用 "default"
                 
         preview_message: （必填）在修改图片前发送给用户的预告消息。
                 根据用户的修改请求和你的性格特点，写一句有趣的话告诉用户你正在处理。
@@ -208,6 +215,7 @@ async def edit_image(
             edit_prompt=edit_prompt,
             reference_mime_type=reference_image["mime_type"],
             aspect_ratio=aspect_ratio,
+            resolution=resolution,
         )
         
         # 移除"正在生成"反应
@@ -232,9 +240,11 @@ async def edit_image(
             if channel:
                 try:
                     import io
-                    file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png")
-                    await channel.send(file=file)
-                    log.info("修改后的图片已直接发送到频道")
+                    file = discord.File(io.BytesIO(edited_image_bytes), filename="SPOILER_edited_image.png")
+                    # 发送图片和提示词（带遮罩）
+                    prompt_text = f"```\n{edit_prompt}\n```"
+                    await channel.send(content=prompt_text, file=file)
+                    log.info("修改后的图片已直接发送到频道（带遮罩）")
                 except Exception as e:
                     log.error(f"发送图片到频道失败: {e}")
             
