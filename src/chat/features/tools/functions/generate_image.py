@@ -272,7 +272,7 @@ async def generate_image(
                     "prompt_used": prompt,
                     "images_generated": actual_count,
                     "cost": actual_cost,
-                    "message": f"已成功生成 {actual_count} 张图片并展示给用户！请用自己的语气告诉用户画好了，并展示使用的中文提示词（不要翻译成英文）。"
+                    "message": f"已成功生成 {actual_count} 张图片并展示给用户！请用自己的语气告诉用户画好了（不需要重复提示词，提示词已经随图片一起展示了）。"
                 }
         else:
             # 添加失败反应
