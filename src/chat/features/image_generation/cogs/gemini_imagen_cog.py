@@ -192,24 +192,28 @@ class GeminiImagenCog(commands.Cog):
                     else:
                         response_msg = f"图片画好啦！\n消耗 {actual_cost} 月光币，剩余 {new_balance}。"
                 
-                response_msg += f"\n\n**提示词:** {prompt[:200]}{'...' if len(prompt) > 200 else ''}"
-                if negative_prompt:
-                    response_msg += f"\n**排除:** {negative_prompt[:100]}{'...' if len(negative_prompt) > 100 else ''}"
-                
                 # 发送图片（每条消息最多10张）
                 MAX_FILES_PER_MESSAGE = 10
                 first_batch = True
                 for batch_start in range(0, len(images), MAX_FILES_PER_MESSAGE):
                     batch_end = min(batch_start + MAX_FILES_PER_MESSAGE, len(images))
                     batch_files = [
-                        discord.File(io.BytesIO(images[i]), filename=f"generated_image_{i+1}.png")
+                        discord.File(io.BytesIO(images[i]), filename=f"SPOILER_generated_image_{i+1}.png")
                         for i in range(batch_start, batch_end)
                     ]
+                    # 构建提示词文本（代码块格式）
+                    prompt_text = f"```\n{prompt}\n```"
+                    if negative_prompt:
+                        prompt_text += f"\n**排除内容:** {negative_prompt}"
+                    
                     if first_batch:
-                        await interaction.followup.send(response_msg, files=batch_files)
+                        # 第一批：发送回复消息 + 提示词 + 图片
+                        full_msg = f"{response_msg}\n\n{prompt_text}"
+                        await interaction.followup.send(full_msg, files=batch_files)
                         first_batch = False
                     else:
-                        await interaction.followup.send(files=batch_files)
+                        # 后续批次：只发送提示词 + 图片
+                        await interaction.followup.send(prompt_text, files=batch_files)
             else:
                 # 全部失败，不扣费
                 await interaction.followup.send(
@@ -409,22 +413,26 @@ class GeminiImagenCog(commands.Cog):
                     else:
                         response_msg = f"图片改好啦！\n消耗 {actual_cost} 月光币，剩余 {new_balance}。"
                 
-                response_msg += f"\n\n**编辑指令:** {edit_prompt[:200]}{'...' if len(edit_prompt) > 200 else ''}"
-                
                 # 发送图片（每条消息最多10张）
                 MAX_FILES_PER_MESSAGE = 10
                 first_batch = True
                 for batch_start in range(0, len(images), MAX_FILES_PER_MESSAGE):
                     batch_end = min(batch_start + MAX_FILES_PER_MESSAGE, len(images))
                     batch_files = [
-                        discord.File(io.BytesIO(images[i]), filename=f"edited_image_{i+1}.png")
+                        discord.File(io.BytesIO(images[i]), filename=f"SPOILER_edited_image_{i+1}.png")
                         for i in range(batch_start, batch_end)
                     ]
+                    # 构建编辑指令文本（代码块格式）
+                    prompt_text = f"```\n{edit_prompt}\n```"
+                    
                     if first_batch:
-                        await interaction.followup.send(response_msg, files=batch_files)
+                        # 第一批：发送回复消息 + 编辑指令 + 图片
+                        full_msg = f"{response_msg}\n\n{prompt_text}"
+                        await interaction.followup.send(full_msg, files=batch_files)
                         first_batch = False
                     else:
-                        await interaction.followup.send(files=batch_files)
+                        # 后续批次：只发送编辑指令 + 图片
+                        await interaction.followup.send(prompt_text, files=batch_files)
             else:
                 # 全部失败，不扣费
                 await interaction.followup.send(
