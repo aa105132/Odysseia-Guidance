@@ -2339,12 +2339,75 @@ class GeminiService:
         log.warning(f"未能为图文生成有效回复。Response: {response}")
         return "我好像没看懂这张图里是什么，可以换一张或者稍后再试试吗？"
 
-    @_api_key_handler
     async def generate_confession_response(
-        self, prompt: str, client: Any = None
+        self, prompt: str
     ) -> Optional[str]:
         """
         专用于生成忏悔回应的方法。
+        优先使用 Dashboard 中配置的自定义 API URL 和 Key，
+        如果未配置则回退到官方 API 密钥池。
+        """
+        # 检查是否有 Dashboard 配置的自定义端点
+        global_api_url = getattr(app_config, '_db_api_url', None)
+        global_api_key = getattr(app_config, '_db_api_key', None)
+        
+        if global_api_url and global_api_key:
+            # 使用 Dashboard 配置的自定义端点
+            log.info(f"忏悔功能: 使用 Dashboard 配置的自定义端点: {global_api_url[:30]}...")
+            return await self._generate_confession_with_custom_endpoint(prompt, global_api_url, global_api_key)
+        else:
+            # 回退到官方 API 密钥池
+            log.info("忏悔功能: 使用官方 API 密钥池")
+            return await self._generate_confession_with_official_api(prompt)
+    
+    async def _generate_confession_with_custom_endpoint(
+        self, prompt: str, api_url: str, api_key: str
+    ) -> Optional[str]:
+        """
+        使用自定义端点生成忏悔回应。
+        """
+        gen_config = types.GenerateContentConfig(
+            **app_config.GEMINI_CONFESSION_GEN_CONFIG,
+            safety_settings=self.safety_settings,
+        )
+        final_model_name = self.default_model_name
+
+        if app_config.DEBUG_CONFIG["LOG_AI_FULL_CONTEXT"]:
+            log.info("--- 忏悔功能 · 完整 AI 上下文 (自定义端点) ---")
+            log.info(prompt)
+            log.info("------------------------------------")
+
+        try:
+            http_options = types.HttpOptions(base_url=api_url)
+            client = genai.Client(api_key=api_key, http_options=http_options)
+            
+            response = await client.aio.models.generate_content(
+                model=final_model_name, contents=[prompt], config=gen_config
+            )
+
+            if response.parts:
+                return response.text.strip()
+
+            log.warning(
+                f"generate_confession_response (自定义端点) 未能生成有效内容。API 响应: {response}"
+            )
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                log.warning(
+                    f"请求可能被安全策略阻止，原因: {response.prompt_feedback.block_reason}"
+                )
+            return None
+        except Exception as e:
+            log.error(f"忏悔功能使用自定义端点失败: {e}", exc_info=True)
+            # 自定义端点失败时，尝试回退到官方 API
+            log.info("忏悔功能: 自定义端点失败，尝试回退到官方 API 密钥池...")
+            return await self._generate_confession_with_official_api(prompt)
+    
+    @_api_key_handler
+    async def _generate_confession_with_official_api(
+        self, prompt: str, client: Any = None
+    ) -> Optional[str]:
+        """
+        使用官方 API 密钥池生成忏悔回应。
         """
         if not client:
             raise ValueError("装饰器未能提供客户端实例。")
@@ -2356,7 +2419,7 @@ class GeminiService:
         final_model_name = self.default_model_name
 
         if app_config.DEBUG_CONFIG["LOG_AI_FULL_CONTEXT"]:
-            log.info("--- 忏悔功能 · 完整 AI 上下文 ---")
+            log.info("--- 忏悔功能 · 完整 AI 上下文 (官方 API) ---")
             log.info(prompt)
             log.info("------------------------------------")
 
@@ -2368,7 +2431,7 @@ class GeminiService:
             return response.text.strip()
 
         log.warning(
-            f"generate_confession_response 未能生成有效内容。API 响应: {response}"
+            f"generate_confession_response (官方 API) 未能生成有效内容。API 响应: {response}"
         )
         if response.prompt_feedback and response.prompt_feedback.block_reason:
             log.warning(
