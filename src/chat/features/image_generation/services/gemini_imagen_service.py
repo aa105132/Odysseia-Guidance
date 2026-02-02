@@ -303,7 +303,21 @@ class GeminiImagenService:
         """
         使用 Gemini SDK 的 generate_content 多模态聊天接口生成图像
         适用于支持图像生成的 Gemini 模型（如 gemini-2.0-flash-exp, gemini-2.5-flash 等）
+        支持流式请求以更快获取响应
         """
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        streaming_enabled = config.get("STREAMING_ENABLED", False)
+        
+        if streaming_enabled:
+            return await self._generate_image_gemini_chat_format_streaming(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                aspect_ratio=aspect_ratio,
+                number_of_images=number_of_images,
+                model_name=model_name,
+            )
+        
+        # 非流式请求的原有逻辑
         try:
             from google.genai import types
             
@@ -356,32 +370,7 @@ class GeminiImagenService:
             response = await loop.run_in_executor(self.executor, _sync_generate)
             
             # 解析响应，提取图像
-            images = []
-            if response and hasattr(response, 'candidates'):
-                for candidate in response.candidates:
-                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                        for part in candidate.content.parts:
-                            # 检查是否是图像数据
-                            if hasattr(part, 'inline_data') and part.inline_data:
-                                inline_data = part.inline_data
-                                if hasattr(inline_data, 'data') and inline_data.data:
-                                    # 如果是 base64 编码的字符串
-                                    if isinstance(inline_data.data, str):
-                                        images.append(base64.b64decode(inline_data.data))
-                                    else:
-                                        # 如果已经是字节数据
-                                        images.append(inline_data.data)
-            
-            # 也检查 response.parts（某些版本的 SDK）
-            if not images and hasattr(response, 'parts'):
-                for part in response.parts:
-                    if hasattr(part, 'inline_data') and part.inline_data:
-                        inline_data = part.inline_data
-                        if hasattr(inline_data, 'data') and inline_data.data:
-                            if isinstance(inline_data.data, str):
-                                images.append(base64.b64decode(inline_data.data))
-                            else:
-                                images.append(inline_data.data)
+            images = self._extract_images_from_gemini_response(response)
             
             if images:
                 log.info(f"成功生成 {len(images)} 张图像")
@@ -398,6 +387,141 @@ class GeminiImagenService:
         except Exception as e:
             log.error(f"Gemini Chat 格式生成图像时发生错误: {e}", exc_info=True)
             return None
+
+    async def _generate_image_gemini_chat_format_streaming(
+        self,
+        prompt: str,
+        negative_prompt: Optional[str],
+        aspect_ratio: str,
+        number_of_images: int,
+        model_name: str,
+    ) -> Optional[List[bytes]]:
+        """
+        使用 Gemini SDK 的流式 generate_content 接口生成图像
+        通过流式传输可以更快地获取响应
+        """
+        try:
+            from google.genai import types
+            
+            loop = asyncio.get_event_loop()
+            
+            # 构建提示词
+            full_prompt = f"请生成一张图片：{prompt}"
+            if negative_prompt:
+                full_prompt += f"\n\n请避免包含以下元素：{negative_prompt}"
+            if aspect_ratio != "1:1":
+                full_prompt += f"\n\n图片宽高比：{aspect_ratio}"
+
+            log.info(f"[Gemini Chat格式-流式] 正在使用 {model_name} 生成图像, 提示词: {prompt[:100]}...")
+
+            # 使用流式 generate_content 接口
+            def _sync_generate_stream():
+                # 配置生成参数，请求返回图像
+                safety_settings = [
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HATE_SPEECH",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HARASSMENT",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                ]
+                
+                gen_config = types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],  # 请求返回图像
+                    safety_settings=safety_settings,
+                )
+                
+                # 使用流式生成
+                collected_images = []
+                try:
+                    for chunk in self._client.models.generate_content_stream(
+                        model=model_name,
+                        contents=full_prompt,
+                        config=gen_config,
+                    ):
+                        # 从每个 chunk 中提取图像
+                        if chunk and hasattr(chunk, 'candidates'):
+                            for candidate in chunk.candidates:
+                                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                                    for part in candidate.content.parts:
+                                        if hasattr(part, 'inline_data') and part.inline_data:
+                                            inline_data = part.inline_data
+                                            if hasattr(inline_data, 'data') and inline_data.data:
+                                                if isinstance(inline_data.data, str):
+                                                    collected_images.append(base64.b64decode(inline_data.data))
+                                                else:
+                                                    collected_images.append(inline_data.data)
+                        
+                        # 也检查 chunk.parts
+                        if hasattr(chunk, 'parts'):
+                            for part in chunk.parts:
+                                if hasattr(part, 'inline_data') and part.inline_data:
+                                    inline_data = part.inline_data
+                                    if hasattr(inline_data, 'data') and inline_data.data:
+                                        if isinstance(inline_data.data, str):
+                                            collected_images.append(base64.b64decode(inline_data.data))
+                                        else:
+                                            collected_images.append(inline_data.data)
+                except Exception as stream_error:
+                    log.warning(f"流式生成过程中发生错误: {stream_error}")
+                
+                return collected_images
+            
+            images = await loop.run_in_executor(self.executor, _sync_generate_stream)
+            
+            if images:
+                log.info(f"[流式] 成功生成 {len(images)} 张图像")
+                return images
+            else:
+                log.warning("[流式] API 返回成功但没有找到图像数据")
+                return None
+
+        except Exception as e:
+            log.error(f"Gemini Chat 格式流式生成图像时发生错误: {e}", exc_info=True)
+            return None
+
+    def _extract_images_from_gemini_response(self, response) -> List[bytes]:
+        """
+        从 Gemini SDK 响应中提取图像数据
+        """
+        images = []
+        if response and hasattr(response, 'candidates'):
+            for candidate in response.candidates:
+                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                    for part in candidate.content.parts:
+                        # 检查是否是图像数据
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            inline_data = part.inline_data
+                            if hasattr(inline_data, 'data') and inline_data.data:
+                                # 如果是 base64 编码的字符串
+                                if isinstance(inline_data.data, str):
+                                    images.append(base64.b64decode(inline_data.data))
+                                else:
+                                    # 如果已经是字节数据
+                                    images.append(inline_data.data)
+        
+        # 也检查 response.parts（某些版本的 SDK）
+        if not images and hasattr(response, 'parts'):
+            for part in response.parts:
+                if hasattr(part, 'inline_data') and part.inline_data:
+                    inline_data = part.inline_data
+                    if hasattr(inline_data, 'data') and inline_data.data:
+                        if isinstance(inline_data.data, str):
+                            images.append(base64.b64decode(inline_data.data))
+                        else:
+                            images.append(inline_data.data)
+        
+        return images
     
     async def _generate_image_openai_format(
         self,
@@ -410,7 +534,21 @@ class GeminiImagenService:
         """
         使用 OpenAI 兼容的 chat/completions API 生成图像
         适用于支持图像生成的聊天模型（如 Gemini 2.0 通过代理）
+        支持流式请求 (SSE) 以更快获取响应
         """
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        streaming_enabled = config.get("STREAMING_ENABLED", False)
+        
+        if streaming_enabled:
+            return await self._generate_image_openai_format_streaming(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                aspect_ratio=aspect_ratio,
+                number_of_images=number_of_images,
+                model_name=model_name,
+            )
+        
+        # 非流式请求的原有逻辑
         try:
             base_url = self._client["base_url"].rstrip("/")
             api_key = self._client["api_key"]
@@ -456,41 +594,7 @@ class GeminiImagenService:
                     data = await response.json()
                     
                     # 解析响应，提取图像
-                    images = []
-                    if "choices" in data:
-                        for choice in data["choices"]:
-                            message = choice.get("message", {})
-                            content = message.get("content")
-                            
-                            # 检查是否有 inline_data（Gemini 格式的图像）
-                            if isinstance(content, list):
-                                for part in content:
-                                    if isinstance(part, dict):
-                                        # 检查 inline_data 格式
-                                        inline_data = part.get("inline_data") or part.get("inlineData")
-                                        if inline_data:
-                                            image_b64 = inline_data.get("data")
-                                            if image_b64:
-                                                images.append(base64.b64decode(image_b64))
-                                        # 检查 image_url 格式
-                                        elif "image_url" in part:
-                                            url_data = part["image_url"]
-                                            if isinstance(url_data, dict) and "url" in url_data:
-                                                url = url_data["url"]
-                                                # 如果是 data URL
-                                                if url.startswith("data:image"):
-                                                    b64_data = url.split(",", 1)[1]
-                                                    images.append(base64.b64decode(b64_data))
-                            
-                            # 检查 parts 字段（某些代理的格式）
-                            parts = message.get("parts", [])
-                            for part in parts:
-                                if isinstance(part, dict):
-                                    inline_data = part.get("inline_data") or part.get("inlineData")
-                                    if inline_data:
-                                        image_b64 = inline_data.get("data")
-                                        if image_b64:
-                                            images.append(base64.b64decode(image_b64))
+                    images = self._extract_images_from_openai_response(data)
                     
                     if images:
                         log.info(f"成功生成 {len(images)} 张图像")
@@ -506,6 +610,214 @@ class GeminiImagenService:
         except Exception as e:
             log.error(f"OpenAI 格式生成图像时发生错误: {e}", exc_info=True)
             return None
+
+    async def _generate_image_openai_format_streaming(
+        self,
+        prompt: str,
+        negative_prompt: Optional[str],
+        aspect_ratio: str,
+        number_of_images: int,
+        model_name: str,
+    ) -> Optional[List[bytes]]:
+        """
+        使用 OpenAI 兼容的 chat/completions API 以流式方式生成图像
+        通过 SSE (Server-Sent Events) 接收数据
+        """
+        try:
+            base_url = self._client["base_url"].rstrip("/")
+            api_key = self._client["api_key"]
+            
+            # 构建提示词
+            full_prompt = f"请生成一张图片：{prompt}"
+            if negative_prompt:
+                full_prompt += f"\n请避免：{negative_prompt}"
+            if aspect_ratio != "1:1":
+                full_prompt += f"\n宽高比：{aspect_ratio}"
+            
+            log.info(f"[OpenAI格式-流式] 正在使用 {model_name} 生成图像, 提示词: {prompt[:100]}...")
+            
+            # 构建请求
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            }
+            
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": full_prompt
+                    }
+                ],
+                "max_tokens": 4096,
+                "stream": True,  # 启用流式传输
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=180)  # 流式请求可能需要更长时间
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        log.error(f"OpenAI API 流式请求返回错误 {response.status}: {error_text[:500]}")
+                        return None
+                    
+                    # 收集流式响应数据
+                    collected_content = []
+                    collected_parts = []
+                    
+                    async for line in response.content:
+                        line = line.decode('utf-8').strip()
+                        
+                        # 跳过空行和注释
+                        if not line or line.startswith(':'):
+                            continue
+                        
+                        # 处理 SSE 数据格式
+                        if line.startswith('data: '):
+                            data_str = line[6:]  # 移除 'data: ' 前缀
+                            
+                            # 检查是否是结束标记
+                            if data_str == '[DONE]':
+                                log.debug("收到流式响应结束标记 [DONE]")
+                                break
+                            
+                            try:
+                                chunk = json.loads(data_str)
+                                
+                                # 处理流式响应块
+                                if "choices" in chunk:
+                                    for choice in chunk["choices"]:
+                                        delta = choice.get("delta", {})
+                                        
+                                        # 收集文本内容
+                                        if "content" in delta:
+                                            content = delta["content"]
+                                            if isinstance(content, str):
+                                                collected_content.append(content)
+                                            elif isinstance(content, list):
+                                                # 处理多模态内容（可能包含图像）
+                                                for part in content:
+                                                    if isinstance(part, dict):
+                                                        collected_parts.append(part)
+                                        
+                                        # 某些实现可能在 delta 中直接包含 parts
+                                        if "parts" in delta:
+                                            for part in delta["parts"]:
+                                                if isinstance(part, dict):
+                                                    collected_parts.append(part)
+                                        
+                                        # 检查完成原因
+                                        finish_reason = choice.get("finish_reason")
+                                        if finish_reason:
+                                            log.debug(f"流式响应完成，原因: {finish_reason}")
+                                
+                            except json.JSONDecodeError as e:
+                                log.warning(f"解析流式响应块失败: {e}, 数据: {data_str[:100]}")
+                                continue
+                    
+                    # 尝试从收集的数据中提取图像
+                    images = []
+                    
+                    # 从收集的 parts 中提取图像
+                    for part in collected_parts:
+                        inline_data = part.get("inline_data") or part.get("inlineData")
+                        if inline_data:
+                            image_b64 = inline_data.get("data")
+                            if image_b64:
+                                try:
+                                    images.append(base64.b64decode(image_b64))
+                                except Exception as e:
+                                    log.warning(f"解码图像数据失败: {e}")
+                        
+                        # 检查 image_url 格式
+                        if "image_url" in part:
+                            url_data = part["image_url"]
+                            if isinstance(url_data, dict) and "url" in url_data:
+                                url = url_data["url"]
+                                if url.startswith("data:image"):
+                                    try:
+                                        b64_data = url.split(",", 1)[1]
+                                        images.append(base64.b64decode(b64_data))
+                                    except Exception as e:
+                                        log.warning(f"解码 image_url 数据失败: {e}")
+                    
+                    # 如果 parts 中没找到图像，尝试从完整的文本内容中提取
+                    if not images and collected_content:
+                        full_content = ''.join(collected_content)
+                        # 尝试解析可能的 JSON 响应（某些模型可能在文本中返回 base64）
+                        try:
+                            content_data = json.loads(full_content)
+                            if isinstance(content_data, list):
+                                for item in content_data:
+                                    if isinstance(item, dict):
+                                        inline_data = item.get("inline_data") or item.get("inlineData")
+                                        if inline_data and inline_data.get("data"):
+                                            images.append(base64.b64decode(inline_data["data"]))
+                        except (json.JSONDecodeError, TypeError):
+                            pass  # 内容不是 JSON，忽略
+                    
+                    if images:
+                        log.info(f"[流式] 成功生成 {len(images)} 张图像")
+                        return images
+                    else:
+                        log.warning("流式 API 返回成功但没有找到图像数据")
+                        if collected_content:
+                            log.debug(f"收集的文本内容: {''.join(collected_content)[:500]}")
+                        return None
+
+        except asyncio.TimeoutError:
+            log.error("OpenAI API 流式请求超时")
+            return None
+        except Exception as e:
+            log.error(f"OpenAI 格式流式生成图像时发生错误: {e}", exc_info=True)
+            return None
+
+    def _extract_images_from_openai_response(self, data: dict) -> List[bytes]:
+        """
+        从 OpenAI 格式的响应中提取图像数据
+        """
+        images = []
+        if "choices" in data:
+            for choice in data["choices"]:
+                message = choice.get("message", {})
+                content = message.get("content")
+                
+                # 检查是否有 inline_data（Gemini 格式的图像）
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict):
+                            # 检查 inline_data 格式
+                            inline_data = part.get("inline_data") or part.get("inlineData")
+                            if inline_data:
+                                image_b64 = inline_data.get("data")
+                                if image_b64:
+                                    images.append(base64.b64decode(image_b64))
+                            # 检查 image_url 格式
+                            elif "image_url" in part:
+                                url_data = part["image_url"]
+                                if isinstance(url_data, dict) and "url" in url_data:
+                                    url = url_data["url"]
+                                    # 如果是 data URL
+                                    if url.startswith("data:image"):
+                                        b64_data = url.split(",", 1)[1]
+                                        images.append(base64.b64decode(b64_data))
+                
+                # 检查 parts 字段（某些代理的格式）
+                parts = message.get("parts", [])
+                for part in parts:
+                    if isinstance(part, dict):
+                        inline_data = part.get("inline_data") or part.get("inlineData")
+                        if inline_data:
+                            image_b64 = inline_data.get("data")
+                            if image_b64:
+                                images.append(base64.b64decode(image_b64))
+        return images
 
     def _get_model_for_resolution(self, resolution: str = "default", is_edit: bool = False) -> str:
         """

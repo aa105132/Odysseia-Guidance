@@ -114,6 +114,10 @@ def _get_imagen_config():
         # - "gemini_chat": 使用 Gemini SDK 的 generate_content 多模态聊天接口（适用于支持图像生成的代理）
         # - "openai": 使用 OpenAI 兼容的 chat/completions 接口
         "API_FORMAT": os.getenv("GEMINI_IMAGEN_API_FORMAT", "gemini_chat"),
+        # --- 流式请求配置 ---
+        # 是否启用流式请求（仅适用于 openai 和 gemini_chat 格式）
+        # 流式请求可以更快地获取生成进度，适用于支持 SSE 的 API 端点
+        "STREAMING_ENABLED": _parse_bool_env("GEMINI_IMAGEN_STREAMING", "False"),
     }
 
 GEMINI_IMAGEN_CONFIG = _get_imagen_config()

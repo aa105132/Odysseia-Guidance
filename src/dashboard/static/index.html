@@ -385,6 +385,29 @@
                             </p>
                         </div>
                         
+                        <!-- 流式请求开关 -->
+                        <div class="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg"
+                             :class="{'opacity-50': imagenForm.api_format === 'gemini'}">
+                            <div>
+                                <p class="font-medium flex items-center gap-2">
+                                    <i data-lucide="activity" class="w-4 h-4 text-blue-400"></i>
+                                    流式请求 (Streaming)
+                                </p>
+                                <p class="text-sm text-slate-400">使用 SSE 流式传输获取生成结果，可更快响应</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer"
+                                   :class="{'pointer-events-none': imagenForm.api_format === 'gemini'}">
+                                <input type="checkbox" x-model="imagenForm.streaming_enabled"
+                                       :disabled="imagenForm.api_format === 'gemini'"
+                                       class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 peer-disabled:opacity-50"></div>
+                            </label>
+                        </div>
+                        <p x-show="imagenForm.api_format === 'gemini'" class="text-xs text-yellow-400 -mt-2">
+                            <i data-lucide="alert-triangle" class="w-3 h-3 inline"></i>
+                            Gemini generateImages 专用接口不支持流式请求
+                        </p>
+                        
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
                             <input type="url" x-model="imagenForm.api_url"
@@ -1191,7 +1214,7 @@
                 
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
-                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '' },
+                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false },
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
                 
@@ -1304,6 +1327,8 @@
                         this.imagenForm.model_4k = this.config.imagen.model_4k || '';
                         this.imagenForm.edit_model_2k = this.config.imagen.edit_model_2k || '';
                         this.imagenForm.edit_model_4k = this.config.imagen.edit_model_4k || '';
+                        // 流式请求配置
+                        this.imagenForm.streaming_enabled = this.config.imagen.streaming_enabled || false;
                     }
                     if (this.config.coin) {
                         this.coinForm.daily_reward = this.config.coin.daily_reward;
@@ -1906,7 +1931,9 @@
                             model_2k: this.imagenForm.model_2k || null,
                             model_4k: this.imagenForm.model_4k || null,
                             edit_model_2k: this.imagenForm.edit_model_2k || null,
-                            edit_model_4k: this.imagenForm.edit_model_4k || null
+                            edit_model_4k: this.imagenForm.edit_model_4k || null,
+                            // 流式请求配置
+                            streaming_enabled: this.imagenForm.streaming_enabled
                         };
                         
                         // 只有填写了新的API Key才发送

@@ -80,6 +80,8 @@ class ImagenConfigUpdate(BaseModel):
     model_4k: Optional[str] = None  # 4K 分辨率绘图模型
     edit_model_2k: Optional[str] = None  # 2K 分辨率图生图模型
     edit_model_4k: Optional[str] = None  # 4K 分辨率图生图模型
+    # 流式请求配置
+    streaming_enabled: Optional[bool] = None  # 是否启用流式请求
 
 
 class EmbeddingConfigUpdate(BaseModel):
@@ -488,6 +490,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     db_generation_cost = await chat_db_manager.get_global_setting("imagen_generation_cost")
     db_edit_cost = await chat_db_manager.get_global_setting("imagen_edit_cost")
     db_max_images = await chat_db_manager.get_global_setting("imagen_max_images")
+    db_streaming_enabled = await chat_db_manager.get_global_setting("imagen_streaming_enabled")
     
     # 内存配置作为回退
     config = chat_config.GEMINI_IMAGEN_CONFIG
@@ -501,6 +504,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     generation_cost = int(db_generation_cost) if db_generation_cost else config.get("IMAGE_GENERATION_COST", 1)
     edit_cost = int(db_edit_cost) if db_edit_cost else config.get("IMAGE_EDIT_COST", 1)
     max_images = int(db_max_images) if db_max_images else config.get("MAX_IMAGES_PER_REQUEST", 20)
+    streaming_enabled = db_streaming_enabled == "true" if db_streaming_enabled else config.get("STREAMING_ENABLED", False)
     
     # 隐藏部分信息
     masked_url = ""
@@ -540,6 +544,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "generation_cost": generation_cost,
         "edit_cost": edit_cost,
         "max_images": max_images,
+        "streaming_enabled": streaming_enabled,
         "available_models": [
             "imagen-3.0-generate-002",
             "imagen-3.0-fast-generate-001",
@@ -657,6 +662,15 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         env_updates["GEMINI_IMAGEN_EDIT_MODEL_4K"] = config.edit_model_4k
         updated["edit_model_4k"] = config.edit_model_4k
         await chat_db_manager.set_global_setting("imagen_edit_model_4k", config.edit_model_4k)
+    
+    # 流式请求配置
+    if config.streaming_enabled is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["STREAMING_ENABLED"] = config.streaming_enabled
+        os.environ["GEMINI_IMAGEN_STREAMING"] = str(config.streaming_enabled).lower()
+        env_updates["GEMINI_IMAGEN_STREAMING"] = str(config.streaming_enabled).lower()
+        updated["streaming_enabled"] = config.streaming_enabled
+        await chat_db_manager.set_global_setting("imagen_streaming_enabled", str(config.streaming_enabled).lower())
+        log.info(f"✅ 流式请求已{'启用' if config.streaming_enabled else '禁用'}")
     
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:
