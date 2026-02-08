@@ -236,6 +236,7 @@ async def get_all_config(token: str = Depends(verify_token)):
             "enabled": chat_config.GEMINI_IMAGEN_CONFIG.get("ENABLED", False),
             "api_url": chat_config.GEMINI_IMAGEN_CONFIG.get("BASE_URL", "") or chat_config.GEMINI_IMAGEN_CONFIG.get("API_URL", ""),
             "model": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME", "agy-gemini-3-pro-image"),
+            "edit_model": chat_config.GEMINI_IMAGEN_CONFIG.get("EDIT_MODEL_NAME", ""),
             "default_images": chat_config.GEMINI_IMAGEN_CONFIG.get("DEFAULT_NUMBER_OF_IMAGES", 1),
             "aspect_ratios": chat_config.GEMINI_IMAGEN_CONFIG.get("ASPECT_RATIOS", {}),
             "api_key_masked": imagen_masked_key,
