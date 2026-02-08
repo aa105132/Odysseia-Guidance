@@ -85,16 +85,20 @@ class VideoGenerationService:
         self,
         prompt: str,
         duration: int = 5,
+        image_data: Optional[bytes] = None,
+        image_mime_type: Optional[str] = None,
     ) -> Optional[VideoResult]:
         """
-        生成视频
+        生成视频（支持文生视频和图生视频）
 
         Args:
             prompt: 视频描述提示词
             duration: 视频时长（秒）
+            image_data: 可选的参考图片字节数据（图生视频模式）
+            image_mime_type: 图片 MIME 类型（如 "image/png"）
 
         Returns:
-            成功时返回 VideoResult，失败时返回 None
+            成功时返回 VideoResult，失败时回 None
         """
         if not self.is_available():
             log.error("视频生成服务不可用")
@@ -108,32 +112,55 @@ class VideoGenerationService:
         # 限制时长
         duration = min(max(1, duration), max_duration)
 
-        log.info(f"使用模型 {model_name} 生成视频, 时长: {duration}s, 格式: {video_format}")
+        is_image_to_video = image_data is not None
+        mode_str = "图生视频" if is_image_to_video else "文生视频"
+        log.info(f"使用模型 {model_name} 生成视频 ({mode_str}), 时长: {duration}s, 格式: {video_format}")
 
         try:
             base_url = self._client["base_url"].rstrip("/")
             api_key = self._client["api_key"]
-
-            # 构建提示词
-            full_prompt = f"请生成一个视频：{prompt}\n视频时长：约{duration}秒"
 
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             }
 
+            # 构建消息内容
+            if is_image_to_video:
+                # 图生视频：构建多模态消息（图片 + 文本）
+                import base64 as b64_module
+                image_b64 = b64_module.b64encode(image_data).decode("utf-8")
+                mime = image_mime_type or "image/png"
+                
+                content_parts = [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime};base64,{image_b64}"
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": f"请根据这张图片生成一个视频：{prompt}\n视频时长：约{duration}秒"
+                    }
+                ]
+                user_content = content_parts
+            else:
+                # 文生视频：纯文本消息
+                user_content = f"请生成一个视频：{prompt}\n视频时长：约{duration}秒"
+
             payload = {
                 "model": model_name,
                 "messages": [
                     {
                         "role": "user",
-                        "content": full_prompt
+                        "content": user_content
                     }
                 ],
                 "max_tokens": 4096,
             }
 
-            log.info(f"[视频生成] 正在使用 {model_name} 生成视频, 提示词: {prompt[:100]}...")
+            log.info(f"[视频生成-{mode_str}] 正在使用 {model_name} 生成视频, 提示词: {prompt[:100]}...")
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(

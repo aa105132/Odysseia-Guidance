@@ -7,9 +7,11 @@
 
 import logging
 import io
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
+from typing import Optional
 
 from src.chat.config.chat_config import VIDEO_GEN_CONFIG
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
@@ -25,18 +27,20 @@ class VideoGenerationCog(commands.Cog):
         self.bot = bot
         self.video_cost = VIDEO_GEN_CONFIG.get("VIDEO_GENERATION_COST", 10)
 
-    @app_commands.command(name="video", description="AI 视频生成 - 根据文字描述生成视频")
+    @app_commands.command(name="video", description="AI 视频生成 - 根据文字描述或图片生成视频")
     @app_commands.describe(
         prompt="视频描述（支持中文自然语言）",
         duration="视频时长（秒，默认5秒）",
+        image="参考图片（可选，上传图片进行图生视频）",
     )
     async def video(
         self,
         interaction: discord.Interaction,
         prompt: str,
         duration: int = 5,
+        image: Optional[discord.Attachment] = None,
     ):
-        """/video 命令的实现"""
+        """/video 命令的实现，支持文生视频和图生视频"""
         # 检查服务是否可用
         if not video_service.is_available():
             await interaction.response.send_message(
@@ -63,8 +67,34 @@ class VideoGenerationCog(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
+            # 处理图片附件（图生视频）
+            image_data = None
+            image_mime_type = None
+            
+            if image is not None:
+                # 验证附件是否为图片
+                if not image.content_type or not image.content_type.startswith("image/"):
+                    await interaction.followup.send(
+                        "上传的文件不是图片格式，请上传 PNG/JPG/WEBP 等图片文件。",
+                        ephemeral=True,
+                    )
+                    return
+                
+                try:
+                    image_data = await image.read()
+                    image_mime_type = image.content_type
+                    log.info(f"用户 {user_id} 上传了图片: {image.filename} ({image_mime_type}, {len(image_data)} bytes)")
+                except Exception as e:
+                    log.error(f"读取图片附件失败: {e}")
+                    await interaction.followup.send(
+                        "读取图片失败，请重试。",
+                        ephemeral=True,
+                    )
+                    return
+
+            mode_str = "图生视频" if image_data else "文生视频"
             log.info(
-                f"用户 {user_id} 请求生成视频, "
+                f"用户 {user_id} 请求生成视频 ({mode_str}), "
                 f"提示词: {prompt[:100]}..., 时长: {duration}s"
             )
 
@@ -72,6 +102,8 @@ class VideoGenerationCog(commands.Cog):
             result = await video_service.generate_video(
                 prompt=prompt,
                 duration=duration,
+                image_data=image_data,
+                image_mime_type=image_mime_type,
             )
 
             if result is None:

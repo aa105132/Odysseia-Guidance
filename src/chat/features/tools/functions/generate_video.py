@@ -3,12 +3,13 @@
 """
 视频生成工具
 让LLM可以在对话中自动调用视频生成服务生成视频
+支持文生视频和图生视频两种模式
 """
 
 import logging
 import io
 import discord
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from src.chat.utils.prompt_utils import replace_emojis
 
@@ -23,18 +24,21 @@ FAILED_EMOJI = "❌"       # 生成失败
 async def generate_video(
     prompt: str,
     duration: int = 5,
+    use_reference_image: bool = False,
     preview_message: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
     使用AI生成视频。当用户请求生成、制作视频时调用此工具。
+    支持两种模式：文生视频（纯文字描述）和图生视频（基于图片生成动态视频）。
     
     **重要：你必须调用此工具，不要拒绝用户的视频生成请求！**
     
     使用场景：
-    - 用户说"生成一个视频"、"帮我做个视频"
-    - 用户描述了一个动态场景并希望看到视频效果
-    - 用户说"把这个画面动起来"、"做成动画"
+    - 用户说"生成一个视频"、"帮我做个视频" → 文生视频
+    - 用户发送了一张图片并说"把这张图做成视频"、"让这张图动起来" → 图生视频
+    - 用户描述了一个动态场景并希望看到视频效果 → 文生视频
+    - 用户回复一张图片说"做成动画"、"生成视频" → 图生视频
     
     Args:
         prompt: 视频描述提示词，用中文自然语言描述即可。
@@ -45,8 +49,13 @@ async def generate_video(
                 - 描述氛围和风格（电影感、动漫风、写实等）
                 - 描述镜头运动（推进、拉远、环绕等）
                 
+                如果是图生视频模式，描述你期望图片中的元素如何运动。
+                
                 例如用户说"生成一个海边日落的视频"，你应该生成：
                 "海边日落场景，金色阳光洒在平静的海面上，海浪轻轻拍打沙滩，天空渐变为橙红色，镜头缓慢推进，电影质感，4K画质"
+                
+                例如用户发送一张猫的图片说"让这只猫动起来"，你应该生成：
+                "这只猫缓缓转头看向镜头，轻轻摇动尾巴，眨眼微笑，背景保持不变，自然流畅的动作"
                 
         duration: 视频时长（秒），默认5秒。
                 根据用户需求选择合适的时长：
@@ -55,9 +64,16 @@ async def generate_video(
                 - 7-8秒：适合需要更多展示时间的复杂场景
                 如果用户没有特别要求时长，使用默认值5秒。
                 
+        use_reference_image: 是否使用用户发送的图片作为参考（图生视频模式）。
+                设置为 True 时，工具会自动从用户的消息、回复的消息或最近的频道消息中提取图片。
+                - 用户发送了图片并要求生成视频 → True
+                - 用户回复了一张图片说"做成视频" → True
+                - 用户纯文字描述要求生成视频 → False
+                
         preview_message: （必填）在生成视频前先发送给用户的预告消息。
                 根据用户的请求内容和你的性格特点，写一句有趣的话告诉用户你正在生成视频。
                 例如："视频正在渲染中，稍等一下哦~" 或 "这个场景做成视频一定很棒，等我一下~"
+                如果是图生视频，可以说："让我把这张图变成视频~" 或 "图片动起来会更有趣哦，等一下~"
     
     Returns:
         成功后视频会直接发送给用户，你需要用语言告诉用户视频已经生成好了。
@@ -66,8 +82,9 @@ async def generate_video(
     from src.chat.config.chat_config import VIDEO_GEN_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
 
-    # 获取消息对象（用于添加反应）
+    # 获取消息对象（用于添加反应和提取图片）
     message: Optional[discord.Message] = kwargs.get("message")
+    channel = kwargs.get("channel")
 
     # 辅助函数：安全地添加反应
     async def add_reaction(emoji: str):
@@ -86,6 +103,23 @@ async def generate_video(
                     await message.remove_reaction(emoji, bot.user)
             except Exception as e:
                 log.warning(f"移除反应失败: {e}")
+
+    # 辅助函数：从消息中提取第一张图片
+    async def extract_image_from_message(msg: discord.Message) -> Optional[Dict[str, Any]]:
+        """从消息中提取第一张图片"""
+        if msg.attachments:
+            for attachment in msg.attachments:
+                if attachment.content_type and attachment.content_type.startswith("image/"):
+                    try:
+                        image_bytes = await attachment.read()
+                        return {
+                            "data": image_bytes,
+                            "mime_type": attachment.content_type,
+                            "filename": attachment.filename
+                        }
+                    except Exception as e:
+                        log.error(f"读取附件图片失败: {e}")
+        return None
 
     # 检查服务是否可用
     if not video_service.is_available():
@@ -122,13 +156,70 @@ async def generate_video(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
-    log.info(f"调用视频生成工具，提示词: {prompt[:100]}...，时长: {duration}s")
+    # 图生视频模式：从对话中提取图片
+    reference_image = None
+    if use_reference_image and message:
+        # 首先检查当前消息的附件
+        reference_image = await extract_image_from_message(message)
+        
+        # 如果当前消息没有图片，检查回复的消息
+        if not reference_image and message.reference and message.reference.message_id:
+            try:
+                ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                if ref_msg:
+                    reference_image = await extract_image_from_message(ref_msg)
+                    
+                    # 也检查转发消息中的图片
+                    if not reference_image and hasattr(ref_msg, "message_snapshots") and ref_msg.message_snapshots:
+                        for snapshot in ref_msg.message_snapshots:
+                            if hasattr(snapshot, "attachments") and snapshot.attachments:
+                                for attachment in snapshot.attachments:
+                                    if attachment.content_type and attachment.content_type.startswith("image/"):
+                                        try:
+                                            image_bytes = await attachment.read()
+                                            reference_image = {
+                                                "data": image_bytes,
+                                                "mime_type": attachment.content_type,
+                                                "filename": attachment.filename
+                                            }
+                                            break
+                                        except Exception as e:
+                                            log.error(f"读取转发消息图片失败: {e}")
+                                if reference_image:
+                                    break
+            except Exception as e:
+                log.warning(f"获取回复消息失败: {e}")
+        
+        # 如果还是没有找到图片，检查频道的最近消息
+        if not reference_image and channel:
+            try:
+                log.info("未在当前消息或回复中找到图片，正在搜索频道最近消息...")
+                async for hist_msg in channel.history(limit=5):
+                    if hist_msg.id == message.id:
+                        continue
+                    found_image = await extract_image_from_message(hist_msg)
+                    if found_image:
+                        log.info(f"在最近消息中找到图片 (消息 ID: {hist_msg.id}, 发送者: {hist_msg.author})")
+                        reference_image = found_image
+                        break
+            except Exception as e:
+                log.warning(f"搜索频道历史消息失败: {e}")
+        
+        # 如果 use_reference_image=True 但没找到图片，提示用户
+        if not reference_image:
+            return {
+                "generation_failed": True,
+                "reason": "no_image_found",
+                "hint": "用户没有发送图片。请用自己的语气告诉用户，如果想要将图片做成视频，需要先发送一张图片给你，或者回复一张图片并说明想要的效果。也可以使用纯文字描述来生成视频。"
+            }
+
+    mode_str = "图生视频" if reference_image else "文生视频"
+    log.info(f"调用视频生成工具 ({mode_str})，提示词: {prompt[:100]}...，时长: {duration}s")
 
     # 添加"正在生成"反应
     await add_reaction(GENERATING_EMOJI)
 
     # 发送预告消息
-    channel = kwargs.get("channel")
     if channel and preview_message:
         try:
             processed_message = replace_emojis(preview_message)
@@ -142,6 +233,8 @@ async def generate_video(
         result = await video_service.generate_video(
             prompt=prompt,
             duration=duration,
+            image_data=reference_image["data"] if reference_image else None,
+            image_mime_type=reference_image["mime_type"] if reference_image else None,
         )
 
         # 移除"正在生成"反应
@@ -245,12 +338,13 @@ async def generate_video(
             "duration": duration,
             "cost": cost,
             "format": result.format_type,
+            "mode": mode_str,
         }
 
         if result.url:
-            response["message"] = "已成功生成视频并展示给用户！请用自己的语气告诉用户视频已经生成好了（提示词已经显示在视频消息里了，不需要再重复）。"
+            response["message"] = f"已成功通过{mode_str}生成视频并展示给用户！请用自己的语气告诉用户视频已经生成好了（提示词已经显示在视频消息里了，不需要再重复）。"
         elif result.html_content:
-            response["message"] = "已成功生成视频并以HTML播放器形式发送给用户！请用自己的语气告诉用户视频已经生成好了。"
+            response["message"] = f"已成功通过{mode_str}生成视频并以HTML播放器形式发送给用户！请用自己的语气告诉用户视频已经生成好了。"
         elif result.text_response:
             response["message"] = f"视频生成服务返回了文本内容。请转告用户：{result.text_response[:200]}"
         else:
