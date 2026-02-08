@@ -73,6 +73,12 @@
                         <i data-lucide="image" class="w-5 h-5"></i>
                         <span>绘图设置</span>
                     </button>
+                    <button @click="currentTab = 'video'"
+                            :class="currentTab === 'video' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="video" class="w-5 h-5"></i>
+                        <span>视频设置</span>
+                    </button>
                     <button @click="currentTab = 'coin'"
                             :class="currentTab === 'coin' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
                             class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
@@ -408,6 +414,37 @@
                             Gemini generateImages 专用接口不支持流式请求
                         </p>
                         
+                        <!-- 图片响应格式选项 -->
+                        <div class="space-y-2" x-show="imagenForm.api_format === 'openai'">
+                            <label class="block text-sm font-medium text-slate-300">
+                                <i data-lucide="image" class="w-4 h-4 inline mr-1"></i>
+                                图片响应格式
+                            </label>
+                            <div class="flex gap-3">
+                                <label class="flex items-center gap-2 cursor-pointer px-4 py-2.5 rounded-lg border transition-all"
+                                       :class="imagenForm.image_response_format === 'auto' ? 'border-purple-500 bg-purple-500/20 text-purple-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
+                                    <input type="radio" x-model="imagenForm.image_response_format" value="auto" class="sr-only">
+                                    <i data-lucide="scan-search" class="w-4 h-4"></i>
+                                    <span class="text-sm font-medium">自动检测</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer px-4 py-2.5 rounded-lg border transition-all"
+                                       :class="imagenForm.image_response_format === 'base64' ? 'border-blue-500 bg-blue-500/20 text-blue-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
+                                    <input type="radio" x-model="imagenForm.image_response_format" value="base64" class="sr-only">
+                                    <i data-lucide="file-code" class="w-4 h-4"></i>
+                                    <span class="text-sm font-medium">Base64</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer px-4 py-2.5 rounded-lg border transition-all"
+                                       :class="imagenForm.image_response_format === 'url' ? 'border-green-500 bg-green-500/20 text-green-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
+                                    <input type="radio" x-model="imagenForm.image_response_format" value="url" class="sr-only">
+                                    <i data-lucide="link" class="w-4 h-4"></i>
+                                    <span class="text-sm font-medium">URL 下载</span>
+                                </label>
+                            </div>
+                            <p class="text-xs text-slate-500" x-show="imagenForm.image_response_format === 'auto'">自动检测响应格式，优先 base64，失败时尝试从 URL 下载</p>
+                            <p class="text-xs text-slate-500" x-show="imagenForm.image_response_format === 'base64'">仅接受 base64 内联图片数据</p>
+                            <p class="text-xs text-slate-500" x-show="imagenForm.image_response_format === 'url'">优先从响应中的 URL 下载图片（适用于上游 base64 有问题的情况）</p>
+                        </div>
+                        
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
                             <input type="url" x-model="imagenForm.api_url"
@@ -556,6 +593,110 @@
                                     class="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-semibold py-3 px-6 rounded-lg transition-all flex items-center justify-center gap-2">
                                 <i data-lucide="flask-conical" class="w-5 h-5"></i>
                                 <span x-text="testing ? '测试中...' : '测试连接'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 视频设置 -->
+            <div x-show="currentTab === 'video'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">视频设置</h2>
+
+                <!-- 服务状态 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center"
+                                 :class="videoForm.enabled ? 'bg-green-500/20' : 'bg-red-500/20'">
+                                <i data-lucide="video" class="w-6 h-6"
+                                   :class="videoForm.enabled ? 'text-green-400' : 'text-red-400'"></i>
+                            </div>
+                            <div>
+                                <p class="font-medium">视频生成服务</p>
+                                <p class="text-sm text-slate-400" x-text="videoForm.enabled ? '已启用' : '已禁用'"></p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="videoForm.enabled" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- API 配置 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6" :class="!videoForm.enabled && 'opacity-50'">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="key" class="w-5 h-5 text-yellow-400"></i>
+                        API 配置
+                    </h3>
+                    <div class="space-y-4">
+                        <!-- 视频格式选项 -->
+                        <div class="space-y-2">
+                            <label class="block text-sm font-medium text-slate-300">
+                                <i data-lucide="film" class="w-4 h-4 inline mr-1"></i>
+                                视频格式
+                            </label>
+                            <div class="flex gap-3">
+                                <label class="flex items-center gap-2 cursor-pointer px-4 py-2.5 rounded-lg border transition-all"
+                                       :class="videoForm.video_format === 'url' ? 'border-green-500 bg-green-500/20 text-green-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
+                                    <input type="radio" x-model="videoForm.video_format" value="url" class="sr-only">
+                                    <i data-lucide="link" class="w-4 h-4"></i>
+                                    <span class="text-sm font-medium">URL</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer px-4 py-2.5 rounded-lg border transition-all"
+                                       :class="videoForm.video_format === 'html' ? 'border-blue-500 bg-blue-500/20 text-blue-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
+                                    <input type="radio" x-model="videoForm.video_format" value="html" class="sr-only">
+                                    <i data-lucide="code" class="w-4 h-4"></i>
+                                    <span class="text-sm font-medium">HTML</span>
+                                </label>
+                            </div>
+                            <p class="text-xs text-slate-500" x-show="videoForm.video_format === 'url'">从 API 响应中提取视频 URL，直接下载并发送到 Discord</p>
+                            <p class="text-xs text-slate-500" x-show="videoForm.video_format === 'html'">从 API 响应中提取 HTML 页面内容，作为 HTML 文件发送</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
+                            <input type="url" x-model="videoForm.api_url"
+                                   placeholder="留空则使用绘图设置的 API URL"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">OpenAI 兼容端点，留空则复用绘图设置的 API URL</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API Key</label>
+                            <input type="password" x-model="videoForm.api_key"
+                                   placeholder="留空则使用绘图设置的 API Key"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">留空则复用绘图设置的 API Key</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">模型</label>
+                            <input type="text" x-model="videoForm.model"
+                                   placeholder="veo-2.0-generate-001"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">生成成本（月光币/次）</label>
+                                <input type="number" x-model.number="videoForm.generation_cost" min="0"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">最大时长（秒）</label>
+                                <input type="number" x-model.number="videoForm.max_duration" min="1" max="60"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+
+                        <div class="flex gap-4">
+                            <button @click="saveVideoConfig()"
+                                    :disabled="saving"
+                                    class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                                <i data-lucide="save" class="w-5 h-5"></i>
+                                <span x-text="saving ? '保存中...' : '保存设置'"></span>
                             </button>
                         </div>
                     </div>
@@ -1214,7 +1355,9 @@
                 
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
-                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false },
+                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto' },
+                videoForm: { enabled: false, api_url: '', api_key: '', model: '', video_format: 'url', generation_cost: 10, max_duration: 8 },
+                videoConfig: {},
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
                 
@@ -1329,6 +1472,23 @@
                         this.imagenForm.edit_model_4k = this.config.imagen.edit_model_4k || '';
                         // 流式请求配置
                         this.imagenForm.streaming_enabled = this.config.imagen.streaming_enabled || false;
+                        // 图片响应格式
+                        this.imagenForm.image_response_format = this.config.imagen.image_response_format || 'auto';
+                    }
+                    // 加载视频配置
+                    try {
+                        const videoResp = await fetch('/api/config/video', { headers: { 'Authorization': `Bearer ${this.token}` } });
+                        if (videoResp.ok) {
+                            this.videoConfig = await videoResp.json();
+                            this.videoForm.enabled = this.videoConfig.enabled || false;
+                            this.videoForm.api_url = this.videoConfig.api_url || '';
+                            this.videoForm.model = this.videoConfig.model || '';
+                            this.videoForm.video_format = this.videoConfig.video_format || 'url';
+                            this.videoForm.generation_cost = this.videoConfig.generation_cost ?? 10;
+                            this.videoForm.max_duration = this.videoConfig.max_duration ?? 8;
+                        }
+                    } catch (e) {
+                        console.warn('加载视频配置失败:', e);
                     }
                     if (this.config.coin) {
                         this.coinForm.daily_reward = this.config.coin.daily_reward;
@@ -1933,7 +2093,9 @@
                             edit_model_2k: this.imagenForm.edit_model_2k || null,
                             edit_model_4k: this.imagenForm.edit_model_4k || null,
                             // 流式请求配置
-                            streaming_enabled: this.imagenForm.streaming_enabled
+                            streaming_enabled: this.imagenForm.streaming_enabled,
+                            // 图片响应格式
+                            image_response_format: this.imagenForm.image_response_format
                         };
                         
                         // 只有填写了新的API Key才发送
@@ -1952,6 +2114,41 @@
                         
                         if (response.ok) {
                             this.showToast('绘图设置已保存', 'success');
+                            await this.refreshConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+                
+                async saveVideoConfig() {
+                    this.saving = true;
+                    try {
+                        const payload = {
+                            enabled: this.videoForm.enabled,
+                            api_url: this.videoForm.api_url || null,
+                            api_key: this.videoForm.api_key || null,
+                            model: this.videoForm.model || null,
+                            video_format: this.videoForm.video_format,
+                            generation_cost: this.videoForm.generation_cost,
+                            max_duration: this.videoForm.max_duration,
+                        };
+                        
+                        const response = await fetch('/api/config/video', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.token}`
+                            },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        if (response.ok) {
+                            this.showToast('视频设置已保存', 'success');
                             await this.refreshConfig();
                         } else {
                             const data = await response.json();

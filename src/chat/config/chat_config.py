@@ -118,6 +118,12 @@ def _get_imagen_config():
         # 是否启用流式请求（仅适用于 openai 和 gemini_chat 格式）
         # 流式请求可以更快地获取生成进度，适用于支持 SSE 的 API 端点
         "STREAMING_ENABLED": _parse_bool_env("GEMINI_IMAGEN_STREAMING", "False"),
+        # --- 图片响应格式配置 ---
+        # 上游 API 返回图片的格式:
+        # - "auto": 自动检测，优先 base64，失败时尝试 URL 下载（默认）
+        # - "base64": 仅接受 base64 内联数据
+        # - "url": 优先从 URL 下载图片（适用于上游 base64 有问题的情况）
+        "IMAGE_RESPONSE_FORMAT": os.getenv("GEMINI_IMAGEN_RESPONSE_FORMAT", "auto"),
     }
 
 GEMINI_IMAGEN_CONFIG = _get_imagen_config()
@@ -128,6 +134,36 @@ def reload_imagen_config():
     global GEMINI_IMAGEN_CONFIG
     GEMINI_IMAGEN_CONFIG.update(_get_imagen_config())
     return GEMINI_IMAGEN_CONFIG
+
+
+# --- 视频生成配置 ---
+def _get_video_config():
+    """获取视频生成配置，从环境变量读取"""
+    return {
+        "ENABLED": _parse_bool_env("VIDEO_GEN_ENABLED", "False"),
+        "API_KEY": os.getenv("VIDEO_GEN_API_KEY"),  # 如果为空则使用 Imagen 的 API Key
+        "BASE_URL": os.getenv("VIDEO_GEN_BASE_URL"),  # 自定义端点 URL
+        "MODEL_NAME": os.getenv("VIDEO_GEN_MODEL", "veo-2.0-generate-001"),
+        # API 格式: "openai" 使用 OpenAI 兼容的 chat/completions 接口
+        "API_FORMAT": os.getenv("VIDEO_GEN_API_FORMAT", "openai"),
+        # 视频格式:
+        # - "url": 从响应中提取 URL 直接发送（默认）
+        # - "html": 从响应中提取 HTML 页面内的视频链接
+        "VIDEO_FORMAT": os.getenv("VIDEO_GEN_FORMAT", "url"),
+        # 月光币成本
+        "VIDEO_GENERATION_COST": int(os.getenv("VIDEO_GEN_COST", "10")),
+        # 视频时长限制（秒）
+        "MAX_DURATION": int(os.getenv("VIDEO_GEN_MAX_DURATION", "8")),
+    }
+
+VIDEO_GEN_CONFIG = _get_video_config()
+
+
+def reload_video_config():
+    """重新加载视频生成配置（从环境变量）"""
+    global VIDEO_GEN_CONFIG
+    VIDEO_GEN_CONFIG.update(_get_video_config())
+    return VIDEO_GEN_CONFIG
 
 # --- 向量嵌入 (Embedding) 配置 ---
 # 用于知识库检索和语义搜索功能

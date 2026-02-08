@@ -94,6 +94,47 @@ class ChatSettingsService:
             chat_config.GEMINI_IMAGEN_CONFIG["API_FORMAT"] = db_imagen_format
             log.info(f"  ✅ Imagen API 格式: {db_imagen_format}")
         
+        db_imagen_response_format = await self.db_manager.get_global_setting("imagen_image_response_format")
+        if db_imagen_response_format:
+            chat_config.GEMINI_IMAGEN_CONFIG["IMAGE_RESPONSE_FORMAT"] = db_imagen_response_format
+            log.info(f"  ✅ Imagen 图片响应格式: {db_imagen_response_format}")
+        
+        # --- 视频生成配置 ---
+        db_video_enabled = await self.db_manager.get_global_setting("video_enabled")
+        if db_video_enabled:
+            chat_config.VIDEO_GEN_CONFIG["ENABLED"] = db_video_enabled == "true"
+            log.info(f"  ✅ 视频生成启用状态: {db_video_enabled}")
+        
+        db_video_url = await self.db_manager.get_global_setting("video_api_url")
+        if db_video_url:
+            chat_config.VIDEO_GEN_CONFIG["BASE_URL"] = db_video_url
+            log.info(f"  ✅ 视频 API URL: {db_video_url[:30]}...")
+        
+        db_video_key = await self.db_manager.get_global_setting("video_api_key")
+        if db_video_key:
+            chat_config.VIDEO_GEN_CONFIG["API_KEY"] = db_video_key
+            log.info(f"  ✅ 视频 API Key: 已加载")
+        
+        db_video_model = await self.db_manager.get_global_setting("video_model")
+        if db_video_model:
+            chat_config.VIDEO_GEN_CONFIG["MODEL_NAME"] = db_video_model
+            log.info(f"  ✅ 视频模型: {db_video_model}")
+        
+        db_video_format = await self.db_manager.get_global_setting("video_format")
+        if db_video_format:
+            chat_config.VIDEO_GEN_CONFIG["VIDEO_FORMAT"] = db_video_format
+            log.info(f"  ✅ 视频格式: {db_video_format}")
+        
+        db_video_cost = await self.db_manager.get_global_setting("video_generation_cost")
+        if db_video_cost:
+            chat_config.VIDEO_GEN_CONFIG["VIDEO_GENERATION_COST"] = int(db_video_cost)
+            log.info(f"  ✅ 视频生成成本: {db_video_cost}")
+        
+        db_video_duration = await self.db_manager.get_global_setting("video_max_duration")
+        if db_video_duration:
+            chat_config.VIDEO_GEN_CONFIG["MAX_DURATION"] = int(db_video_duration)
+            log.info(f"  ✅ 视频最大时长: {db_video_duration}s")
+        
         log.info("数据库配置加载完成。")
 
     async def set_entity_settings(

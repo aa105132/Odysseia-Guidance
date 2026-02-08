@@ -13,6 +13,7 @@ import logging
 import asyncio
 import aiohttp
 import json
+import re
 from typing import Optional, List
 from concurrent.futures import ThreadPoolExecutor
 import base64
@@ -706,7 +707,7 @@ class GeminiImagenService:
                     data = await response.json()
                     
                     # 解析响应，提取图像
-                    images = self._extract_images_from_openai_response(data)
+                    images = await self._extract_images_from_openai_response(data)
                     
                     if images:
                         log.info(f"成功生成 {len(images)} 张图像")
@@ -902,6 +903,11 @@ class GeminiImagenService:
                                         images.append(base64.b64decode(b64_data))
                                     except Exception as e:
                                         log.warning(f"解码 image_url 数据失败: {e}")
+                                elif url.startswith("http://") or url.startswith("https://"):
+                                    # 下载 HTTP URL 图片
+                                    downloaded = await self._download_image_from_url(url)
+                                    if downloaded:
+                                        images.append(downloaded)
                     
                     # 如果 parts 中没找到图像，尝试从完整的文本内容中提取
                     if not images and collected_content:
@@ -919,6 +925,12 @@ class GeminiImagenService:
                                             images.append(base64.b64decode(inline_data["data"]))
                         except (json.JSONDecodeError, TypeError):
                             pass  # 内容不是 JSON，忽略
+                    
+                    # 如果仍没找到图像，尝试从文本中提取 URL 并下载
+                    if not images and collected_content:
+                        full_content = ''.join(collected_content)
+                        url_images = await self._extract_and_download_urls_from_text(full_content)
+                        images.extend(url_images)
                     
                     if images:
                         log.info(f"[流式] 成功生成 {len(images)} 张图像")
@@ -938,11 +950,120 @@ class GeminiImagenService:
             log.error(f"OpenAI 格式流式生成图像时发生错误: {e}", exc_info=True)
             return None
 
-    def _extract_images_from_openai_response(self, data: dict) -> List[bytes]:
+    async def _download_image_from_url(self, url: str) -> Optional[bytes]:
         """
-        从 OpenAI 格式的响应中提取图像数据
+        从 HTTP/HTTPS URL 下载图片并返回字节数据
+        
+        Args:
+            url: 图片的 HTTP/HTTPS URL
+            
+        Returns:
+            成功时返回图片字节数据，失败时返回 None
+        """
+        try:
+            log.info(f"正在从 URL 下载图片: {url[:100]}...")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    headers={"User-Agent": "Mozilla/5.0"}
+                ) as response:
+                    if response.status != 200:
+                        log.warning(f"下载图片失败，HTTP 状态码: {response.status}, URL: {url[:100]}")
+                        return None
+                    
+                    # 检查 Content-Type 是否为图片
+                    content_type = response.headers.get("Content-Type", "")
+                    if not content_type.startswith("image/") and "octet-stream" not in content_type:
+                        log.warning(f"URL 返回的不是图片格式: {content_type}, URL: {url[:100]}")
+                        # 不严格限制，某些 CDN 可能返回非标准 Content-Type
+                    
+                    # 限制最大下载大小为 50MB
+                    content_length = response.headers.get("Content-Length")
+                    if content_length and int(content_length) > 50 * 1024 * 1024:
+                        log.warning(f"图片太大 ({content_length} bytes), 跳过下载")
+                        return None
+                    
+                    image_data = await response.read()
+                    if len(image_data) > 50 * 1024 * 1024:
+                        log.warning(f"下载的图片太大 ({len(image_data)} bytes)")
+                        return None
+                    
+                    log.info(f"成功下载图片, 大小: {len(image_data)} bytes")
+                    return image_data
+                    
+        except asyncio.TimeoutError:
+            log.warning(f"下载图片超时: {url[:100]}")
+            return None
+        except Exception as e:
+            log.warning(f"下载图片失败: {e}, URL: {url[:100]}")
+            return None
+
+    async def _extract_and_download_urls_from_text(self, text: str) -> List[bytes]:
+        """
+        从文本内容中提取图片 URL（包括 markdown 格式和纯 URL）并下载
+        
+        支持的格式:
+        - Markdown 图片: ![alt](url)
+        - 纯 HTTP/HTTPS URL（以常见图片扩展名结尾或包含图片相关路径）
+        
+        Args:
+            text: 可能包含图片 URL 的文本内容
+            
+        Returns:
+            下载成功的图片字节数据列表
         """
         images = []
+        urls = set()  # 用 set 去重
+        
+        # 提取 markdown 图片链接: ![alt](url)
+        md_pattern = r'!\[[^\]]*\]\((https?://[^\)]+)\)'
+        for match in re.finditer(md_pattern, text):
+            urls.add(match.group(1))
+        
+        # 提取纯 URL（以常见图片扩展名结尾）
+        url_pattern = r'(https?://[^\s\)\]\"\'<>]+\.(?:png|jpg|jpeg|gif|webp|bmp|svg|tiff)(?:\?[^\s\)\]\"\'<>]*)?)'
+        for match in re.finditer(url_pattern, text, re.IGNORECASE):
+            urls.add(match.group(1))
+        
+        # 提取可能的通用图片 URL（包含 /image 或 /img 路径的 URL）
+        generic_url_pattern = r'(https?://[^\s\)\]\"\'<>]+(?:/image[s]?/|/img/|/photo/|/pic/)[^\s\)\]\"\'<>]*)'
+        for match in re.finditer(generic_url_pattern, text, re.IGNORECASE):
+            urls.add(match.group(1))
+        
+        if urls:
+            log.info(f"从文本中提取到 {len(urls)} 个图片 URL")
+            # 并发下载所有 URL
+            download_tasks = [self._download_image_from_url(url) for url in urls]
+            results = await asyncio.gather(*download_tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, bytes) and result:
+                    images.append(result)
+                elif isinstance(result, Exception):
+                    log.warning(f"下载图片时异常: {result}")
+        
+        return images
+
+    async def _extract_images_from_openai_response(self, data: dict) -> List[bytes]:
+        """
+        从 OpenAI 格式的响应中提取图像数据
+        根据 IMAGE_RESPONSE_FORMAT 配置决定处理策略:
+        - "auto": 优先 base64，同时也处理 URL（默认行为）
+        - "base64": 仅接受 base64 内联数据，忽略 URL
+        - "url": 优先从 URL 下载图片，忽略 base64 数据
+        """
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        response_format = config.get("IMAGE_RESPONSE_FORMAT", "auto")
+        
+        images = []
+        url_images_pending = []  # 待下载的 URL 列表
+        text_contents = []  # 收集文本内容，用于后续提取 URL
+        
+        accept_base64 = response_format in ("auto", "base64")
+        accept_url = response_format in ("auto", "url")
+        
+        log.debug(f"图片响应格式策略: {response_format} (base64={accept_base64}, url={accept_url})")
+        
         if "choices" in data:
             for choice in data["choices"]:
                 message = choice.get("message", {})
@@ -952,21 +1073,43 @@ class GeminiImagenService:
                 if isinstance(content, list):
                     for part in content:
                         if isinstance(part, dict):
+                            part_type = part.get("type", "")
+                            
                             # 检查 inline_data 格式
                             inline_data = part.get("inline_data") or part.get("inlineData")
                             if inline_data:
                                 image_b64 = inline_data.get("data")
-                                if image_b64:
-                                    images.append(base64.b64decode(image_b64))
+                                if image_b64 and accept_base64:
+                                    try:
+                                        images.append(base64.b64decode(image_b64))
+                                    except Exception as e:
+                                        log.warning(f"解码 inline_data 失败: {e}")
                             # 检查 image_url 格式
-                            elif "image_url" in part:
-                                url_data = part["image_url"]
+                            elif "image_url" in part or part_type == "image_url":
+                                url_data = part.get("image_url", part)
                                 if isinstance(url_data, dict) and "url" in url_data:
                                     url = url_data["url"]
                                     # 如果是 data URL
-                                    if url.startswith("data:image"):
-                                        b64_data = url.split(",", 1)[1]
-                                        images.append(base64.b64decode(b64_data))
+                                    if url.startswith("data:image") and accept_base64:
+                                        try:
+                                            b64_data = url.split(",", 1)[1]
+                                            images.append(base64.b64decode(b64_data))
+                                        except Exception as e:
+                                            log.warning(f"解码 data URL 失败: {e}")
+                                    # 如果是 HTTP URL，收集待下载
+                                    elif (url.startswith("http://") or url.startswith("https://")) and accept_url:
+                                        url_images_pending.append(url)
+                            # 收集文本部分
+                            elif part_type == "text" or "text" in part:
+                                text_val = part.get("text", "")
+                                if text_val:
+                                    text_contents.append(text_val)
+                        elif isinstance(part, str):
+                            text_contents.append(part)
+                
+                # content 为纯字符串时，收集用于后续 URL 提取
+                elif isinstance(content, str) and content:
+                    text_contents.append(content)
                 
                 # 检查 parts 字段（某些代理的格式）
                 parts = message.get("parts", [])
@@ -975,8 +1118,43 @@ class GeminiImagenService:
                         inline_data = part.get("inline_data") or part.get("inlineData")
                         if inline_data:
                             image_b64 = inline_data.get("data")
-                            if image_b64:
-                                images.append(base64.b64decode(image_b64))
+                            if image_b64 and accept_base64:
+                                try:
+                                    images.append(base64.b64decode(image_b64))
+                                except Exception as e:
+                                    log.warning(f"解码 parts inline_data 失败: {e}")
+                        # 检查 parts 中的 image_url
+                        elif "image_url" in part:
+                            url_data = part["image_url"]
+                            if isinstance(url_data, dict) and "url" in url_data:
+                                url = url_data["url"]
+                                if url.startswith("data:image") and accept_base64:
+                                    try:
+                                        b64_data = url.split(",", 1)[1]
+                                        images.append(base64.b64decode(b64_data))
+                                    except Exception as e:
+                                        log.warning(f"解码 parts data URL 失败: {e}")
+                                elif (url.startswith("http://") or url.startswith("https://")) and accept_url:
+                                    url_images_pending.append(url)
+        
+        # 下载所有收集到的 URL 图片
+        if url_images_pending:
+            log.info(f"从响应中收集到 {len(url_images_pending)} 个图片 URL，开始下载...")
+            download_tasks = [self._download_image_from_url(url) for url in url_images_pending]
+            results = await asyncio.gather(*download_tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, bytes) and result:
+                    images.append(result)
+                elif isinstance(result, Exception):
+                    log.warning(f"下载 URL 图片异常: {result}")
+        
+        # 如果没有从结构化数据中找到图片，尝试从文本内容中提取 URL 并下载
+        if not images and text_contents and accept_url:
+            full_text = '\n'.join(text_contents)
+            log.debug(f"尝试从响应文本中提取图片 URL, 文本长度: {len(full_text)}")
+            url_images = await self._extract_and_download_urls_from_text(full_text)
+            images.extend(url_images)
+        
         return images
 
     def _get_model_for_resolution(self, resolution: str = "default", is_edit: bool = False) -> str:
@@ -1248,42 +1426,8 @@ class GeminiImagenService:
                     
                     data = await response.json()
                     
-                    # 解析响应，提取图像
-                    images = []
-                    if "choices" in data:
-                        for choice in data["choices"]:
-                            message = choice.get("message", {})
-                            content = message.get("content")
-                            
-                            # 检查是否有 inline_data（Gemini 格式的图像）
-                            if isinstance(content, list):
-                                for part in content:
-                                    if isinstance(part, dict):
-                                        # 检查 inline_data 格式
-                                        inline_data = part.get("inline_data") or part.get("inlineData")
-                                        if inline_data:
-                                            image_b64 = inline_data.get("data")
-                                            if image_b64:
-                                                images.append(base64.b64decode(image_b64))
-                                        # 检查 image_url 格式
-                                        elif "image_url" in part:
-                                            url_data = part["image_url"]
-                                            if isinstance(url_data, dict) and "url" in url_data:
-                                                url = url_data["url"]
-                                                # 如果是 data URL
-                                                if url.startswith("data:image"):
-                                                    b64_data = url.split(",", 1)[1]
-                                                    images.append(base64.b64decode(b64_data))
-                            
-                            # 检查 parts 字段（某些代理的格式）
-                            parts = message.get("parts", [])
-                            for part in parts:
-                                if isinstance(part, dict):
-                                    inline_data = part.get("inline_data") or part.get("inlineData")
-                                    if inline_data:
-                                        image_b64 = inline_data.get("data")
-                                        if image_b64:
-                                            images.append(base64.b64decode(image_b64))
+                    # 解析响应，提取图像（复用通用提取方法）
+                    images = await self._extract_images_from_openai_response(data)
                     
                     if images:
                         log.info(f"图生图成功，生成了 {len(images)} 张图像")

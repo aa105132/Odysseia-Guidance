@@ -82,6 +82,20 @@ class ImagenConfigUpdate(BaseModel):
     edit_model_4k: Optional[str] = None  # 4K 分辨率图生图模型
     # 流式请求配置
     streaming_enabled: Optional[bool] = None  # 是否启用流式请求
+    # 图片响应格式: 'auto', 'base64', 'url'
+    image_response_format: Optional[str] = None
+
+
+class VideoConfigUpdate(BaseModel):
+    """视频生成配置更新"""
+    enabled: Optional[bool] = None
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    api_format: Optional[str] = None
+    video_format: Optional[str] = None  # 'url' 或 'html'
+    generation_cost: Optional[int] = None
+    max_duration: Optional[int] = None
 
 
 class EmbeddingConfigUpdate(BaseModel):
@@ -230,6 +244,7 @@ async def get_all_config(token: str = Depends(verify_token)):
             "model_4k": chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME_4K", "agy-gemini-3-pro-image-4k"),
             "edit_model_2k": chat_config.GEMINI_IMAGEN_CONFIG.get("EDIT_MODEL_NAME_2K", "agy-gemini-3-pro-image-2k"),
             "edit_model_4k": chat_config.GEMINI_IMAGEN_CONFIG.get("EDIT_MODEL_NAME_4K", "agy-gemini-3-pro-image-4k"),
+            "image_response_format": chat_config.GEMINI_IMAGEN_CONFIG.get("IMAGE_RESPONSE_FORMAT", "auto"),
         },
         "coin": {
             "daily_reward": chat_config.COIN_CONFIG.get("DAILY_CHECKIN_REWARD", 50),
@@ -491,6 +506,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     db_edit_cost = await chat_db_manager.get_global_setting("imagen_edit_cost")
     db_max_images = await chat_db_manager.get_global_setting("imagen_max_images")
     db_streaming_enabled = await chat_db_manager.get_global_setting("imagen_streaming_enabled")
+    db_image_response_format = await chat_db_manager.get_global_setting("imagen_image_response_format")
     
     # 内存配置作为回退
     config = chat_config.GEMINI_IMAGEN_CONFIG
@@ -505,6 +521,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     edit_cost = int(db_edit_cost) if db_edit_cost else config.get("IMAGE_EDIT_COST", 1)
     max_images = int(db_max_images) if db_max_images else config.get("MAX_IMAGES_PER_REQUEST", 20)
     streaming_enabled = db_streaming_enabled == "true" if db_streaming_enabled else config.get("STREAMING_ENABLED", False)
+    image_response_format = db_image_response_format or config.get("IMAGE_RESPONSE_FORMAT", "auto")
     
     # 隐藏部分信息
     masked_url = ""
@@ -545,6 +562,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "edit_cost": edit_cost,
         "max_images": max_images,
         "streaming_enabled": streaming_enabled,
+        "image_response_format": image_response_format,
         "available_models": [
             "imagen-3.0-generate-002",
             "imagen-3.0-fast-generate-001",
@@ -672,6 +690,17 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         await chat_db_manager.set_global_setting("imagen_streaming_enabled", str(config.streaming_enabled).lower())
         log.info(f"✅ 流式请求已{'启用' if config.streaming_enabled else '禁用'}")
     
+    # 图片响应格式配置
+    if config.image_response_format is not None:
+        if config.image_response_format not in ["auto", "base64", "url"]:
+            raise HTTPException(400, "图片响应格式必须是 'auto', 'base64' 或 'url'")
+        chat_config.GEMINI_IMAGEN_CONFIG["IMAGE_RESPONSE_FORMAT"] = config.image_response_format
+        os.environ["GEMINI_IMAGEN_RESPONSE_FORMAT"] = config.image_response_format
+        env_updates["GEMINI_IMAGEN_RESPONSE_FORMAT"] = config.image_response_format
+        updated["image_response_format"] = config.image_response_format
+        await chat_db_manager.set_global_setting("imagen_image_response_format", config.image_response_format)
+        log.info(f"✅ 图片响应格式已设置为: {config.image_response_format}")
+    
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:
         try:
@@ -706,6 +735,145 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         log.info("Imagen 服务已禁用，跳过热重载")
     
     log.info(f"Imagen 配置已更新: {updated}")
+    return {"success": True, "updated": updated}
+
+
+# --- 视频生成配置 API ---
+
+@app.get("/api/config/video")
+async def get_video_config(token: str = Depends(verify_token)):
+    """获取视频生成配置"""
+    from src.chat.utils.database import chat_db_manager
+    
+    config = chat_config.VIDEO_GEN_CONFIG
+    
+    # 从数据库读取持久化设置
+    db_enabled = await chat_db_manager.get_global_setting("video_enabled")
+    db_api_url = await chat_db_manager.get_global_setting("video_api_url")
+    db_api_key = await chat_db_manager.get_global_setting("video_api_key")
+    db_model = await chat_db_manager.get_global_setting("video_model")
+    db_video_format = await chat_db_manager.get_global_setting("video_format")
+    db_generation_cost = await chat_db_manager.get_global_setting("video_generation_cost")
+    db_max_duration = await chat_db_manager.get_global_setting("video_max_duration")
+    
+    # 优先使用数据库值
+    enabled = db_enabled == "true" if db_enabled else config.get("ENABLED", False)
+    api_url = db_api_url or config.get("BASE_URL", "")
+    api_key = db_api_key or config.get("API_KEY", "")
+    model = db_model or config.get("MODEL_NAME", "veo-2.0-generate-001")
+    video_format = db_video_format or config.get("VIDEO_FORMAT", "url")
+    generation_cost = int(db_generation_cost) if db_generation_cost else config.get("VIDEO_GENERATION_COST", 10)
+    max_duration = int(db_max_duration) if db_max_duration else config.get("MAX_DURATION", 8)
+    
+    # 隐藏 API Key
+    masked_key = ""
+    if api_key and len(api_key) > 14:
+        masked_key = api_key[:10] + "..." + api_key[-4:]
+    elif api_key:
+        masked_key = "***"
+    
+    # 检查服务状态
+    service_available = False
+    if enabled:
+        try:
+            from src.chat.features.video_generation.services.video_service import video_service as vs
+            service_available = vs.is_available()
+        except Exception:
+            pass
+    
+    return {
+        "enabled": enabled,
+        "api_url": api_url,
+        "api_key_masked": masked_key,
+        "has_api_key": bool(api_key),
+        "model": model,
+        "api_format": config.get("API_FORMAT", "openai"),
+        "video_format": video_format,
+        "generation_cost": generation_cost,
+        "max_duration": max_duration,
+        "service_available": service_available,
+    }
+
+
+@app.put("/api/config/video")
+async def update_video_config(config: VideoConfigUpdate, token: str = Depends(verify_token)):
+    """更新视频生成配置"""
+    from src.chat.utils.database import chat_db_manager
+    
+    updated = {}
+    env_updates = {}
+    
+    if config.enabled is not None:
+        chat_config.VIDEO_GEN_CONFIG["ENABLED"] = config.enabled
+        os.environ["VIDEO_GEN_ENABLED"] = str(config.enabled).lower()
+        env_updates["VIDEO_GEN_ENABLED"] = str(config.enabled).lower()
+        updated["enabled"] = config.enabled
+        await chat_db_manager.set_global_setting("video_enabled", str(config.enabled).lower())
+    
+    if config.api_url is not None:
+        if config.api_url and not (config.api_url.startswith("http://") or config.api_url.startswith("https://")):
+            raise HTTPException(400, "API URL 必须以 http:// 或 https:// 开头")
+        chat_config.VIDEO_GEN_CONFIG["BASE_URL"] = config.api_url
+        os.environ["VIDEO_GEN_BASE_URL"] = config.api_url
+        env_updates["VIDEO_GEN_BASE_URL"] = config.api_url
+        updated["api_url"] = config.api_url[:30] + "..." if len(config.api_url) > 30 else config.api_url
+        await chat_db_manager.set_global_setting("video_api_url", config.api_url)
+    
+    if config.api_key is not None:
+        chat_config.VIDEO_GEN_CONFIG["API_KEY"] = config.api_key
+        os.environ["VIDEO_GEN_API_KEY"] = config.api_key
+        env_updates["VIDEO_GEN_API_KEY"] = config.api_key
+        updated["api_key"] = "已更新"
+        await chat_db_manager.set_global_setting("video_api_key", config.api_key)
+    
+    if config.model is not None:
+        chat_config.VIDEO_GEN_CONFIG["MODEL_NAME"] = config.model
+        os.environ["VIDEO_GEN_MODEL"] = config.model
+        env_updates["VIDEO_GEN_MODEL"] = config.model
+        updated["model"] = config.model
+        await chat_db_manager.set_global_setting("video_model", config.model)
+    
+    if config.video_format is not None:
+        if config.video_format not in ["url", "html"]:
+            raise HTTPException(400, "视频格式必须是 'url' 或 'html'")
+        chat_config.VIDEO_GEN_CONFIG["VIDEO_FORMAT"] = config.video_format
+        os.environ["VIDEO_GEN_FORMAT"] = config.video_format
+        env_updates["VIDEO_GEN_FORMAT"] = config.video_format
+        updated["video_format"] = config.video_format
+        await chat_db_manager.set_global_setting("video_format", config.video_format)
+    
+    if config.generation_cost is not None:
+        if config.generation_cost < 0:
+            raise HTTPException(400, "视频生成成本不能为负数")
+        chat_config.VIDEO_GEN_CONFIG["VIDEO_GENERATION_COST"] = config.generation_cost
+        updated["generation_cost"] = config.generation_cost
+        await chat_db_manager.set_global_setting("video_generation_cost", str(config.generation_cost))
+    
+    if config.max_duration is not None:
+        if not 1 <= config.max_duration <= 60:
+            raise HTTPException(400, "最大视频时长必须在 1 到 60 秒之间")
+        chat_config.VIDEO_GEN_CONFIG["MAX_DURATION"] = config.max_duration
+        updated["max_duration"] = config.max_duration
+        await chat_db_manager.set_global_setting("video_max_duration", str(config.max_duration))
+    
+    # 写入 .env 文件
+    if env_updates:
+        try:
+            update_env_file(env_updates)
+        except Exception as e:
+            log.warning(f"无法写入 .env 文件: {e}")
+    
+    # 热重载视频服务
+    if config.enabled is True:
+        try:
+            from src.chat.features.video_generation.services.video_service import video_service as vs
+            vs.reinitialize()
+            updated["service_available"] = vs.is_available()
+        except Exception as e:
+            log.warning(f"热重载视频服务失败: {e}")
+            updated["service_reload_error"] = str(e)
+    
+    log.info(f"视频生成配置已更新: {updated}")
     return {"success": True, "updated": updated}
 
 
