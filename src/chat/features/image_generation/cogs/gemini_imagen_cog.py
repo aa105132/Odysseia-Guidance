@@ -34,6 +34,7 @@ class GeminiImagenCog(commands.Cog):
         aspect_ratio="图片宽高比",
         count="生成图片数量 (1-20张)",
         resolution="图片分辨率 (默认/2K/4K，高分辨率需要更多月光币)",
+        content_rating="内容分级 (SFW安全内容/NSFW成人内容)",
     )
     @app_commands.rename(
         prompt="提示词",
@@ -41,6 +42,7 @@ class GeminiImagenCog(commands.Cog):
         aspect_ratio="宽高比",
         count="数量",
         resolution="分辨率",
+        content_rating="内容分级",
     )
     @app_commands.choices(
         aspect_ratio=[
@@ -54,6 +56,10 @@ class GeminiImagenCog(commands.Cog):
             app_commands.Choice(name="默认", value="default"),
             app_commands.Choice(name="2K 高清", value="2k"),
             app_commands.Choice(name="4K 超清", value="4k"),
+        ],
+        content_rating=[
+            app_commands.Choice(name="SFW (安全内容)", value="sfw"),
+            app_commands.Choice(name="NSFW (成人内容)", value="nsfw"),
         ]
     )
     async def paint(
@@ -64,6 +70,7 @@ class GeminiImagenCog(commands.Cog):
         aspect_ratio: str = None,
         count: int = 1,
         resolution: str = "default",
+        content_rating: str = "sfw",
     ):
         """/paint 命令的实现"""
         # 检查服务是否可用
@@ -138,6 +145,7 @@ class GeminiImagenCog(commands.Cog):
                     negative_prompt=negative_prompt if negative_prompt else None,
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
+                    content_rating=content_rating,
                 )
                 for _ in range(count)
             ]
@@ -232,6 +240,7 @@ class GeminiImagenCog(commands.Cog):
         aspect_ratio="输出图片的宽高比",
         count="生成图片数量 (1-20)",
         resolution="图片分辨率 (默认/2K/4K，高分辨率需要更多月光币)",
+        content_rating="内容分级 (SFW安全内容/NSFW成人内容)",
     )
     @app_commands.rename(
         image="参考图片",
@@ -239,6 +248,7 @@ class GeminiImagenCog(commands.Cog):
         aspect_ratio="宽高比",
         count="数量",
         resolution="分辨率",
+        content_rating="内容分级",
     )
     @app_commands.choices(
         aspect_ratio=[
@@ -252,6 +262,10 @@ class GeminiImagenCog(commands.Cog):
             app_commands.Choice(name="默认", value="default"),
             app_commands.Choice(name="2K 高清", value="2k"),
             app_commands.Choice(name="4K 超清", value="4k"),
+        ],
+        content_rating=[
+            app_commands.Choice(name="SFW (安全内容)", value="sfw"),
+            app_commands.Choice(name="NSFW (成人内容)", value="nsfw"),
         ]
     )
     async def image_to_image(
@@ -262,6 +276,7 @@ class GeminiImagenCog(commands.Cog):
         aspect_ratio: str = None,
         count: int = 1,
         resolution: str = "default",
+        content_rating: str = "sfw",
     ):
         """/图生图 命令的实现"""
         # 检查附件是否是图片
@@ -356,6 +371,7 @@ class GeminiImagenCog(commands.Cog):
                     reference_mime_type=reference_mime_type,
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
+                    content_rating=content_rating,
                 )
                 for _ in range(count)
             ]

@@ -509,40 +509,6 @@
                             <p class="text-xs text-slate-500 mt-1">用于图像编辑 (I2I)，留空则复用上方的文生图模型</p>
                         </div>
                         
-                        <!-- 分辨率模型配置 -->
-                        <div class="border-t border-slate-700 pt-4 mt-2">
-                            <h4 class="text-sm font-medium text-slate-300 mb-3 flex items-center gap-2">
-                                <i data-lucide="scaling" class="w-4 h-4 text-blue-400"></i>
-                                分辨率模型配置
-                            </h4>
-                            <p class="text-xs text-slate-400 mb-4">为不同分辨率配置专用模型，用户使用 /画图 或 /图生图 命令时可选择分辨率</p>
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label class="block text-xs text-slate-400 mb-1">2K 绘图模型</label>
-                                    <input type="text" x-model="imagenForm.model_2k"
-                                           placeholder="agy-gemini-3-pro-image-2k"
-                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
-                                </div>
-                                <div>
-                                    <label class="block text-xs text-slate-400 mb-1">4K 绘图模型</label>
-                                    <input type="text" x-model="imagenForm.model_4k"
-                                           placeholder="agy-gemini-3-pro-image-4k"
-                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
-                                </div>
-                                <div>
-                                    <label class="block text-xs text-slate-400 mb-1">2K 图生图模型</label>
-                                    <input type="text" x-model="imagenForm.edit_model_2k"
-                                           placeholder="agy-gemini-3-pro-image-2k"
-                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
-                                </div>
-                                <div>
-                                    <label class="block text-xs text-slate-400 mb-1">4K 图生图模型</label>
-                                    <input type="text" x-model="imagenForm.edit_model_4k"
-                                           placeholder="agy-gemini-3-pro-image-4k"
-                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
-                                </div>
-                            </div>
-                        </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">默认图片数量</label>
