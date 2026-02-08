@@ -564,6 +564,35 @@
                             </div>
                         </div>
 
+                        <!-- 内容分级模型配置 (SFW/NSFW) -->
+                        <div class="col-span-2 border-t border-slate-700 pt-4 mt-2">
+                            <h4 class="text-sm font-medium text-slate-300 mb-3 flex items-center gap-2">
+                                <i data-lucide="shield" class="w-4 h-4 text-purple-400"></i>
+                                内容分级模型配置 (SFW/NSFW)
+                            </h4>
+                            <p class="text-xs text-slate-400 mb-4">AI 会根据用户请求的内容类型自动选择对应模型。留空则使用默认模型。</p>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1 flex items-center gap-1">
+                                        <i data-lucide="shield-check" class="w-3 h-3 text-green-400"></i>
+                                        SFW 模型（安全内容）
+                                    </label>
+                                    <input type="text" x-model="imagenForm.sfw_model"
+                                           placeholder="留空使用默认模型"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1 flex items-center gap-1">
+                                        <i data-lucide="shield-alert" class="w-3 h-3 text-red-400"></i>
+                                        NSFW 模型（成人内容）
+                                    </label>
+                                    <input type="text" x-model="imagenForm.nsfw_model"
+                                           placeholder="留空使用默认模型"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- 月光币成本配置 -->
                         <div class="col-span-2 border-t border-slate-700 pt-4 mt-2">
                             <h4 class="text-sm font-medium text-slate-300 mb-3 flex items-center gap-2">
@@ -1372,7 +1401,7 @@
                 
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
-                imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto' },
+                imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto', sfw_model: '', nsfw_model: '' },
                 videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8 },
                 videoConfig: {},
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
@@ -1492,6 +1521,9 @@
                         this.imagenForm.streaming_enabled = this.config.imagen.streaming_enabled || false;
                         // 图片响应格式
                         this.imagenForm.image_response_format = this.config.imagen.image_response_format || 'auto';
+                        // SFW/NSFW 模型配置
+                        this.imagenForm.sfw_model = this.config.imagen.sfw_model || '';
+                        this.imagenForm.nsfw_model = this.config.imagen.nsfw_model || '';
                     }
                     // 加载视频配置（使用 .then() 避免在非 async 函数中使用 await）
                     fetch('/api/config/video', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
@@ -2118,7 +2150,10 @@
                             // 流式请求配置
                             streaming_enabled: this.imagenForm.streaming_enabled,
                             // 图片响应格式
-                            image_response_format: this.imagenForm.image_response_format
+                            image_response_format: this.imagenForm.image_response_format,
+                            // SFW/NSFW 模型配置
+                            sfw_model: this.imagenForm.sfw_model || null,
+                            nsfw_model: this.imagenForm.nsfw_model || null
                         };
                         
                         // 只有填写了新的API Key才发送

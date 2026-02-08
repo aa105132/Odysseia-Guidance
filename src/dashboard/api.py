@@ -85,6 +85,9 @@ class ImagenConfigUpdate(BaseModel):
     streaming_enabled: Optional[bool] = None  # 是否启用流式请求
     # 图片响应格式: 'auto', 'base64', 'url'
     image_response_format: Optional[str] = None
+    # 内容分级模型配置 (SFW/NSFW)
+    sfw_model: Optional[str] = None  # SFW 安全内容模型
+    nsfw_model: Optional[str] = None  # NSFW 成人内容模型
 
 
 class VideoConfigUpdate(BaseModel):
@@ -511,6 +514,9 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     db_max_images = await chat_db_manager.get_global_setting("imagen_max_images")
     db_streaming_enabled = await chat_db_manager.get_global_setting("imagen_streaming_enabled")
     db_image_response_format = await chat_db_manager.get_global_setting("imagen_image_response_format")
+    # SFW/NSFW 模型配置
+    db_sfw_model = await chat_db_manager.get_global_setting("imagen_sfw_model")
+    db_nsfw_model = await chat_db_manager.get_global_setting("imagen_nsfw_model")
     
     # 内存配置作为回退
     config = chat_config.GEMINI_IMAGEN_CONFIG
@@ -527,6 +533,9 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     max_images = int(db_max_images) if db_max_images else config.get("MAX_IMAGES_PER_REQUEST", 20)
     streaming_enabled = db_streaming_enabled == "true" if db_streaming_enabled else config.get("STREAMING_ENABLED", False)
     image_response_format = db_image_response_format or config.get("IMAGE_RESPONSE_FORMAT", "auto")
+    # SFW/NSFW 模型
+    sfw_model = db_sfw_model or config.get("SFW_MODEL_NAME", "")
+    nsfw_model = db_nsfw_model or config.get("NSFW_MODEL_NAME", "")
     
     # 隐藏部分信息
     masked_url = ""
@@ -569,6 +578,9 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "max_images": max_images,
         "streaming_enabled": streaming_enabled,
         "image_response_format": image_response_format,
+        # SFW/NSFW 模型配置
+        "sfw_model": sfw_model,
+        "nsfw_model": nsfw_model,
         "available_models": [
             "imagen-3.0-generate-002",
             "imagen-3.0-fast-generate-001",
@@ -714,6 +726,23 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         updated["image_response_format"] = config.image_response_format
         await chat_db_manager.set_global_setting("imagen_image_response_format", config.image_response_format)
         log.info(f"✅ 图片响应格式已设置为: {config.image_response_format}")
+    
+    # SFW/NSFW 模型配置
+    if config.sfw_model is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["SFW_MODEL_NAME"] = config.sfw_model
+        os.environ["GEMINI_IMAGEN_SFW_MODEL"] = config.sfw_model
+        env_updates["GEMINI_IMAGEN_SFW_MODEL"] = config.sfw_model
+        updated["sfw_model"] = config.sfw_model
+        await chat_db_manager.set_global_setting("imagen_sfw_model", config.sfw_model)
+        log.info(f"✅ SFW 模型已设置为: {config.sfw_model or '(使用默认模型)'}")
+    
+    if config.nsfw_model is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["NSFW_MODEL_NAME"] = config.nsfw_model
+        os.environ["GEMINI_IMAGEN_NSFW_MODEL"] = config.nsfw_model
+        env_updates["GEMINI_IMAGEN_NSFW_MODEL"] = config.nsfw_model
+        updated["nsfw_model"] = config.nsfw_model
+        await chat_db_manager.set_global_setting("imagen_nsfw_model", config.nsfw_model)
+        log.info(f"✅ NSFW 模型已设置为: {config.nsfw_model or '(使用默认模型)'}")
     
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:

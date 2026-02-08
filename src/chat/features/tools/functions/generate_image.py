@@ -25,6 +25,7 @@ async def generate_image(
     aspect_ratio: str = "1:1",
     number_of_images: int = 1,
     resolution: str = "default",
+    content_rating: str = "sfw",
     preview_message: Optional[str] = None,
     **kwargs
 ) -> dict:
@@ -74,6 +75,18 @@ async def generate_image(
                 - "2k" 2K高清（用户明确要求高清、2K时使用）
                 - "4k" 4K超高清（用户明确要求超高清、4K时使用）
                 如果用户没有特别要求分辨率，使用 "default"
+        
+        content_rating: 内容分级，根据用户请求的内容类型选择：
+                - "sfw" (Safe For Work) 适合普通内容：风景、动物、日常场景、
+                        正常穿着的人物、Q版卡通、可爱风格等
+                - "nsfw" (Not Safe For Work) 适合成人内容：性感姿势、暴露穿着、
+                        挑逗表情、擦边内容、内衣泳装、丝袜特写等
+                
+                **判断规则：**
+                - 如果用户请求包含任何与性感、暴露、诱惑相关的描述，选择 "nsfw"
+                - 如果用户明确要求擦边、色色、涩涩等内容，选择 "nsfw"
+                - 如果是普通的风景、动物、日常内容，选择 "sfw"
+                - 如果不确定，倾向于选择 "nsfw" 以获得更好的生成效果
                 
         preview_message: （必填）在生成图片前先发送给用户的预告消息。
                 根据用户的请求内容和你的性格特点，写一句有趣的话告诉用户你正在画图。
@@ -166,6 +179,14 @@ async def generate_image(
             aspect_ratio = "1:1"
             log.warning(f"无效的宽高比，已重置为默认值 1:1")
         
+        # 验证内容分级
+        valid_ratings = ["sfw", "nsfw"]
+        if content_rating not in valid_ratings:
+            content_rating = "sfw"
+            log.warning(f"无效的内容分级，已重置为默认值 sfw")
+        
+        log.info(f"图片生成内容分级: {content_rating}")
+        
         # 调用图片生成服务（每张图一个请求，全部并发执行）
         import asyncio
         
@@ -177,6 +198,7 @@ async def generate_image(
                 negative_prompt=negative_prompt,
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
+                content_rating=content_rating,
             )
             if result:
                 images_list = [result]
@@ -188,6 +210,7 @@ async def generate_image(
                     negative_prompt=negative_prompt,
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
+                    content_rating=content_rating,
                 )
                 for _ in range(number_of_images)
             ]
@@ -443,6 +466,10 @@ async def generate_images_batch(
         if aspect_ratio not in valid_ratios:
             aspect_ratio = "1:1"
         
+        # 批量生成默认使用 sfw，因为批量请求通常是多样化主题
+        # 如需 NSFW 批量生成，应使用 generate_image 配合 number_of_images
+        batch_content_rating = "sfw"
+        
         # 为每个提示词创建一个生成任务
         tasks = [
             gemini_imagen_service.generate_single_image(
@@ -450,6 +477,7 @@ async def generate_images_batch(
                 negative_prompt=negative_prompt,
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
+                content_rating=batch_content_rating,
             )
             for p in prompts
         ]

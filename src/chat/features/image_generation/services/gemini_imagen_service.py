@@ -174,6 +174,7 @@ class GeminiImagenService:
         aspect_ratio: str = "1:1",
         number_of_images: int = 1,
         resolution: str = "default",
+        content_rating: str = "sfw",
     ) -> Optional[List[bytes]]:
         """
         使用 Gemini Imagen 生成图像
@@ -184,6 +185,7 @@ class GeminiImagenService:
             aspect_ratio: 宽高比，支持 "1:1", "3:4", "4:3", "9:16", "16:9"
             number_of_images: 生成图片数量（1-4）
             resolution: 分辨率 ("default", "2k", "4k")
+            content_rating: 内容分级 ("sfw" 安全内容, "nsfw" 成人内容)
 
         Returns:
             成功时返回图像字节数据列表，失败时返回 None
@@ -193,9 +195,9 @@ class GeminiImagenService:
             return None
 
         config = app_config.GEMINI_IMAGEN_CONFIG
-        # 根据分辨率选择模型
-        model_name = self._get_model_for_resolution(resolution=resolution, is_edit=False)
-        log.info(f"使用模型 {model_name} 生成图像 (分辨率: {resolution})")
+        # 根据分辨率和内容分级选择模型
+        model_name = self._get_model_for_resolution(resolution=resolution, is_edit=False, content_rating=content_rating)
+        log.info(f"使用模型 {model_name} 生成图像 (分辨率: {resolution}, 内容分级: {content_rating})")
 
         # 根据 API 格式选择不同的生成方法
         # gemini_chat: 使用 Gemini SDK 的 generate_content 多模态聊天接口
@@ -1162,19 +1164,30 @@ class GeminiImagenService:
         
         return images
 
-    def _get_model_for_resolution(self, resolution: str = "default", is_edit: bool = False) -> str:
+    def _get_model_for_resolution(self, resolution: str = "default", is_edit: bool = False, content_rating: str = "sfw") -> str:
         """
-        根据分辨率选择合适的模型
+        根据分辨率和内容分级选择合适的模型
         
         Args:
             resolution: 分辨率选项 ("default", "2k", "4k")
             is_edit: 是否为图像编辑（图生图）
+            content_rating: 内容分级 ("sfw" 安全内容, "nsfw" 成人内容)
             
         Returns:
             选定的模型名称
         """
         config = app_config.GEMINI_IMAGEN_CONFIG
         
+        # 首先检查内容分级模型配置
+        # 如果配置了 SFW/NSFW 专用模型，优先使用
+        if content_rating == "nsfw" and config.get("NSFW_MODEL_NAME"):
+            log.info(f"使用 NSFW 专用模型: {config['NSFW_MODEL_NAME']}")
+            return config["NSFW_MODEL_NAME"]
+        elif content_rating == "sfw" and config.get("SFW_MODEL_NAME"):
+            log.info(f"使用 SFW 专用模型: {config['SFW_MODEL_NAME']}")
+            return config["SFW_MODEL_NAME"]
+        
+        # 如果没有配置内容分级专用模型，回退到分辨率模型选择逻辑
         if is_edit:
             # 图生图模型选择
             if resolution == "2k" and config.get("EDIT_MODEL_NAME_2K"):
@@ -1197,6 +1210,7 @@ class GeminiImagenService:
         negative_prompt: Optional[str] = None,
         aspect_ratio: str = "1:1",
         resolution: str = "default",
+        content_rating: str = "sfw",
     ) -> Optional[bytes]:
         """
         生成单张图像的便捷方法
@@ -1206,6 +1220,7 @@ class GeminiImagenService:
             negative_prompt: 负面提示词（可选）
             aspect_ratio: 宽高比
             resolution: 分辨率 ("default", "2k", "4k")
+            content_rating: 内容分级 ("sfw" 安全内容, "nsfw" 成人内容)
 
         Returns:
             成功时返回图像字节数据，失败时返回 None
@@ -1216,6 +1231,7 @@ class GeminiImagenService:
             aspect_ratio=aspect_ratio,
             number_of_images=1,
             resolution=resolution,
+            content_rating=content_rating,
         )
         
         if images and len(images) > 0:
@@ -1230,6 +1246,7 @@ class GeminiImagenService:
         reference_mime_type: str = "image/png",
         aspect_ratio: str = "1:1",
         resolution: str = "default",
+        content_rating: str = "sfw",
     ) -> Optional[bytes]:
         """
         使用 Gemini 多模态接口进行图生图（图像编辑）
@@ -1240,6 +1257,7 @@ class GeminiImagenService:
             reference_mime_type: 参考图像的 MIME 类型
             aspect_ratio: 输出图像的宽高比
             resolution: 分辨率 ("default", "2k", "4k")
+            content_rating: 内容分级 ("sfw" 安全内容, "nsfw" 成人内容)
             
         Returns:
             成功时返回生成的图像字节数据，失败时返回 None
@@ -1248,9 +1266,9 @@ class GeminiImagenService:
             log.error("Gemini Imagen 服务不可用")
             return None
         
-        # 根据分辨率选择编辑模型
-        model_name = self._get_model_for_resolution(resolution=resolution, is_edit=True)
-        log.info(f"图生图使用模型: {model_name} (分辨率: {resolution})")
+        # 根据分辨率和内容分级选择编辑模型
+        model_name = self._get_model_for_resolution(resolution=resolution, is_edit=True, content_rating=content_rating)
+        log.info(f"图生图使用模型: {model_name} (分辨率: {resolution}, 内容分级: {content_rating})")
         
         # 根据 API 格式选择不同的编辑方法
         if self._api_format == "openai":

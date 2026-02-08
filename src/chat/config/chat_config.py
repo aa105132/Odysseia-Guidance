@@ -102,6 +102,13 @@ def _get_imagen_config():
         "EDIT_MODEL_NAME_2K": os.getenv("GEMINI_IMAGEN_EDIT_MODEL_2K", "agy-gemini-3-pro-image-2k"),
         # 4K 图生图使用的模型
         "EDIT_MODEL_NAME_4K": os.getenv("GEMINI_IMAGEN_EDIT_MODEL_4K", "agy-gemini-3-pro-image-4k"),
+        # --- 内容分级模型配置 (SFW/NSFW) ---
+        # SFW (Safe For Work) 安全内容模型 - 适用于普通内容生成
+        # 如果未设置，使用默认模型 MODEL_NAME
+        "SFW_MODEL_NAME": os.getenv("GEMINI_IMAGEN_SFW_MODEL", ""),
+        # NSFW (Not Safe For Work) 成人内容模型 - 适用于成人内容生成
+        # 如果未设置，使用默认模型 MODEL_NAME
+        "NSFW_MODEL_NAME": os.getenv("GEMINI_IMAGEN_NSFW_MODEL", ""),
         "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "1")),  # 生成一张图片的月光币成本
         "IMAGE_EDIT_COST": int(os.getenv("GEMINI_IMAGEN_EDIT_COST", "1")),  # 图生图的月光币成本
         "MAX_IMAGES_PER_REQUEST": int(os.getenv("GEMINI_IMAGEN_MAX_IMAGES", "20")),  # 单次请求最多生成图片数量
