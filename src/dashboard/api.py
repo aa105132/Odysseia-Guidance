@@ -64,6 +64,7 @@ class ImagenConfigUpdate(BaseModel):
     enabled: Optional[bool] = None
     api_url: Optional[str] = None
     model: Optional[str] = None
+    edit_model: Optional[str] = None  # 图生图模型（默认分辨率）
     default_images: Optional[int] = None
     api_key: Optional[str] = None
     # API 格式:
@@ -502,6 +503,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     db_api_url = await chat_db_manager.get_global_setting("imagen_api_url")
     db_api_key = await chat_db_manager.get_global_setting("imagen_api_key")
     db_model = await chat_db_manager.get_global_setting("imagen_model")
+    db_edit_model = await chat_db_manager.get_global_setting("imagen_edit_model")
     db_api_format = await chat_db_manager.get_global_setting("imagen_api_format")
     db_generation_cost = await chat_db_manager.get_global_setting("imagen_generation_cost")
     db_edit_cost = await chat_db_manager.get_global_setting("imagen_edit_cost")
@@ -517,6 +519,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     api_url = db_api_url or config.get("BASE_URL", "") or config.get("API_URL", "")
     api_key = db_api_key or config.get("API_KEY", "")
     model = db_model or config.get("MODEL_NAME") or config.get("MODEL") or "imagen-3.0-generate-002"
+    edit_model = db_edit_model or config.get("EDIT_MODEL_NAME") or ""
     api_format = db_api_format or config.get("API_FORMAT", "gemini")
     generation_cost = int(db_generation_cost) if db_generation_cost else config.get("IMAGE_GENERATION_COST", 1)
     edit_cost = int(db_edit_cost) if db_edit_cost else config.get("IMAGE_EDIT_COST", 1)
@@ -555,6 +558,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "api_key_masked": masked_key,
         "has_api_key": bool(api_key),
         "model": model,
+        "edit_model": edit_model,
         "default_images": config.get("DEFAULT_NUMBER_OF_IMAGES", 1),
         "aspect_ratios": config.get("ASPECT_RATIOS", {}),
         "api_format": api_format,
@@ -606,6 +610,14 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         updated["model"] = config.model
         # 写入数据库
         await chat_db_manager.set_global_setting("imagen_model", config.model)
+    
+    if config.edit_model is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["EDIT_MODEL_NAME"] = config.edit_model if config.edit_model else None
+        os.environ["GEMINI_IMAGEN_EDIT_MODEL"] = config.edit_model
+        env_updates["GEMINI_IMAGEN_EDIT_MODEL"] = config.edit_model
+        updated["edit_model"] = config.edit_model
+        # 写入数据库
+        await chat_db_manager.set_global_setting("imagen_edit_model", config.edit_model)
     
     if config.default_images is not None:
         if not 1 <= config.default_images <= 4:

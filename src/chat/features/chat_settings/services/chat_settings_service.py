@@ -87,7 +87,12 @@ class ChatSettingsService:
         db_imagen_model = await self.db_manager.get_global_setting("imagen_model")
         if db_imagen_model:
             chat_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = db_imagen_model
-            log.info(f"  ✅ Imagen 模型: {db_imagen_model}")
+            log.info(f"  ✅ Imagen 模型 (T2I): {db_imagen_model}")
+        
+        db_imagen_edit_model = await self.db_manager.get_global_setting("imagen_edit_model")
+        if db_imagen_edit_model:
+            chat_config.GEMINI_IMAGEN_CONFIG["EDIT_MODEL_NAME"] = db_imagen_edit_model
+            log.info(f"  ✅ Imagen 模型 (I2I): {db_imagen_edit_model}")
         
         db_imagen_format = await self.db_manager.get_global_setting("imagen_api_format")
         if db_imagen_format:

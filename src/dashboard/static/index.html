@@ -481,7 +481,7 @@
                     <div class="space-y-6">
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-medium text-slate-300">模型</label>
+                                <label class="block text-sm font-medium text-slate-300">文生图模型</label>
                                 <button @click="fetchImagenModels()"
                                         :disabled="fetchingImagenModels"
                                         class="text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-purple-300 px-3 py-1 rounded-lg transition-all flex items-center gap-1">
@@ -499,6 +499,14 @@
                             <input type="text" x-model="imagenForm.custom_model"
                                    :placeholder="imagenForm.api_format === 'openai' ? 'dall-e-3' : 'imagen-3.0-generate-002'"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 mt-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">图生图模型</label>
+                            <input type="text" x-model="imagenForm.edit_model"
+                                   placeholder="留空则使用文生图模型"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">用于图像编辑 (I2I)，留空则复用上方的文生图模型</p>
                         </div>
                         
                         <!-- 分辨率模型配置 -->
@@ -1364,7 +1372,7 @@
                 
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
-                imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto' },
+                imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto' },
                 videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8 },
                 videoConfig: {},
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
@@ -1468,6 +1476,7 @@
                         this.imagenForm.enabled = this.config.imagen.enabled || false;
                         this.imagenForm.api_url = this.config.imagen.api_url || '';
                         this.imagenForm.model = this.config.imagen.model;
+                        this.imagenForm.edit_model = this.config.imagen.edit_model || '';
                         this.imagenForm.default_images = this.config.imagen.default_images;
                         this.imagenForm.api_key = '';  // 不显示真实的key
                         this.imagenForm.api_format = this.config.imagen.api_format || 'gemini';
@@ -2095,6 +2104,7 @@
                             enabled: this.imagenForm.enabled,
                             api_url: this.imagenForm.api_url,
                             model: this.imagenForm.custom_model || this.imagenForm.model,
+                            edit_model: this.imagenForm.edit_model ?? null,
                             default_images: parseInt(this.imagenForm.default_images),
                             api_format: this.imagenForm.api_format,
                             generation_cost: parseInt(this.imagenForm.generation_cost) || 1,
