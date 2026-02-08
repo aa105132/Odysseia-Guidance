@@ -1168,6 +1168,12 @@ class GeminiImagenService:
         """
         根据分辨率和内容分级选择合适的模型
         
+        模型选择优先级：
+        1. 内容分级+分辨率+生成类型 对应的专用模型（如 SFW_MODEL_NAME_2K）
+        2. 内容分级+生成类型 对应的默认模型（如 SFW_MODEL_NAME）
+        3. 分辨率+生成类型 对应的通用模型（如 MODEL_NAME_2K）
+        4. 生成类型对应的默认模型（如 EDIT_MODEL_NAME 或 MODEL_NAME）
+        
         Args:
             resolution: 分辨率选项 ("default", "2k", "4k")
             is_edit: 是否为图像编辑（图生图）
@@ -1178,30 +1184,90 @@ class GeminiImagenService:
         """
         config = app_config.GEMINI_IMAGEN_CONFIG
         
-        # 首先检查内容分级模型配置
-        # 如果配置了 SFW/NSFW 专用模型，优先使用
-        if content_rating == "nsfw" and config.get("NSFW_MODEL_NAME"):
-            log.info(f"使用 NSFW 专用模型: {config['NSFW_MODEL_NAME']}")
-            return config["NSFW_MODEL_NAME"]
-        elif content_rating == "sfw" and config.get("SFW_MODEL_NAME"):
-            log.info(f"使用 SFW 专用模型: {config['SFW_MODEL_NAME']}")
-            return config["SFW_MODEL_NAME"]
+        # 构建内容分级前缀（大写）
+        rating_prefix = content_rating.upper()  # "SFW" 或 "NSFW"
         
-        # 如果没有配置内容分级专用模型，回退到分辨率模型选择逻辑
+        # 根据生成类型选择模型键的基础名称
         if is_edit:
-            # 图生图模型选择
-            if resolution == "2k" and config.get("EDIT_MODEL_NAME_2K"):
-                return config["EDIT_MODEL_NAME_2K"]
-            elif resolution == "4k" and config.get("EDIT_MODEL_NAME_4K"):
-                return config["EDIT_MODEL_NAME_4K"]
-            # 默认使用编辑专用模型，如果没有则使用普通绘图模型
+            # 图生图模型
+            if resolution == "2k":
+                # 优先级: SFW/NSFW_EDIT_MODEL_NAME_2K -> SFW/NSFW_EDIT_MODEL_NAME -> EDIT_MODEL_NAME_2K -> EDIT_MODEL_NAME -> MODEL_NAME
+                rated_2k_key = f"{rating_prefix}_EDIT_MODEL_NAME_2K"
+                rated_default_key = f"{rating_prefix}_EDIT_MODEL_NAME"
+                
+                if config.get(rated_2k_key):
+                    log.info(f"使用 {content_rating.upper()} 2K 图生图模型: {config[rated_2k_key]}")
+                    return config[rated_2k_key]
+                elif config.get(rated_default_key):
+                    log.info(f"使用 {content_rating.upper()} 默认图生图模型: {config[rated_default_key]}")
+                    return config[rated_default_key]
+                elif config.get("EDIT_MODEL_NAME_2K"):
+                    return config["EDIT_MODEL_NAME_2K"]
+                    
+            elif resolution == "4k":
+                # 优先级: SFW/NSFW_EDIT_MODEL_NAME_4K -> SFW/NSFW_EDIT_MODEL_NAME -> EDIT_MODEL_NAME_4K -> EDIT_MODEL_NAME -> MODEL_NAME
+                rated_4k_key = f"{rating_prefix}_EDIT_MODEL_NAME_4K"
+                rated_default_key = f"{rating_prefix}_EDIT_MODEL_NAME"
+                
+                if config.get(rated_4k_key):
+                    log.info(f"使用 {content_rating.upper()} 4K 图生图模型: {config[rated_4k_key]}")
+                    return config[rated_4k_key]
+                elif config.get(rated_default_key):
+                    log.info(f"使用 {content_rating.upper()} 默认图生图模型: {config[rated_default_key]}")
+                    return config[rated_default_key]
+                elif config.get("EDIT_MODEL_NAME_4K"):
+                    return config["EDIT_MODEL_NAME_4K"]
+                    
+            else:  # default 分辨率
+                # 优先级: SFW/NSFW_EDIT_MODEL_NAME -> EDIT_MODEL_NAME -> MODEL_NAME
+                rated_default_key = f"{rating_prefix}_EDIT_MODEL_NAME"
+                
+                if config.get(rated_default_key):
+                    log.info(f"使用 {content_rating.upper()} 默认图生图模型: {config[rated_default_key]}")
+                    return config[rated_default_key]
+            
+            # 回退到通用图生图模型
             return config.get("EDIT_MODEL_NAME") or config.get("MODEL_NAME", "agy-gemini-3-pro-image")
+            
         else:
-            # 普通绘图模型选择
-            if resolution == "2k" and config.get("MODEL_NAME_2K"):
-                return config["MODEL_NAME_2K"]
-            elif resolution == "4k" and config.get("MODEL_NAME_4K"):
-                return config["MODEL_NAME_4K"]
+            # 文生图模型
+            if resolution == "2k":
+                # 优先级: SFW/NSFW_MODEL_NAME_2K -> SFW/NSFW_MODEL_NAME -> MODEL_NAME_2K -> MODEL_NAME
+                rated_2k_key = f"{rating_prefix}_MODEL_NAME_2K"
+                rated_default_key = f"{rating_prefix}_MODEL_NAME"
+                
+                if config.get(rated_2k_key):
+                    log.info(f"使用 {content_rating.upper()} 2K 文生图模型: {config[rated_2k_key]}")
+                    return config[rated_2k_key]
+                elif config.get(rated_default_key):
+                    log.info(f"使用 {content_rating.upper()} 默认文生图模型: {config[rated_default_key]}")
+                    return config[rated_default_key]
+                elif config.get("MODEL_NAME_2K"):
+                    return config["MODEL_NAME_2K"]
+                    
+            elif resolution == "4k":
+                # 优先级: SFW/NSFW_MODEL_NAME_4K -> SFW/NSFW_MODEL_NAME -> MODEL_NAME_4K -> MODEL_NAME
+                rated_4k_key = f"{rating_prefix}_MODEL_NAME_4K"
+                rated_default_key = f"{rating_prefix}_MODEL_NAME"
+                
+                if config.get(rated_4k_key):
+                    log.info(f"使用 {content_rating.upper()} 4K 文生图模型: {config[rated_4k_key]}")
+                    return config[rated_4k_key]
+                elif config.get(rated_default_key):
+                    log.info(f"使用 {content_rating.upper()} 默认文生图模型: {config[rated_default_key]}")
+                    return config[rated_default_key]
+                elif config.get("MODEL_NAME_4K"):
+                    return config["MODEL_NAME_4K"]
+                    
+            else:  # default 分辨率
+                # 优先级: SFW/NSFW_MODEL_NAME -> MODEL_NAME
+                rated_default_key = f"{rating_prefix}_MODEL_NAME"
+                
+                if config.get(rated_default_key):
+                    log.info(f"使用 {content_rating.upper()} 默认文生图模型: {config[rated_default_key]}")
+                    return config[rated_default_key]
+            
+            # 回退到通用文生图模型
             return config.get("MODEL_NAME", "agy-gemini-3-pro-image")
 
     async def generate_single_image(

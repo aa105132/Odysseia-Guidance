@@ -85,9 +85,21 @@ class ImagenConfigUpdate(BaseModel):
     streaming_enabled: Optional[bool] = None  # 是否启用流式请求
     # 图片响应格式: 'auto', 'base64', 'url'
     image_response_format: Optional[str] = None
-    # 内容分级模型配置 (SFW/NSFW)
-    sfw_model: Optional[str] = None  # SFW 安全内容模型
-    nsfw_model: Optional[str] = None  # NSFW 成人内容模型
+    # 内容分级模型配置 (SFW/NSFW) - 完整的模型矩阵
+    # SFW 模型
+    sfw_model: Optional[str] = None  # SFW 默认文生图
+    sfw_edit_model: Optional[str] = None  # SFW 默认图生图
+    sfw_model_2k: Optional[str] = None  # SFW 2K文生图
+    sfw_edit_model_2k: Optional[str] = None  # SFW 2K图生图
+    sfw_model_4k: Optional[str] = None  # SFW 4K文生图
+    sfw_edit_model_4k: Optional[str] = None  # SFW 4K图生图
+    # NSFW 模型
+    nsfw_model: Optional[str] = None  # NSFW 默认文生图
+    nsfw_edit_model: Optional[str] = None  # NSFW 默认图生图
+    nsfw_model_2k: Optional[str] = None  # NSFW 2K文生图
+    nsfw_edit_model_2k: Optional[str] = None  # NSFW 2K图生图
+    nsfw_model_4k: Optional[str] = None  # NSFW 4K文生图
+    nsfw_edit_model_4k: Optional[str] = None  # NSFW 4K图生图
 
 
 class VideoConfigUpdate(BaseModel):
@@ -514,9 +526,19 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     db_max_images = await chat_db_manager.get_global_setting("imagen_max_images")
     db_streaming_enabled = await chat_db_manager.get_global_setting("imagen_streaming_enabled")
     db_image_response_format = await chat_db_manager.get_global_setting("imagen_image_response_format")
-    # SFW/NSFW 模型配置
+    # SFW/NSFW 模型配置 - 完整矩阵
     db_sfw_model = await chat_db_manager.get_global_setting("imagen_sfw_model")
+    db_sfw_edit_model = await chat_db_manager.get_global_setting("imagen_sfw_edit_model")
+    db_sfw_model_2k = await chat_db_manager.get_global_setting("imagen_sfw_model_2k")
+    db_sfw_edit_model_2k = await chat_db_manager.get_global_setting("imagen_sfw_edit_model_2k")
+    db_sfw_model_4k = await chat_db_manager.get_global_setting("imagen_sfw_model_4k")
+    db_sfw_edit_model_4k = await chat_db_manager.get_global_setting("imagen_sfw_edit_model_4k")
     db_nsfw_model = await chat_db_manager.get_global_setting("imagen_nsfw_model")
+    db_nsfw_edit_model = await chat_db_manager.get_global_setting("imagen_nsfw_edit_model")
+    db_nsfw_model_2k = await chat_db_manager.get_global_setting("imagen_nsfw_model_2k")
+    db_nsfw_edit_model_2k = await chat_db_manager.get_global_setting("imagen_nsfw_edit_model_2k")
+    db_nsfw_model_4k = await chat_db_manager.get_global_setting("imagen_nsfw_model_4k")
+    db_nsfw_edit_model_4k = await chat_db_manager.get_global_setting("imagen_nsfw_edit_model_4k")
     
     # 内存配置作为回退
     config = chat_config.GEMINI_IMAGEN_CONFIG
@@ -533,9 +555,19 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     max_images = int(db_max_images) if db_max_images else config.get("MAX_IMAGES_PER_REQUEST", 20)
     streaming_enabled = db_streaming_enabled == "true" if db_streaming_enabled else config.get("STREAMING_ENABLED", False)
     image_response_format = db_image_response_format or config.get("IMAGE_RESPONSE_FORMAT", "auto")
-    # SFW/NSFW 模型
+    # SFW/NSFW 模型 - 完整矩阵
     sfw_model = db_sfw_model or config.get("SFW_MODEL_NAME", "")
+    sfw_edit_model = db_sfw_edit_model or config.get("SFW_EDIT_MODEL_NAME", "")
+    sfw_model_2k = db_sfw_model_2k or config.get("SFW_MODEL_NAME_2K", "")
+    sfw_edit_model_2k = db_sfw_edit_model_2k or config.get("SFW_EDIT_MODEL_NAME_2K", "")
+    sfw_model_4k = db_sfw_model_4k or config.get("SFW_MODEL_NAME_4K", "")
+    sfw_edit_model_4k = db_sfw_edit_model_4k or config.get("SFW_EDIT_MODEL_NAME_4K", "")
     nsfw_model = db_nsfw_model or config.get("NSFW_MODEL_NAME", "")
+    nsfw_edit_model = db_nsfw_edit_model or config.get("NSFW_EDIT_MODEL_NAME", "")
+    nsfw_model_2k = db_nsfw_model_2k or config.get("NSFW_MODEL_NAME_2K", "")
+    nsfw_edit_model_2k = db_nsfw_edit_model_2k or config.get("NSFW_EDIT_MODEL_NAME_2K", "")
+    nsfw_model_4k = db_nsfw_model_4k or config.get("NSFW_MODEL_NAME_4K", "")
+    nsfw_edit_model_4k = db_nsfw_edit_model_4k or config.get("NSFW_EDIT_MODEL_NAME_4K", "")
     
     # 隐藏部分信息
     masked_url = ""
@@ -578,9 +610,19 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "max_images": max_images,
         "streaming_enabled": streaming_enabled,
         "image_response_format": image_response_format,
-        # SFW/NSFW 模型配置
+        # SFW/NSFW 模型配置 - 完整矩阵
         "sfw_model": sfw_model,
+        "sfw_edit_model": sfw_edit_model,
+        "sfw_model_2k": sfw_model_2k,
+        "sfw_edit_model_2k": sfw_edit_model_2k,
+        "sfw_model_4k": sfw_model_4k,
+        "sfw_edit_model_4k": sfw_edit_model_4k,
         "nsfw_model": nsfw_model,
+        "nsfw_edit_model": nsfw_edit_model,
+        "nsfw_model_2k": nsfw_model_2k,
+        "nsfw_edit_model_2k": nsfw_edit_model_2k,
+        "nsfw_model_4k": nsfw_model_4k,
+        "nsfw_edit_model_4k": nsfw_edit_model_4k,
         "available_models": [
             "imagen-3.0-generate-002",
             "imagen-3.0-fast-generate-001",
@@ -727,22 +769,104 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         await chat_db_manager.set_global_setting("imagen_image_response_format", config.image_response_format)
         log.info(f"✅ 图片响应格式已设置为: {config.image_response_format}")
     
-    # SFW/NSFW 模型配置
+    # SFW/NSFW 模型配置 - 完整矩阵
+    # SFW 模型
     if config.sfw_model is not None:
         chat_config.GEMINI_IMAGEN_CONFIG["SFW_MODEL_NAME"] = config.sfw_model
         os.environ["GEMINI_IMAGEN_SFW_MODEL"] = config.sfw_model
         env_updates["GEMINI_IMAGEN_SFW_MODEL"] = config.sfw_model
         updated["sfw_model"] = config.sfw_model
         await chat_db_manager.set_global_setting("imagen_sfw_model", config.sfw_model)
-        log.info(f"✅ SFW 模型已设置为: {config.sfw_model or '(使用默认模型)'}")
+        log.info(f"✅ SFW 文生图模型已设置为: {config.sfw_model or '(使用默认模型)'}")
     
+    if config.sfw_edit_model is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["SFW_EDIT_MODEL_NAME"] = config.sfw_edit_model
+        os.environ["GEMINI_IMAGEN_SFW_EDIT_MODEL"] = config.sfw_edit_model
+        env_updates["GEMINI_IMAGEN_SFW_EDIT_MODEL"] = config.sfw_edit_model
+        updated["sfw_edit_model"] = config.sfw_edit_model
+        await chat_db_manager.set_global_setting("imagen_sfw_edit_model", config.sfw_edit_model)
+        log.info(f"✅ SFW 图生图模型已设置为: {config.sfw_edit_model or '(使用默认模型)'}")
+    
+    if config.sfw_model_2k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["SFW_MODEL_NAME_2K"] = config.sfw_model_2k
+        os.environ["GEMINI_IMAGEN_SFW_MODEL_2K"] = config.sfw_model_2k
+        env_updates["GEMINI_IMAGEN_SFW_MODEL_2K"] = config.sfw_model_2k
+        updated["sfw_model_2k"] = config.sfw_model_2k
+        await chat_db_manager.set_global_setting("imagen_sfw_model_2k", config.sfw_model_2k)
+        log.info(f"✅ SFW 2K文生图模型已设置为: {config.sfw_model_2k or '(使用默认模型)'}")
+    
+    if config.sfw_edit_model_2k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["SFW_EDIT_MODEL_NAME_2K"] = config.sfw_edit_model_2k
+        os.environ["GEMINI_IMAGEN_SFW_EDIT_MODEL_2K"] = config.sfw_edit_model_2k
+        env_updates["GEMINI_IMAGEN_SFW_EDIT_MODEL_2K"] = config.sfw_edit_model_2k
+        updated["sfw_edit_model_2k"] = config.sfw_edit_model_2k
+        await chat_db_manager.set_global_setting("imagen_sfw_edit_model_2k", config.sfw_edit_model_2k)
+        log.info(f"✅ SFW 2K图生图模型已设置为: {config.sfw_edit_model_2k or '(使用默认模型)'}")
+    
+    if config.sfw_model_4k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["SFW_MODEL_NAME_4K"] = config.sfw_model_4k
+        os.environ["GEMINI_IMAGEN_SFW_MODEL_4K"] = config.sfw_model_4k
+        env_updates["GEMINI_IMAGEN_SFW_MODEL_4K"] = config.sfw_model_4k
+        updated["sfw_model_4k"] = config.sfw_model_4k
+        await chat_db_manager.set_global_setting("imagen_sfw_model_4k", config.sfw_model_4k)
+        log.info(f"✅ SFW 4K文生图模型已设置为: {config.sfw_model_4k or '(使用默认模型)'}")
+    
+    if config.sfw_edit_model_4k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["SFW_EDIT_MODEL_NAME_4K"] = config.sfw_edit_model_4k
+        os.environ["GEMINI_IMAGEN_SFW_EDIT_MODEL_4K"] = config.sfw_edit_model_4k
+        env_updates["GEMINI_IMAGEN_SFW_EDIT_MODEL_4K"] = config.sfw_edit_model_4k
+        updated["sfw_edit_model_4k"] = config.sfw_edit_model_4k
+        await chat_db_manager.set_global_setting("imagen_sfw_edit_model_4k", config.sfw_edit_model_4k)
+        log.info(f"✅ SFW 4K图生图模型已设置为: {config.sfw_edit_model_4k or '(使用默认模型)'}")
+    
+    # NSFW 模型
     if config.nsfw_model is not None:
         chat_config.GEMINI_IMAGEN_CONFIG["NSFW_MODEL_NAME"] = config.nsfw_model
         os.environ["GEMINI_IMAGEN_NSFW_MODEL"] = config.nsfw_model
         env_updates["GEMINI_IMAGEN_NSFW_MODEL"] = config.nsfw_model
         updated["nsfw_model"] = config.nsfw_model
         await chat_db_manager.set_global_setting("imagen_nsfw_model", config.nsfw_model)
-        log.info(f"✅ NSFW 模型已设置为: {config.nsfw_model or '(使用默认模型)'}")
+        log.info(f"✅ NSFW 文生图模型已设置为: {config.nsfw_model or '(使用默认模型)'}")
+    
+    if config.nsfw_edit_model is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["NSFW_EDIT_MODEL_NAME"] = config.nsfw_edit_model
+        os.environ["GEMINI_IMAGEN_NSFW_EDIT_MODEL"] = config.nsfw_edit_model
+        env_updates["GEMINI_IMAGEN_NSFW_EDIT_MODEL"] = config.nsfw_edit_model
+        updated["nsfw_edit_model"] = config.nsfw_edit_model
+        await chat_db_manager.set_global_setting("imagen_nsfw_edit_model", config.nsfw_edit_model)
+        log.info(f"✅ NSFW 图生图模型已设置为: {config.nsfw_edit_model or '(使用默认模型)'}")
+    
+    if config.nsfw_model_2k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["NSFW_MODEL_NAME_2K"] = config.nsfw_model_2k
+        os.environ["GEMINI_IMAGEN_NSFW_MODEL_2K"] = config.nsfw_model_2k
+        env_updates["GEMINI_IMAGEN_NSFW_MODEL_2K"] = config.nsfw_model_2k
+        updated["nsfw_model_2k"] = config.nsfw_model_2k
+        await chat_db_manager.set_global_setting("imagen_nsfw_model_2k", config.nsfw_model_2k)
+        log.info(f"✅ NSFW 2K文生图模型已设置为: {config.nsfw_model_2k or '(使用默认模型)'}")
+    
+    if config.nsfw_edit_model_2k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["NSFW_EDIT_MODEL_NAME_2K"] = config.nsfw_edit_model_2k
+        os.environ["GEMINI_IMAGEN_NSFW_EDIT_MODEL_2K"] = config.nsfw_edit_model_2k
+        env_updates["GEMINI_IMAGEN_NSFW_EDIT_MODEL_2K"] = config.nsfw_edit_model_2k
+        updated["nsfw_edit_model_2k"] = config.nsfw_edit_model_2k
+        await chat_db_manager.set_global_setting("imagen_nsfw_edit_model_2k", config.nsfw_edit_model_2k)
+        log.info(f"✅ NSFW 2K图生图模型已设置为: {config.nsfw_edit_model_2k or '(使用默认模型)'}")
+    
+    if config.nsfw_model_4k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["NSFW_MODEL_NAME_4K"] = config.nsfw_model_4k
+        os.environ["GEMINI_IMAGEN_NSFW_MODEL_4K"] = config.nsfw_model_4k
+        env_updates["GEMINI_IMAGEN_NSFW_MODEL_4K"] = config.nsfw_model_4k
+        updated["nsfw_model_4k"] = config.nsfw_model_4k
+        await chat_db_manager.set_global_setting("imagen_nsfw_model_4k", config.nsfw_model_4k)
+        log.info(f"✅ NSFW 4K文生图模型已设置为: {config.nsfw_model_4k or '(使用默认模型)'}")
+    
+    if config.nsfw_edit_model_4k is not None:
+        chat_config.GEMINI_IMAGEN_CONFIG["NSFW_EDIT_MODEL_NAME_4K"] = config.nsfw_edit_model_4k
+        os.environ["GEMINI_IMAGEN_NSFW_EDIT_MODEL_4K"] = config.nsfw_edit_model_4k
+        env_updates["GEMINI_IMAGEN_NSFW_EDIT_MODEL_4K"] = config.nsfw_edit_model_4k
+        updated["nsfw_edit_model_4k"] = config.nsfw_edit_model_4k
+        await chat_db_manager.set_global_setting("imagen_nsfw_edit_model_4k", config.nsfw_edit_model_4k)
+        log.info(f"✅ NSFW 4K图生图模型已设置为: {config.nsfw_edit_model_4k or '(使用默认模型)'}")
     
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:

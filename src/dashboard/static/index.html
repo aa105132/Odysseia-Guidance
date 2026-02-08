@@ -570,25 +570,97 @@
                                 <i data-lucide="shield" class="w-4 h-4 text-purple-400"></i>
                                 内容分级模型配置 (SFW/NSFW)
                             </h4>
-                            <p class="text-xs text-slate-400 mb-4">AI 会根据用户请求的内容类型自动选择对应模型。留空则使用默认模型。</p>
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label class="block text-xs text-slate-400 mb-1 flex items-center gap-1">
-                                        <i data-lucide="shield-check" class="w-3 h-3 text-green-400"></i>
-                                        SFW 模型（安全内容）
-                                    </label>
-                                    <input type="text" x-model="imagenForm.sfw_model"
-                                           placeholder="留空使用默认模型"
-                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                            <p class="text-xs text-slate-400 mb-4">AI 会根据用户请求的内容类型自动选择对应模型。留空则回退到上一级或默认模型。</p>
+                            
+                            <!-- SFW 模型配置 -->
+                            <div class="mb-6">
+                                <h5 class="text-xs font-medium text-green-400 mb-3 flex items-center gap-1">
+                                    <i data-lucide="shield-check" class="w-3 h-3"></i>
+                                    SFW 模型（安全内容）
+                                </h5>
+                                <div class="grid grid-cols-3 gap-3">
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">默认 文生图</label>
+                                        <input type="text" x-model="imagenForm.sfw_model"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">2K 文生图</label>
+                                        <input type="text" x-model="imagenForm.sfw_model_2k"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">4K 文生图</label>
+                                        <input type="text" x-model="imagenForm.sfw_model_4k"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">默认 图生图</label>
+                                        <input type="text" x-model="imagenForm.sfw_edit_model"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">2K 图生图</label>
+                                        <input type="text" x-model="imagenForm.sfw_edit_model_2k"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">4K 图生图</label>
+                                        <input type="text" x-model="imagenForm.sfw_edit_model_4k"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    </div>
                                 </div>
-                                <div>
-                                    <label class="block text-xs text-slate-400 mb-1 flex items-center gap-1">
-                                        <i data-lucide="shield-alert" class="w-3 h-3 text-red-400"></i>
-                                        NSFW 模型（成人内容）
-                                    </label>
-                                    <input type="text" x-model="imagenForm.nsfw_model"
-                                           placeholder="留空使用默认模型"
-                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                            </div>
+                            
+                            <!-- NSFW 模型配置 -->
+                            <div>
+                                <h5 class="text-xs font-medium text-red-400 mb-3 flex items-center gap-1">
+                                    <i data-lucide="shield-alert" class="w-3 h-3"></i>
+                                    NSFW 模型（成人内容）
+                                </h5>
+                                <div class="grid grid-cols-3 gap-3">
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">默认 文生图</label>
+                                        <input type="text" x-model="imagenForm.nsfw_model"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">2K 文生图</label>
+                                        <input type="text" x-model="imagenForm.nsfw_model_2k"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">4K 文生图</label>
+                                        <input type="text" x-model="imagenForm.nsfw_model_4k"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">默认 图生图</label>
+                                        <input type="text" x-model="imagenForm.nsfw_edit_model"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">2K 图生图</label>
+                                        <input type="text" x-model="imagenForm.nsfw_edit_model_2k"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-slate-400 mb-1">4K 图生图</label>
+                                        <input type="text" x-model="imagenForm.nsfw_edit_model_4k"
+                                               placeholder="留空使用默认"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500">
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1401,7 +1473,7 @@
                 
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
-                imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto', sfw_model: '', nsfw_model: '' },
+                imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto', sfw_model: '', sfw_edit_model: '', sfw_model_2k: '', sfw_edit_model_2k: '', sfw_model_4k: '', sfw_edit_model_4k: '', nsfw_model: '', nsfw_edit_model: '', nsfw_model_2k: '', nsfw_edit_model_2k: '', nsfw_model_4k: '', nsfw_edit_model_4k: '' },
                 videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8 },
                 videoConfig: {},
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
@@ -1521,9 +1593,19 @@
                         this.imagenForm.streaming_enabled = this.config.imagen.streaming_enabled || false;
                         // 图片响应格式
                         this.imagenForm.image_response_format = this.config.imagen.image_response_format || 'auto';
-                        // SFW/NSFW 模型配置
+                        // SFW/NSFW 模型配置 - 完整矩阵
                         this.imagenForm.sfw_model = this.config.imagen.sfw_model || '';
+                        this.imagenForm.sfw_edit_model = this.config.imagen.sfw_edit_model || '';
+                        this.imagenForm.sfw_model_2k = this.config.imagen.sfw_model_2k || '';
+                        this.imagenForm.sfw_edit_model_2k = this.config.imagen.sfw_edit_model_2k || '';
+                        this.imagenForm.sfw_model_4k = this.config.imagen.sfw_model_4k || '';
+                        this.imagenForm.sfw_edit_model_4k = this.config.imagen.sfw_edit_model_4k || '';
                         this.imagenForm.nsfw_model = this.config.imagen.nsfw_model || '';
+                        this.imagenForm.nsfw_edit_model = this.config.imagen.nsfw_edit_model || '';
+                        this.imagenForm.nsfw_model_2k = this.config.imagen.nsfw_model_2k || '';
+                        this.imagenForm.nsfw_edit_model_2k = this.config.imagen.nsfw_edit_model_2k || '';
+                        this.imagenForm.nsfw_model_4k = this.config.imagen.nsfw_model_4k || '';
+                        this.imagenForm.nsfw_edit_model_4k = this.config.imagen.nsfw_edit_model_4k || '';
                     }
                     // 加载视频配置（使用 .then() 避免在非 async 函数中使用 await）
                     fetch('/api/config/video', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
@@ -2151,9 +2233,19 @@
                             streaming_enabled: this.imagenForm.streaming_enabled,
                             // 图片响应格式
                             image_response_format: this.imagenForm.image_response_format,
-                            // SFW/NSFW 模型配置
+                            // SFW/NSFW 模型配置 - 完整矩阵
                             sfw_model: this.imagenForm.sfw_model || null,
-                            nsfw_model: this.imagenForm.nsfw_model || null
+                            sfw_edit_model: this.imagenForm.sfw_edit_model || null,
+                            sfw_model_2k: this.imagenForm.sfw_model_2k || null,
+                            sfw_edit_model_2k: this.imagenForm.sfw_edit_model_2k || null,
+                            sfw_model_4k: this.imagenForm.sfw_model_4k || null,
+                            sfw_edit_model_4k: this.imagenForm.sfw_edit_model_4k || null,
+                            nsfw_model: this.imagenForm.nsfw_model || null,
+                            nsfw_edit_model: this.imagenForm.nsfw_edit_model || null,
+                            nsfw_model_2k: this.imagenForm.nsfw_model_2k || null,
+                            nsfw_edit_model_2k: this.imagenForm.nsfw_edit_model_2k || null,
+                            nsfw_model_4k: this.imagenForm.nsfw_model_4k || null,
+                            nsfw_edit_model_4k: this.imagenForm.nsfw_edit_model_4k || null
                         };
                         
                         // 只有填写了新的API Key才发送
