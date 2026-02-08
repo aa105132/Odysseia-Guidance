@@ -23,6 +23,7 @@ async def edit_image(
     edit_prompt: str,
     aspect_ratio: str = "1:1",
     resolution: str = "default",
+    content_rating: str = "sfw",
     preview_message: Optional[str] = None,
     **kwargs
 ) -> dict:
@@ -62,6 +63,15 @@ async def edit_image(
                 - "2k" 2K高清（用户明确要求高清、2K时使用）
                 - "4k" 4K超高清（用户明确要求超高清、4K时使用）
                 如果用户没有特别要求分辨率，使用 "default"
+        
+        content_rating: 内容分级，根据图片内容和编辑请求判断：
+                - "sfw" 安全内容（默认，适用于普通图片）
+                - "nsfw" 成人内容（仅当原图或编辑请求明显涉及成人内容时使用）
+                
+                判断标准：
+                - 如果原图包含裸露、性暗示或成人内容，应使用 "nsfw"
+                - 如果编辑请求涉及色情、裸露、性感化等成人元素，应使用 "nsfw"
+                - 其他情况使用 "sfw"
                 
         preview_message: （必填）在修改图片前发送给用户的预告消息。
                 根据用户的修改请求和你的性格特点，写一句有趣的话告诉用户你正在处理。
@@ -228,6 +238,13 @@ async def edit_image(
             aspect_ratio = "1:1"
             log.warning(f"无效的宽高比，已重置为默认值 1:1")
         
+        # 验证内容分级参数
+        if content_rating not in ["sfw", "nsfw"]:
+            content_rating = "sfw"
+            log.warning(f"无效的内容分级参数，已重置为默认值 sfw")
+        
+        log.info(f"图生图内容分级: {content_rating}")
+        
         # 调用图生图服务
         edited_image_bytes = await gemini_imagen_service.edit_image(
             reference_image=reference_image["data"],
@@ -235,6 +252,7 @@ async def edit_image(
             reference_mime_type=reference_image["mime_type"],
             aspect_ratio=aspect_ratio,
             resolution=resolution,
+            content_rating=content_rating,
         )
         
         # 移除"正在生成"反应
