@@ -113,20 +113,17 @@ class VideoGenerationCog(commands.Cog):
                 return
 
             # 3. 扣除月光币
-            success = await coin_service.deduct_balance(
+            new_balance = await coin_service.remove_coins(
                 user_id=user_id,
                 amount=cost,
                 reason=f"视频生成: {prompt[:50]}",
             )
-            if not success:
+            if new_balance is None:
                 await interaction.followup.send(
-                    "月光币扣除失败，请稍后再试。",
+                    "月光币扣除失败，余额不足。",
                     ephemeral=True,
                 )
                 return
-
-            # 获取新余额
-            new_balance = await coin_service.get_balance(user_id)
 
             # 4. 发送视频结果
             if result.format_type == "url" and result.url:
