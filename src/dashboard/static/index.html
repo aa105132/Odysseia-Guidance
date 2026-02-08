@@ -1475,21 +1475,24 @@
                         // 图片响应格式
                         this.imagenForm.image_response_format = this.config.imagen.image_response_format || 'auto';
                     }
-                    // 加载视频配置
-                    try {
-                        const videoResp = await fetch('/api/config/video', { headers: { 'Authorization': `Bearer ${this.token}` } });
-                        if (videoResp.ok) {
-                            this.videoConfig = await videoResp.json();
-                            this.videoForm.enabled = this.videoConfig.enabled || false;
-                            this.videoForm.api_url = this.videoConfig.api_url || '';
-                            this.videoForm.model = this.videoConfig.model || '';
-                            this.videoForm.video_format = this.videoConfig.video_format || 'url';
-                            this.videoForm.generation_cost = this.videoConfig.generation_cost ?? 10;
-                            this.videoForm.max_duration = this.videoConfig.max_duration ?? 8;
-                        }
-                    } catch (e) {
-                        console.warn('加载视频配置失败:', e);
-                    }
+                    // 加载视频配置（使用 .then() 避免在非 async 函数中使用 await）
+                    fetch('/api/config/video', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
+                        .then(resp => {
+                            if (resp.ok) return resp.json();
+                            return null;
+                        })
+                        .then(data => {
+                            if (data) {
+                                this.videoConfig = data;
+                                this.videoForm.enabled = data.enabled || false;
+                                this.videoForm.api_url = data.api_url || '';
+                                this.videoForm.model = data.model || '';
+                                this.videoForm.video_format = data.video_format || 'url';
+                                this.videoForm.generation_cost = data.generation_cost ?? 10;
+                                this.videoForm.max_duration = data.max_duration ?? 8;
+                            }
+                        })
+                        .catch(e => console.warn('加载视频配置失败:', e));
                     if (this.config.coin) {
                         this.coinForm.daily_reward = this.config.coin.daily_reward;
                         this.coinForm.chat_reward = this.config.coin.chat_reward;
@@ -2142,7 +2145,7 @@
                             method: 'PUT',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${this.token}`
+                                'Authorization': `Bearer ${this.secretKey}`
                             },
                             body: JSON.stringify(payload)
                         });
