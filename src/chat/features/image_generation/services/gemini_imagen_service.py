@@ -876,7 +876,7 @@ class GeminiImagenService:
                                 except json.JSONDecodeError:
                                     pass
                     
-                    log.debug(f"流式接收完成: 共 {chunk_count} 个数据块, {len(collected_parts)} 个 parts, {len(collected_content)} 个内容片段")
+                    log.info(f"流式接收完成: 共 {chunk_count} 个数据块, {len(collected_parts)} 个 parts, {len(collected_content)} 个内容片段")
                     
                     # 尝试从收集的数据中提取图像
                     images = []
@@ -938,9 +938,14 @@ class GeminiImagenService:
                     else:
                         log.warning("流式 API 返回成功但没有找到图像数据")
                         if collected_content:
-                            log.debug(f"收集的文本内容: {''.join(collected_content)[:500]}")
+                            full_text = ''.join(collected_content)
+                            log.warning(f"收集的文本内容 (前500字符): {full_text[:500]}")
+                        else:
+                            log.warning("没有收集到任何文本内容")
                         if collected_parts:
-                            log.debug(f"收集的 parts: {collected_parts[:3]}")  # 只打印前3个
+                            log.warning(f"收集的 parts (前3个): {collected_parts[:3]}")
+                        else:
+                            log.warning("没有收集到任何 parts")
                         return None
 
         except asyncio.TimeoutError:
