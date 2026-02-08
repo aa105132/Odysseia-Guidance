@@ -105,7 +105,6 @@ class VideoGenerationService:
             return None
 
         config = app_config.VIDEO_GEN_CONFIG
-        model_name = config.get("MODEL_NAME", "veo-2.0-generate-001")
         video_format = config.get("VIDEO_FORMAT", "url")
         max_duration = config.get("MAX_DURATION", 8)
 
@@ -114,6 +113,15 @@ class VideoGenerationService:
 
         is_image_to_video = image_data is not None
         mode_str = "图生视频" if is_image_to_video else "文生视频"
+
+        # 根据模式选择模型：图生视频优先使用 I2V 专用模型，未配置时回退到通用模型
+        default_model = config.get("MODEL_NAME", "veo-2.0-generate-001")
+        if is_image_to_video:
+            i2v_model = config.get("I2V_MODEL_NAME", "")
+            model_name = i2v_model if i2v_model else default_model
+        else:
+            model_name = default_model
+
         log.info(f"使用模型 {model_name} 生成视频 ({mode_str}), 时长: {duration}s, 格式: {video_format}")
 
         try:

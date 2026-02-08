@@ -144,6 +144,8 @@ def _get_video_config():
         "API_KEY": os.getenv("VIDEO_GEN_API_KEY"),  # 如果为空则使用 Imagen 的 API Key
         "BASE_URL": os.getenv("VIDEO_GEN_BASE_URL"),  # 自定义端点 URL
         "MODEL_NAME": os.getenv("VIDEO_GEN_MODEL", "veo-2.0-generate-001"),
+        # 图生视频专用模型（留空则使用 MODEL_NAME）
+        "I2V_MODEL_NAME": os.getenv("VIDEO_GEN_I2V_MODEL", ""),
         # API 格式: "openai" 使用 OpenAI 兼容的 chat/completions 接口
         "API_FORMAT": os.getenv("VIDEO_GEN_API_FORMAT", "openai"),
         # 视频格式:

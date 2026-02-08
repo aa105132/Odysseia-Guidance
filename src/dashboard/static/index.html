@@ -672,10 +672,19 @@
                         </div>
 
                         <div>
-                            <label class="block text-sm font-medium text-slate-300 mb-2">模型</label>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">文生视频模型</label>
                             <input type="text" x-model="videoForm.model"
                                    placeholder="veo-2.0-generate-001"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">用于文字描述生成视频 (T2V)</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">图生视频模型</label>
+                            <input type="text" x-model="videoForm.i2v_model"
+                                   placeholder="留空则使用文生视频模型"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">用于图片生成视频 (I2V)，留空则复用上方模型</p>
                         </div>
 
                         <div class="grid grid-cols-2 gap-4">
@@ -1356,7 +1365,7 @@
                 // 表单数据
                 aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
                 imagenForm: { enabled: false, api_url: '', model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto' },
-                videoForm: { enabled: false, api_url: '', api_key: '', model: '', video_format: 'url', generation_cost: 10, max_duration: 8 },
+                videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8 },
                 videoConfig: {},
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
@@ -1487,6 +1496,7 @@
                                 this.videoForm.enabled = data.enabled || false;
                                 this.videoForm.api_url = data.api_url || '';
                                 this.videoForm.model = data.model || '';
+                                this.videoForm.i2v_model = data.i2v_model || '';
                                 this.videoForm.video_format = data.video_format || 'url';
                                 this.videoForm.generation_cost = data.generation_cost ?? 10;
                                 this.videoForm.max_duration = data.max_duration ?? 8;
@@ -2136,6 +2146,7 @@
                             api_url: this.videoForm.api_url || null,
                             api_key: this.videoForm.api_key || null,
                             model: this.videoForm.model || null,
+                            i2v_model: this.videoForm.i2v_model ?? null,
                             video_format: this.videoForm.video_format,
                             generation_cost: this.videoForm.generation_cost,
                             max_duration: this.videoForm.max_duration,

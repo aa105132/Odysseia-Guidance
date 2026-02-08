@@ -92,6 +92,7 @@ class VideoConfigUpdate(BaseModel):
     api_url: Optional[str] = None
     api_key: Optional[str] = None
     model: Optional[str] = None
+    i2v_model: Optional[str] = None  # 图生视频专用模型
     api_format: Optional[str] = None
     video_format: Optional[str] = None  # 'url' 或 'html'
     generation_cost: Optional[int] = None
@@ -752,6 +753,7 @@ async def get_video_config(token: str = Depends(verify_token)):
     db_api_url = await chat_db_manager.get_global_setting("video_api_url")
     db_api_key = await chat_db_manager.get_global_setting("video_api_key")
     db_model = await chat_db_manager.get_global_setting("video_model")
+    db_i2v_model = await chat_db_manager.get_global_setting("video_i2v_model")
     db_video_format = await chat_db_manager.get_global_setting("video_format")
     db_generation_cost = await chat_db_manager.get_global_setting("video_generation_cost")
     db_max_duration = await chat_db_manager.get_global_setting("video_max_duration")
@@ -761,6 +763,7 @@ async def get_video_config(token: str = Depends(verify_token)):
     api_url = db_api_url or config.get("BASE_URL", "")
     api_key = db_api_key or config.get("API_KEY", "")
     model = db_model or config.get("MODEL_NAME", "veo-2.0-generate-001")
+    i2v_model = db_i2v_model or config.get("I2V_MODEL_NAME", "")
     video_format = db_video_format or config.get("VIDEO_FORMAT", "url")
     generation_cost = int(db_generation_cost) if db_generation_cost else config.get("VIDEO_GENERATION_COST", 10)
     max_duration = int(db_max_duration) if db_max_duration else config.get("MAX_DURATION", 8)
@@ -787,6 +790,7 @@ async def get_video_config(token: str = Depends(verify_token)):
         "api_key_masked": masked_key,
         "has_api_key": bool(api_key),
         "model": model,
+        "i2v_model": i2v_model,
         "api_format": config.get("API_FORMAT", "openai"),
         "video_format": video_format,
         "generation_cost": generation_cost,
@@ -832,6 +836,13 @@ async def update_video_config(config: VideoConfigUpdate, token: str = Depends(ve
         env_updates["VIDEO_GEN_MODEL"] = config.model
         updated["model"] = config.model
         await chat_db_manager.set_global_setting("video_model", config.model)
+    
+    if config.i2v_model is not None:
+        chat_config.VIDEO_GEN_CONFIG["I2V_MODEL_NAME"] = config.i2v_model
+        os.environ["VIDEO_GEN_I2V_MODEL"] = config.i2v_model
+        env_updates["VIDEO_GEN_I2V_MODEL"] = config.i2v_model
+        updated["i2v_model"] = config.i2v_model
+        await chat_db_manager.set_global_setting("video_i2v_model", config.i2v_model)
     
     if config.video_format is not None:
         if config.video_format not in ["url", "html"]:

@@ -118,7 +118,12 @@ class ChatSettingsService:
         db_video_model = await self.db_manager.get_global_setting("video_model")
         if db_video_model:
             chat_config.VIDEO_GEN_CONFIG["MODEL_NAME"] = db_video_model
-            log.info(f"  ✅ 视频模型: {db_video_model}")
+            log.info(f"  ✅ 视频模型 (T2V): {db_video_model}")
+        
+        db_video_i2v_model = await self.db_manager.get_global_setting("video_i2v_model")
+        if db_video_i2v_model:
+            chat_config.VIDEO_GEN_CONFIG["I2V_MODEL_NAME"] = db_video_i2v_model
+            log.info(f"  ✅ 视频模型 (I2V): {db_video_i2v_model}")
         
         db_video_format = await self.db_manager.get_global_setting("video_format")
         if db_video_format:
