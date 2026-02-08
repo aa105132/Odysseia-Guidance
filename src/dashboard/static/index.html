@@ -1545,7 +1545,20 @@
                     if (this.config.imagen) {
                         this.imagenForm.enabled = this.config.imagen.enabled || false;
                         this.imagenForm.api_url = this.config.imagen.api_url || '';
-                        this.imagenForm.model = this.config.imagen.model;
+                        // 处理自定义模型（与AI模型相同逻辑）
+                        const loadedModel = this.config.imagen.model || '';
+                        const presetModels = this.config.imagen.available_models || ['imagen-3.0-generate-002', 'imagen-3.0-fast-generate-001', 'dall-e-3', 'dall-e-2'];
+                        if (presetModels.includes(loadedModel)) {
+                            this.imagenForm.model = loadedModel;
+                            this.imagenForm.custom_model = '';
+                        } else if (loadedModel) {
+                            // 自定义模型，放到 custom_model 字段显示
+                            this.imagenForm.model = presetModels[0] || '';
+                            this.imagenForm.custom_model = loadedModel;
+                        } else {
+                            this.imagenForm.model = presetModels[0] || '';
+                            this.imagenForm.custom_model = '';
+                        }
                         this.imagenForm.edit_model = this.config.imagen.edit_model || '';
                         this.imagenForm.default_images = this.config.imagen.default_images;
                         this.imagenForm.api_key = '';  // 不显示真实的key
@@ -2068,7 +2081,20 @@
                             // 更新表单
                             this.imagenForm.enabled = data.enabled || false;
                             this.imagenForm.api_url = data.api_url || '';
-                            this.imagenForm.model = data.model || '';
+                            // 处理自定义模型（与syncForms相同逻辑）
+                            const loadedModel = data.model || '';
+                            const presetModels = data.available_models || ['imagen-3.0-generate-002', 'imagen-3.0-fast-generate-001', 'dall-e-3', 'dall-e-2'];
+                            if (presetModels.includes(loadedModel)) {
+                                this.imagenForm.model = loadedModel;
+                                this.imagenForm.custom_model = '';
+                            } else if (loadedModel) {
+                                // 自定义模型，放到 custom_model 字段显示
+                                this.imagenForm.model = presetModels[0] || '';
+                                this.imagenForm.custom_model = loadedModel;
+                            } else {
+                                this.imagenForm.model = presetModels[0] || '';
+                                this.imagenForm.custom_model = '';
+                            }
                             this.imagenForm.edit_model = data.edit_model || '';
                             this.imagenForm.default_images = data.default_images || 1;
                             this.imagenForm.api_format = data.api_format || 'gemini';
