@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>月月 Dashboard - 管理面板</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>月月 Dashboard - 管理面板 v2.1</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
@@ -2052,6 +2055,51 @@
                     }
                 },
                 
+                async refreshImagenConfig() {
+                    // 专门从数据库读取imagen配置
+                    try {
+                        const response = await fetch('/api/config/imagen', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            // 更新 config.imagen
+                            this.config.imagen = data;
+                            // 更新表单
+                            this.imagenForm.enabled = data.enabled || false;
+                            this.imagenForm.api_url = data.api_url || '';
+                            this.imagenForm.model = data.model || '';
+                            this.imagenForm.edit_model = data.edit_model || '';
+                            this.imagenForm.default_images = data.default_images || 1;
+                            this.imagenForm.api_format = data.api_format || 'gemini';
+                            this.imagenForm.generation_cost = data.generation_cost ?? 1;
+                            this.imagenForm.edit_cost = data.edit_cost ?? 1;
+                            this.imagenForm.max_images = data.max_images ?? 20;
+                            this.imagenForm.model_2k = data.model_2k || '';
+                            this.imagenForm.model_4k = data.model_4k || '';
+                            this.imagenForm.edit_model_2k = data.edit_model_2k || '';
+                            this.imagenForm.edit_model_4k = data.edit_model_4k || '';
+                            this.imagenForm.streaming_enabled = data.streaming_enabled || false;
+                            this.imagenForm.image_response_format = data.image_response_format || 'auto';
+                            // SFW/NSFW 模型配置 - 完整矩阵
+                            this.imagenForm.sfw_model = data.sfw_model || '';
+                            this.imagenForm.sfw_edit_model = data.sfw_edit_model || '';
+                            this.imagenForm.sfw_model_2k = data.sfw_model_2k || '';
+                            this.imagenForm.sfw_edit_model_2k = data.sfw_edit_model_2k || '';
+                            this.imagenForm.sfw_model_4k = data.sfw_model_4k || '';
+                            this.imagenForm.sfw_edit_model_4k = data.sfw_edit_model_4k || '';
+                            this.imagenForm.nsfw_model = data.nsfw_model || '';
+                            this.imagenForm.nsfw_edit_model = data.nsfw_edit_model || '';
+                            this.imagenForm.nsfw_model_2k = data.nsfw_model_2k || '';
+                            this.imagenForm.nsfw_edit_model_2k = data.nsfw_edit_model_2k || '';
+                            this.imagenForm.nsfw_model_4k = data.nsfw_model_4k || '';
+                            this.imagenForm.nsfw_edit_model_4k = data.nsfw_edit_model_4k || '';
+                        }
+                    } catch (e) {
+                        console.warn('刷新绘图配置失败:', e);
+                    }
+                },
+                
                 async fetchAvailableModels() {
                     this.fetchingModels = true;
                     try {
@@ -2230,7 +2278,8 @@
                         
                         if (response.ok) {
                             this.showToast('绘图设置已保存', 'success');
-                            await this.refreshConfig();
+                            // 专门刷新imagen配置（从数据库读取）
+                            await this.refreshImagenConfig();
                         } else {
                             const data = await response.json();
                             this.showToast(data.detail || '保存失败', 'error');
