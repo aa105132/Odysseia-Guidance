@@ -190,6 +190,11 @@ class GeminiImagenCog(commands.Cog):
                     title="AI 图片生成",
                     color=0x2b2d31,
                 )
+                # 设置请求者头像和名称
+                embed.set_author(
+                    name=interaction.user.display_name,
+                    icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+                )
                 embed.add_field(
                     name="提示词",
                     value=f"```\n{prompt[:1016]}\n```",
@@ -446,6 +451,11 @@ class GeminiImagenCog(commands.Cog):
                 embed = discord.Embed(
                     title="AI 图生图",
                     color=0x2b2d31,
+                )
+                # 设置请求者头像和名称
+                embed.set_author(
+                    name=interaction.user.display_name,
+                    icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
                 )
                 embed.add_field(
                     name="编辑指令",

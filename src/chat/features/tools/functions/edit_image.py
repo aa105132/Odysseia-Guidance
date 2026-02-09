@@ -227,15 +227,16 @@ async def edit_image(
     
     log.info(f"调用图生图工具，编辑指令: {edit_prompt[:100]}...")
     
-    # 添加"正在生成"反应
+    # 添加"正生成"反应
     await add_reaction(GENERATING_EMOJI)
     
-    # 发送预告消息
+    # 发送预告消息并保存消息引用
+    preview_msg: Optional[discord.Message] = None
     if channel and preview_message:
         try:
             # 替换表情占位符为实际表情
             processed_message = replace_emojis(preview_message)
-            await channel.send(processed_message)
+            preview_msg = await channel.send(processed_message)
             log.info(f"已发送图生图预告消息: {preview_message[:50]}...")
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
@@ -298,6 +299,12 @@ async def edit_image(
                         title="AI 图生图",
                         color=0x2b2d31,
                     )
+                    # 设置请求者头像和名称
+                    if message and hasattr(message, 'author') and message.author:
+                        embed.set_author(
+                            name=message.author.display_name,
+                            icon_url=message.author.display_avatar.url if message.author.display_avatar else None,
+                        )
                     embed.add_field(
                         name="编辑提示词",
                         value=f"```\n{edit_prompt[:1016]}\n```",
@@ -351,8 +358,15 @@ async def edit_image(
             # 添加失败反应
             await add_reaction(FAILED_EMOJI)
             
-            # 图片编辑失败
+            # 图片编辑失败 - 编辑预告消息为失败内容
             log.warning(f"图生图返回空结果。编辑指令: {edit_prompt}")
+            
+            if preview_msg:
+                try:
+                    await preview_msg.edit(content="图片修改失败了...可能是编辑指令不够清晰或者图片格式有问题，换个描述试试吧~")
+                except Exception as e:
+                    log.warning(f"编辑预告消息失败: {e}")
+            
             return {
                 "edit_failed": True,
                 "reason": "edit_failed",
@@ -363,6 +377,13 @@ async def edit_image(
         # 移除"正在生成"反应，添加失败反应
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
+        
+        # 编辑预告消息为失败内容
+        if preview_msg:
+            try:
+                await preview_msg.edit(content="图片修改时发生了系统错误，请稍后再试...")
+            except Exception as edit_e:
+                log.warning(f"编辑预告消息失败: {edit_e}")
         
         log.error(f"图生图工具执行错误: {e}", exc_info=True)
         return {

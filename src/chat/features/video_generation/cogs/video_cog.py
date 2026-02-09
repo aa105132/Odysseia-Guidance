@@ -142,6 +142,11 @@ class VideoGenerationCog(commands.Cog):
                 title="AI 视频生成",
                 color=0x2b2d31,
             )
+            # 设置请求者头像和名称
+            embed.set_author(
+                name=interaction.user.display_name,
+                icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+            )
             embed.add_field(
                 name="视频提示词",
                 value=f"```\n{prompt[:1016]}\n```",

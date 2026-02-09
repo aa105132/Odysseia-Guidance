@@ -295,6 +295,12 @@ async def generate_video(
                     title="AI 视频生成",
                     color=0x2b2d31,
                 )
+                # 设置请求者头像和名称
+                if message and hasattr(message, 'author') and message.author:
+                    prompt_embed.set_author(
+                        name=message.author.display_name,
+                        icon_url=message.author.display_avatar.url if message.author.display_avatar else None,
+                    )
                 prompt_embed.add_field(
                     name="视频提示词",
                     value=f"```\n{prompt[:1016]}\n```",

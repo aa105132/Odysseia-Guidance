@@ -274,6 +274,12 @@ async def generate_image(
                         title="AI 图片生成",
                         color=0x2b2d31,
                     )
+                    # 设置请求者头像和名称
+                    if message and hasattr(message, 'author') and message.author:
+                        embed.set_author(
+                            name=message.author.display_name,
+                            icon_url=message.author.display_avatar.url if message.author.display_avatar else None,
+                        )
                     embed.add_field(
                         name="提示词",
                         value=f"```\n{prompt[:1016]}\n```",  # Embed field value 最多1024字符
@@ -600,6 +606,12 @@ async def generate_images_batch(
                         title="AI 批量图片生成",
                         color=0x2b2d31,
                     )
+                    # 设置请求者头像和名称
+                    if message and hasattr(message, 'author') and message.author:
+                        embed.set_author(
+                            name=message.author.display_name,
+                            icon_url=message.author.display_avatar.url if message.author.display_avatar else None,
+                        )
                     for idx, (_, p) in enumerate(successful_images, 1):
                         embed.add_field(
                             name=f"图{idx}提示词",
