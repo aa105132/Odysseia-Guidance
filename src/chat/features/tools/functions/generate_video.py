@@ -190,9 +190,15 @@ async def generate_video(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
-    # 图生视频模式：提取参考图片（优先级：emoji_id > avatar_user_id > 消息附件 > 回复 > 历史）
+    # 图生视频模式：提取参考图片（优先级：预准备图片 > emoji_id > avatar_user_id > 消息附件 > 回复 > 历史）
     reference_image = None
     if use_reference_image:
+        # 最高优先级：检查是否有预先准备好的参考图片(来自重新生成功能)
+        prepared_image = kwargs.get("_prepared_reference_image")
+        if prepared_image:
+            reference_image = prepared_image
+            log.info("使用预先准备的参考图片数据进行视频生成")
+
         # 优先提取自定义表情图片（自动解析消息内容 + 显式 emoji_id）
         if not reference_image:
             try:
@@ -205,7 +211,7 @@ async def generate_video(
                     reference_image = emoji_result
             except Exception as e:
                 log.error(f"提取Discord表情图片失败: {e}")
-        
+
         # 其次提取贴纸（Sticker）图片
         if not reference_image:
             try:
@@ -385,14 +391,20 @@ async def generate_video(
                 if user_id:
                     try:
                         user_id_int = int(user_id)
+                        # 保存参考图片数据以便重新生成(如果是图生视频模式)
+                        params_dict = {
+                            "prompt": prompt,
+                            "duration": duration,
+                            "use_reference_image": bool(reference_image),
+                            "original_success_message": success_message or "",
+                        }
+                        if reference_image:
+                            params_dict["reference_image_data"] = reference_image["data"]
+                            params_dict["reference_image_mime_type"] = reference_image["mime_type"]
+
                         regenerate_view = RegenerateView(
                             generation_type="video",
-                            original_params={
-                                "prompt": prompt,
-                                "duration": duration,
-                                "use_reference_image": False,
-                                "original_success_message": success_message or "",
-                            },
+                            original_params=params_dict,
                             user_id=user_id_int,
                         )
                     except (ValueError, TypeError):

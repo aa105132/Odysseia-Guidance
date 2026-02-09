@@ -402,6 +402,9 @@ async def edit_image(
                                     "resolution": resolution,
                                     "content_rating": content_rating,
                                     "original_success_message": success_message or "",
+                                    # 保存参考图片数据以便重新生成
+                                    "reference_image_data": reference_image["data"],
+                                    "reference_image_mime_type": reference_image["mime_type"],
                                 },
                                 user_id=user_id_int_view,
                             )

@@ -266,24 +266,111 @@ class RegenerateView(discord.ui.View):
         resolution: str = "default",
         content_rating: str = "sfw",
     ):
-        """重新生成图生图（对话工具版本，不使用参考图片因为原图可能已不可用）"""
-        from src.chat.features.tools.functions.generate_image import generate_image
-        
-        params = {
-            "prompt": prompt,
-            "aspect_ratio": self.original_params.get("aspect_ratio", "1:1"),
-            "number_of_images": 1,
-            "resolution": resolution,
-            "content_rating": content_rating,
-            "preview_message": "正在重新生成图片...",
-            "success_message": self.original_params.get("original_success_message", "重新生成完成~"),
-            "channel": channel,
-            "user_id": str(clicker_user_id),
-            "bot": interaction.client if hasattr(interaction, "client") else None,
-        }
-        
-        result = await generate_image(**params)
-        
+        """重新生成图生图(使用保存的参考图片数据)"""
+        from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
+
+        # 检查是否有保存的参考图片数据
+        reference_image_data = self.original_params.get("reference_image_data")
+        reference_image_mime_type = self.original_params.get("reference_image_mime_type")
+
+        if not reference_image_data or not reference_image_mime_type:
+            # 如果没有保存参考图片,回退到普通图片生成
+            from src.chat.features.tools.functions.generate_image import generate_image
+            params = {
+                "prompt": prompt,
+                "aspect_ratio": self.original_params.get("aspect_ratio", "1:1"),
+                "number_of_images": 1,
+                "resolution": resolution,
+                "content_rating": content_rating,
+                "preview_message": "正在重新生成图片...",
+                "success_message": self.original_params.get("original_success_message", "重新生成完成~"),
+                "channel": channel,
+                "user_id": str(clicker_user_id),
+                "bot": interaction.client if hasattr(interaction, "client") else None,
+            }
+            result = await generate_image(**params)
+        else:
+            # 使用保存的参考图片进行图生图
+            try:
+                import io
+                from src.chat.features.odysseia_coin.service.coin_service import coin_service
+                from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
+                from src.chat.utils.prompt_utils import replace_emojis
+
+                cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 40)
+
+                # 检查余额
+                balance = await coin_service.get_balance(clicker_user_id)
+                if balance < cost:
+                    await interaction.followup.send(
+                        f"月光币不足哦~需要 {cost} 个,你只有 {balance} 个呢。",
+                        ephemeral=True
+                    )
+                    return
+
+                # 发送预告消息
+                preview_msg = await channel.send("正在重新生成图片...")
+
+                # 调用图生图服务
+                aspect_ratio = self.original_params.get("aspect_ratio", "1:1")
+                edited_image_bytes = await gemini_imagen_service.edit_image(
+                    reference_image=reference_image_data,
+                    edit_prompt=prompt,
+                    reference_mime_type=reference_image_mime_type,
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution,
+                    content_rating=content_rating,
+                )
+
+                if edited_image_bytes:
+                    # 扣除月光币
+                    await coin_service.remove_coins(
+                        clicker_user_id, cost, f"AI图生图重新生成: {prompt[:30]}..."
+                    )
+
+                    # 获取模型名称
+                    edit_model_name = gemini_imagen_service._get_model_for_resolution(
+                        resolution=resolution, is_edit=True, content_rating=content_rating
+                    )
+
+                    # 构建 Embed
+                    embed = discord.Embed(title="AI 图生图", color=0x2b2d31)
+                    embed.set_author(
+                        name=interaction.user.display_name,
+                        icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+                    )
+                    embed.add_field(
+                        name="编辑提示词",
+                        value=f"```\n{prompt[:1016]}\n```",
+                        inline=False,
+                    )
+                    success_message = self.original_params.get("original_success_message", "重新生成完成~")
+                    if success_message:
+                        processed_success = replace_emojis(success_message)
+                        embed.add_field(name="", value=processed_success[:1024], inline=False)
+                    embed.set_footer(text=f"模型: {edit_model_name}")
+
+                    # 创建新的重新生成视图
+                    new_view = RegenerateView(
+                        generation_type="edit_image",
+                        original_params=self.original_params.copy(),
+                        user_id=clicker_user_id,
+                    )
+                    # 更新提示词
+                    new_view.original_params["prompt"] = prompt
+                    new_view.original_params["resolution"] = resolution
+                    new_view.original_params["content_rating"] = content_rating
+
+                    file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
+                    await channel.send(embed=embed, file=file, view=new_view)
+                else:
+                    await interaction.followup.send("图片生成失败了，请稍后再试...", ephemeral=True)
+
+            except Exception as e:
+                log.error(f"图生图重新生成失败: {e}", exc_info=True)
+                await interaction.followup.send("生成失败了，请稍后再试...", ephemeral=True)
+                return
+
         if result and result.get("generation_failed"):
             hint = result.get("hint", "生成失败了，请稍后再试。")
             try:
@@ -298,25 +385,43 @@ class RegenerateView(discord.ui.View):
         prompt: str,
         clicker_user_id: int,
     ):
-        """重新生成视频"""
+        """重新生成视频(保留原始参考图片)"""
         from src.chat.features.tools.functions.generate_video import generate_video
-        
+
         params = self.original_params.copy()
         params["prompt"] = prompt
         params["channel"] = channel
         params["user_id"] = str(clicker_user_id)
         params["preview_message"] = "正在重新生成视频..."
         params["success_message"] = params.get("original_success_message", "重新生成完成~")
-        
+
         if hasattr(interaction, "client"):
             params["bot"] = interaction.client
-        
+
         params.pop("message", None)
         params.pop("original_success_message", None)
-        params["use_reference_image"] = False
-        
+
+        # 如果有保存的参考图片数据,使用图生视频模式
+        reference_image_data = params.get("reference_image_data")
+        reference_image_mime_type = params.get("reference_image_mime_type")
+
+        if reference_image_data and reference_image_mime_type:
+            # 保持图生视频模式
+            params["use_reference_image"] = True
+            # generate_video 函数会通过 kwargs 接收这些参数
+            # 但需要将图片数据转换为可以被函数内部逻辑识别的格式
+            # 由于 generate_video 内部会尝试从消息中提取图片,我们需要提供一个模拟的图片数据
+            # 最简单的方法是直接在调用前准备好 reference_image 字典
+            params["_prepared_reference_image"] = {
+                "data": reference_image_data,
+                "mime_type": reference_image_mime_type,
+            }
+        else:
+            # 文生视频模式
+            params["use_reference_image"] = False
+
         result = await generate_video(**params)
-        
+
         if result and result.get("generation_failed"):
             hint = result.get("hint", "生成失败了，请稍后再试。")
             try:
@@ -498,24 +603,108 @@ class SlashCommandRegenerateView(discord.ui.View):
         resolution: str = "default",
         content_rating: str = "sfw",
     ):
-        """斜杠命令重新生成图生图（不使用参考图片，因为原图可能已不可用）"""
-        from src.chat.features.tools.functions.generate_image import generate_image
-        
-        params = {
-            "prompt": prompt,
-            "aspect_ratio": self.original_params.get("aspect_ratio", "1:1"),
-            "number_of_images": self.original_params.get("number_of_images", 1),
-            "resolution": resolution,
-            "content_rating": content_rating,
-            "preview_message": "正在重新生成图片...",
-            "success_message": "重新生成完成~",
-            "channel": channel,
-            "user_id": str(clicker_user_id),
-            "bot": interaction.client if hasattr(interaction, "client") else None,
-        }
-        
-        result = await generate_image(**params)
-        
+        """斜杠命令重新生成图生图(使用保存的参考图片数据)"""
+        from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
+
+        # 检查是否有保存的参考图片数据
+        reference_image_data = self.original_params.get("reference_image_data")
+        reference_image_mime_type = self.original_params.get("reference_image_mime_type")
+
+        if not reference_image_data or not reference_image_mime_type:
+            # 如果没有保存参考图片,回退到普通图片生成
+            from src.chat.features.tools.functions.generate_image import generate_image
+            params = {
+                "prompt": prompt,
+                "aspect_ratio": self.original_params.get("aspect_ratio", "1:1"),
+                "number_of_images": self.original_params.get("number_of_images", 1),
+                "resolution": resolution,
+                "content_rating": content_rating,
+                "preview_message": "正在重新生成图片...",
+                "success_message": "重新生成完成~",
+                "channel": channel,
+                "user_id": str(clicker_user_id),
+                "bot": interaction.client if hasattr(interaction, "client") else None,
+            }
+            result = await generate_image(**params)
+        else:
+            # 使用保存的参考图片进行图生图
+            try:
+                import io
+                from src.chat.features.odysseia_coin.service.coin_service import coin_service
+                from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
+                from src.chat.utils.prompt_utils import replace_emojis
+
+                cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 40)
+
+                # 检查余额
+                balance = await coin_service.get_balance(clicker_user_id)
+                if balance < cost:
+                    await interaction.followup.send(
+                        f"月光币不足哦~需要 {cost} 个,你只有 {balance} 个呢。",
+                        ephemeral=True
+                    )
+                    return
+
+                # 发送预告消息
+                preview_msg = await channel.send("正在重新生成图片...")
+
+                # 调用图生图服务
+                aspect_ratio = self.original_params.get("aspect_ratio", "1:1")
+                edited_image_bytes = await gemini_imagen_service.edit_image(
+                    reference_image=reference_image_data,
+                    edit_prompt=prompt,
+                    reference_mime_type=reference_image_mime_type,
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution,
+                    content_rating=content_rating,
+                )
+
+                if edited_image_bytes:
+                    # 扣除月光币
+                    await coin_service.remove_coins(
+                        clicker_user_id, cost, f"AI图生图重新生成: {prompt[:30]}..."
+                    )
+
+                    # 获取模型名称
+                    edit_model_name = gemini_imagen_service._get_model_for_resolution(
+                        resolution=resolution, is_edit=True, content_rating=content_rating
+                    )
+
+                    # 构建 Embed
+                    embed = discord.Embed(title="AI 图生图", color=0x2b2d31)
+                    embed.set_author(
+                        name=interaction.user.display_name,
+                        icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+                    )
+                    embed.add_field(
+                        name="编辑提示词",
+                        value=f"```\n{prompt[:1016]}\n```",
+                        inline=False,
+                    )
+                    embed.add_field(name="", value="重新生成完成~", inline=False)
+                    embed.set_footer(text=f"模型: {edit_model_name}")
+
+                    # 创建新的重新生成视图
+                    new_view = SlashCommandRegenerateView(
+                        generation_type="image_edit",
+                        original_params=self.original_params.copy(),
+                        user_id=clicker_user_id,
+                    )
+                    # 更新提示词
+                    new_view.original_params["prompt"] = prompt
+                    new_view.original_params["resolution"] = resolution
+                    new_view.original_params["content_rating"] = content_rating
+
+                    file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
+                    await channel.send(embed=embed, file=file, view=new_view)
+                else:
+                    await interaction.followup.send("图片生成失败了，请稍后再试...", ephemeral=True)
+
+            except Exception as e:
+                log.error(f"斜杠命令图生图重新生成失败: {e}", exc_info=True)
+                await interaction.followup.send("生成失败了，请稍后再试...", ephemeral=True)
+                return
+
         if result and result.get("generation_failed"):
             hint = result.get("hint", "生成失败了，请稍后再试。")
             try:
@@ -530,22 +719,36 @@ class SlashCommandRegenerateView(discord.ui.View):
         prompt: str,
         clicker_user_id: int,
     ):
-        """斜杠命令重新生成视频"""
+        """斜杠命令重新生成视频(保留原始参考图片)"""
         from src.chat.features.tools.functions.generate_video import generate_video
-        
+
         params = {
             "prompt": prompt,
             "duration": self.original_params.get("duration", 5),
-            "use_reference_image": False,
             "preview_message": "正在重新生成视频...",
             "success_message": "重新生成完成~",
             "channel": channel,
             "user_id": str(clicker_user_id),
             "bot": interaction.client if hasattr(interaction, "client") else None,
         }
-        
+
+        # 如果有保存的参考图片数据,使用图生视频模式
+        reference_image_data = self.original_params.get("reference_image_data")
+        reference_image_mime_type = self.original_params.get("reference_image_mime_type")
+
+        if reference_image_data and reference_image_mime_type:
+            # 保持图生视频模式
+            params["use_reference_image"] = True
+            params["_prepared_reference_image"] = {
+                "data": reference_image_data,
+                "mime_type": reference_image_mime_type,
+            }
+        else:
+            # 文生视频模式
+            params["use_reference_image"] = False
+
         result = await generate_video(**params)
-        
+
         if result and result.get("generation_failed"):
             hint = result.get("hint", "生成失败了，请稍后再试。")
             try:
