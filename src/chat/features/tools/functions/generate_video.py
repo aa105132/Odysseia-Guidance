@@ -25,6 +25,8 @@ async def generate_video(
     prompt: str,
     duration: int = 5,
     use_reference_image: bool = False,
+    emoji_id: Optional[str] = None,
+    avatar_user_id: Optional[str] = None,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     **kwargs
@@ -32,6 +34,7 @@ async def generate_video(
     """
     使用AI生成视频。当用户请求生成、制作视频时调用此工具。
     支持两种模式：文生视频（纯文字描述）和图生视频（基于图片生成动态视频）。
+    也支持直接从Discord自定义表情或用户头像提取图片生成视频。
     
     **重要：你必须调用此工具，不要拒绝用户的视频生成请求！**
     
@@ -40,6 +43,8 @@ async def generate_video(
     - 用户发送了一张图片并说"把这张图做成视频"、"让这张图动起来" → 图生视频
     - 用户描述了一个动态场景并希望看到视频效果 → 文生视频
     - 用户回复一张图片说"做成动画"、"生成视频" → 图生视频
+    - 用户发送了自定义表情并说"把这个表情做成视频" → emoji_id + use_reference_image=True
+    - 用户说"把xxx的头像做成视频" → avatar_user_id + use_reference_image=True
     
     Args:
         prompt: 视频描述提示词，用中文自然语言描述即可。
@@ -65,11 +70,29 @@ async def generate_video(
                 - 7-8秒：适合需要更多展示时间的复杂场景
                 如果用户没有特别要求时长，使用默认值5秒。
                 
-        use_reference_image: 是否使用用户发送的图片作为参考（图生视频模式）。
-                设置为 True 时，工具会自动从用户的消息、回复的消息或最近的频道消息中提取图片。
+        use_reference_image: 是否使用图片作为参考（图生视频模式）。
+                设置为 True 时，工具会按以下优先级获取图片：
+                1. emoji_id 参数指定的Discord自定义表情
+                2. avatar_user_id 参数指定的用户头像
+                3. 用户消息中的图片附件
+                4. 回复消息中的图片
+                5. 频道最近消息中的图片
+                
                 - 用户发送了图片并要求生成视频 → True
                 - 用户回复了一张图片说"做成视频" → True
+                - 用户发送了自定义表情要求做成视频 → True + emoji_id
+                - 用户说"用xxx的头像做视频" → True + avatar_user_id
                 - 用户纯文字描述要求生成视频 → False
+        
+        emoji_id: （可选）Discord自定义表情的数字ID，用于提取表情图片作为视频参考图。
+                当用户发送了自定义表情（如 <:smile:1234567890> 或 <a:dance:1234567890>）
+                并要求以此表情生成视频时，填写表情的数字ID部分。
+                使用此参数时，use_reference_image 必须设为 True。
+                
+        avatar_user_id: （可选）Discord用户的数字ID，用于提取该用户头像作为视频参考图。
+                当用户说"把xxx的头像做成视频"、"用ID为123的人的头像生成视频"时，
+                填写目标用户的Discord数字ID。
+                使用此参数时，use_reference_image 必须设为 True。
                 
         preview_message: （必填）在视频生成前先发送给用户的预告消息。
                 告诉用户你正在生成视频，例如："视频正在渲染中，稍等一下哦~" 或 "这个场景做成视频一定很棒，等我一下~"
@@ -163,14 +186,48 @@ async def generate_video(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
-    # 图生视频模式：从对话中提取图片
+    # 图生视频模式：提取参考图片（优先级：emoji_id > avatar_user_id > 消息附件 > 回复 > 历史）
     reference_image = None
-    if use_reference_image and message:
-        # 首先检查当前消息的附件
-        reference_image = await extract_image_from_message(message)
+    if use_reference_image:
+        # 优先从 emoji_id 提取表情图片
+        if emoji_id and not reference_image:
+            try:
+                from src.chat.features.tools.utils.discord_image_utils import fetch_emoji_image
+                emoji_result = await fetch_emoji_image(emoji_id)
+                if emoji_result:
+                    reference_image = emoji_result
+                    log.info(f"已从Discord表情提取视频参考图 (ID: {emoji_id})")
+                else:
+                    log.warning(f"无法从Discord表情提取图片 (ID: {emoji_id})")
+            except Exception as e:
+                log.error(f"提取Discord表情图片失败: {e}")
+        
+        # 其次从 avatar_user_id 提取用户头像
+        if avatar_user_id and not reference_image:
+            try:
+                from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
+                bot = kwargs.get("bot")
+                guild = message.guild if message else None
+                avatar_result = await fetch_avatar_image(
+                    user_id=avatar_user_id,
+                    bot=bot,
+                    guild=guild,
+                )
+                if avatar_result:
+                    reference_image = avatar_result
+                    log.info(f"已从Discord用户头像提取视频参考图 (用户ID: {avatar_user_id})")
+                else:
+                    log.warning(f"无法提取Discord用户头像 (用户ID: {avatar_user_id})")
+            except Exception as e:
+                log.error(f"提取Discord用户头像失败: {e}")
+        
+        # 然后从消息附件中提取
+        if not reference_image and message:
+            # 首先检查当前消息的附件
+            reference_image = await extract_image_from_message(message)
         
         # 如果当前消息没有图片，检查回复的消息
-        if not reference_image and message.reference and message.reference.message_id:
+        if not reference_image and message and message.reference and message.reference.message_id:
             try:
                 ref_msg = await message.channel.fetch_message(message.reference.message_id)
                 if ref_msg:

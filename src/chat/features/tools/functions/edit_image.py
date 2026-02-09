@@ -3,6 +3,7 @@
 """
 图生图工具
 让LLM可以在对话中自动识别用户发送的图片并根据指令修改
+也支持从Discord自定义表情或用户头像提取图片作为参考
 """
 
 import logging
@@ -24,21 +25,29 @@ async def edit_image(
     aspect_ratio: str = "1:1",
     resolution: str = "default",
     content_rating: str = "sfw",
+    emoji_id: Optional[str] = None,
+    avatar_user_id: Optional[str] = None,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
     修改用户发送的图片。当用户发送了一张图片并请求修改、编辑、调整时调用此工具。
+    也支持直接使用Discord自定义表情图片或用户头像作为参考图进行编辑。
     
     使用场景：
     - 用户发送一张图片并说"帮我把背景改成蓝色"
     - 用户发送一张图片并说"把这个人物变成动漫风格"
     - 用户发送一张图片并说"添加一些特效"
     - 用户回复一张图片并请求修改
+    - 用户发送了自定义表情（如 <:name:123456>）并说"把这个表情改成..."
+    - 用户说"提取xxx的头像帮我改成..."
     
-    注意：此工具需要用户在对话中发送了图片才能使用。如果用户没有发送图片，
-    请提示用户先发送一张图片。
+    注意：此工具需要参考图片。图片来源优先级：
+    1. emoji_id 参数指定的Discord自定义表情
+    2. avatar_user_id 参数指定的用户头像
+    3. 用户在对话中发送的图片附件
+    如果以上都没有，请提示用户先发送一张图片。
     
     Args:
         edit_prompt: 编辑指令，用中文描述希望如何修改图片。
@@ -73,6 +82,15 @@ async def edit_image(
                 - 如果原图包含裸露、性暗示或成人内容，应使用 "nsfw"
                 - 如果编辑请求涉及色情、裸露、性感化等成人元素，应使用 "nsfw"
                 - 其他情况使用 "sfw"
+        
+        emoji_id: （可选）Discord自定义表情的数字ID，用于提取表情图片作为参考图。
+                当用户发送了自定义表情（如 <:smile:1234567890> 或 <a:dance:1234567890>）
+                并要求以此表情为基础进行编辑时，填写表情的数字ID部分。
+                例如用户发送了 <:myemoji:1234567890>，则填 "1234567890"
+                
+        avatar_user_id: （可选）Discord用户的数字ID，用于提取该用户头像作为参考图。
+                当用户说"提取xxx的头像并修改"、"用ID为123的人的头像生成图片"时，
+                填写目标用户的Discord数字ID。
                 
         preview_message: （必填）你对这次图片修改请求的回复消息。
                 这条消息会在生成前先发送给用户，作为预告。
@@ -134,12 +152,44 @@ async def edit_image(
                         log.error(f"读取附件图片失败: {e}")
         return None
     
-    # 1. 尝试获取用户发送的图片
+    # 1. 尝试获取参考图片（优先级：emoji_id > avatar_user_id > 消息附件 > 回复 > 历史）
     reference_image = None
     user_id = kwargs.get("user_id")  # 获取当前用户ID
     
-    # 首先检查当前消息的附件
-    if message:
+    # 优先从 emoji_id 提取表情图片
+    if emoji_id and not reference_image:
+        try:
+            from src.chat.features.tools.utils.discord_image_utils import fetch_emoji_image
+            emoji_result = await fetch_emoji_image(emoji_id)
+            if emoji_result:
+                reference_image = emoji_result
+                log.info(f"已从Discord表情提取参考图 (ID: {emoji_id})")
+            else:
+                log.warning(f"无法从Discord表情提取图片 (ID: {emoji_id})")
+        except Exception as e:
+            log.error(f"提取Discord表情图片失败: {e}")
+    
+    # 其次从 avatar_user_id 提取用户头像
+    if avatar_user_id and not reference_image:
+        try:
+            from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
+            bot = kwargs.get("bot")
+            guild = message.guild if message else None
+            avatar_result = await fetch_avatar_image(
+                user_id=avatar_user_id,
+                bot=bot,
+                guild=guild,
+            )
+            if avatar_result:
+                reference_image = avatar_result
+                log.info(f"已从Discord用户头像提取参考图 (用户ID: {avatar_user_id})")
+            else:
+                log.warning(f"无法提取Discord用户头像 (用户ID: {avatar_user_id})")
+        except Exception as e:
+            log.error(f"提取Discord用户头像失败: {e}")
+    
+    # 然后检查当前消息的附件
+    if not reference_image and message:
         reference_image = await extract_image_from_message(message)
         
         # 如果当前消息没有图片，检查回复的消息
