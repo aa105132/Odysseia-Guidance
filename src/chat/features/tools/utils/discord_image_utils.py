@@ -3,16 +3,76 @@
 """
 Discord 图片提取辅助工具
 从 Discord 自定义表情和用户头像中提取图片数据
-供 edit_image 和 generate_video 工具使用
+供 edit_image、generate_image 和 generate_video 工具使用
 """
 
 import logging
 import re
 import aiohttp
 import discord
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 
 log = logging.getLogger(__name__)
+
+# Discord 自定义表情正则：匹配 <:name:id> 或 <a:name:id>
+CUSTOM_EMOJI_PATTERN = re.compile(r'<a?:(\w+):(\d+)>')
+
+
+def extract_emoji_ids_from_text(text: str) -> List[Tuple[str, str]]:
+    """
+    从文本中提取所有 Discord 自定义表情的名称和 ID
+    
+    Args:
+        text: 包含 Discord 自定义表情格式的文本
+              例如: "帮我把 <:smile:1234567890> 画成头像"
+    
+    Returns:
+        列表，每项为 (name, id) 元组
+        例如: [("smile", "1234567890")]
+    """
+    if not text:
+        return []
+    return CUSTOM_EMOJI_PATTERN.findall(text)
+
+
+async def auto_extract_emoji_from_message(
+    message: Optional[discord.Message],
+    explicit_emoji_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    自动从消息中提取自定义表情图片。
+    优先使用显式传入的 emoji_id，否则从消息内容中自解析。
+    
+    Args:
+        message: Discord 消息对象
+        explicit_emoji_id: AI 显式传入的 emoji_id（可能为 None）
+    
+    Returns:
+        成功返回 {"data": bytes, "mime_type": str, "filename": str}
+        失败或未找到返回 None
+    """
+    # 1. 优先使用显式传入的 emoji_id
+    if explicit_emoji_id:
+        result = await fetch_emoji_image(explicit_emoji_id)
+        if result:
+            log.info(f"已从显式 emoji_id 提取表情图片 (ID: {explicit_emoji_id})")
+            return result
+        log.warning(f"显式 emoji_id 提取失败 (ID: {explicit_emoji_id})")
+    
+    # 2. 从消息内容中自动解析自定义表情
+    if message and message.content:
+        emoji_matches = extract_emoji_ids_from_text(message.content)
+        if emoji_matches:
+            # 取第一个匹配的表情
+            emoji_name, emoji_id = emoji_matches[0]
+            log.info(f"从消息内容中检测到自定义表情: :{emoji_name}: (ID: {emoji_id})")
+            result = await fetch_emoji_image(emoji_id)
+            if result:
+                log.info(f"已从消息内容自动提取表情图片 (:{emoji_name}: ID: {emoji_id})")
+                return result
+            log.warning(f"从消息内容自动提取表情图片失败 (:{emoji_name}: ID: {emoji_id})")
+    
+    return None
 
 
 async def fetch_emoji_image(emoji_id: str) -> Optional[Dict[str, Any]]:

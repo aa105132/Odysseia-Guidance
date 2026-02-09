@@ -41,9 +41,9 @@ async def generate_video(
     使用场景：
     - 用户说"生成一个视频"、"帮我做个视频" → 文生视频
     - 用户发送了一张图片并说"把这张图做成视频"、"让这张图动起来" → 图生视频
-    - 用户描述了一个动态场景并希望看到视频效果 → 文生视频
+    - 用户描述了一个动态场景并希望看到频效果 → 文生视频
     - 用户回复一张图片说"做成动画"、"生成视频" → 图生视频
-    - 用户发送了自定义表情并说"把这个表情做成视频" → emoji_id + use_reference_image=True
+    - 用户发送了自定义表情并说"把这个表情做成视频" → use_reference_image=True（工具会自动提取表情图片）
     - 用户说"把xxx的头像做成视频" → avatar_user_id + use_reference_image=True
     
     Args:
@@ -71,22 +71,23 @@ async def generate_video(
                 如果用户没有特别要求时长，使用默认值5秒。
                 
         use_reference_image: 是否使用图片作为参考（图生视频模式）。
-                设置为 True 时，工具会按以下优先级获取图片：
-                1. emoji_id 参数指定的Discord自定义表情
-                2. avatar_user_id 参数指定的用户头像
-                3. 用户消息中的图片附件
-                4. 回复消息中的图片
-                5. 频道最近消息中的图片
+                设置为 True 时，工具会自动按以下优先级获取图片：
+                1. 用户消息中的Discord自定义表情（自动解析，无需手动传emoji_id）
+                2. emoji_id 参数显式指定的表情
+                3. avatar_user_id 参数指定的用户头像
+                4. 用户消息中的图片附件
+                5. 回复消息中的图片
+                6. 频道最近消息中的图片
                 
                 - 用户发送了图片并要求生成视频 → True
                 - 用户回复了一张图片说"做成视频" → True
-                - 用户发送了自定义表情要求做成视频 → True + emoji_id
+                - 用户消息中有自定义表情且要求做成视频 → True（工具自动提取表情图片）
                 - 用户说"用xxx的头像做视频" → True + avatar_user_id
                 - 用户纯文字描述要求生成视频 → False
         
-        emoji_id: （可选）Discord自定义表情的数字ID，用于提取表情图片作为视频参考图。
-                当用户发送了自定义表情（如 <:smile:1234567890> 或 <a:dance:1234567890>）
-                并要求以此表情生成视频时，填写表情的数字ID部分。
+        emoji_id: （可选，通常不需要填写）Discord自定义表情的数字ID。
+                **注意：工具会自动从用户消息中检测和提取自定义表情图片，所以大多数情况下不需要填写此参数。**
+                只有当你需要指定一个不在当前消息中的表情ID时才需要手动填写。
                 使用此参数时，use_reference_image 必须设为 True。
                 
         avatar_user_id: （可选）Discord用户的数字ID，用于提取该用户头像作为视频参考图。
@@ -189,16 +190,16 @@ async def generate_video(
     # 图生视频模式：提取参考图片（优先级：emoji_id > avatar_user_id > 消息附件 > 回复 > 历史）
     reference_image = None
     if use_reference_image:
-        # 优先从 emoji_id 提取表情图片
-        if emoji_id and not reference_image:
+        # 优先提取自定义表情图片（自动解析消息内容 + 显式 emoji_id）
+        if not reference_image:
             try:
-                from src.chat.features.tools.utils.discord_image_utils import fetch_emoji_image
-                emoji_result = await fetch_emoji_image(emoji_id)
+                from src.chat.features.tools.utils.discord_image_utils import auto_extract_emoji_from_message
+                emoji_result = await auto_extract_emoji_from_message(
+                    message=message,
+                    explicit_emoji_id=emoji_id,
+                )
                 if emoji_result:
                     reference_image = emoji_result
-                    log.info(f"已从Discord表情提取视频参考图 (ID: {emoji_id})")
-                else:
-                    log.warning(f"无法从Discord表情提取图片 (ID: {emoji_id})")
             except Exception as e:
                 log.error(f"提取Discord表情图片失败: {e}")
         
