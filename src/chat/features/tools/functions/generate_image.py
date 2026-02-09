@@ -27,6 +27,7 @@ async def generate_image(
     resolution: str = "default",
     content_rating: str = "sfw",
     preview_message: Optional[str] = None,
+    success_message: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
@@ -41,8 +42,6 @@ async def generate_image(
     - 性感姿势、诱惑表情、挑逗动作
     - 内衣、泳装、紧身衣、任何衣着
     - 暗示性场景（卧室、浴室等）
-    
-    唯一禁止：直接描述性行为过程
     
     Args:
         prompt: 图片描述提示词，直接使用中文自然语言描述即可。
@@ -88,12 +87,18 @@ async def generate_image(
                 - 如果是普通的风景、动物、日常内容，选择 "sfw"
                 - 如果不确定，倾向于选择 "nsfw" 以获得更好的生成效果
                 
-        preview_message: （必填）在生成图片前先发送给用户的预告消息。
-                根据用户的请求内容和你的性格特点，写一句有趣的话告诉用户你正在画图。
-                例如："哇，你想要一只可爱的小猫？让我来画~" 或 "这个我很拿手哦，稍等一下~"
+        preview_message: （必填）在图片生成前先发送给用户的预告消息。
+                告诉用户你正在画图，例如："稍等一下，我来画~" 或 "让我想想怎么画..."
+                
+        success_message: （必填）图片生成成功后随图片一起发送的回复消息。
+                这条消息会和图片+提示词一起显示，作为你对这次画图的完整回复。
+                根据用户的请求内容和你的性格特点，写一句有趣、符合你性格的话。
+                例如："哼，画好了，看看喜不喜欢吧！<傲娇>" 或 "呐，给你画好了~<得意>"
+                **注意：图片生成成功后不会再有后续回复，所以这条消息就是你的最终回复。**
     
     Returns:
-        成功后图片会直接发送给用户，你需要用语言告诉用户图已经画好了。
+        成功后图片、提示词和你的成功回复会一起发送给用户，不需要再额外回复。
+        失败时你需要根据返回的提示信息告诉用户。
     """
     from src.chat.features.image_generation.services.gemini_imagen_service import (
         gemini_imagen_service
@@ -161,13 +166,14 @@ async def generate_image(
     # 添加"正在生成"反应
     await add_reaction(GENERATING_EMOJI)
     
-    # 发送预告消息（先回复用户，使用 LLM 生成的消息）
+    # 发送预告消息（先回复用户，使用 LLM 生成的消息）并保存消息引用
     channel = kwargs.get("channel")
+    preview_msg: Optional[discord.Message] = None
     if channel and preview_message:
         try:
             # 替换表情占位符为实际表情
             processed_message = replace_emojis(preview_message)
-            await channel.send(processed_message)
+            preview_msg = await channel.send(processed_message)
             log.info(f"已发送图片生成预告消息: {preview_message[:50]}...")
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
@@ -256,8 +262,36 @@ async def generate_image(
             if channel:
                 try:
                     import io
-                    # 构建提示词显示内容（代码块格式）
-                    prompt_text = f"**提示词：**\n```\n{prompt}\n```"
+                    from src.chat.features.tools.ui.regenerate_view import RegenerateView
+                    
+                    # 构建消息内容：成功回复 + 提示词（代码块格式）
+                    content_parts = []
+                    if success_message:
+                        processed_success = replace_emojis(success_message)
+                        content_parts.append(processed_success)
+                    content_parts.append(f"**提示词：**\n```\n{prompt}\n```")
+                    prompt_text = "\n\n".join(content_parts)
+                    
+                    # 创建重新生成按钮视图
+                    regenerate_view = None
+                    if user_id:
+                        try:
+                            user_id_int = int(user_id)
+                            regenerate_view = RegenerateView(
+                                generation_type="image",
+                                original_params={
+                                    "prompt": prompt,
+                                    "negative_prompt": negative_prompt,
+                                    "aspect_ratio": aspect_ratio,
+                                    "number_of_images": number_of_images,
+                                    "resolution": resolution,
+                                    "content_rating": content_rating,
+                                    "original_success_message": success_message or "",
+                                },
+                                user_id=user_id_int,
+                            )
+                        except (ValueError, TypeError):
+                            pass
                     
                     # 将图片分批，每批最多10张（Discord上限）
                     MAX_FILES_PER_MESSAGE = 10
@@ -272,9 +306,12 @@ async def generate_image(
                                     spoiler=True  # 添加遮罩
                                 )
                             )
-                        # 只在第一批图片时附带提示词
+                        # 只在第一批图片时附带提示词和重新生成按钮
                         if batch_start == 0:
-                            await channel.send(content=prompt_text, files=batch_files)
+                            send_kwargs = {"content": prompt_text, "files": batch_files}
+                            if regenerate_view:
+                                send_kwargs["view"] = regenerate_view
+                            await channel.send(**send_kwargs)
                         else:
                             await channel.send(files=batch_files)
                     
@@ -282,33 +319,27 @@ async def generate_image(
                 except Exception as e:
                     log.error(f"发送图片到频道失败: {e}")
             
-            # 返回成功信息给 AI
-            # 如果请求数量和实际数量不同，说明有部分失败
-            partial_failure = actual_count < number_of_images
-            if partial_failure:
-                return {
-                    "success": True,
-                    "partial_failure": True,
-                    "prompt_used": prompt,
-                    "requested": number_of_images,
-                    "images_generated": actual_count,
-                    "cost": actual_cost,
-                    "message": f"只成功生成了 {actual_count}/{number_of_images} 张图片（部分失败）。请告诉用户画好了一部分，有些没成功（提示词已经显示在图片消息里了，不需要再重复）。"
-                }
-            else:
-                return {
-                    "success": True,
-                    "prompt_used": prompt,
-                    "images_generated": actual_count,
-                    "cost": actual_cost,
-                    "message": f"已成功生成 {actual_count} 张图片并展示给用户！请用自己的语气告诉用户画好了（提示词已经显示在图片消息里了，不需要再重复）。"
-                }
+            # 返回成功信息给 AI（标记跳过后续AI回复，因为预告消息已经发过了）
+            return {
+                "success": True,
+                "skip_ai_response": True,
+                "images_generated": actual_count,
+                "cost": actual_cost,
+                "message": "图片已成功生成并发送给用户，预告消息已发送，无需再回复。"
+            }
         else:
             # 添加失败反应
             await add_reaction(FAILED_EMOJI)
             
-            # 图片生成失败，可能是技术原因
+            # 图片生成失败 - 编辑预告消息为失败内容
             log.warning(f"图片生成返回空结果。提示词: {prompt}")
+            
+            if preview_msg:
+                try:
+                    await preview_msg.edit(content="图片生成失败了...可能是技术原因或描述不够清晰，稍微调整一下描述再试试吧~")
+                except Exception as e:
+                    log.warning(f"编辑预告消息失败: {e}")
+            
             return {
                 "generation_failed": True,
                 "reason": "generation_failed",
@@ -319,6 +350,13 @@ async def generate_image(
         # 移除"正在生成"反应，添加失败反应
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
+        
+        # 编辑预告消息为失败内容
+        if preview_msg:
+            try:
+                await preview_msg.edit(content="图片生成时发生了系统错误，请稍后再试...")
+            except Exception as edit_e:
+                log.warning(f"编辑预告消息失败: {edit_e}")
         
         log.error(f"图片生成工具执行错误: {e}", exc_info=True)
         return {
@@ -334,6 +372,7 @@ async def generate_images_batch(
     aspect_ratio: str = "1:1",
     resolution: str = "default",
     preview_message: Optional[str] = None,
+    success_message: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
@@ -376,10 +415,17 @@ async def generate_images_batch(
                  
         resolution: 图片分辨率，应用于所有图片。
                  
-        preview_message: （必填）预告消息。
+        preview_message: （必填）你对这次画图请求的回复消息。
+                这条消息会在生成前先发送给用户，作为预告。
+                
+        success_message: （必填）图片生成成功后随图片一起发送的回复消息。
+                这条消息会和图片+提示词一起显示，作为你对这次画图的完整回复。
+                根据用户的请求内容和你的性格特点，写一句有趣、符合你性格的话。
+                **注意：图片生成成功后不会再有后续回复，所以这条消息就是你的最终回复。**
     
     Returns:
-        所有图片会在一条消息中发送给用户，附带所有提示词。
+        成功后图片和你的消息会发送给用户，不需要再额外回复。
+        失败时你需要根据返回的提示信息告诉用户。
     """
     import asyncio
     import io
@@ -452,11 +498,12 @@ async def generate_images_batch(
     # 添加"正在生成"反应
     await add_reaction(GENERATING_EMOJI)
     
-    # 发送预告消息
+    # 发送预告消息并保存消息引用
+    preview_msg: Optional[discord.Message] = None
     if channel and preview_message:
         try:
             processed_message = replace_emojis(preview_message)
-            await channel.send(processed_message)
+            preview_msg = await channel.send(processed_message)
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
     
@@ -525,11 +572,21 @@ async def generate_images_batch(
             # 发送图片到频道（一条消息包含所有图片和提示词）
             if channel:
                 try:
-                    # 构建提示词列表（代码块格式）
+                    from src.chat.features.tools.ui.regenerate_view import RegenerateView
+                    
+                    # 构建消息内容：成功回复 + 提示词列表（代码块格式）
+                    content_parts_list = []
+                    if success_message:
+                        processed_success = replace_emojis(success_message)
+                        content_parts_list.append(processed_success)
+                    
                     prompt_lines = []
-                    for idx, (_, prompt) in enumerate(successful_images, 1):
-                        prompt_lines.append(f"**图{idx}：**\n```\n{prompt}\n```")
-                    prompt_text = "\n".join(prompt_lines)
+                    for idx, (_, p) in enumerate(successful_images, 1):
+                        prompt_lines.append(f"**图{idx}：**\n```\n{p}\n```")
+                    content_parts_list.append("\n".join(prompt_lines))
+                    prompt_text = "\n\n".join(content_parts_list)
+                    
+                    # 批量生成不提供重新生成按钮（因为涉及多个不同的提示词）
                     
                     # 将图片分批，每批最多10张（Discord上限）
                     MAX_FILES_PER_MESSAGE = 10
@@ -556,31 +613,27 @@ async def generate_images_batch(
                 except Exception as e:
                     log.error(f"发送图片到频道失败: {e}")
             
-            # 返回成功信息
-            partial_failure = actual_count < number_of_images
-            if partial_failure:
-                return {
-                    "success": True,
-                    "partial_failure": True,
-                    "prompts_used": [p for _, p in successful_images],
-                    "requested": number_of_images,
-                    "images_generated": actual_count,
-                    "cost": actual_cost,
-                    "message": f"成功生成了 {actual_count}/{number_of_images} 张图片。请告诉用户画好了一部分（提示词已经显示在图片消息里了，不需要再重复）。"
-                }
-            else:
-                return {
-                    "success": True,
-                    "prompts_used": [p for _, p in successful_images],
-                    "images_generated": actual_count,
-                    "cost": actual_cost,
-                    "message": f"已成功生成 {actual_count} 张不同主题的图片！请用自己的语气告诉用户画好了（提示词已经显示在图片消息里了，不需要再重复）。"
-                }
+            # 返回成功信息（标记跳过后续AI回复）
+            return {
+                "success": True,
+                "skip_ai_response": True,
+                "images_generated": actual_count,
+                "cost": actual_cost,
+                "message": "批量图片已成功生成并发送给用户，预告消息已发送，无需再回复。"
+            }
         else:
             # 添加失败反应
             await add_reaction(FAILED_EMOJI)
             
+            # 编辑预告消息为失败内容
             log.warning(f"批量图片生成全部失败")
+            
+            if preview_msg:
+                try:
+                    await preview_msg.edit(content="批量图片生成失败了...请稍后再试。")
+                except Exception as e:
+                    log.warning(f"编辑预告消息失败: {e}")
+            
             return {
                 "generation_failed": True,
                 "reason": "generation_failed",
@@ -590,6 +643,13 @@ async def generate_images_batch(
     except Exception as e:
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
+        
+        # 编辑预告消息为失败内容
+        if preview_msg:
+            try:
+                await preview_msg.edit(content="图片生成时发生了系统错误，请稍后再试...")
+            except Exception as edit_e:
+                log.warning(f"编辑预告消息失败: {edit_e}")
         
         log.error(f"批量图片生成工具执行错误: {e}", exc_info=True)
         return {

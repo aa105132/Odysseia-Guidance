@@ -76,8 +76,7 @@ class GeminiImagenCog(commands.Cog):
         # 检查服务是否可用
         if not gemini_imagen_service.is_available():
             await interaction.response.send_message(
-                "哼...抱歉,Gemini Imagen 图像生成服务当前未启用。\n"
-                "才、才不是因为服务器出问题了呢!",
+                "图像生成服务当前未启用。",
                 ephemeral=True,
             )
             return
@@ -96,8 +95,7 @@ class GeminiImagenCog(commands.Cog):
         balance = await coin_service.get_balance(user_id)
         if balance < total_cost:
             await interaction.response.send_message(
-                f"你的月光币余额不足哦!生成 {count} 张图片需要 {total_cost} 月光币,你当前只有 {balance}。\n"
-                "...才不是因为心疼你才提醒的!",
+                f"你的月光币余额不足！生成 {count} 张图片需要 {total_cost} 月光币，你当前只有 {balance}。",
                 ephemeral=True,
             )
             return
@@ -121,8 +119,8 @@ class GeminiImagenCog(commands.Cog):
                     if gs.is_available():
                         count_text = f"{count}张图" if count > 1 else "一张图"
                         response = await gs.generate_simple_response(
-                            prompt=f"""你是月月，一个傲娇的狐狸娘AI助手。用户请求你画{count_text}，提示词是："{prompt}"
-请用你的傲娇性格回应用户，简短地评价一下这个画图请求，可以用<表情>标签表达情绪。
+                            prompt=f"""你是一个傲娇的AI助手。用户请求你画{count_text}，提示词是："{prompt}"
+请用傲娇性格回应用户，简短地评价一下这个画图请求，可以用<表情>标签表达情绪。
 回复要简短（1-2句话），例如：
 - "这个我画起来完全没问题啦！<傲娇>"
 - "哼，你的品味还不错嘛~让我来画给你看！<得意>"
@@ -187,23 +185,39 @@ class GeminiImagenCog(commands.Cog):
 
             # 4. 发送结果
             if images:
-                # 构建回复消息
+                # 构建回复消息：AI 回复 + 提示词
+                content_parts = []
+                
                 if ai_response:
                     ai_response = replace_emotion_tags(ai_response)
-                    if actual_count < count:
-                        response_msg = f"{ai_response}\n成功生成 {actual_count}/{count} 张图片，消耗 {actual_cost} 月光币，剩余 {new_balance}。"
-                    else:
-                        response_msg = f"{ai_response}\n消耗 {actual_cost} 月光币，剩余 {new_balance}。"
-                else:
-                    if actual_count < count:
-                        response_msg = f"成功生成 {actual_count}/{count} 张图片！\n消耗 {actual_cost} 月光币，剩余 {new_balance}。"
-                    else:
-                        response_msg = f"图片画好啦！\n消耗 {actual_cost} 月光币，剩余 {new_balance}。"
+                    content_parts.append(ai_response)
                 
-                # 使用代码块格式显示提示词
-                response_msg += f"\n\n**提示词：**\n```\n{prompt}\n```"
+                content_parts.append(f"**提示词：**\n```\n{prompt}\n```")
                 if negative_prompt:
-                    response_msg += f"\n**排除：**\n```\n{negative_prompt}\n```"
+                    content_parts.append(f"**排除：**\n```\n{negative_prompt}\n```")
+                
+                if actual_count < count:
+                    content_parts.append(f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                else:
+                    content_parts.append(f"消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                
+                response_msg = "\n\n".join(content_parts)
+                
+                # 创建重新生成按钮
+                from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView
+                
+                regenerate_view = SlashCommandRegenerateView(
+                    generation_type="image",
+                    original_params={
+                        "prompt": prompt,
+                        "negative_prompt": negative_prompt if negative_prompt else None,
+                        "aspect_ratio": aspect_ratio,
+                        "number_of_images": count,
+                        "resolution": resolution,
+                        "content_rating": content_rating,
+                    },
+                    user_id=user_id,
+                )
                 
                 # 发送图片（每条消息最多10张，带遮罩）
                 MAX_FILES_PER_MESSAGE = 10
@@ -215,22 +229,25 @@ class GeminiImagenCog(commands.Cog):
                         for i in range(batch_start, batch_end)
                     ]
                     if first_batch:
-                        await interaction.followup.send(response_msg, files=batch_files)
+                        await interaction.followup.send(
+                            response_msg,
+                            files=batch_files,
+                            view=regenerate_view,
+                        )
                         first_batch = False
                     else:
                         await interaction.followup.send(files=batch_files)
             else:
                 # 全部失败，不扣费
                 await interaction.followup.send(
-                    "呜...图片生成全部失败了。\n"
+                    "图片生成全部失败了...\n"
                     "可能是提示词有问题，或者服务暂时不可用..."
                 )
 
         except Exception as e:
             log.error(f"处理 /paint 命令时发生未知错误: {e}", exc_info=True)
             await interaction.followup.send(
-                "处理你的请求时发生了一个意料之外的错误。\n"
-                "才、才不是我的错呢!"
+                "处理你的请求时发生了一个意料之外的错误。"
             )
 
     @app_commands.command(name="图生图", description="上传一张图片，让 AI 根据你的指令修改它")
@@ -282,7 +299,7 @@ class GeminiImagenCog(commands.Cog):
         # 检查附件是否是图片
         if not image.content_type or not image.content_type.startswith("image/"):
             await interaction.response.send_message(
-                "你上传的不是图片哦！请上传一张 PNG、JPG 或 WebP 格式的图片。",
+                "你上传的不是图片！请上传一张 PNG、JPG 或 WebP 格式的图片。",
                 ephemeral=True,
             )
             return
@@ -290,8 +307,7 @@ class GeminiImagenCog(commands.Cog):
         # 检查服务是否可用
         if not gemini_imagen_service.is_available():
             await interaction.response.send_message(
-                "哼...抱歉,图生图服务当前未启用。\n"
-                "才、才不是因为服务器出问题了呢!",
+                "图生图服务当前未启用。",
                 ephemeral=True,
             )
             return
@@ -310,8 +326,7 @@ class GeminiImagenCog(commands.Cog):
         balance = await coin_service.get_balance(user_id)
         if balance < total_cost:
             await interaction.response.send_message(
-                f"你的月光币余额不足哦!图生图 {count} 张需要 {total_cost} 月光币,你当前只有 {balance}。\n"
-                "...才不是因为心疼你才提醒的!",
+                f"你的月光币余额不足！图生图 {count} 张需要 {total_cost} 月光币，你当前只有 {balance}。",
                 ephemeral=True,
             )
             return
@@ -346,8 +361,8 @@ class GeminiImagenCog(commands.Cog):
                     if gs.is_available():
                         count_text = f"{count}张不同效果" if count > 1 else "一张"
                         response = await gs.generate_simple_response(
-                            prompt=f"""你是月月，一个傲娇的狐狸娘AI助手。用户请求你修改一张图生成{count_text}，编辑指令是："{edit_prompt}"
-请用你的傲娇性格回应用户，简短地评价一下这个图片修改请求，可以用<表情>标签表达情绪。
+                            prompt=f"""你是一个傲娇的AI助手。用户请求你修改一张图生成{count_text}，编辑指令是："{edit_prompt}"
+请用傲娇性格回应用户，简短地评价一下这个图片修改请求，可以用<表情>标签表达情绪。
 回复要简短（1-2句话），例如：
 - "帮你改一改？可以是可以...让我看看！<傲娇>"
 - "这种修改对我来说小菜一碟！<得意>"
@@ -413,21 +428,36 @@ class GeminiImagenCog(commands.Cog):
 
             # 5. 发送结果
             if images:
-                # 构建回复消息
+                # 构建回复消息：AI 回复 + 提示词
+                content_parts = []
+                
                 if ai_response:
                     ai_response = replace_emotion_tags(ai_response)
-                    if actual_count < count:
-                        response_msg = f"{ai_response}\n成功生成 {actual_count}/{count} 张图片，消耗 {actual_cost} 月光币，剩余 {new_balance}。"
-                    else:
-                        response_msg = f"{ai_response}\n消耗 {actual_cost} 月光币，剩余 {new_balance}。"
-                else:
-                    if actual_count < count:
-                        response_msg = f"成功生成 {actual_count}/{count} 张图片！\n消耗 {actual_cost} 月光币，剩余 {new_balance}。"
-                    else:
-                        response_msg = f"图片改好啦！\n消耗 {actual_cost} 月光币，剩余 {new_balance}。"
+                    content_parts.append(ai_response)
                 
-                # 使用代码块格式显示编辑指令
-                response_msg += f"\n\n**编辑指令：**\n```\n{edit_prompt}\n```"
+                content_parts.append(f"**编辑指令：**\n```\n{edit_prompt}\n```")
+                
+                if actual_count < count:
+                    content_parts.append(f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                else:
+                    content_parts.append(f"消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                
+                response_msg = "\n\n".join(content_parts)
+                
+                # 创建重新生成按钮（图生图重新生成时退化为普通图片生成，因为原图不可再用）
+                from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView
+                
+                regenerate_view = SlashCommandRegenerateView(
+                    generation_type="image_edit",
+                    original_params={
+                        "prompt": edit_prompt,
+                        "aspect_ratio": aspect_ratio,
+                        "number_of_images": count,
+                        "resolution": resolution,
+                        "content_rating": content_rating,
+                    },
+                    user_id=user_id,
+                )
                 
                 # 发送图片（每条消息最多10张，带遮罩）
                 MAX_FILES_PER_MESSAGE = 10
@@ -439,14 +469,18 @@ class GeminiImagenCog(commands.Cog):
                         for i in range(batch_start, batch_end)
                     ]
                     if first_batch:
-                        await interaction.followup.send(response_msg, files=batch_files)
+                        await interaction.followup.send(
+                            response_msg,
+                            files=batch_files,
+                            view=regenerate_view,
+                        )
                         first_batch = False
                     else:
                         await interaction.followup.send(files=batch_files)
             else:
                 # 全部失败，不扣费
                 await interaction.followup.send(
-                    "呜...图生图全部失败了。\n"
+                    "图生图全部失败了...\n"
                     "可能是编辑指令有问题，或者服务暂时不可用...\n"
                     "你可以试试更简单的指令，或者换一张图片。"
                 )
@@ -454,12 +488,7 @@ class GeminiImagenCog(commands.Cog):
         except Exception as e:
             log.error(f"处理 /图生图 命令时发生未知错误: {e}", exc_info=True)
             await interaction.followup.send(
-                "处理你的请求时发生了一个意料之外的错误。\n"
-                "才、才不是我的错呢!"
-            )
-            await interaction.followup.send(
-                "处理你的请求时发生了一个意料之外的错误,已返还你的月光币。\n"
-                "才、才不是我的错呢!"
+                "处理你的请求时发生了一个意料之外的错误。"
             )
 
 

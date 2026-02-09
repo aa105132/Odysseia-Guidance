@@ -1183,6 +1183,26 @@ class GeminiService:
                 except Exception as e:
                     log.error(f"序列化工具结果用于日志记录时出错: {e}")
 
+            # --- 检查是否有工具标记了 skip_ai_response（生图/生视频成功时跳过后续AI回复） ---
+            skip_ai_response = False
+            for part in tool_result_parts:
+                if (
+                    isinstance(part, types.Part)
+                    and part.function_response
+                    and part.function_response.response
+                ):
+                    result_data = part.function_response.response.get("result", {})
+                    if isinstance(result_data, dict) and result_data.get("skip_ai_response"):
+                        skip_ai_response = True
+                        log.info(f"工具 '{part.function_response.name}' 标记了 skip_ai_response，跳过后续AI回复。")
+                        break
+            
+            if skip_ai_response:
+                self.last_called_tools = called_tool_names
+                log.info("生成工具已成功完成并直接发送内容，无需后续AI回复。")
+                return None
+            # --- skip_ai_response 检查结束 ---
+
             conversation_history.append(
                 types.Content(role="user", parts=tool_result_parts)
             )
@@ -1557,6 +1577,12 @@ class GeminiService:
                                     "tool_call_id": tool_call_id,
                                     "content": json.dumps(tool_result, ensure_ascii=False) if isinstance(tool_result, (dict, list)) else str(tool_result)
                                 })
+                                
+                                # 检查是否有工具标记了 skip_ai_response（生图/生视频成功时跳过后续AI回复）
+                                if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
+                                    log.info(f"OpenAI 工具 '{tool_name}' 标记了 skip_ai_response，跳过后续AI回复。")
+                                    self.last_called_tools = called_tool_names
+                                    return None
                             
                             # 继续循环以获取最终响应
                             continue

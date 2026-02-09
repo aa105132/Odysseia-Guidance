@@ -73,12 +73,15 @@ async def edit_image(
                 - 如果编辑请求涉及色情、裸露、性感化等成人元素，应使用 "nsfw"
                 - 其他情况使用 "sfw"
                 
-        preview_message: （必填）在修改图片前发送给用户的预告消息。
+        preview_message: （必填）你对这次图片修改请求的回复消息。
+                这条消息会在生成前先发送给用户，作为预告。
                 根据用户的修改请求和你的性格特点，写一句有趣的话告诉用户你正在处理。
                 例如："让我看看这张图...好的，我来帮你改改！" 或 "这个修改我可以做到~稍等哦！"
+                **注意：图片修改成功后不会再有后续回复，所以这条预告消息就是你的完整回复。**
     
     Returns:
-        成功后修改后的图片会直接发送给用户，你需要用语言告诉用户图片已经修改好了。
+        成功后修改后的图片和你的预告消息会发送给用户，不需要再额外回复。
+        失败时你需要根据返回的提示信息告诉用户。
     """
     from src.chat.features.image_generation.services.gemini_imagen_service import (
         gemini_imagen_service
@@ -285,12 +288,12 @@ async def edit_image(
                 except Exception as e:
                     log.error(f"发送图片到频道失败: {e}")
             
-            # 返回成功信息给 AI
+            # 返回成功信息给 AI（标记跳过后续AI回复）
             return {
                 "success": True,
-                "edit_prompt_used": edit_prompt,
+                "skip_ai_response": True,
                 "cost": cost,
-                "message": "图片已成功修改并展示给用户了！请用自己的语气告诉用户图片已经改好了（提示词已经显示在图片消息里了，不需要再重复）。"
+                "message": "图片已成功修改并发送给用户，预告消息已发送，无需再回复。"
             }
         else:
             # 添加失败反应

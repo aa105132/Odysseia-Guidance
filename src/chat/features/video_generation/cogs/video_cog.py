@@ -125,48 +125,49 @@ class VideoGenerationCog(commands.Cog):
                 )
                 return
 
+            # 创建重新生成按钮
+            from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView
+            
+            regenerate_view = SlashCommandRegenerateView(
+                generation_type="video",
+                original_params={
+                    "prompt": prompt,
+                    "duration": duration,
+                },
+                user_id=user_id,
+            )
+
+            # 构建统一的消息内容
+            content_parts = []
+            content_parts.append(f"**提示词：**\n```\n{prompt}\n```")
+            content_parts.append(f"消耗 {cost} 月光币 | 余额: {new_balance} | 时长: ~{duration}s")
+            prompt_text = "\n\n".join(content_parts)
+
             # 4. 发送视频结果
             if result.format_type == "url" and result.url:
-                # URL 格式：直接发送视频链接
-                embed = discord.Embed(
-                    title="AI 视频生成",
-                    description=f"**提示词**: {prompt[:200]}",
-                    color=0x9B59B6,
-                )
-                embed.add_field(
-                    name="视频链接",
-                    value=f"[点击观看]({result.url})",
-                    inline=False,
-                )
-                embed.set_footer(
-                    text=f"消耗 {cost} 月光币 | 余额: {new_balance} | 时长: ~{duration}s"
-                )
-
-                # 尝试下载视频文件并作为附件发送
+                # URL 格式：尝试下载视频文件并作为附件发送
                 video_file = await self._try_download_video(result.url)
                 if video_file:
                     await interaction.followup.send(
-                        embed=embed,
+                        content=prompt_text,
                         file=video_file,
+                        view=regenerate_view,
                     )
                 else:
-                    # 无法下载时只发送链接
+                    # 无法下载时发送链接
+                    embed = discord.Embed(
+                        title="视频已生成",
+                        description=f"[点击查看视频]({result.url})",
+                        color=0x9B59B6,
+                    )
                     await interaction.followup.send(
+                        content=prompt_text,
                         embed=embed,
+                        view=regenerate_view,
                     )
 
             elif result.format_type == "html" and result.html_content:
                 # HTML 格式：将 HTML 内容作为文件发送
-                embed = discord.Embed(
-                    title="AI 视频生成",
-                    description=f"**提示词**: {prompt[:200]}",
-                    color=0x9B59B6,
-                )
-                embed.set_footer(
-                    text=f"消耗 {cost} 月光币 | 余额: {new_balance} | 时长: ~{duration}s"
-                )
-
-                # 将 HTML 内容作为文件发送
                 html_bytes = result.html_content.encode('utf-8')
                 html_file = discord.File(
                     io.BytesIO(html_bytes),
@@ -180,37 +181,23 @@ class VideoGenerationCog(commands.Cog):
                     video_file = await self._try_download_video(result.url)
                     if video_file:
                         files.append(video_file)
-                    else:
-                        embed.add_field(
-                            name="视频链接",
-                            value=f"[点击观看]({result.url})",
-                            inline=False,
-                        )
 
                 await interaction.followup.send(
-                    embed=embed,
+                    content=prompt_text,
                     files=files,
+                    view=regenerate_view,
                 )
 
             elif result.text_response:
                 # 只有文本响应，没有视频
-                embed = discord.Embed(
-                    title="AI 视频生成",
-                    description=f"**提示词**: {prompt[:200]}",
-                    color=0xE74C3C,
+                await interaction.followup.send(
+                    content=f"{prompt_text}\n\n{result.text_response[:1000]}",
+                    view=regenerate_view,
                 )
-                embed.add_field(
-                    name="API 响应",
-                    value=result.text_response[:1000],
-                    inline=False,
-                )
-                embed.set_footer(
-                    text=f"消耗 {cost} 月光币 | 余额: {new_balance}"
-                )
-                await interaction.followup.send(embed=embed)
             else:
                 await interaction.followup.send(
-                    "视频生成完成但未能获取到视频内容。"
+                    "视频生成完成但未能获取到视频内容。",
+                    view=regenerate_view,
                 )
 
         except Exception as e:
@@ -259,6 +246,7 @@ class VideoGenerationCog(commands.Cog):
                     return discord.File(
                         io.BytesIO(data),
                         filename=f"generated_video.{ext}",
+                        spoiler=True,
                     )
 
         except Exception as e:

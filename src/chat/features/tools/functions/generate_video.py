@@ -26,6 +26,7 @@ async def generate_video(
     duration: int = 5,
     use_reference_image: bool = False,
     preview_message: Optional[str] = None,
+    success_message: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
@@ -70,13 +71,19 @@ async def generate_video(
                 - 用户回复了一张图片说"做成视频" → True
                 - 用户纯文字描述要求生成视频 → False
                 
-        preview_message: （必填）在生成视频前先发送给用户的预告消息。
-                根据用户的请求内容和你的性格特点，写一句有趣的话告诉用户你正在生成视频。
-                例如："视频正在渲染中，稍等一下哦~" 或 "这个场景做成视频一定很棒，等我一下~"
+        preview_message: （必填）在视频生成前先发送给用户的预告消息。
+                告诉用户你正在生成视频，例如："视频正在渲染中，稍等一下哦~" 或 "这个场景做成视频一定很棒，等我一下~"
                 如果是图生视频，可以说："让我把这张图变成视频~" 或 "图片动起来会更有趣哦，等一下~"
+                
+        success_message: （必填）视频生成成功后随视频一起发送的回复消息。
+                这条消息会和视频+提示词一起显示，作为你对这次视频生成的完整回复。
+                根据用户的请求内容和你的性格特点，写一句有趣、符合你性格的话。
+                例如："视频做好啦，效果不错吧~<得意>" 或 "哼，看看这个视频，厉害吧！<傲娇>"
+                **注意：视频生成成功后不会再有后续回复，所以这条消息就是你的最终回复。**
     
     Returns:
-        成功后视频会直接发送给用户，你需要用语言告诉用户视频已经生成好了。
+        成功后视频和你的成功回复会发送给用户，不需要再额外回复。
+        失败时你需要根据返回的提示信息告诉用户。
     """
     from src.chat.features.video_generation.services.video_service import video_service
     from src.chat.config.chat_config import VIDEO_GEN_CONFIG
@@ -219,11 +226,12 @@ async def generate_video(
     # 添加"正在生成"反应
     await add_reaction(GENERATING_EMOJI)
 
-    # 发送预告消息
+    # 发送预告消息并保存消息引用
+    preview_msg: Optional[discord.Message] = None
     if channel and preview_message:
         try:
             processed_message = replace_emojis(preview_message)
-            await channel.send(processed_message)
+            preview_msg = await channel.send(processed_message)
             log.info(f"已发送视频生成预告消息: {preview_message[:50]}...")
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
@@ -244,6 +252,14 @@ async def generate_video(
             # 生成失败
             await add_reaction(FAILED_EMOJI)
             log.warning(f"视频生成返回空结果。提示词: {prompt}")
+            
+            # 编辑预告消息为失败内容
+            if preview_msg:
+                try:
+                    await preview_msg.edit(content="视频生成失败了...可能是技术原因或描述不够清晰，稍微调整一下描述再试试吧~")
+                except Exception as e:
+                    log.warning(f"编辑预告消息失败: {e}")
+            
             return {
                 "generation_failed": True,
                 "reason": "generation_failed",
@@ -268,9 +284,33 @@ async def generate_video(
         if channel:
             try:
                 import aiohttp
+                from src.chat.features.tools.ui.regenerate_view import RegenerateView
 
-                # 构建提示词显示内容
-                prompt_text = f"**视频提示词：**\n```\n{prompt}\n```"
+                # 构建消息内容：成功回复 + 提示词（代码块格式）
+                content_parts = []
+                if success_message:
+                    processed_success = replace_emojis(success_message)
+                    content_parts.append(processed_success)
+                content_parts.append(f"**视频提示词：**\n```\n{prompt}\n```")
+                prompt_text = "\n\n".join(content_parts)
+                
+                # 创建重新生成按钮视图
+                regenerate_view = None
+                if user_id:
+                    try:
+                        user_id_int = int(user_id)
+                        regenerate_view = RegenerateView(
+                            generation_type="video",
+                            original_params={
+                                "prompt": prompt,
+                                "duration": duration,
+                                "use_reference_image": False,  # 重新生成时不使用参考图片
+                                "original_success_message": success_message or "",
+                            },
+                            user_id=user_id_int,
+                        )
+                    except (ValueError, TypeError):
+                        pass
 
                 if result.url:
                     # 尝试下载视频并作为文件发送
@@ -290,10 +330,13 @@ async def generate_video(
                                             filename="generated_video.mp4",
                                             spoiler=True
                                         )
-                                        await channel.send(
-                                            content=prompt_text,
-                                            files=[video_file]
-                                        )
+                                        send_kwargs = {
+                                            "content": prompt_text,
+                                            "files": [video_file],
+                                        }
+                                        if regenerate_view:
+                                            send_kwargs["view"] = regenerate_view
+                                        await channel.send(**send_kwargs)
                                         video_sent = True
                                         log.info("已发送视频文件到频道")
                                     else:
@@ -308,7 +351,10 @@ async def generate_video(
                             description=f"[点击查看视频]({result.url})",
                             color=0x9B59B6
                         )
-                        await channel.send(content=prompt_text, embed=embed)
+                        send_kwargs = {"content": prompt_text, "embed": embed}
+                        if regenerate_view:
+                            send_kwargs["view"] = regenerate_view
+                        await channel.send(**send_kwargs)
                         log.info("已发送视频URL到频道")
 
                 elif result.html_content:
@@ -317,45 +363,44 @@ async def generate_video(
                         io.BytesIO(result.html_content.encode("utf-8")),
                         filename="video_player.html"
                     )
-                    await channel.send(
-                        content=prompt_text,
-                        files=[html_file]
-                    )
+                    send_kwargs = {"content": prompt_text, "files": [html_file]}
+                    if regenerate_view:
+                        send_kwargs["view"] = regenerate_view
+                    await channel.send(**send_kwargs)
                     log.info("已发送视频HTML到频道")
 
                 elif result.text_response:
                     # 仅文本响应
-                    await channel.send(content=f"{prompt_text}\n{result.text_response}")
+                    send_kwargs = {"content": f"{prompt_text}\n{result.text_response}"}
+                    if regenerate_view:
+                        send_kwargs["view"] = regenerate_view
+                    await channel.send(**send_kwargs)
                     log.info("已发送视频文本响应到频道")
 
             except Exception as e:
                 log.error(f"发送视频到频道失败: {e}", exc_info=True)
 
-        # 返回成功信息给 AI
-        response = {
+        # 返回成功信息给 AI（标记跳过后续AI回复）
+        return {
             "success": True,
-            "prompt_used": prompt,
+            "skip_ai_response": True,
             "duration": duration,
             "cost": cost,
-            "format": result.format_type,
             "mode": mode_str,
+            "message": "视频已成功生成并发送给用户，预告消息已发送，无需再回复。"
         }
-
-        if result.url:
-            response["message"] = f"已成功通过{mode_str}生成视频并展示给用户！请用自己的语气告诉用户视频已经生成好了（提示词已经显示在视频消息里了，不需要再重复）。"
-        elif result.html_content:
-            response["message"] = f"已成功通过{mode_str}生成视频并以HTML播放器形式发送给用户！请用自己的语气告诉用户视频已经生成好了。"
-        elif result.text_response:
-            response["message"] = f"视频生成服务返回了文本内容。请转告用户：{result.text_response[:200]}"
-        else:
-            response["message"] = "视频已生成，请用自己的语气告诉用户。"
-
-        return response
 
     except Exception as e:
         # 移除"正在生成"反应，添加失败反应
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
+        
+        # 编辑预告消息为失败内容
+        if preview_msg:
+            try:
+                await preview_msg.edit(content="视频生成时发生了系统错误，请稍后再试...")
+            except Exception as edit_e:
+                log.warning(f"编辑预告消息失败: {edit_e}")
 
         log.error(f"视频生成工具执行错误: {e}", exc_info=True)
         return {
