@@ -25,6 +25,7 @@ async def edit_image(
     resolution: str = "default",
     content_rating: str = "sfw",
     preview_message: Optional[str] = None,
+    success_message: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
@@ -77,7 +78,12 @@ async def edit_image(
                 这条消息会在生成前先发送给用户，作为预告。
                 根据用户的修改请求和你的性格特点，写一句有趣的话告诉用户你正在处理。
                 例如："让我看看这张图...好的，我来帮你改改！" 或 "这个修改我可以做到~稍等哦！"
-                **注意：图片修改成功后不会再有后续回复，所以这条预告消息就是你的完整回复。**
+                
+        success_message: （必填）图片修改成功后的回复消息。
+                这条消息会在图片修改成功后和图片一起发送给用户。
+                根据修改结果，写一句符合你性格的话来回应用户。
+                例如："改好了~看看满不满意？" 或 "嘿嘿，这是你要的效果吗？"
+                **注意：图片修改成功后不会再有后续回复，所以这条 success_message 就是你的最终回复。**
     
     Returns:
         成功后修改后的图片和你的预告消息会发送给用户，不需要再额外回复。
@@ -276,15 +282,55 @@ async def edit_image(
                 except Exception as e:
                     log.error(f"扣除月光币失败: {e}")
             
-            # 直接发送图片到频道（附带编辑提示词）
+            # 直接发送图片到频道（Embed 格式 + 重新生成按钮）
             if channel:
                 try:
                     import io
-                    # 构建提示词显示内容（代码块格式）
-                    prompt_text = f"**编辑提示词：**\n```\n{edit_prompt}\n```"
+                    from src.chat.features.tools.ui.regenerate_view import RegenerateView
+                    
+                    # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
+                    embed = discord.Embed(
+                        title="AI 图生图",
+                        color=0x2b2d31,
+                    )
+                    embed.add_field(
+                        name="编辑提示词",
+                        value=f"```\n{edit_prompt[:1016]}\n```",
+                        inline=False,
+                    )
+                    if success_message:
+                        processed_success = replace_emojis(success_message)
+                        embed.add_field(
+                            name="",
+                            value=processed_success[:1024],
+                            inline=False,
+                        )
+                    
+                    # 创建重新生成按钮视图
+                    regenerate_view = None
+                    if user_id:
+                        try:
+                            user_id_int_view = int(user_id)
+                            regenerate_view = RegenerateView(
+                                generation_type="edit_image",
+                                original_params={
+                                    "prompt": edit_prompt,
+                                    "aspect_ratio": aspect_ratio,
+                                    "resolution": resolution,
+                                    "content_rating": content_rating,
+                                    "original_success_message": success_message or "",
+                                },
+                                user_id=user_id_int_view,
+                            )
+                        except (ValueError, TypeError):
+                            pass
+                    
                     file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
-                    await channel.send(content=prompt_text, file=file)
-                    log.info("修改后的图片已直接发送到频道（附带提示词）")
+                    send_kwargs = {"embed": embed, "file": file}
+                    if regenerate_view:
+                        send_kwargs["view"] = regenerate_view
+                    await channel.send(**send_kwargs)
+                    log.info("修改后的图片已直接发送到频道（Embed格式+重新生成按钮）")
                 except Exception as e:
                     log.error(f"发送图片到频道失败: {e}")
             

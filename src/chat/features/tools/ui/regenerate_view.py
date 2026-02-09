@@ -136,6 +136,8 @@ class RegenerateView(discord.ui.View):
         
         if self.generation_type == "image":
             await self._regenerate_image(channel, interaction, prompt, clicker_user_id)
+        elif self.generation_type == "edit_image":
+            await self._regenerate_edit_image(channel, interaction, prompt, clicker_user_id)
         elif self.generation_type == "video":
             await self._regenerate_video(channel, interaction, prompt, clicker_user_id)
 
@@ -162,6 +164,38 @@ class RegenerateView(discord.ui.View):
         
         # 不传入 message（因为这是按钮交互，不是原始消息）
         params.pop("message", None)
+        
+        result = await generate_image(**params)
+        
+        if result and result.get("generation_failed"):
+            hint = result.get("hint", "生成失败了，请稍后再试。")
+            try:
+                await interaction.followup.send(hint, ephemeral=True)
+            except Exception:
+                pass
+
+    async def _regenerate_edit_image(
+        self,
+        channel: discord.abc.Messageable,
+        interaction: discord.Interaction,
+        prompt: str,
+        clicker_user_id: int,
+    ):
+        """重新生成图生图（对话工具版本，不使用参考图片因为原图可能已不可用）"""
+        from src.chat.features.tools.functions.generate_image import generate_image
+        
+        params = {
+            "prompt": prompt,
+            "aspect_ratio": self.original_params.get("aspect_ratio", "1:1"),
+            "number_of_images": 1,
+            "resolution": self.original_params.get("resolution", "default"),
+            "content_rating": self.original_params.get("content_rating", "sfw"),
+            "preview_message": "正在重新生成图片...",
+            "success_message": self.original_params.get("original_success_message", "重新生成完成~"),
+            "channel": channel,
+            "user_id": str(clicker_user_id),
+            "bot": interaction.client if hasattr(interaction, "client") else None,
+        }
         
         result = await generate_image(**params)
         
