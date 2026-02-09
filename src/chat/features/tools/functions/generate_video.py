@@ -286,14 +286,23 @@ async def generate_video(
                 import aiohttp
                 from src.chat.features.tools.ui.regenerate_view import RegenerateView
 
-                # 构建消息内容：提示词（引用块格式）+ 成功回复
-                quoted_prompt = "\n".join(f"> {line}" for line in prompt.split("\n"))
-                content_parts = []
-                content_parts.append(f"**视频提示词：**\n{quoted_prompt}")
+                # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
+                prompt_embed = discord.Embed(
+                    title="AI 视频生成",
+                    color=0x2b2d31,
+                )
+                prompt_embed.add_field(
+                    name="视频提示词",
+                    value=prompt[:1024],
+                    inline=False,
+                )
                 if success_message:
                     processed_success = replace_emojis(success_message)
-                    content_parts.append(processed_success)
-                prompt_text = "\n\n".join(content_parts)
+                    prompt_embed.add_field(
+                        name="",
+                        value=processed_success[:1024],
+                        inline=False,
+                    )
                 
                 # 创建重新生成按钮视图
                 regenerate_view = None
@@ -305,7 +314,7 @@ async def generate_video(
                             original_params={
                                 "prompt": prompt,
                                 "duration": duration,
-                                "use_reference_image": False,  # 重新生成时不使用参考图片
+                                "use_reference_image": False,
                                 "original_success_message": success_message or "",
                             },
                             user_id=user_id_int,
@@ -324,7 +333,6 @@ async def generate_video(
                             ) as resp:
                                 if resp.status == 200:
                                     video_data = await resp.read()
-                                    # Discord 文件大小限制 25MB
                                     if len(video_data) <= 25 * 1024 * 1024:
                                         video_file = discord.File(
                                             io.BytesIO(video_data),
@@ -332,7 +340,7 @@ async def generate_video(
                                             spoiler=True
                                         )
                                         send_kwargs = {
-                                            "content": prompt_text,
+                                            "embed": prompt_embed,
                                             "files": [video_file],
                                         }
                                         if regenerate_view:
@@ -345,14 +353,14 @@ async def generate_video(
                     except Exception as e:
                         log.warning(f"下载视频失败，将发送URL: {e}")
 
-                    # 如果无法作为文件发送，发送 URL 链接
+                    # 如果无法作为文件发送，在 Embed 中添加视频链接
                     if not video_sent:
-                        embed = discord.Embed(
-                            title="视频已生成",
-                            description=f"[点击查看视频]({result.url})",
-                            color=0x9B59B6
+                        prompt_embed.add_field(
+                            name="视频链接",
+                            value=f"[点击观看]({result.url})",
+                            inline=False,
                         )
-                        send_kwargs = {"content": prompt_text, "embed": embed}
+                        send_kwargs = {"embed": prompt_embed}
                         if regenerate_view:
                             send_kwargs["view"] = regenerate_view
                         await channel.send(**send_kwargs)
@@ -364,7 +372,7 @@ async def generate_video(
                         io.BytesIO(result.html_content.encode("utf-8")),
                         filename="video_player.html"
                     )
-                    send_kwargs = {"content": prompt_text, "files": [html_file]}
+                    send_kwargs = {"embed": prompt_embed, "files": [html_file]}
                     if regenerate_view:
                         send_kwargs["view"] = regenerate_view
                     await channel.send(**send_kwargs)
@@ -372,7 +380,12 @@ async def generate_video(
 
                 elif result.text_response:
                     # 仅文本响应
-                    send_kwargs = {"content": f"{prompt_text}\n{result.text_response}"}
+                    prompt_embed.add_field(
+                        name="响应",
+                        value=result.text_response[:1024],
+                        inline=False,
+                    )
+                    send_kwargs = {"embed": prompt_embed}
                     if regenerate_view:
                         send_kwargs["view"] = regenerate_view
                     await channel.send(**send_kwargs)

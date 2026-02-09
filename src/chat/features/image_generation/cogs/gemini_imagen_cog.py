@@ -185,25 +185,34 @@ class GeminiImagenCog(commands.Cog):
 
             # 4. 发送结果
             if images:
-                # 构建回复消息：AI 回复 + 提示词
-                # 构建引用块格式的提示词
-                quoted_prompt = "\n".join(f"> {line}" for line in prompt.split("\n"))
-                content_parts = []
-                content_parts.append(f"**提示词：**\n{quoted_prompt}")
+                # 构建 Discord Embed（标题+提示词+AI回复+消耗信息）
+                embed = discord.Embed(
+                    title="AI 图片生成",
+                    color=0x2b2d31,
+                )
+                embed.add_field(
+                    name="提示词",
+                    value=prompt[:1024],
+                    inline=False,
+                )
                 if negative_prompt:
-                    quoted_neg = "\n".join(f"> {line}" for line in negative_prompt.split("\n"))
-                    content_parts.append(f"**排除：**\n{quoted_neg}")
-                
+                    embed.add_field(
+                        name="排除",
+                        value=negative_prompt[:1024],
+                        inline=False,
+                    )
                 if ai_response:
                     ai_response = replace_emotion_tags(ai_response)
-                    content_parts.append(ai_response)
+                    embed.add_field(
+                        name="",
+                        value=ai_response[:1024],
+                        inline=False,
+                    )
                 
                 if actual_count < count:
-                    content_parts.append(f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")
                 else:
-                    content_parts.append(f"消耗 {actual_cost} 月光币 | 余额: {new_balance}")
-                
-                response_msg = "\n\n".join(content_parts)
+                    embed.set_footer(text=f"消耗 {actual_cost} 月光币 | 余额: {new_balance}")
                 
                 # 创建重新生成按钮
                 from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView
@@ -232,7 +241,7 @@ class GeminiImagenCog(commands.Cog):
                     ]
                     if first_batch:
                         await interaction.followup.send(
-                            response_msg,
+                            embed=embed,
                             files=batch_files,
                             view=regenerate_view,
                         )
@@ -430,22 +439,28 @@ class GeminiImagenCog(commands.Cog):
 
             # 5. 发送结果
             if images:
-                # 构建回复消息：AI 回复 + 提示词
-                # 构建引用块格式的编辑指令
-                quoted_edit = "\n".join(f"> {line}" for line in edit_prompt.split("\n"))
-                content_parts = []
-                content_parts.append(f"**编辑指令：**\n{quoted_edit}")
-                
+                # 构建 Discord Embed（标题+编辑指令+AI回复+消耗信息）
+                embed = discord.Embed(
+                    title="AI 图生图",
+                    color=0x2b2d31,
+                )
+                embed.add_field(
+                    name="编辑指令",
+                    value=edit_prompt[:1024],
+                    inline=False,
+                )
                 if ai_response:
                     ai_response = replace_emotion_tags(ai_response)
-                    content_parts.append(ai_response)
+                    embed.add_field(
+                        name="",
+                        value=ai_response[:1024],
+                        inline=False,
+                    )
                 
                 if actual_count < count:
-                    content_parts.append(f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")
                 else:
-                    content_parts.append(f"消耗 {actual_cost} 月光币 | 余额: {new_balance}")
-                
-                response_msg = "\n\n".join(content_parts)
+                    embed.set_footer(text=f"消耗 {actual_cost} 月光币 | 余额: {new_balance}")
                 
                 # 创建重新生成按钮（图生图重新生成时退化为普通图片生成，因为原图不可再用）
                 from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView
@@ -473,7 +488,7 @@ class GeminiImagenCog(commands.Cog):
                     ]
                     if first_batch:
                         await interaction.followup.send(
-                            response_msg,
+                            embed=embed,
                             files=batch_files,
                             view=regenerate_view,
                         )

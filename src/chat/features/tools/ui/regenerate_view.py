@@ -74,13 +74,7 @@ class RegenerateView(discord.ui.View):
         self.user_id = user_id
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """只有原始请求者才能使用按钮"""
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "只有请求生成的用户才能使用这个按钮哦~",
-                ephemeral=True,
-            )
-            return False
+        """任何用户都可以使用按钮"""
         return True
 
     async def on_timeout(self):
@@ -137,17 +131,20 @@ class RegenerateView(discord.ui.View):
             return
 
         prompt = new_prompt if new_prompt else self.original_params.get("prompt", "")
+        # 使用点击者的用户ID进行扣费
+        clicker_user_id = interaction.user.id
         
         if self.generation_type == "image":
-            await self._regenerate_image(channel, interaction, prompt)
+            await self._regenerate_image(channel, interaction, prompt, clicker_user_id)
         elif self.generation_type == "video":
-            await self._regenerate_video(channel, interaction, prompt)
+            await self._regenerate_video(channel, interaction, prompt, clicker_user_id)
 
     async def _regenerate_image(
         self,
         channel: discord.abc.Messageable,
         interaction: discord.Interaction,
         prompt: str,
+        clicker_user_id: int,
     ):
         """重新生成图片"""
         from src.chat.features.tools.functions.generate_image import generate_image
@@ -155,7 +152,7 @@ class RegenerateView(discord.ui.View):
         params = self.original_params.copy()
         params["prompt"] = prompt
         params["channel"] = channel
-        params["user_id"] = str(self.user_id)
+        params["user_id"] = str(clicker_user_id)
         params["preview_message"] = "正在重新生成图片..."
         params["success_message"] = params.get("original_success_message", "重新生成完成~")
         
@@ -180,6 +177,7 @@ class RegenerateView(discord.ui.View):
         channel: discord.abc.Messageable,
         interaction: discord.Interaction,
         prompt: str,
+        clicker_user_id: int,
     ):
         """重新生成视频"""
         from src.chat.features.tools.functions.generate_video import generate_video
@@ -187,7 +185,7 @@ class RegenerateView(discord.ui.View):
         params = self.original_params.copy()
         params["prompt"] = prompt
         params["channel"] = channel
-        params["user_id"] = str(self.user_id)
+        params["user_id"] = str(clicker_user_id)
         params["preview_message"] = "正在重新生成视频..."
         params["success_message"] = params.get("original_success_message", "重新生成完成~")
         
@@ -228,12 +226,7 @@ class SlashCommandRegenerateView(discord.ui.View):
         self.user_id = user_id
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "只有请求生成的用户才能使用这个按钮哦~",
-                ephemeral=True,
-            )
-            return False
+        """任何用户都可以使用按钮"""
         return True
 
     async def on_timeout(self):
@@ -281,19 +274,22 @@ class SlashCommandRegenerateView(discord.ui.View):
             return
 
         prompt = new_prompt if new_prompt else self.original_params.get("prompt", "")
+        # 使用点击者的用户ID进行扣费
+        clicker_user_id = interaction.user.id
 
         if self.generation_type == "image":
-            await self._regenerate_slash_image(channel, interaction, prompt)
+            await self._regenerate_slash_image(channel, interaction, prompt, clicker_user_id)
         elif self.generation_type == "image_edit":
-            await self._regenerate_slash_image_edit(channel, interaction, prompt)
+            await self._regenerate_slash_image_edit(channel, interaction, prompt, clicker_user_id)
         elif self.generation_type == "video":
-            await self._regenerate_slash_video(channel, interaction, prompt)
+            await self._regenerate_slash_video(channel, interaction, prompt, clicker_user_id)
 
     async def _regenerate_slash_image(
         self,
         channel: discord.abc.Messageable,
         interaction: discord.Interaction,
         prompt: str,
+        clicker_user_id: int,
     ):
         """斜杠命令重新生成图片"""
         from src.chat.features.tools.functions.generate_image import generate_image
@@ -308,7 +304,7 @@ class SlashCommandRegenerateView(discord.ui.View):
             "preview_message": "正在重新生成图片...",
             "success_message": "重新生成完成~",
             "channel": channel,
-            "user_id": str(self.user_id),
+            "user_id": str(clicker_user_id),
             "bot": interaction.client if hasattr(interaction, "client") else None,
         }
         
@@ -326,9 +322,9 @@ class SlashCommandRegenerateView(discord.ui.View):
         channel: discord.abc.Messageable,
         interaction: discord.Interaction,
         prompt: str,
+        clicker_user_id: int,
     ):
         """斜杠命令重新生成图生图（不使用参考图片，因为原图可能已不可用）"""
-        # 图生图重新生成退化为普通图片生成，因为原始参考图片已不可访问
         from src.chat.features.tools.functions.generate_image import generate_image
         
         params = {
@@ -340,7 +336,7 @@ class SlashCommandRegenerateView(discord.ui.View):
             "preview_message": "正在重新生成图片...",
             "success_message": "重新生成完成~",
             "channel": channel,
-            "user_id": str(self.user_id),
+            "user_id": str(clicker_user_id),
             "bot": interaction.client if hasattr(interaction, "client") else None,
         }
         
@@ -358,6 +354,7 @@ class SlashCommandRegenerateView(discord.ui.View):
         channel: discord.abc.Messageable,
         interaction: discord.Interaction,
         prompt: str,
+        clicker_user_id: int,
     ):
         """斜杠命令重新生成视频"""
         from src.chat.features.tools.functions.generate_video import generate_video
@@ -369,7 +366,7 @@ class SlashCommandRegenerateView(discord.ui.View):
             "preview_message": "正在重新生成视频...",
             "success_message": "重新生成完成~",
             "channel": channel,
-            "user_id": str(self.user_id),
+            "user_id": str(clicker_user_id),
             "bot": interaction.client if hasattr(interaction, "client") else None,
         }
         

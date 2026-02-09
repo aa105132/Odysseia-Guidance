@@ -264,15 +264,23 @@ async def generate_image(
                     import io
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
                     
-                    # 构建消息内容：提示词（引用块格式）+ 成功回复
-                    # 将提示词转换为引用块格式（每行前加 > ）
-                    quoted_prompt = "\n".join(f"> {line}" for line in prompt.split("\n"))
-                    content_parts = []
-                    content_parts.append(f"**提示词：**\n{quoted_prompt}")
+                    # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
+                    embed = discord.Embed(
+                        title="AI 图片生成",
+                        color=0x2b2d31,
+                    )
+                    embed.add_field(
+                        name="提示词",
+                        value=prompt[:1024],  # Embed field value 最多1024字符
+                        inline=False,
+                    )
                     if success_message:
                         processed_success = replace_emojis(success_message)
-                        content_parts.append(processed_success)
-                    prompt_text = "\n\n".join(content_parts)
+                        embed.add_field(
+                            name="",
+                            value=processed_success[:1024],
+                            inline=False,
+                        )
                     
                     # 创建重新生成按钮视图
                     regenerate_view = None
@@ -308,9 +316,9 @@ async def generate_image(
                                     spoiler=True  # 添加遮罩
                                 )
                             )
-                        # 只在第一批图片时附带提示词和重新生成按钮
+                        # 只在第一批图片时附带 Embed 和重新生成按钮
                         if batch_start == 0:
-                            send_kwargs = {"content": prompt_text, "files": batch_files}
+                            send_kwargs = {"embed": embed, "files": batch_files}
                             if regenerate_view:
                                 send_kwargs["view"] = regenerate_view
                             await channel.send(**send_kwargs)
@@ -576,20 +584,24 @@ async def generate_images_batch(
                 try:
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
                     
-                    # 构建消息内容：提示词列表（引用块格式）+ 成功回复
-                    content_parts_list = []
-                    
-                    prompt_lines = []
+                    # 构建 Discord Embed（批量生成：标题+多个提示词+成功回复）
+                    embed = discord.Embed(
+                        title="AI 批量图片生成",
+                        color=0x2b2d31,
+                    )
                     for idx, (_, p) in enumerate(successful_images, 1):
-                        quoted_p = "\n".join(f"> {line}" for line in p.split("\n"))
-                        prompt_lines.append(f"**图{idx}提示词：**\n{quoted_p}")
-                    content_parts_list.append("\n\n".join(prompt_lines))
-                    
+                        embed.add_field(
+                            name=f"图{idx}提示词",
+                            value=p[:1024],
+                            inline=False,
+                        )
                     if success_message:
                         processed_success = replace_emojis(success_message)
-                        content_parts_list.append(processed_success)
-                    
-                    prompt_text = "\n\n".join(content_parts_list)
+                        embed.add_field(
+                            name="",
+                            value=processed_success[:1024],
+                            inline=False,
+                        )
                     
                     # 批量生成不提供重新生成按钮（因为涉及多个不同的提示词）
                     
@@ -608,9 +620,9 @@ async def generate_images_batch(
                                     spoiler=True  # 添加遮罩
                                 )
                             )
-                        # 只在第一批图片时附带所有提示词
+                        # 只在第一批图片时附带 Embed
                         if batch_start == 0:
-                            await channel.send(content=prompt_text, files=batch_files)
+                            await channel.send(embed=embed, files=batch_files)
                         else:
                             await channel.send(files=batch_files)
                     

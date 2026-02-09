@@ -137,12 +137,17 @@ class VideoGenerationCog(commands.Cog):
                 user_id=user_id,
             )
 
-            # 构建统一的消息内容（引用块格式）
-            quoted_prompt = "\n".join(f"> {line}" for line in prompt.split("\n"))
-            content_parts = []
-            content_parts.append(f"**视频提示词：**\n{quoted_prompt}")
-            content_parts.append(f"消耗 {cost} 月光币 | 余额: {new_balance} | 时长: ~{duration}s")
-            prompt_text = "\n\n".join(content_parts)
+            # 构建 Discord Embed（标题+提示词+消耗信息全在 Embed 内）
+            embed = discord.Embed(
+                title="AI 视频生成",
+                color=0x2b2d31,
+            )
+            embed.add_field(
+                name="视频提示词",
+                value=prompt[:1024],
+                inline=False,
+            )
+            embed.set_footer(text=f"消耗 {cost} 月光币 | 余额: {new_balance} | 时长: ~{duration}s")
 
             # 4. 发送视频结果
             if result.format_type == "url" and result.url:
@@ -150,19 +155,18 @@ class VideoGenerationCog(commands.Cog):
                 video_file = await self._try_download_video(result.url)
                 if video_file:
                     await interaction.followup.send(
-                        content=prompt_text,
+                        embed=embed,
                         file=video_file,
                         view=regenerate_view,
                     )
                 else:
-                    # 无法下载时发送链接
-                    embed = discord.Embed(
-                        title="视频已生成",
-                        description=f"[点击查看视频]({result.url})",
-                        color=0x9B59B6,
+                    # 无法下载时在 Embed 中添加视频链接
+                    embed.add_field(
+                        name="视频链接",
+                        value=f"[点击观看]({result.url})",
+                        inline=False,
                     )
                     await interaction.followup.send(
-                        content=prompt_text,
                         embed=embed,
                         view=regenerate_view,
                     )
@@ -184,15 +188,20 @@ class VideoGenerationCog(commands.Cog):
                         files.append(video_file)
 
                 await interaction.followup.send(
-                    content=prompt_text,
+                    embed=embed,
                     files=files,
                     view=regenerate_view,
                 )
 
             elif result.text_response:
                 # 只有文本响应，没有视频
+                embed.add_field(
+                    name="响应",
+                    value=result.text_response[:1024],
+                    inline=False,
+                )
                 await interaction.followup.send(
-                    content=f"{prompt_text}\n\n{result.text_response[:1000]}",
+                    embed=embed,
                     view=regenerate_view,
                 )
             else:
