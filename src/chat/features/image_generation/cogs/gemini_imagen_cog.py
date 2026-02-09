@@ -192,13 +192,13 @@ class GeminiImagenCog(commands.Cog):
                 )
                 embed.add_field(
                     name="提示词",
-                    value=prompt[:1024],
+                    value=f"```\n{prompt[:1016]}\n```",
                     inline=False,
                 )
                 if negative_prompt:
                     embed.add_field(
                         name="排除",
-                        value=negative_prompt[:1024],
+                        value=f"```\n{negative_prompt[:1016]}\n```",
                         inline=False,
                     )
                 if ai_response:
@@ -446,7 +446,7 @@ class GeminiImagenCog(commands.Cog):
                 )
                 embed.add_field(
                     name="编辑指令",
-                    value=edit_prompt[:1024],
+                    value=f"```\n{edit_prompt[:1016]}\n```",
                     inline=False,
                 )
                 if ai_response:

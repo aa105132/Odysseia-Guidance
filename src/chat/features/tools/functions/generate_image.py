@@ -271,7 +271,7 @@ async def generate_image(
                     )
                     embed.add_field(
                         name="提示词",
-                        value=prompt[:1024],  # Embed field value 最多1024字符
+                        value=f"```\n{prompt[:1016]}\n```",  # Embed field value 最多1024字符
                         inline=False,
                     )
                     if success_message:
@@ -592,7 +592,7 @@ async def generate_images_batch(
                     for idx, (_, p) in enumerate(successful_images, 1):
                         embed.add_field(
                             name=f"图{idx}提示词",
-                            value=p[:1024],
+                            value=f"```\n{p[:1016]}\n```",
                             inline=False,
                         )
                     if success_message:

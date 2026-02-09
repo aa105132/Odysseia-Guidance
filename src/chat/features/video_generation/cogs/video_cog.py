@@ -144,7 +144,7 @@ class VideoGenerationCog(commands.Cog):
             )
             embed.add_field(
                 name="视频提示词",
-                value=prompt[:1024],
+                value=f"```\n{prompt[:1016]}\n```",
                 inline=False,
             )
             embed.set_footer(text=f"消耗 {cost} 月光币 | 余额: {new_balance} | 时长: ~{duration}s")

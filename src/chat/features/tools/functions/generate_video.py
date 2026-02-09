@@ -293,7 +293,7 @@ async def generate_video(
                 )
                 prompt_embed.add_field(
                     name="视频提示词",
-                    value=prompt[:1024],
+                    value=f"```\n{prompt[:1016]}\n```",
                     inline=False,
                 )
                 if success_message:
