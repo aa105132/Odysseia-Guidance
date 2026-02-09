@@ -147,7 +147,8 @@ class VideoGenerationCog(commands.Cog):
                 value=f"```\n{prompt[:1016]}\n```",
                 inline=False,
             )
-            embed.set_footer(text=f"消耗 {cost} 月光币 | 余额: {new_balance} | 时长: ~{duration}s")
+            video_model = VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
+            embed.set_footer(text=f"消耗 {cost} 月光币 | 余额: {new_balance} | 时长: ~{duration}s | 模型: {video_model}")
 
             # 4. 发送视频结果
             if result.format_type == "url" and result.url:

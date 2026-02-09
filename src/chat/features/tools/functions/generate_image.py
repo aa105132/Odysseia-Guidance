@@ -264,6 +264,11 @@ async def generate_image(
                     import io
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
                     
+                    # 获取实际使用的模型名称
+                    imagen_model_name = gemini_imagen_service._get_model_for_resolution(
+                        resolution=resolution, is_edit=False, content_rating=content_rating
+                    )
+                    
                     # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
                     embed = discord.Embed(
                         title="AI 图片生成",
@@ -281,6 +286,7 @@ async def generate_image(
                             value=processed_success[:1024],
                             inline=False,
                         )
+                    embed.set_footer(text=f"模型: {imagen_model_name}")
                     
                     # 创建重新生成按钮视图
                     regenerate_view = None
@@ -584,6 +590,11 @@ async def generate_images_batch(
                 try:
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
                     
+                    # 获取实际使用的模型名称
+                    batch_model_name = gemini_imagen_service._get_model_for_resolution(
+                        resolution=resolution, is_edit=False, content_rating=content_rating
+                    )
+                    
                     # 构建 Discord Embed（批量生成：标题+多个提示词+成功回复）
                     embed = discord.Embed(
                         title="AI 批量图片生成",
@@ -602,6 +613,7 @@ async def generate_images_batch(
                             value=processed_success[:1024],
                             inline=False,
                         )
+                    embed.set_footer(text=f"模型: {batch_model_name}")
                     
                     # 批量生成不提供重新生成按钮（因为涉及多个不同的提示词）
                     

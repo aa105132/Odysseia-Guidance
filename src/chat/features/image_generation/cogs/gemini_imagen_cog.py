@@ -209,10 +209,13 @@ class GeminiImagenCog(commands.Cog):
                         inline=False,
                     )
                 
+                imagen_model = gemini_imagen_service._get_model_for_resolution(
+                    resolution=resolution, is_edit=False, content_rating=content_rating
+                )
                 if actual_count < count:
-                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance} | 模型: {imagen_model}")
                 else:
-                    embed.set_footer(text=f"消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                    embed.set_footer(text=f"消耗 {actual_cost} 月光币 | 余额: {new_balance} | 模型: {imagen_model}")
                 
                 # 创建重新生成按钮
                 from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView
@@ -457,10 +460,13 @@ class GeminiImagenCog(commands.Cog):
                         inline=False,
                     )
                 
+                edit_imagen_model = gemini_imagen_service._get_model_for_resolution(
+                    resolution=resolution, is_edit=True, content_rating=content_rating
+                )
                 if actual_count < count:
-                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance} | 模型: {edit_imagen_model}")
                 else:
-                    embed.set_footer(text=f"消耗 {actual_cost} 月光币 | 余额: {new_balance}")
+                    embed.set_footer(text=f"消耗 {actual_cost} 月光币 | 余额: {new_balance} | 模型: {edit_imagen_model}")
                 
                 # 创建重新生成按钮（图生图重新生成时退化为普通图片生成，因为原图不可再用）
                 from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView

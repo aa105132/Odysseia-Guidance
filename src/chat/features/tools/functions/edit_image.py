@@ -288,6 +288,11 @@ async def edit_image(
                     import io
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
                     
+                    # 获取实际使用的模型名称
+                    edit_model_name = gemini_imagen_service._get_model_for_resolution(
+                        resolution=resolution, is_edit=True, content_rating=content_rating
+                    )
+                    
                     # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
                     embed = discord.Embed(
                         title="AI 图生图",
@@ -305,6 +310,7 @@ async def edit_image(
                             value=processed_success[:1024],
                             inline=False,
                         )
+                    embed.set_footer(text=f"模型: {edit_model_name}")
                     
                     # 创建重新生成按钮视图
                     regenerate_view = None

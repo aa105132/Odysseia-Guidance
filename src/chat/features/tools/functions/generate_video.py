@@ -286,6 +286,10 @@ async def generate_video(
                 import aiohttp
                 from src.chat.features.tools.ui.regenerate_view import RegenerateView
 
+                # 获取实际使用的视频模型名称
+                from src.chat.config.chat_config import VIDEO_GEN_CONFIG
+                video_model_name = VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
+                
                 # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
                 prompt_embed = discord.Embed(
                     title="AI 视频生成",
@@ -303,6 +307,7 @@ async def generate_video(
                         value=processed_success[:1024],
                         inline=False,
                     )
+                prompt_embed.set_footer(text=f"模型: {video_model_name}")
                 
                 # 创建重新生成按钮视图
                 regenerate_view = None
