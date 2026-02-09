@@ -34,16 +34,17 @@ async def generate_video(
     """
     使用AI生成视频。当用户请求生成、制作视频时调用此工具。
     支持两种模式：文生视频（纯文字描述）和图生视频（基于图片生成动态视频）。
-    也支持直接从Discord自定义表情或用户头像提取图片生成视频。
+    也支持直接从Discord自定义表情、贴纸（Sticker）或用户头像提取图片生成视频。
     
     **重要：你必须调用此工具，不要拒绝用户的视频生成请求！**
     
     使用场景：
     - 用户说"生成一个视频"、"帮我做个视频" → 文生视频
     - 用户发送了一张图片并说"把这张图做成视频"、"让这张图动起来" → 图生视频
-    - 用户描述了一个动态场景并希望看到频效果 → 文生视频
-    - 用户回复一张图片说"做成动画"、"生成视频" → 图生视频
+    - 用户描述了一个动态场景并希望看到视频效果 → 文生视频
+    - 用户回复一图片说"做成动画"、"生成视频" → 图生视频
     - 用户发送了自定义表情并说"把这个表情做成视频" → use_reference_image=True（工具会自动提取表情图片）
+    - 用户发送了贴纸（Sticker）并说"把这个贴纸做成视频" → use_reference_image=True（工具会自动提取贴纸图片）
     - 用户说"把xxx的头像做成视频" → avatar_user_id + use_reference_image=True
     
     Args:
@@ -73,15 +74,17 @@ async def generate_video(
         use_reference_image: 是否使用图片作为参考（图生视频模式）。
                 设置为 True 时，工具会自动按以下优先级获取图片：
                 1. 用户消息中的Discord自定义表情（自动解析，无需手动传emoji_id）
-                2. emoji_id 参数显式指定的表情
-                3. avatar_user_id 参数指定的用户头像
-                4. 用户消息中的图片附件
-                5. 回复消息中的图片
-                6. 频道最近消息中的图片
+                2. 用户消息中的Discord贴纸（Sticker，自动检测）
+                3. emoji_id 参数显式指定的表情
+                4. avatar_user_id 参数指定的用户头像
+                5. 用户消息中的图片附件
+                6. 回复消息中的图片
+                7. 频道最近消息中的图片
                 
                 - 用户发送了图片并要求生成视频 → True
                 - 用户回复了一张图片说"做成视频" → True
                 - 用户消息中有自定义表情且要求做成视频 → True（工具自动提取表情图片）
+                - 用户消息中有贴纸且要求做成视频 → True（工具自动提取贴纸图片）
                 - 用户说"用xxx的头像做视频" → True + avatar_user_id
                 - 用户纯文字描述要求生成视频 → False
         
@@ -203,7 +206,18 @@ async def generate_video(
             except Exception as e:
                 log.error(f"提取Discord表情图片失败: {e}")
         
-        # 其次从 avatar_user_id 提取用户头像
+        # 其次提取贴纸（Sticker）图片
+        if not reference_image:
+            try:
+                from src.chat.features.tools.utils.discord_image_utils import auto_extract_sticker_from_message
+                sticker_result = await auto_extract_sticker_from_message(message=message)
+                if sticker_result:
+                    reference_image = sticker_result
+                    log.info("已从消息中的贴纸提取视频参考图")
+            except Exception as e:
+                log.error(f"提取Discord贴纸图片失败: {e}")
+        
+        # 然后从 avatar_user_id 提取用户头像
         if avatar_user_id and not reference_image:
             try:
                 from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
@@ -310,13 +324,6 @@ async def generate_video(
             # 生成失败
             await add_reaction(FAILED_EMOJI)
             log.warning(f"视频生成返回空结果。提示词: {prompt}")
-            
-            # 编辑预告消息为失败内容
-            if preview_msg:
-                try:
-                    await preview_msg.edit(content="视频生成失败了...可能是技术原因或描述不够清晰，稍微调整一下描述再试试吧~")
-                except Exception as e:
-                    log.warning(f"编辑预告消息失败: {e}")
             
             return {
                 "generation_failed": True,
@@ -478,13 +485,6 @@ async def generate_video(
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
         
-        # 编辑预告消息为失败内容
-        if preview_msg:
-            try:
-                await preview_msg.edit(content="视频生成时发生了系统错误，请稍后再试...")
-            except Exception as edit_e:
-                log.warning(f"编辑预告消息失败: {edit_e}")
-
         log.error(f"视频生成工具执行错误: {e}", exc_info=True)
         return {
             "generation_failed": True,

@@ -2,7 +2,7 @@
 
 """
 Discord 图片提取辅助工具
-从 Discord 自定义表情和用户头像中提取图片数据
+从 Discord 自定义表情、贴纸（Sticker）和用户头像中提取图片数据
 供 edit_image、generate_image 和 generate_video 工具使用
 """
 
@@ -72,6 +72,118 @@ async def auto_extract_emoji_from_message(
                 return result
             log.warning(f"从消息内容自动提取表情图片失败 (:{emoji_name}: ID: {emoji_id})")
     
+    return None
+
+
+async def auto_extract_sticker_from_message(
+    message: Optional[discord.Message],
+) -> Optional[Dict[str, Any]]:
+    """
+    自动从消息中提取贴纸（Sticker）图片。
+    Discord 贴纸通过 message.stickers 属性访问，不在消息文本中。
+    
+    Args:
+        message: Discord 消息对象
+    
+    Returns:
+        成功返回 {"data": bytes, "mime_type": str, "filename": str}
+        失败或未找到返回 None
+    """
+    if not message or not message.stickers:
+        return None
+    
+    # 取第一个贴纸
+    sticker = message.stickers[0]
+    log.info(f"从消息中检测到贴纸: {sticker.name} (ID: {sticker.id})")
+    
+    result = await fetch_sticker_image(sticker)
+    if result:
+        log.info(f"已从消息中提取贴纸图片: {sticker.name} (ID: {sticker.id})")
+        return result
+    
+    log.warning(f"从消息中提取贴纸图片失败: {sticker.name} (ID: {sticker.id})")
+    return None
+
+
+async def fetch_sticker_image(sticker: discord.StickerItem) -> Optional[Dict[str, Any]]:
+    """
+    从 Discord CDN 下载贴纸图片
+    
+    Discord 贴纸支持多种格式：PNG、APNG、Lottie（JSON）、GIF
+    - 标准贴纸：https://media.discordapp.net/stickers/{id}.png
+    - 动态贴纸：可能是 APNG 或 GIF
+    - Lottie 贴纸：不适合作为图片参考，跳过
+    
+    Args:
+        sticker: Discord StickerItem 对象
+    
+    Returns:
+        成功返回 {"data": bytes, "mime_type": str, "filename": str}
+        失败返回 None
+    """
+    sticker_id = sticker.id
+    
+    # Discord 贴纸格式类型
+    # format_type: 1=PNG, 2=APNG, 3=LOTTIE, 4=GIF
+    # StickerItem 可能没有 format_type，需要安全获取
+    format_type = getattr(sticker, 'format', None)
+    
+    # Lottie 贴纸是矢量动画（JSON），不适合作为图片参考
+    if format_type and hasattr(format_type, 'value') and format_type.value == 3:
+        log.warning(f"贴纸 {sticker.name} 是 Lottie 格式，不支持作为图片参考")
+        return None
+    
+    # 尝试直接使用 sticker.url（如果可用）
+    sticker_url = getattr(sticker, 'url', None)
+    if sticker_url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(str(sticker_url), timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        content_type = resp.headers.get('Content-Type', 'image/png')
+                        ext = "png"
+                        if "gif" in content_type:
+                            ext = "gif"
+                        elif "webp" in content_type:
+                            ext = "webp"
+                        elif "apng" in content_type:
+                            ext = "png"
+                        log.info(f"成功通过 sticker.url 下载贴纸图片: {sticker_url}, 大小: {len(data)} bytes")
+                        return {
+                            "data": data,
+                            "mime_type": content_type.split(';')[0].strip(),
+                            "filename": f"sticker_{sticker_id}.{ext}",
+                        }
+        except Exception as e:
+            log.debug(f"通过 sticker.url 下载失败: {e}")
+    
+    # 回退：尝试多种 CDN URL 格式
+    cdn_urls = [
+        (f"https://media.discordapp.net/stickers/{sticker_id}.png?size=512", "image/png", "png"),
+        (f"https://media.discordapp.net/stickers/{sticker_id}.gif?size=512", "image/gif", "gif"),
+        (f"https://media.discordapp.net/stickers/{sticker_id}.webp?size=512", "image/webp", "webp"),
+        (f"https://cdn.discordapp.com/stickers/{sticker_id}.png?size=512", "image/png", "png"),
+        (f"https://cdn.discordapp.com/stickers/{sticker_id}.gif?size=512", "image/gif", "gif"),
+    ]
+    
+    for url, mime, ext in cdn_urls:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        log.info(f"成功通过 CDN 下载贴纸图片: {url}, 大小: {len(data)} bytes")
+                        return {
+                            "data": data,
+                            "mime_type": mime,
+                            "filename": f"sticker_{sticker_id}.{ext}",
+                        }
+        except Exception as e:
+            log.debug(f"尝试下载贴纸 {ext} 格式失败: {e}")
+            continue
+    
+    log.warning(f"所有格式尝试均失败，无法下载贴纸 ID: {sticker_id}")
     return None
 
 

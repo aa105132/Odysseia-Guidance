@@ -353,14 +353,7 @@ async def generate_image(
             # 添加失败反应
             await add_reaction(FAILED_EMOJI)
             
-            # 图片生成失败 - 编辑预告消息为失败内容
             log.warning(f"图片生成返回空结果。提示词: {prompt}")
-            
-            if preview_msg:
-                try:
-                    await preview_msg.edit(content="图片生成失败了...可能是技术原因或描述不够清晰，稍微调整一下描述再试试吧~")
-                except Exception as e:
-                    log.warning(f"编辑预告消息失败: {e}")
             
             return {
                 "generation_failed": True,
@@ -372,13 +365,6 @@ async def generate_image(
         # 移除"正在生成"反应，添加失败反应
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
-        
-        # 编辑预告消息为失败内容
-        if preview_msg:
-            try:
-                await preview_msg.edit(content="图片生成时发生了系统错误，请稍后再试...")
-            except Exception as edit_e:
-                log.warning(f"编辑预告消息失败: {edit_e}")
         
         log.error(f"图片生成工具执行错误: {e}", exc_info=True)
         return {
@@ -666,14 +652,7 @@ async def generate_images_batch(
             # 添加失败反应
             await add_reaction(FAILED_EMOJI)
             
-            # 编辑预告消息为失败内容
             log.warning(f"批量图片生成全部失败")
-            
-            if preview_msg:
-                try:
-                    await preview_msg.edit(content="批量图片生成失败了...请稍后再试。")
-                except Exception as e:
-                    log.warning(f"编辑预告消息失败: {e}")
             
             return {
                 "generation_failed": True,
@@ -684,13 +663,6 @@ async def generate_images_batch(
     except Exception as e:
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
-        
-        # 编辑预告消息为失败内容
-        if preview_msg:
-            try:
-                await preview_msg.edit(content="图片生成时发生了系统错误，请稍后再试...")
-            except Exception as edit_e:
-                log.warning(f"编辑预告消息失败: {edit_e}")
         
         log.error(f"批量图片生成工具执行错误: {e}", exc_info=True)
         return {

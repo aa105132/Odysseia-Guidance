@@ -32,10 +32,10 @@ async def edit_image(
     **kwargs
 ) -> dict:
     """
-    修改用户发送的图片，或基于已有图片（包括自定义表情、用户头像）进行再创作。
+    修改用户发送的图片，或基于已有图片（包括自定义表情、贴纸、用户头像）进行再创作。
     
-    **重要：当用户消息中包含自定义表情（如 <:name:123456>）并且要求基于该表情画图、改图、
-    做成头像等操作时，必须调用此工具！工具会自动从用户消息中提取表情图片，你不需要手动提取。**
+    **重要：当用户消息中包含自定义表情（如 <:name:123456>）或贴纸（Sticker），并且要求基于它画图、改图、
+    做成头像等操作时，必须调用此工具！工具会自动从用户消息中提取表情/贴纸图片，你不需要手动提取。**
     
     使用场景（必须调用此工具）：
     - 用户发送一张图片并说"帮我把背景改成蓝色"
@@ -43,18 +43,20 @@ async def edit_image(
     - 用户发送一张图片并说"添加一些特效"
     - 用户回复一张图片并请求修改
     - 用户发送了自定义表情并说"画成头像"、"改成xxx风格"、"帮我美化一下"
-    - 用户说"用这个表情帮我画一张图"
+    - 用户发送了贴纸（Sticker）并说"画成头像"、"改成xxx风格"、"帮我美化一下"
+    - 用户说"用这个表情/贴纸帮我画一张图"
     - 用户说"提取xxx的头像帮我改成..."
-    - 用户要求基于表情/头像/图片做任何形式的再创作
+    - 用户要求基于表情/贴纸/头像/图片做任何形式的再创作
     
-    **不要拒绝！** 如果用户消息中有自定义表情且要求画图/改图，直接调用此工具。
-    工具会自动检测并提取消息中的自定义表情图片，无需你手动操作。
+    **不要拒绝！** 如果用户消息中有自定义表情或贴纸且要求画图/改图，直接调用此工具。
+    工具会自动检测并提取消息中的自定义表情和贴纸图片，无需你手动操作。
     
     注意：此工具需要参考图片。图片来源会被自动检测（优先级）：
     1. 用户消息中的Discord自定义表情（自动解析，无需手动传emoji_id）
-    2. emoji_id 参数显式指定的表情
-    3. avatar_user_id 参数指定的用户头像
-    4. 用户在对话中发送的图片附件
+    2. 用户消息中的Discord贴纸（Sticker，自动检测）
+    3. emoji_id 参数显式指定的表情
+    4. avatar_user_id 参数指定的用户头像
+    5. 用户在对话中发送的图片附件
     如果以上都没有，请提示用户先发送一张图片。
     
     Args:
@@ -159,7 +161,7 @@ async def edit_image(
                         log.error(f"读取附件图片失败: {e}")
         return None
     
-    # 1. 尝试获取参考图片（优先级：emoji > avatar_user_id > 消息附件 > 回复 > 历史）
+    # 1. 尝试获取参考图片（优先级：emoji > sticker > avatar_user_id > 消息附件 > 回复 > 历史）
     reference_image = None
     user_id = kwargs.get("user_id")  # 获取当前用户ID
     
@@ -176,7 +178,18 @@ async def edit_image(
         except Exception as e:
             log.error(f"提取Discord表情图片失败: {e}")
     
-    # 其次从 avatar_user_id 提取用户头像
+    # 其次提取贴纸（Sticker）图片
+    if not reference_image:
+        try:
+            from src.chat.features.tools.utils.discord_image_utils import auto_extract_sticker_from_message
+            sticker_result = await auto_extract_sticker_from_message(message=message)
+            if sticker_result:
+                reference_image = sticker_result
+                log.info("已从消息中的贴纸提取参考图")
+        except Exception as e:
+            log.error(f"提取Discord贴纸图片失败: {e}")
+    
+    # 然后从 avatar_user_id 提取用户头像
     if avatar_user_id and not reference_image:
         try:
             from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
@@ -415,32 +428,18 @@ async def edit_image(
             # 添加失败反应
             await add_reaction(FAILED_EMOJI)
             
-            # 图片编辑失败 - 编辑预告消息为失败内容
             log.warning(f"图生图返回空结果。编辑指令: {edit_prompt}")
-            
-            if preview_msg:
-                try:
-                    await preview_msg.edit(content="图片修改失败了...可能是编辑指令不够清晰或者图片格式有问题，换个描述试试吧~")
-                except Exception as e:
-                    log.warning(f"编辑预告消息失败: {e}")
             
             return {
                 "edit_failed": True,
                 "reason": "edit_failed",
-                "hint": "图片修改失败了，可能是编辑指令不够清晰或者图片格式有问题。请用自己的语气告诉用户换个描述试试，或者换一张图片。"
+                "hint": "图片修改失败了，可能是编辑指令不够清晰或者图片格式有问题。请用自己的语气告诉用换个描述试试，或者换一张图片。"
             }
             
     except Exception as e:
         # 移除"正在生成"反应，添加失败反应
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
-        
-        # 编辑预告消息为失败内容
-        if preview_msg:
-            try:
-                await preview_msg.edit(content="图片修改时发生了系统错误，请稍后再试...")
-            except Exception as edit_e:
-                log.warning(f"编辑预告消息失败: {edit_e}")
         
         log.error(f"图生图工具执行错误: {e}", exc_info=True)
         return {
