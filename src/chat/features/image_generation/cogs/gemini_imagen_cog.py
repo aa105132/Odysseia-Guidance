@@ -186,15 +186,17 @@ class GeminiImagenCog(commands.Cog):
             # 4. 发送结果
             if images:
                 # 构建回复消息：AI 回复 + 提示词
+                # 构建引用块格式的提示词
+                quoted_prompt = "\n".join(f"> {line}" for line in prompt.split("\n"))
                 content_parts = []
+                content_parts.append(f"**提示词：**\n{quoted_prompt}")
+                if negative_prompt:
+                    quoted_neg = "\n".join(f"> {line}" for line in negative_prompt.split("\n"))
+                    content_parts.append(f"**排除：**\n{quoted_neg}")
                 
                 if ai_response:
                     ai_response = replace_emotion_tags(ai_response)
                     content_parts.append(ai_response)
-                
-                content_parts.append(f"**提示词：**\n```\n{prompt}\n```")
-                if negative_prompt:
-                    content_parts.append(f"**排除：**\n```\n{negative_prompt}\n```")
                 
                 if actual_count < count:
                     content_parts.append(f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")
@@ -429,13 +431,14 @@ class GeminiImagenCog(commands.Cog):
             # 5. 发送结果
             if images:
                 # 构建回复消息：AI 回复 + 提示词
+                # 构建引用块格式的编辑指令
+                quoted_edit = "\n".join(f"> {line}" for line in edit_prompt.split("\n"))
                 content_parts = []
+                content_parts.append(f"**编辑指令：**\n{quoted_edit}")
                 
                 if ai_response:
                     ai_response = replace_emotion_tags(ai_response)
                     content_parts.append(ai_response)
-                
-                content_parts.append(f"**编辑指令：**\n```\n{edit_prompt}\n```")
                 
                 if actual_count < count:
                     content_parts.append(f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance}")

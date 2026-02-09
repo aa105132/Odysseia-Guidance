@@ -286,12 +286,13 @@ async def generate_video(
                 import aiohttp
                 from src.chat.features.tools.ui.regenerate_view import RegenerateView
 
-                # 构建消息内容：成功回复 + 提示词（代码块格式）
+                # 构建消息内容：提示词（引用块格式）+ 成功回复
+                quoted_prompt = "\n".join(f"> {line}" for line in prompt.split("\n"))
                 content_parts = []
+                content_parts.append(f"**视频提示词：**\n{quoted_prompt}")
                 if success_message:
                     processed_success = replace_emojis(success_message)
                     content_parts.append(processed_success)
-                content_parts.append(f"**视频提示词：**\n```\n{prompt}\n```")
                 prompt_text = "\n\n".join(content_parts)
                 
                 # 创建重新生成按钮视图

@@ -137,9 +137,10 @@ class VideoGenerationCog(commands.Cog):
                 user_id=user_id,
             )
 
-            # 构建统一的消息内容
+            # 构建统一的消息内容（引用块格式）
+            quoted_prompt = "\n".join(f"> {line}" for line in prompt.split("\n"))
             content_parts = []
-            content_parts.append(f"**提示词：**\n```\n{prompt}\n```")
+            content_parts.append(f"**视频提示词：**\n{quoted_prompt}")
             content_parts.append(f"消耗 {cost} 月光币 | 余额: {new_balance} | 时长: ~{duration}s")
             prompt_text = "\n\n".join(content_parts)
 

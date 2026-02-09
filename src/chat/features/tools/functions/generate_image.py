@@ -264,12 +264,14 @@ async def generate_image(
                     import io
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
                     
-                    # 构建消息内容：成功回复 + 提示词（代码块格式）
+                    # 构建消息内容：提示词（引用块格式）+ 成功回复
+                    # 将提示词转换为引用块格式（每行前加 > ）
+                    quoted_prompt = "\n".join(f"> {line}" for line in prompt.split("\n"))
                     content_parts = []
+                    content_parts.append(f"**提示词：**\n{quoted_prompt}")
                     if success_message:
                         processed_success = replace_emojis(success_message)
                         content_parts.append(processed_success)
-                    content_parts.append(f"**提示词：**\n```\n{prompt}\n```")
                     prompt_text = "\n\n".join(content_parts)
                     
                     # 创建重新生成按钮视图
@@ -574,16 +576,19 @@ async def generate_images_batch(
                 try:
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
                     
-                    # 构建消息内容：成功回复 + 提示词列表（代码块格式）
+                    # 构建消息内容：提示词列表（引用块格式）+ 成功回复
                     content_parts_list = []
+                    
+                    prompt_lines = []
+                    for idx, (_, p) in enumerate(successful_images, 1):
+                        quoted_p = "\n".join(f"> {line}" for line in p.split("\n"))
+                        prompt_lines.append(f"**图{idx}提示词：**\n{quoted_p}")
+                    content_parts_list.append("\n\n".join(prompt_lines))
+                    
                     if success_message:
                         processed_success = replace_emojis(success_message)
                         content_parts_list.append(processed_success)
                     
-                    prompt_lines = []
-                    for idx, (_, p) in enumerate(successful_images, 1):
-                        prompt_lines.append(f"**图{idx}：**\n```\n{p}\n```")
-                    content_parts_list.append("\n".join(prompt_lines))
                     prompt_text = "\n\n".join(content_parts_list)
                     
                     # 批量生成不提供重新生成按钮（因为涉及多个不同的提示词）
