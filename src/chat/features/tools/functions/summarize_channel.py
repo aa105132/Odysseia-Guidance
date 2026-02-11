@@ -42,13 +42,16 @@ async def summarize_channel(
     """
     1. 获取当前频道的最近消息并返回一个准备好用于总结的字符串。
     2. **仅在用户明确表示想要"总结"、"概括"或回顾"最近的对话"时使用此工具。**
-    3. 用户可以指定消息数量、开始日期或结束日期。limit默认200条
+    3. 用户可以指定消息数量、开始日期或结束日期。
+    4. 当指定了时间范围(start_date/end_date)时，会自动获取该范围内的所有消息（上限2000条），无需手动指定limit。
 
     [使用示例]
     - 用户说: "总结一下最近的对话"
       - 调用参数: `limit=200`
     - 用户说: "总结一下从昨天开始的对话"
-      - 调用参数: `start_date="YYYY-MM-DD"`
+      - 调用参数: `start_date="YYYY-MM-DD"` （不需要设置limit，系统会自动获取该时间范围内所有消息）
+    - 用户说: "总结一下0点到现在的对话"
+      - 调用参数: `start_date="YYYY-MM-DD"`（使用今天的日期）
 
     [返回格式与要求]
     - 函数返回一个包含消息历史的字符串，每条消息的格式为：`'作者(时间): 内容'`。
@@ -69,9 +72,7 @@ async def summarize_channel(
             log.error(f"从字典 {params} 创建 SummarizeChannelParams 时出错: {e}")
             return f"错误：提供的参数格式不正确。详情: {e}"
 
-    # 为保护系统性能，设置一个硬性上限
-    limit = min(params.limit, 500)
-
+    # 解析时间范围
     after = None
     if params.start_date:
         try:
@@ -86,9 +87,19 @@ async def summarize_channel(
         except ValueError:
             return "错误: `end_date` 格式不正确，请使用 YYYY-MM-DD 格式。"
 
+    # 当指定了时间范围时，不限制消息数量（获取该范围内所有消息）
+    # 否则使用用户指定的 limit，硬性上限 2000 条
+    HARD_LIMIT = 2000
+    if after or before:
+        # 有时间范围时，获取该范围内所有消息（上限 HARD_LIMIT）
+        limit = HARD_LIMIT
+    else:
+        limit = min(params.limit, HARD_LIMIT)
+
     channel_id = getattr(channel, "id", "未知")
     log.info(
-        f"工具 'summarize_channel' 被调用，在频道 {channel_id} 中获取 {limit} 条消息"
+        f"工具 'summarize_channel' 被调用，在频道 {channel_id} 中获取最多 {limit} 条消息"
+        f"{'（时间范围: ' + str(after) + ' ~ ' + str(before) + '）' if after or before else ''}"
     )
 
     try:

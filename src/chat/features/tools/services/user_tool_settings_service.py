@@ -28,13 +28,25 @@ class UserToolSettingsService:
         Returns:
             如果用户有设置记录，返回 enabled_tools 字典；否则返回 None
         """
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(UserToolSettings).where(UserToolSettings.user_id == user_id)
-            )
-            settings = result.scalar_one_or_none()
-            if settings:
-                return settings.enabled_tools
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(UserToolSettings).where(UserToolSettings.user_id == user_id)
+                )
+                settings = result.scalar_one_or_none()
+                if settings:
+                    return settings.enabled_tools
+                return None
+        except Exception as e:
+            # 表可能还未通过 alembic migrate 创建，优雅降级
+            error_msg = str(e)
+            if "UndefinedTableError" in error_msg or "does not exist" in error_msg:
+                log.warning(
+                    "user_tool_settings 表尚未创建，跳过用户工具设置检查。"
+                    "请运行 'alembic upgrade head' 来创建表。"
+                )
+            else:
+                log.error(f"获取用户 {user_id} 的工具设置时出错: {e}")
             return None
 
     async def save_user_tool_settings(
