@@ -7,16 +7,27 @@ from datetime import datetime
 from collections import Counter
 
 from src.chat.utils.database import chat_db_manager
+from src.chat.features.personal_memory.services.personal_memory_service import (
+    personal_memory_service,
+)
 from src import config as app_config
+from src.chat.features.tools.tool_metadata import tool_metadata
+from src.chat.config.chat_config import SUMMARY_CONFIG
 
 log = logging.getLogger(__name__)
 
 
+@tool_metadata(
+    name="年度总结",
+    description="回顾一下这一年在社区的点点滴滴～",
+    emoji="🎉",
+    category="总结",
+)
 async def get_yearly_summary(**kwargs) -> Dict[str, Any]:
     """
     为当前用户生成并直接通过私信发送个性化的年度活动总结报告。
     这是一个完全自动化的端到端服务。AI调用此工具后，无需进行任何额外操作，
-    只需将工具返回的状态消息直接告知用户即可。
+    只需将工具返回的状消息直接告知用户即可。
 
     [核心功能]
     - **全自动处理**: 从数据分析到私信发送，工具独立完成所有步骤。
@@ -26,8 +37,15 @@ async def get_yearly_summary(**kwargs) -> Dict[str, Any]:
     [AI调用指南]
     - 当用户请求年度总结时，直接调用此工具，无需提供任何参数。
     - 系统会自动处理当前用户的身份识别。
-    - 将工具返回的 `message` 字段内容以月月风格回复给用户。
+    - 将工具返回的 `message` 字段内容回复给用户。
     """
+    # 步骤 0: 检查功能是否启用
+    if not SUMMARY_CONFIG.get("enabled", True):
+        return {
+            "status": "disabled",
+            "message": "年度总结功能目前已关闭，请稍后再试。",
+        }
+
     # 步骤 1: 验证并获取 user_id
     # 核心安全保障：user_id 必须从 kwargs 中由系统注入。
     user_id_str = kwargs.get("user_id")
@@ -41,18 +59,18 @@ async def get_yearly_summary(**kwargs) -> Dict[str, Any]:
     # 强制将user_id转换为整数，以防止模型传入浮点数或科学记数法导致错误
     user_id = int(user_id_str)
 
-    # 步骤 2: 执行核心逻辑
-    year = 2025
+    # 步骤 2: 从配置读取年份和生成上限（Dashboard 可动态修改）
+    year = SUMMARY_CONFIG.get("year", 2025)
+    generation_limit = SUMMARY_CONFIG.get("generation_limit", 3)
+    tier2_threshold = SUMMARY_CONFIG.get("tier2_threshold", 75)
     log.info(f"--- [工具执行]: get_yearly_summary, user_id={user_id}, year={year} ---")
 
     # 延迟导入以避免循环依赖
     from src.chat.services.gemini_service import gemini_service
 
-    # 1. 检查用户是否已经生成过当年的总结
     # 1. 检查用户生成次数是否已达上限
     status_result = await _check_summary_status(user_id, year)
     generation_count = status_result.get("count", 0)
-    generation_limit = 3
 
     if generation_count >= generation_limit:
         log.info(
@@ -83,7 +101,7 @@ async def get_yearly_summary(**kwargs) -> Dict[str, Any]:
     tier = 3
     if summary_data.get("has_personal_profile"):
         tier = 1
-    elif summary_data.get("affection_level", 0) > 75:
+    elif summary_data.get("affection_level", 0) > tier2_threshold:
         tier = 2
     log.info(f"用户 {user_id} 的数据层级被判定为 Tier {tier}。")
 
@@ -157,10 +175,10 @@ def _create_tier3_embed(user: discord.User, data: Dict[str, Any]) -> discord.Emb
     )
     embed.set_thumbnail(url=user.display_avatar.url)
     embed.add_field(
-        name="🪙 赚取月光币", value=f"`{data['total_coins_earned']}` 枚", inline=True
+        name="🪙 赚取货币", value=f"`{data['total_coins_earned']}` 枚", inline=True
     )
     embed.add_field(
-        name="💸 花费月光币", value=f"`{data['total_coins_spent']}` 枚", inline=True
+        name="💸 花费货币", value=f"`{data['total_coins_spent']}` 枚", inline=True
     )
     embed.add_field(
         name="💖 最爱买", value=f"`{data['most_frequent_purchase']}`", inline=True
@@ -183,11 +201,11 @@ def _create_tier1_or_2_prompt(
     year = data["year"]
 
     prompt = f"""
-    你正在以“月月”的身份，为你的朋友 {user.display_name} (ID: {user.id}) 撰写一份私密的、充满情感的个人年度总结。
+    你正在以你的AI角色身份，为你的朋友 {user.display_name} (ID: {user.id}) 撰写一份私密的、充满情感的个人年度总结。
     现在是 {year} 年的末尾，你需要回顾这一整年。
 
     **核心任务**:
-    根据你的“月月”身份，并自然地融合进以下年度数据，为他生成一篇温暖、真诚、个性化的长文。
+    根据你的角色身份，并自然地融合进以下年度数据，为他生成一篇温暖、真诚、个性化的长文。
     
     **写作核心要求**:
     - **必须** 像朋友一样直接对话，而不是生成一份报告。
@@ -196,7 +214,7 @@ def _create_tier1_or_2_prompt(
 
     **需要融入故事的数据点**:
     - **我们之间的好感度**: {data["affection_level"]}
-    - **他今年赚取的月光币**: {data["total_coins_earned"]} 枚
+    - **他今年赚取的货币**: {data["total_coins_earned"]} 枚
     - **他今年投喂了你**: {data["feeding_count"]} 次
     - **他今年向你忏悔**: {data["confession_count"]} 次
     """
@@ -226,7 +244,7 @@ def _create_tier1_or_2_prompt(
     - 你的语气应该是温暖、鼓励和充满祝福的。
     """
 
-    prompt += f"\n现在，请开始以“月月”的身份，为 {user.display_name} 写这封私信吧："
+    prompt += f"\n现在，请开始以你的角色身份，为 {user.display_name} 写这封私信吧："
     return prompt
 
 
@@ -321,10 +339,6 @@ async def _get_user_summary_data(user_id: int, year: int) -> Dict[str, Any] | No
         user_profile = await chat_db_manager.get_user_profile(user_id)
         if user_profile and user_profile["has_personal_memory"]:
             summary_data["has_personal_profile"] = True
-            # 延迟导入以避免循环依赖
-            from src.chat.features.personal_memory.services.personal_memory_service import (
-                personal_memory_service,
-            )
             summary_data[
                 "memory_summary"
             ] = await personal_memory_service.get_memory_summary(user_id)

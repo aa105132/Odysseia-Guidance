@@ -168,6 +168,14 @@ class ModerationConfigUpdate(BaseModel):
     ban_duration_max: Optional[int] = None  # 拉黑时长最大值（分钟）
 
 
+class SummaryConfigUpdate(BaseModel):
+    """年度总结配置更新"""
+    enabled: Optional[bool] = None           # 是否启用年度总结
+    year: Optional[int] = None               # 总结的年份
+    generation_limit: Optional[int] = None   # 每用户每年最大生成次数
+    tier2_threshold: Optional[int] = None    # Tier 2 好感度阈值
+
+
 class EmojiMapping(BaseModel):
     """单个表情映射"""
     placeholder: str  # 如 <微笑>
@@ -1881,6 +1889,118 @@ async def get_knowledge_stats(token: str = Depends(verify_token)):
         raise HTTPException(500, f"获取统计失败: {str(e)}")
     finally:
         conn.close()
+
+
+# --- 年度总结配置 ---
+
+@app.get("/api/config/summary")
+async def get_summary_config(token: str = Depends(verify_token)):
+    """获取年度总结配置 - 优先从数据库读取持久化设置"""
+    from src.chat.utils.database import chat_db_manager
+    from src.chat.config.chat_config import SUMMARY_CONFIG
+    
+    # 从数据库读取持久化设置
+    db_enabled = await chat_db_manager.get_global_setting("summary_enabled")
+    db_year = await chat_db_manager.get_global_setting("summary_year")
+    db_generation_limit = await chat_db_manager.get_global_setting("summary_generation_limit")
+    db_tier2_threshold = await chat_db_manager.get_global_setting("summary_tier2_threshold")
+    
+    # 优先使用数据库值，否则回退到内存配置
+    enabled = db_enabled == "true" if db_enabled is not None else SUMMARY_CONFIG.get("enabled", True)
+    year = int(db_year) if db_year else SUMMARY_CONFIG.get("year", 2025)
+    generation_limit = int(db_generation_limit) if db_generation_limit else SUMMARY_CONFIG.get("generation_limit", 3)
+    tier2_threshold = int(db_tier2_threshold) if db_tier2_threshold else SUMMARY_CONFIG.get("tier2_threshold", 75)
+    
+    # 获取总结统计数据
+    stats = {"total_generated": 0, "unique_users": 0}
+    try:
+        count_query = "SELECT COUNT(*) as total, COUNT(DISTINCT user_id) as users FROM yearly_summary_log WHERE year = ?"
+        result = await chat_db_manager._execute(
+            chat_db_manager._db_transaction, count_query, (year,), fetch="one"
+        )
+        if result:
+            stats["total_generated"] = result["total"]
+            stats["unique_users"] = result["users"]
+    except Exception as e:
+        log.warning(f"获取总结统计数据失败: {e}")
+    
+    return {
+        "enabled": enabled,
+        "year": year,
+        "generation_limit": generation_limit,
+        "tier2_threshold": tier2_threshold,
+        "stats": stats,
+    }
+
+
+@app.put("/api/config/summary")
+async def update_summary_config(config: SummaryConfigUpdate, token: str = Depends(verify_token)):
+    """更新年度总结配置 - 写入数据库持久化并同步到内存"""
+    from src.chat.utils.database import chat_db_manager
+    from src.chat.config.chat_config import SUMMARY_CONFIG
+    
+    updated = {}
+    
+    if config.enabled is not None:
+        SUMMARY_CONFIG["enabled"] = config.enabled
+        await chat_db_manager.set_global_setting("summary_enabled", str(config.enabled).lower())
+        updated["enabled"] = config.enabled
+        log.info(f"年度总结功能已{'启用' if config.enabled else '禁用'}")
+    
+    if config.year is not None:
+        if not 2020 <= config.year <= 2099:
+            raise HTTPException(400, "年份必须在 2020 到 2099 之间")
+        SUMMARY_CONFIG["year"] = config.year
+        await chat_db_manager.set_global_setting("summary_year", str(config.year))
+        updated["year"] = config.year
+        log.info(f"年度总结年份已设置为: {config.year}")
+    
+    if config.generation_limit is not None:
+        if not 1 <= config.generation_limit <= 100:
+            raise HTTPException(400, "生成次数限制必须在 1 到 100 之间")
+        SUMMARY_CONFIG["generation_limit"] = config.generation_limit
+        await chat_db_manager.set_global_setting("summary_generation_limit", str(config.generation_limit))
+        updated["generation_limit"] = config.generation_limit
+        log.info(f"年度总结生成次数限制已设置为: {config.generation_limit}")
+    
+    if config.tier2_threshold is not None:
+        if not 0 <= config.tier2_threshold <= 1000:
+            raise HTTPException(400, "Tier 2 好感度阈值必须在 0 到 1000 之间")
+        SUMMARY_CONFIG["tier2_threshold"] = config.tier2_threshold
+        await chat_db_manager.set_global_setting("summary_tier2_threshold", str(config.tier2_threshold))
+        updated["tier2_threshold"] = config.tier2_threshold
+        log.info(f"Tier 2 好感度阈值已设置为: {config.tier2_threshold}")
+    
+    log.info(f"年度总结配置已更新: {updated}")
+    return {"success": True, "updated": updated}
+
+
+@app.delete("/api/config/summary/logs")
+async def clear_summary_logs(
+    year: Optional[int] = Query(None, description="要清除的年份，不传则清除所有"),
+    token: str = Depends(verify_token)
+):
+    """清除年度总结生成日志（允许用户重新生成）"""
+    from src.chat.utils.database import chat_db_manager
+    
+    try:
+        if year:
+            query = "DELETE FROM yearly_summary_log WHERE year = ?"
+            await chat_db_manager._execute(
+                chat_db_manager._db_transaction, query, (year,), commit=True
+            )
+            log.info(f"已清除 {year} 年的年度总结日志")
+            return {"success": True, "message": f"已清除 {year} 年的所有总结生成记录"}
+        else:
+            query = "DELETE FROM yearly_summary_log"
+            await chat_db_manager._execute(
+                chat_db_manager._db_transaction, query, commit=True
+            )
+            log.info("已清除所有年度总结日志")
+            return {"success": True, "message": "已清除所有总结生成记录"}
+    except Exception as e:
+        log.error(f"清除总结日志失败: {e}", exc_info=True)
+        raise HTTPException(500, f"清除日志失败: {str(e)}")
 
 
 # --- 静态文件服务 ---

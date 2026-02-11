@@ -112,6 +112,12 @@
                         <i data-lucide="book-open" class="w-5 h-5"></i>
                         <span>知识库</span>
                     </button>
+                    <button @click="currentTab = 'summary'"
+                            :class="currentTab === 'summary' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="calendar-check" class="w-5 h-5"></i>
+                        <span>年度总结</span>
+                    </button>
                 </nav>
             </div>
             
@@ -1373,6 +1379,142 @@
                 </div>
             </div>
             
+            <!-- 年度总结设置 -->
+            <div x-show="currentTab === 'summary'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">年度总结设置</h2>
+                
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 mb-6">
+                    <div class="flex items-center gap-3 mb-4 text-blue-300">
+                        <i data-lucide="info" class="w-5 h-5"></i>
+                        <span class="text-sm">年度总结功能允许用户生成个性化的年度活动报告，通过私信发送。可根据用户与AI的交互深度自动分为三个层级。</span>
+                    </div>
+                </div>
+
+                <!-- 统计卡片 -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-slate-400">已生成总结</span>
+                            <i data-lucide="file-text" class="w-5 h-5 text-purple-400"></i>
+                        </div>
+                        <p class="text-2xl font-bold" x-text="summaryStats.total_generated || 0"></p>
+                    </div>
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-slate-400">覆盖用户数</span>
+                            <i data-lucide="users" class="w-5 h-5 text-green-400"></i>
+                        </div>
+                        <p class="text-2xl font-bold" x-text="summaryStats.unique_users || 0"></p>
+                    </div>
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-slate-400">功能状态</span>
+                            <i data-lucide="power" class="w-5 h-5" :class="summaryForm.enabled ? 'text-green-400' : 'text-red-400'"></i>
+                        </div>
+                        <p class="text-2xl font-bold" :class="summaryForm.enabled ? 'text-green-400' : 'text-red-400'" x-text="summaryForm.enabled ? '已启用' : '已禁用'"></p>
+                    </div>
+                </div>
+
+                <!-- 配置表单 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 mb-6">
+                    <h3 class="text-lg font-semibold mb-6 flex items-center gap-2">
+                        <i data-lucide="settings" class="w-5 h-5 text-purple-400"></i>
+                        基础配置
+                    </h3>
+                    <div class="space-y-6">
+                        <!-- 启用开关 -->
+                        <div class="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg">
+                            <div>
+                                <p class="font-medium">启用年度总结</p>
+                                <p class="text-sm text-slate-400">关闭后用户将无法请求生成年度总结</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" x-model="summaryForm.enabled" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-600 rounded-full peer peer-checked:bg-purple-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                            </label>
+                        </div>
+
+                        <!-- 年份 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">总结年份</label>
+                            <input type="number" x-model.number="summaryForm.year"
+                                   min="2020" max="2099"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">设置当前总结对应的年份（2020-2099）</p>
+                        </div>
+
+                        <!-- 生成次数限制 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">每用户生成次数上限</label>
+                            <input type="number" x-model.number="summaryForm.generation_limit"
+                                   min="1" max="100"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">每个用户在该年度内最多可生成的总结次数（1-100）</p>
+                        </div>
+
+                        <!-- Tier 2 阈值 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">Tier 2 好感度阈值</label>
+                            <input type="number" x-model.number="summaryForm.tier2_threshold"
+                                   min="0" max="1000"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">好感度达到此阈值的用户将获得 Tier 2 个性化长文总结（0-1000）</p>
+                        </div>
+
+                        <!-- 层级说明 -->
+                        <div class="bg-slate-700/20 rounded-lg p-4">
+                            <h4 class="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                                <i data-lucide="layers" class="w-4 h-4 text-purple-400"></i>
+                                总结层级说明
+                            </h4>
+                            <div class="space-y-2 text-sm text-slate-400">
+                                <div class="flex items-start gap-2">
+                                    <span class="bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded text-xs font-mono shrink-0">Tier 1</span>
+                                    <span>拥有个人记忆档案的用户 - 获得最深度的个性化长文，包含共同回忆和人设认知</span>
+                                </div>
+                                <div class="flex items-start gap-2">
+                                    <span class="bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded text-xs font-mono shrink-0">Tier 2</span>
+                                    <span>好感度超过阈值的用户 - 获得温暖感性的 AI 生成长文</span>
+                                </div>
+                                <div class="flex items-start gap-2">
+                                    <span class="bg-slate-500/20 text-slate-300 px-2 py-0.5 rounded text-xs font-mono shrink-0">Tier 3</span>
+                                    <span>其他用户 - 获得简洁的数据 Embed 卡片</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 保存按钮 -->
+                        <button @click="saveSummaryConfig()"
+                                :disabled="saving"
+                                class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                            <i data-lucide="save" class="w-4 h-4"></i>
+                            <span x-text="saving ? '保存中...' : '保存配置'"></span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 日志管理 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="trash-2" class="w-5 h-5 text-red-400"></i>
+                        日志管理
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">清除生成日志后，所有用户将能重新生成年度总结。此操作不可撤销。</p>
+                    <div class="flex gap-3">
+                        <button @click="clearSummaryLogs(summaryForm.year)"
+                                class="bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-500/30 px-4 py-2 rounded-lg transition-all flex items-center gap-2">
+                            <i data-lucide="calendar-x" class="w-4 h-4"></i>
+                            <span x-text="'清除 ' + summaryForm.year + ' 年日志'"></span>
+                        </button>
+                        <button @click="clearSummaryLogs(null)"
+                                class="bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-500/30 px-4 py-2 rounded-lg transition-all flex items-center gap-2">
+                            <i data-lucide="trash" class="w-4 h-4"></i>
+                            清除所有日志
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- 添加/编辑表情模态框 -->
             <div x-show="showAddEmojiModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50" x-transition>
                 <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-700" @click.away="closeEmojiModal()">
@@ -1482,6 +1624,10 @@
                 newKnowledge: { title: '', content: '', category: '' },
                 editingKnowledgeId: null,
                 viewingKnowledge: {},
+                
+                // 年度总结数据
+                summaryForm: { enabled: true, year: 2025, generation_limit: 3, tier2_threshold: 75 },
+                summaryStats: { total_generated: 0, unique_users: 0 },
                 
                 async init() {
                     // 检查是否有保存的密钥
@@ -1627,6 +1773,8 @@
                     this.loadEmbeddingConfig();
                     // 加载管理配置
                     this.loadModerationConfig();
+                    // 加载总结配置
+                    this.loadSummaryConfig();
                 },
                 
                 async loadEmbeddingConfig() {
@@ -1948,6 +2096,76 @@
                     }
                 },
                 
+                async loadSummaryConfig() {
+                    try {
+                        const response = await fetch('/api/config/summary', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.summaryForm.enabled = data.enabled ?? true;
+                            this.summaryForm.year = data.year ?? 2025;
+                            this.summaryForm.generation_limit = data.generation_limit ?? 3;
+                            this.summaryForm.tier2_threshold = data.tier2_threshold ?? 75;
+                            this.summaryStats = data.stats || { total_generated: 0, unique_users: 0 };
+                            this.$nextTick(() => lucide.createIcons());
+                        }
+                    } catch (e) {
+                        console.error('加载总结配置失败', e);
+                    }
+                },
+
+                async saveSummaryConfig() {
+                    this.saving = true;
+                    try {
+                        const response = await fetch('/api/config/summary', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify({
+                                enabled: this.summaryForm.enabled,
+                                year: this.summaryForm.year,
+                                generation_limit: this.summaryForm.generation_limit,
+                                tier2_threshold: this.summaryForm.tier2_threshold,
+                            })
+                        });
+                        if (response.ok) {
+                            this.showToast('总结配置已保存', 'success');
+                            await this.loadSummaryConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败: ' + e.message, 'error');
+                    }
+                    this.saving = false;
+                },
+
+                async clearSummaryLogs(year) {
+                    const msg = year ? `确定要清除 ${year} 年的所有总结日志吗？` : '确定要清除所有年份的总结日志吗？';
+                    if (!confirm(msg + ' 此操作不可撤销。')) return;
+                    try {
+                        const url = year ? `/api/config/summary/logs?year=${year}` : '/api/config/summary/logs';
+                        const response = await fetch(url, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.showToast(data.message || '日志已清除', 'success');
+                            await this.loadSummaryConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '清除失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('清除失败: ' + e.message, 'error');
+                    }
+                },
+
                 async loadEmojiConfig() {
                     try {
                         const response = await fetch('/api/config/emoji', {

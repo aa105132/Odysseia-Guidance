@@ -190,6 +190,17 @@ class ChatService:
             current_model = await chat_settings_service.get_current_ai_model()
             log.info(f"当前使用的AI模型: {current_model}")
 
+            # --- [新增] 根据上下文确定用于工具设置的用户ID ---
+            user_id_for_settings: Optional[str] = None
+            if isinstance(message.channel, discord.Thread) and message.channel.owner_id:
+                user_id_for_settings = str(message.channel.owner_id)
+                log.info(
+                    f"消息在帖子中，将使用帖主 {user_id_for_settings} 的工具设置。"
+                )
+            else:
+                log.info("消息不在帖子中，将使用默认工具集。")
+            # --- [结束] ---
+
             ai_response = await gemini_service.generate_response(
                 author.id,
                 guild_id,
@@ -206,7 +217,7 @@ class ChatService:
                 guild_name=guild_name,
                 location_name=location_name,
                 model_name=current_model,  # 传递模型名称
-                discord_message=message,  # 传递原始消息对象，用于工具调用时添加反应
+                user_id_for_settings=user_id_for_settings,  # 传递用于工具设置的用户ID
             )
 
             if not ai_response:
@@ -215,13 +226,13 @@ class ChatService:
 
             # --- 个人记忆服务 ---
             # 在获得AI回复后，记录这次对话并根据需要触发总结
-            # 所有用户都会自动获得个人记忆功能（如果没有档案会自动创建）
-            await personal_memory_service.update_and_conditionally_summarize_memory(
-                user_id=author.id,
-                user_name=author.display_name,
-                user_content=user_content,
-                ai_response=ai_response,
-            )
+            if user_profile_data:
+                await personal_memory_service.update_and_conditionally_summarize_memory(
+                    user_id=author.id,
+                    user_name=author.display_name,
+                    user_content=user_content,
+                    ai_response=ai_response,
+                )
 
             # 更新新系统的CD
             await chat_settings_service.update_user_cooldown(

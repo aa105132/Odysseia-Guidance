@@ -301,7 +301,9 @@ class GeminiService:
         )
 
         # 2. 实例化工具服务，并传入工具映射
-        self.tool_service = ToolService(bot=self.bot, tool_map=self.tool_map)
+        self.tool_service = ToolService(
+            bot=self.bot, tool_map=self.tool_map, tool_declarations=self.available_tools
+        )
 
         log.info("--- 工具加载完成 (模块化) ---")
         log.info(
@@ -567,6 +569,7 @@ class GeminiService:
         location_name: str = "未知位置",
         model_name: Optional[str] = None,
         discord_message: Optional[Any] = None,  # Discord Message对象，用于工具调用时添加反应
+        user_id_for_settings: Optional[str] = None,
     ) -> str:
         """
         AI 回复生成的分发器。
@@ -609,6 +612,7 @@ class GeminiService:
                         location_name=location_name,
                         model_name=model_name,
                         discord_message=discord_message,
+                        user_id_for_settings=user_id_for_settings,
                     )
                 except Exception as e:
                     last_exception = e
@@ -644,6 +648,7 @@ class GeminiService:
                 location_name=location_name,
                 model_name=fallback_model_name,  # 关键：使用固定的回退模型
                 discord_message=discord_message,
+                user_id_for_settings=user_id_for_settings,
             )
 
         # 对于非自定义模型或回退失败后的默认路径
@@ -667,6 +672,7 @@ class GeminiService:
             location_name=location_name,
             model_name=model_name,
             discord_message=discord_message,
+            user_id_for_settings=user_id_for_settings,
         )
 
     async def _generate_with_custom_endpoint(
@@ -687,6 +693,7 @@ class GeminiService:
         location_name: str = "未知位置",
         model_name: Optional[str] = None,
         discord_message: Optional[Any] = None,
+        user_id_for_settings: Optional[str] = None,
     ) -> str:
         """
         [新增] 使用自定义端点 (例如公益站) 生成 AI 回复。
@@ -763,10 +770,27 @@ class GeminiService:
 
         # --- [重构] 针对自定义端点的图片净化 ---
         # 只有在调用自定义端点时才执行此操作，因为官方API可以处理这些图片。
+        # 使用顺序处理策略：一张一张处理，处理完一张释放内存，再处理下一张
         sanitized_images_for_endpoint = []
         if images:
-            log.info(f"检测到 {len(images)} 张图片，将为自定义端点进行净化处理。")
-            for img_data in images:
+            total_images = len(images)
+            max_images = app_config.IMAGE_PROCESSING_CONFIG.get(
+                "MAX_IMAGES_PER_MESSAGE", 9
+            )
+            sequential_processing = app_config.IMAGE_PROCESSING_CONFIG.get(
+                "SEQUENTIAL_PROCESSING", True
+            )
+
+            log.info(f"检测到 {total_images} 张图片，将为自定义端点进行净化处理。")
+
+            # 限制处理的图片数量
+            images_to_process = images[:max_images]
+            if total_images > max_images:
+                log.warning(
+                    f"图片数量 ({total_images}) 超过最大限制 ({max_images})，将只处理前 {max_images} 张。"
+                )
+
+            for idx, img_data in enumerate(images_to_process, 1):
                 # --- [优化] 仅当图片来源是用户附件时才进行净化 ---
                 if img_data.get("source") == "attachment":
                     try:
@@ -778,7 +802,16 @@ class GeminiService:
                             )
                             continue
 
+                        log.info(f"正在处理第 {idx}/{len(images_to_process)} 张图片...")
                         sanitized_bytes, new_mime_type = sanitize_image(image_bytes)
+
+                        # [内存优化] 处理完成后立即删除原始图片数据引用
+                        # 这有助于垃圾回收器及时释放内存
+                        if "data" in img_data:
+                            del img_data["data"]
+                        if "bytes" in img_data:
+                            del img_data["bytes"]
+
                         # [修复] 保持键名一致性，使用 'data' 存储净化后的字节
                         sanitized_images_for_endpoint.append(
                             {
@@ -787,9 +820,20 @@ class GeminiService:
                                 "source": "attachment",  # 来源是确定的
                             }
                         )
+
+                        log.info(f"第 {idx}/{len(images_to_process)} 张图片处理完成。")
+
+                        # [内存优化] 如果启用了顺序处理，在每张图片处理后强制垃圾回收
+                        if sequential_processing:
+                            import gc
+
+                            gc.collect()
+
                     except Exception as e:
                         # 如果净化失败，记录错误并通知用户
-                        log.error(f"为自定义端点净化附件图片时失败: {e}", exc_info=True)
+                        log.error(
+                            f"为自定义端点净化第 {idx} 张图片时失败: {e}", exc_info=True
+                        )
                         return "呜哇，这张图好像有点问题，我处理不了…可以换一张试试吗？<伤心>"
                 else:
                     # 对于非附件图片（如表情），直接使用原始数据
@@ -818,6 +862,7 @@ class GeminiService:
             or self.default_model_name,  # 传递用于调用 API 的真实模型名称
             client=client,
             discord_message=discord_message,
+            user_id_for_settings=user_id_for_settings,
         )
 
     @_api_key_handler
@@ -840,6 +885,7 @@ class GeminiService:
         model_name: Optional[str] = None,
         client: Any = None,
         discord_message: Optional[Any] = None,
+        user_id_for_settings: Optional[str] = None,
     ) -> str:
         """
         [重构] 使用官方 API 密钥池生成 AI 回复。
@@ -868,6 +914,7 @@ class GeminiService:
             api_model_name=model_name,
             client=client,
             discord_message=discord_message,
+            user_id_for_settings=user_id_for_settings,
         )
 
     async def _execute_generation_cycle(
@@ -890,6 +937,7 @@ class GeminiService:
         api_model_name: Optional[str],
         client: Any,
         discord_message: Optional[Any] = None,
+        user_id_for_settings: Optional[str] = None,
     ) -> str:
         """
         [新增] 核心的 AI 生成周期，包含上下文构建、工具调用循环和响应处理。
@@ -939,10 +987,13 @@ class GeminiService:
         # enabled_tools.append(types.Tool(url_context=types.UrlContext()))
         # log.info("已为本次调用启用 Google 搜索工具。")
 
-        # 3. 合并自定义的函数工具
-        if self.available_tools:
-            enabled_tools.extend(self.available_tools)
-            log.info(f"已合并 {len(self.available_tools)} 个自定义函数工具。")
+        # 3. 根据上下文动态获取函数工具
+        dynamic_tools = await self.tool_service.get_dynamic_tools_for_context(
+            user_id_for_settings=user_id_for_settings
+        )
+        if dynamic_tools:
+            enabled_tools.extend(dynamic_tools)
+            log.info(f"已根据上下文合并 {len(dynamic_tools)} 个动态函数工具。")
 
         # 4. 如果最终有工具被启用，则配置到生成参数中
         if enabled_tools:
@@ -1059,6 +1110,7 @@ class GeminiService:
                     user_id=user_id,
                     log_detailed=log_detailed,
                     message=discord_message,
+                    user_id_for_settings=user_id_for_settings,
                 )
                 for call in function_calls
             ]
@@ -1098,10 +1150,16 @@ class GeminiService:
                     and result.function_response.response
                 ):
                     tool_name = result.function_response.name
-                    # 现在这里是绝对安全的
-                    original_result = result.function_response.response.get(
-                        "result", {}
-                    )
+                    # 首先检查是否有错误信息
+                    error_message = result.function_response.response.get("error")
+                    if error_message:
+                        # 如果有错误信息，直接使用错误信息作为结果
+                        original_result = error_message
+                        log.info(f"工具返回错误信息: {error_message}")
+                    else:
+                        original_result = result.function_response.response.get(
+                            "result", {}
+                        )
 
                     # --- 新增：处理工具返回的头像图片 ---
                     if isinstance(original_result, dict):
@@ -1204,7 +1262,7 @@ class GeminiService:
             # --- skip_ai_response 检查结束 ---
 
             conversation_history.append(
-                types.Content(role="user", parts=tool_result_parts)
+                types.Content(role="tool", parts=tool_result_parts)
             )
 
             if i == max_calls - 1:

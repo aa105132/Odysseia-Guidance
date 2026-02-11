@@ -9,16 +9,37 @@ from src.chat.features.forum_search.services.forum_search_service import (
 )
 from src.chat.config import chat_config as config
 from src.chat.utils.database import chat_db_manager
+from src.chat.features.tools.tool_metadata import tool_metadata
 
 log = logging.getLogger(__name__)
 
 
 # 1. 使用 Pydantic 定义 Filter 的精确结构，替代模糊的 Dict[str, Any]
 # 这能让 Google SDK 自动生成精确的 JSON Schema，引导模型正确调用
+
+# 允许的频道名称列表
+ALLOWED_CATEGORIES = [
+    "世界书",
+    "全性向",
+    "其他区",
+    "制卡工具区",
+    "女性向",
+    "工具区",
+    "插件",
+    "教程",
+    "深渊区",
+    "男性向",
+    "纯净区",
+    "美化",
+    "预设",
+    "️其它工具区",
+]
+
+
 class ForumSearchFilters(BaseModel):
     category_name: Optional[Union[str, List[str]]] = Field(
         None,
-        description="论坛频道的名称。必须是以下列表中的一个或多个: ['世界书', '全性向', '其他区', '制卡工具区', '女性向', '工具区', '插件', '教程', '深渊区', '男性向', '纯净区', '美化', '预设', '️其它工具区']。",
+        description=f"论坛频道的名称。如果填写,必须是以下列表中的一个或多个: {ALLOWED_CATEGORIES}。注意：不支持'角色卡'等其他频道。",
     )
     author_id: Optional[Union[str, List[str]]] = Field(
         None, description="作者的 Discord ID (纯数字) "
@@ -28,6 +49,12 @@ class ForumSearchFilters(BaseModel):
 
 
 # 2. 在函数签名中使用 Pydantic 模型
+@tool_metadata(
+    name="论坛搜索",
+    description="在社区论坛里找找帖子～可以按关键词、作者、频道或者日期来搜哦！",
+    emoji="🔍",
+    category="查询",
+)
 async def search_forum_threads(
     query: Optional[str] = None,
     filters: Optional[ForumSearchFilters] = None,
@@ -35,7 +62,9 @@ async def search_forum_threads(
     **kwargs,
 ) -> List[str]:
     """
-    在社区论坛中搜索帖子，可根据关键词、作者、频道或日期进行精确查找。
+    1.在社区论坛中搜索帖子，可根据关键词、作者、频道或日期进行精确查找。
+    2. **仅在用户明确指定时使用 `filters`**: 只有当用户明确地使用了"频道"、"日期"等词语来限定范围时，才使用 `filters` 参数。
+    3.**允许推断"category_name"**: 但只允许是类脑频道里的频道,绝对禁止其他没有写的频道,例如角色卡
 
     [使用示例]
     - "帮我找找关于'女仆'的帖子" -> `query="女仆"`
@@ -65,6 +94,39 @@ async def search_forum_threads(
         filter_dict = filters.model_dump(exclude_none=True)
 
     # 4. 在字典上执行所有的数据清洗和验证逻辑
+
+    # 4.1 过滤 category_name：只保留允许的频道名称
+    if "category_name" in filter_dict and filter_dict.get("category_name") is not None:
+        category_input = filter_dict["category_name"]
+        is_single_item = not isinstance(category_input, list)
+        category_list = [category_input] if is_single_item else category_input
+
+        # 过滤掉不在允许列表中的频道
+        filtered_categories = [
+            cat for cat in category_list if cat in ALLOWED_CATEGORIES
+        ]
+
+        # 记录被过滤掉的无效频道
+        invalid_categories = [
+            cat for cat in category_list if cat not in ALLOWED_CATEGORIES
+        ]
+        if invalid_categories:
+            log.warning(
+                f"自动过滤了无效的频道名称: {invalid_categories}。"
+                f"允许的频道名称为: {ALLOWED_CATEGORIES}。"
+            )
+
+        # 如果过滤后为空，则删除该字段
+        if not filtered_categories:
+            log.warning("所有提供的频道名称都无效，已移除 category_name 过滤器。")
+            del filter_dict["category_name"]
+        else:
+            # 更新字典中的值
+            filter_dict["category_name"] = (
+                filtered_categories[0] if is_single_item else filtered_categories
+            )
+
+    # 4.2 处理 author_id
     if "author_id" in filter_dict and filter_dict.get("author_id") is not None:
         author_id_input = filter_dict["author_id"]
         is_single_item = not isinstance(author_id_input, list)
