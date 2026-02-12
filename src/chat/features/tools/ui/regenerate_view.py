@@ -269,11 +269,36 @@ class RegenerateView(discord.ui.View):
         """重新生成图生图(使用保存的参考图片数据)"""
         from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
 
-        # 检查是否有保存的参考图片数据
+        # 检查是否有保存的参考图片数据（兼容单图与多图）
         reference_image_data = self.original_params.get("reference_image_data")
         reference_image_mime_type = self.original_params.get("reference_image_mime_type")
+        reference_images_data = self.original_params.get("reference_images_data") or []
+        reference_images_mime_types = self.original_params.get("reference_images_mime_types") or []
 
-        if not reference_image_data or not reference_image_mime_type:
+        normalized_reference_images: List[Dict[str, Any]] = []
+        if isinstance(reference_images_data, list):
+            for idx, image_bytes in enumerate(reference_images_data):
+                if not image_bytes:
+                    continue
+                mime_type = (
+                    reference_images_mime_types[idx]
+                    if idx < len(reference_images_mime_types) and reference_images_mime_types[idx]
+                    else "image/png"
+                )
+                normalized_reference_images.append(
+                    {"data": image_bytes, "mime_type": mime_type}
+                )
+
+        if not normalized_reference_images and reference_image_data:
+            normalized_reference_images.append(
+                {
+                    "data": reference_image_data,
+                    "mime_type": reference_image_mime_type or "image/png",
+                }
+            )
+
+        result = None
+        if not normalized_reference_images:
             # 如果没有保存参考图片,回退到普通图片生成
             from src.chat.features.tools.functions.generate_image import generate_image
             params = {
@@ -314,9 +339,10 @@ class RegenerateView(discord.ui.View):
                 # 调用图生图服务
                 aspect_ratio = self.original_params.get("aspect_ratio", "1:1")
                 edited_image_bytes = await gemini_imagen_service.edit_image(
-                    reference_image=reference_image_data,
+                    reference_image=normalized_reference_images[0]["data"],
                     edit_prompt=prompt,
-                    reference_mime_type=reference_image_mime_type,
+                    reference_mime_type=normalized_reference_images[0].get("mime_type", "image/png"),
+                    reference_images=normalized_reference_images,
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
                     content_rating=content_rating,
@@ -401,21 +427,38 @@ class RegenerateView(discord.ui.View):
         params.pop("message", None)
         params.pop("original_success_message", None)
 
-        # 如果有保存的参考图片数据,使用图生视频模式
+        # 如果有保存的参考图片数据,使用图生视频模式（兼容单图与多图）
         reference_image_data = params.get("reference_image_data")
         reference_image_mime_type = params.get("reference_image_mime_type")
+        reference_images_data = params.get("reference_images_data") or []
+        reference_images_mime_types = params.get("reference_images_mime_types") or []
 
-        if reference_image_data and reference_image_mime_type:
-            # 保持图生视频模式
+        normalized_reference_images: List[Dict[str, Any]] = []
+        if isinstance(reference_images_data, list):
+            for idx, image_bytes in enumerate(reference_images_data):
+                if not image_bytes:
+                    continue
+                mime_type = (
+                    reference_images_mime_types[idx]
+                    if idx < len(reference_images_mime_types) and reference_images_mime_types[idx]
+                    else "image/png"
+                )
+                normalized_reference_images.append(
+                    {"data": image_bytes, "mime_type": mime_type}
+                )
+
+        if not normalized_reference_images and reference_image_data:
+            normalized_reference_images.append(
+                {
+                    "data": reference_image_data,
+                    "mime_type": reference_image_mime_type or "image/png",
+                }
+            )
+
+        if normalized_reference_images:
             params["use_reference_image"] = True
-            # generate_video 函数会通过 kwargs 接收这些参数
-            # 但需要将图片数据转换为可以被函数内部逻辑识别的格式
-            # 由于 generate_video 内部会尝试从消息中提取图片,我们需要提供一个模拟的图片数据
-            # 最简单的方法是直接在调用前准备好 reference_image 字典
-            params["_prepared_reference_image"] = {
-                "data": reference_image_data,
-                "mime_type": reference_image_mime_type,
-            }
+            params["_prepared_reference_images"] = normalized_reference_images
+            params["_prepared_reference_image"] = normalized_reference_images[0]
         else:
             # 文生视频模式
             params["use_reference_image"] = False
@@ -606,11 +649,36 @@ class SlashCommandRegenerateView(discord.ui.View):
         """斜杠命令重新生成图生图(使用保存的参考图片数据)"""
         from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
 
-        # 检查是否有保存的参考图片数据
+        # 检查是否有保存的参考图片数据（兼容单图与多图）
         reference_image_data = self.original_params.get("reference_image_data")
         reference_image_mime_type = self.original_params.get("reference_image_mime_type")
+        reference_images_data = self.original_params.get("reference_images_data") or []
+        reference_images_mime_types = self.original_params.get("reference_images_mime_types") or []
 
-        if not reference_image_data or not reference_image_mime_type:
+        normalized_reference_images: List[Dict[str, Any]] = []
+        if isinstance(reference_images_data, list):
+            for idx, image_bytes in enumerate(reference_images_data):
+                if not image_bytes:
+                    continue
+                mime_type = (
+                    reference_images_mime_types[idx]
+                    if idx < len(reference_images_mime_types) and reference_images_mime_types[idx]
+                    else "image/png"
+                )
+                normalized_reference_images.append(
+                    {"data": image_bytes, "mime_type": mime_type}
+                )
+
+        if not normalized_reference_images and reference_image_data:
+            normalized_reference_images.append(
+                {
+                    "data": reference_image_data,
+                    "mime_type": reference_image_mime_type or "image/png",
+                }
+            )
+
+        result = None
+        if not normalized_reference_images:
             # 如果没有保存参考图片,回退到普通图片生成
             from src.chat.features.tools.functions.generate_image import generate_image
             params = {
@@ -651,9 +719,10 @@ class SlashCommandRegenerateView(discord.ui.View):
                 # 调用图生图服务
                 aspect_ratio = self.original_params.get("aspect_ratio", "1:1")
                 edited_image_bytes = await gemini_imagen_service.edit_image(
-                    reference_image=reference_image_data,
+                    reference_image=normalized_reference_images[0]["data"],
                     edit_prompt=prompt,
-                    reference_mime_type=reference_image_mime_type,
+                    reference_mime_type=normalized_reference_images[0].get("mime_type", "image/png"),
+                    reference_images=normalized_reference_images,
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
                     content_rating=content_rating,
@@ -732,17 +801,39 @@ class SlashCommandRegenerateView(discord.ui.View):
             "bot": interaction.client if hasattr(interaction, "client") else None,
         }
 
-        # 如果有保存的参考图片数据,使用图生视频模式
+        # 如果有保存的参考图片数据,使用图生视频模式（兼容单图与多图）
         reference_image_data = self.original_params.get("reference_image_data")
         reference_image_mime_type = self.original_params.get("reference_image_mime_type")
+        reference_images_data = self.original_params.get("reference_images_data") or []
+        reference_images_mime_types = self.original_params.get("reference_images_mime_types") or []
 
-        if reference_image_data and reference_image_mime_type:
+        normalized_reference_images: List[Dict[str, Any]] = []
+        if isinstance(reference_images_data, list):
+            for idx, image_bytes in enumerate(reference_images_data):
+                if not image_bytes:
+                    continue
+                mime_type = (
+                    reference_images_mime_types[idx]
+                    if idx < len(reference_images_mime_types) and reference_images_mime_types[idx]
+                    else "image/png"
+                )
+                normalized_reference_images.append(
+                    {"data": image_bytes, "mime_type": mime_type}
+                )
+
+        if not normalized_reference_images and reference_image_data:
+            normalized_reference_images.append(
+                {
+                    "data": reference_image_data,
+                    "mime_type": reference_image_mime_type or "image/png",
+                }
+            )
+
+        if normalized_reference_images:
             # 保持图生视频模式
             params["use_reference_image"] = True
-            params["_prepared_reference_image"] = {
-                "data": reference_image_data,
-                "mime_type": reference_image_mime_type,
-            }
+            params["_prepared_reference_images"] = normalized_reference_images
+            params["_prepared_reference_image"] = normalized_reference_images[0]
         else:
             # 文生视频模式
             params["use_reference_image"] = False

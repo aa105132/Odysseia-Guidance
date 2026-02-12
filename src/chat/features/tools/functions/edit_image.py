@@ -27,6 +27,7 @@ async def edit_image(
     content_rating: str = "sfw",
     emoji_id: Optional[str] = None,
     avatar_user_id: Optional[str] = None,
+    avatar_user_ids: Optional[List[str]] = None,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     **kwargs
@@ -47,6 +48,8 @@ async def edit_image(
     - 用户说"用这个表情/贴纸帮我画一张图"
     - 用户说"提取xxx的头像帮我改成..."
     - 用户要求基于表情/贴纸/头像/图片做任何形式的再创作
+    - 用户说"用xxx和yyy的头像画一张合照" → 使用 avatar_user_ids 传入多个用户ID
+    - 用户 @了多个人并说"把我们的头像画在一起" → 使用 avatar_user_ids
     
     **不要拒绝！** 如果用户消息中有自定义表情或贴纸且要求画图/改图，直接调用此工具。
     工具会自动检测并提取消息中的自定义表情和贴纸图片，无需你手动操作。
@@ -55,8 +58,9 @@ async def edit_image(
     1. 用户消息中的Discord自定义表情（自动解析，无需手动传emoji_id）
     2. 用户消息中的Discord贴纸（Sticker，自动检测）
     3. emoji_id 参数显式指定的表情
-    4. avatar_user_id 参数指定的用户头像
-    5. 用户在对话中发送的图片附件
+    4. avatar_user_ids 参数指定的多个用户头像（作为多参考图）
+    5. avatar_user_id 参数指定的单个用户头像
+    6. 用户在对话中发送的图片附件
     如果以上都没有，请提示用户先发送一张图片。
     
     Args:
@@ -97,9 +101,16 @@ async def edit_image(
                 **注意：工具会自动从用户消息中检测和提取自定义表情图片，所以大多数情况下不需要填写此参数。**
                 只有当你需要指定一个不在当前消息中的表情ID时才需要手动填写。
                 
-        avatar_user_id: （可选）Discord用户的数字ID，用于提取该用户头像作为参考图。
+        avatar_user_id: （可选）单个Discord用户的数字ID，用于提取该用户头像作为参考图。
                 当用户说"提取xxx的头像并修改"、"用ID为123的人的头像生成图片"时，
                 填写目标用户的Discord数字ID。
+        
+        avatar_user_ids: （可选）多个Discord用户的数字ID列表，用于提取多个用户的头像作为参考图。
+                当用户要求基于多个人的头像来画图时使用此参数。
+                例如用户说"把我和他的头像画成一张合照"、"用我们三个人的头像画一幅画"。
+                传入的多个头像会作为多参考图传给图生图接口（不再强制拼接）。
+                最多支持 10 个用户ID。
+                例如: ["123456789", "987654321"]
                 
         preview_message: （必填）你对这次图片修改请求的回复消息。
                 这条消息会在生成前先发送给用户，作为预告。
@@ -161,8 +172,11 @@ async def edit_image(
                         log.error(f"读取附件图片失败: {e}")
         return None
     
-    # 1. 尝试获取参考图片（优先级：emoji > sticker > avatar_user_id > 消息附件 > 回复 > 历史）
+    # 1. 尝试获取参考图片（优先级：emoji > sticker > avatar_user_ids/avatar_user_id > 消息附件 > 回复 > 历史）
+    # reference_image: 向后兼容的单图引用（通常取第一张）
+    # reference_images: 多图引用（当 API 支持多参考图时优先使用）
     reference_image = None
+    reference_images = []
     user_id = kwargs.get("user_id")  # 获取当前用户ID
     
     # 优先提取自定义表情图片（自动解析消息内容 + 显式 emoji_id）
@@ -175,6 +189,7 @@ async def edit_image(
             )
             if emoji_result:
                 reference_image = emoji_result
+                reference_images = [emoji_result]
         except Exception as e:
             log.error(f"提取Discord表情图片失败: {e}")
     
@@ -185,31 +200,69 @@ async def edit_image(
             sticker_result = await auto_extract_sticker_from_message(message=message)
             if sticker_result:
                 reference_image = sticker_result
+                reference_images = [sticker_result]
                 log.info("已从消息中的贴纸提取参考图")
         except Exception as e:
             log.error(f"提取Discord贴纸图片失败: {e}")
     
-    # 然后从 avatar_user_id 提取用户头像
-    if avatar_user_id and not reference_image:
-        try:
-            from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
-            bot = kwargs.get("bot")
-            guild = message.guild if message else None
-            avatar_result = await fetch_avatar_image(
-                user_id=avatar_user_id,
-                bot=bot,
-                guild=guild,
-            )
-            if avatar_result:
-                reference_image = avatar_result
-                log.info(f"已从Discord用户头像提取参考图 (用户ID: {avatar_user_id})")
-            else:
-                log.warning(f"无法提取Discord用户头像 (用户ID: {avatar_user_id})")
-        except Exception as e:
-            log.error(f"提取Discord用户头像失败: {e}")
+    # 然后从 avatar_user_ids（多个）或 avatar_user_id（单个）提取用户头像
+    # 当多个头像可用时，优先走多参考图链路（不再强制拼接）
+    if not reference_image and not reference_images:
+        # 合并 avatar_user_ids 和 avatar_user_id 为统一列表
+        all_avatar_ids = []
+        if avatar_user_ids and isinstance(avatar_user_ids, list):
+            all_avatar_ids.extend(avatar_user_ids[:10])  # 最多10个
+        if avatar_user_id and avatar_user_id not in all_avatar_ids:
+            all_avatar_ids.append(avatar_user_id)
+        
+        if all_avatar_ids:
+            try:
+                from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
+                import asyncio
+                bot = kwargs.get("bot")
+                guild = message.guild if message else None
+
+                async def _fetch_one(uid):
+                    return await fetch_avatar_image(user_id=uid, bot=bot, guild=guild)
+
+                avatar_results = await asyncio.gather(
+                    *[_fetch_one(uid) for uid in all_avatar_ids]
+                )
+
+                successful_avatar_refs = []
+                for idx, result in enumerate(avatar_results):
+                    if result and result.get("data"):
+                        successful_avatar_refs.append(
+                            {
+                                "data": result["data"],
+                                "mime_type": result.get("mime_type", "image/png"),
+                                "filename": result.get(
+                                    "filename", f"avatar_{all_avatar_ids[idx]}.png"
+                                ),
+                            }
+                        )
+                    else:
+                        log.warning(f"无法提取用户 {all_avatar_ids[idx]} 的头像")
+
+                if successful_avatar_refs:
+                    reference_images = successful_avatar_refs
+                    # 向后兼容：单图链路使用第一张
+                    reference_image = successful_avatar_refs[0]
+                    if len(successful_avatar_refs) > 1:
+                        log.info(
+                            f"已提取 {len(successful_avatar_refs)} 个用户头像作为多参考图"
+                        )
+                    else:
+                        log.info(
+                            f"已从Discord用户头像提取参考图 (用户ID: {all_avatar_ids[0]})"
+                        )
+                else:
+                    log.warning("所有用户头像都提取失败")
+            except Exception as e:
+                log.error(f"提取Discord用户头像失败: {e}")
     
     # 然后检查当前消息的附件
-    if not reference_image and message:
+    if not reference_image and not reference_images and message:
         reference_image = await extract_image_from_message(message)
         
         # 如果当前消息没有图片，检查回复的消息
@@ -259,7 +312,7 @@ async def edit_image(
                 log.warning(f"搜索频道历史消息失败: {e}")
     
     # 如果还是没有找到图片，返回错误
-    if not reference_image:
+    if not reference_image and not reference_images:
         return {
             "edit_failed": True,
             "reason": "no_image_found",
@@ -325,11 +378,25 @@ async def edit_image(
         
         log.info(f"图生图内容分级: {content_rating}")
         
-        # 调用图生图服务
+        # 调用图生图服务（支持多参考图）
         edited_image_bytes = await gemini_imagen_service.edit_image(
-            reference_image=reference_image["data"],
+            reference_image=reference_image["data"] if reference_image else None,
             edit_prompt=edit_prompt,
-            reference_mime_type=reference_image["mime_type"],
+            reference_mime_type=(
+                reference_image["mime_type"] if reference_image else "image/png"
+            ),
+            reference_images=(
+                [
+                    {
+                        "data": ref["data"],
+                        "mime_type": ref.get("mime_type", "image/png"),
+                    }
+                    for ref in reference_images
+                    if ref and ref.get("data")
+                ]
+                if reference_images
+                else None
+            ),
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             content_rating=content_rating,
@@ -405,6 +472,14 @@ async def edit_image(
                                     # 保存参考图片数据以便重新生成
                                     "reference_image_data": reference_image["data"],
                                     "reference_image_mime_type": reference_image["mime_type"],
+                                    "reference_images_data": [
+                                        ref["data"] for ref in reference_images if ref.get("data")
+                                    ] if reference_images else [reference_image["data"]],
+                                    "reference_images_mime_types": [
+                                        ref.get("mime_type", "image/png")
+                                        for ref in reference_images
+                                        if ref.get("data")
+                                    ] if reference_images else [reference_image["mime_type"]],
                                 },
                                 user_id=user_id_int_view,
                             )

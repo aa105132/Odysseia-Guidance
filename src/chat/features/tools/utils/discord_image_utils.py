@@ -8,6 +8,7 @@ Discord 图片提取辅助工具
 
 import logging
 import re
+import io
 import aiohttp
 import discord
 from typing import Optional, Dict, Any, List, Tuple
@@ -298,4 +299,66 @@ async def fetch_avatar_image(
                     return None
     except Exception as e:
         log.error(f"下载头像出错: {e}")
+        return None
+
+
+def compose_avatars(avatar_images: List[bytes], max_size: int = 512) -> Optional[bytes]:
+    """
+    将多张头像图片横向拼接成一张合成图。
+    
+    Args:
+        avatar_images: 头像图片字节数据列表
+        max_size: 每张头像的最大尺寸（像素），用于统一缩放
+    
+    Returns:
+        拼接后的 PNG 图片字节数据，失败返回 None
+    """
+    try:
+        from PIL import Image as PILImage
+    except ImportError:
+        log.error("Pillow 未安装，无法拼接头像")
+        return None
+    
+    if not avatar_images:
+        return None
+    
+    if len(avatar_images) == 1:
+        # 单张直接返回
+        return avatar_images[0]
+    
+    try:
+        # 加载所有图片
+        pil_images = []
+        for img_bytes in avatar_images:
+            img = PILImage.open(io.BytesIO(img_bytes))
+            img = img.convert("RGBA")
+            # 统一缩放到 max_size x max_size
+            img = img.resize((max_size, max_size), PILImage.Resampling.LANCZOS)
+            pil_images.append(img)
+        
+        # 计算合成图尺寸
+        padding = 20  # 头像之间的间距
+        total_width = max_size * len(pil_images) + padding * (len(pil_images) - 1)
+        total_height = max_size
+        
+        # 创建合成画布（白色背景）
+        composite = PILImage.new("RGBA", (total_width, total_height), (255, 255, 255, 255))
+        
+        # 粘贴每张头像
+        x_offset = 0
+        for img in pil_images:
+            composite.paste(img, (x_offset, 0), img)
+            x_offset += max_size + padding
+        
+        # 转换为 PNG 字节
+        output = io.BytesIO()
+        composite.save(output, format="PNG")
+        output.seek(0)
+        result = output.read()
+        
+        log.info(f"已拼接 {len(pil_images)} 张头像为合成图，大小: {len(result)} bytes")
+        return result
+        
+    except Exception as e:
+        log.error(f"拼接头像失败: {e}")
         return None

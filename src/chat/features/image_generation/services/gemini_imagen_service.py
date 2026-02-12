@@ -1307,23 +1307,28 @@ class GeminiImagenService:
 
     async def edit_image(
         self,
-        reference_image: bytes,
-        edit_prompt: str,
+        reference_image: bytes = None,
+        edit_prompt: str = "",
         reference_mime_type: str = "image/png",
         aspect_ratio: str = "1:1",
         resolution: str = "default",
         content_rating: str = "sfw",
+        reference_images: Optional[List[dict]] = None,
     ) -> Optional[bytes]:
         """
         使用 Gemini 多模态接口进行图生图（图像编辑）
         
+        支持单张或多张参考图。当传入多张参考图时，所有图片都会作为上下文传给模型。
+        
         Args:
-            reference_image: 参考图像的字节数据
+            reference_image: 单张参考图像的字节数据（向后兼容）
             edit_prompt: 编辑指令，描述希望如何修改图像
-            reference_mime_type: 参考图像的 MIME 类型
+            reference_mime_type: 单张参考图像的 MIME 类型（向后兼容）
             aspect_ratio: 输出图像的宽高比
             resolution: 分辨率 ("default", "2k", "4k")
             content_rating: 内容分级 ("sfw" 安全内容, "nsfw" 成人内容)
+            reference_images: 多张参考图列表，每项为 {"data": bytes, "mime_type": str}
+                             如果提供此参数，reference_image 参数会被忽略。
             
         Returns:
             成功时返回生成的图像字节数据，失败时返回 None
@@ -1332,6 +1337,19 @@ class GeminiImagenService:
             log.error("Gemini Imagen 服务不可用")
             return None
         
+        # 统一处理：将单张图和多张图合并为统一的列表格式
+        images_list = []
+        if reference_images and isinstance(reference_images, list):
+            images_list = reference_images
+        elif reference_image:
+            images_list = [{"data": reference_image, "mime_type": reference_mime_type}]
+        
+        if not images_list:
+            log.error("图生图需要至少一张参考图")
+            return None
+        
+        log.info(f"图生图参考图数量: {len(images_list)}")
+        
         # 根据分辨率和内容分级选择编辑模型
         model_name = self._get_model_for_resolution(resolution=resolution, is_edit=True, content_rating=content_rating)
         log.info(f"图生图使用模型: {model_name} (分辨率: {resolution}, 内容分级: {content_rating})")
@@ -1339,32 +1357,30 @@ class GeminiImagenService:
         # 根据 API 格式选择不同的编辑方法
         if self._api_format == "openai":
             return await self._edit_image_openai_format(
-                reference_image=reference_image,
+                reference_images=images_list,
                 edit_prompt=edit_prompt,
-                reference_mime_type=reference_mime_type,
                 aspect_ratio=aspect_ratio,
                 model_name=model_name,
             )
         else:
             # 使用 Gemini 多模态聊天接口（gemini 或 gemini_chat 格式都使用这个）
             return await self._edit_image_gemini_chat_format(
-                reference_image=reference_image,
+                reference_images=images_list,
                 edit_prompt=edit_prompt,
-                reference_mime_type=reference_mime_type,
                 aspect_ratio=aspect_ratio,
                 model_name=model_name,
             )
     
     async def _edit_image_gemini_chat_format(
         self,
-        reference_image: bytes,
+        reference_images: List[dict],
         edit_prompt: str,
-        reference_mime_type: str,
         aspect_ratio: str,
         model_name: str,
     ) -> Optional[bytes]:
         """
         使用 Gemini SDK 的 generate_content 多模态聊天接口进行图像编辑
+        支持多张参考图。
         """
         try:
             from google.genai import types
@@ -1372,22 +1388,28 @@ class GeminiImagenService:
             loop = asyncio.get_event_loop()
             
             # 构建编辑提示词
-            full_prompt = f"请根据以下指令修改这张图片：{edit_prompt}"
+            img_count = len(reference_images)
+            if img_count == 1:
+                full_prompt = f"请根据以下指令修改这张图片：{edit_prompt}"
+            else:
+                full_prompt = f"以下是{img_count}张参考图片，请根据指令进行创作：{edit_prompt}"
             if aspect_ratio != "1:1":
                 full_prompt += f"\n\n输出图片的宽高比应为：{aspect_ratio}"
             
-            log.info(f"[Gemini Chat 图生图] 正在使用 {model_name} 编辑图像, 指令: {edit_prompt[:100]}...")
+            log.info(f"[Gemini Chat 图生图] 正在使用 {model_name} 编辑图像 ({img_count}张参考图), 指令: {edit_prompt[:100]}...")
             
-            # 构建多模态请求内容
-            contents = [
-                types.Part(
-                    inline_data=types.Blob(
-                        mime_type=reference_mime_type,
-                        data=reference_image
+            # 构建多模态请求内容：先放所有参考图，最后放文字提示
+            contents = []
+            for img_info in reference_images:
+                contents.append(
+                    types.Part(
+                        inline_data=types.Blob(
+                            mime_type=img_info.get("mime_type", "image/png"),
+                            data=img_info["data"]
+                        )
                     )
-                ),
-                types.Part(text=full_prompt),
-            ]
+                )
+            contents.append(types.Part(text=full_prompt))
             
             # 使用 generate_content 多模态接口
             def _sync_generate():
@@ -1450,28 +1472,29 @@ class GeminiImagenService:
     
     async def _edit_image_openai_format(
         self,
-        reference_image: bytes,
+        reference_images: List[dict],
         edit_prompt: str,
-        reference_mime_type: str,
         aspect_ratio: str,
         model_name: str,
     ) -> Optional[bytes]:
         """
         使用 OpenAI 兼容的 chat/completions API 进行图像编辑
+        支持多张参考图。
         """
         try:
             base_url = self._client["base_url"].rstrip("/")
             api_key = self._client["api_key"]
             
-            # 将参考图像转换为 base64
-            image_b64 = base64.b64encode(reference_image).decode('utf-8')
-            
             # 构建提示词
-            full_prompt = f"请根据以下指令修改这张图片：{edit_prompt}"
+            img_count = len(reference_images)
+            if img_count == 1:
+                full_prompt = f"请根据以下指令修改这张图片：{edit_prompt}"
+            else:
+                full_prompt = f"以下是{img_count}张参考图片，请根据指令进行创作：{edit_prompt}"
             if aspect_ratio != "1:1":
                 full_prompt += f"\n输出图片的宽高比应为：{aspect_ratio}"
             
-            log.info(f"[OpenAI格式 图生图] 正在使用 {model_name} 编辑图像, 指令: {edit_prompt[:100]}...")
+            log.info(f"[OpenAI格式 图生图] 正在使用 {model_name} 编辑图像 ({img_count}张参考图), 指令: {edit_prompt[:100]}...")
             
             # 构建请求
             headers = {
@@ -1479,23 +1502,28 @@ class GeminiImagenService:
                 "Content-Type": "application/json",
             }
             
+            # 构建 content 数组：先放所有参考图，最后放文字提示
+            content_parts = []
+            for img_info in reference_images:
+                image_b64 = base64.b64encode(img_info["data"]).decode('utf-8')
+                mime_type = img_info.get("mime_type", "image/png")
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{image_b64}"
+                    }
+                })
+            content_parts.append({
+                "type": "text",
+                "text": full_prompt
+            })
+            
             payload = {
                 "model": model_name,
                 "messages": [
                     {
                         "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{reference_mime_type};base64,{image_b64}"
-                                }
-                            },
-                            {
-                                "type": "text",
-                                "text": full_prompt
-                            }
-                        ]
+                        "content": content_parts
                     }
                 ],
                 "max_tokens": 4096,

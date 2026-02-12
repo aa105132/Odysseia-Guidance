@@ -14,7 +14,7 @@ import asyncio
 import aiohttp
 import json
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
 from src.chat.config import chat_config as app_config
@@ -87,6 +87,7 @@ class VideoGenerationService:
         duration: int = 5,
         image_data: Optional[bytes] = None,
         image_mime_type: Optional[str] = None,
+        reference_images: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[VideoResult]:
         """
         生成视频（支持文生视频和图生视频）
@@ -94,8 +95,11 @@ class VideoGenerationService:
         Args:
             prompt: 视频描述提示词
             duration: 视频时长（秒）
-            image_data: 可选的参考图片字节数据（图生视频模式）
-            image_mime_type: 图片 MIME 类型（如 "image/png"）
+            image_data: 可选的单张参考图片字节数据（向后兼容）
+            image_mime_type: 单张图片 MIME 类型（如 "image/png"，向后兼容）
+            reference_images: 可选的多张参考图片列表，每项形如：
+                {"data": bytes, "mime_type": "image/png"}
+                若提供该参数，将优先使用它；否则回退使用 image_data。
 
         Returns:
             成功时返回 VideoResult，失败时回 None
@@ -111,7 +115,27 @@ class VideoGenerationService:
         # 限制时长
         duration = min(max(1, duration), max_duration)
 
-        is_image_to_video = image_data is not None
+        # 统一处理单图/多图参考输入
+        normalized_reference_images: List[Dict[str, Any]] = []
+        if reference_images and isinstance(reference_images, list):
+            for img in reference_images:
+                if isinstance(img, dict) and img.get("data"):
+                    normalized_reference_images.append(
+                        {
+                            "data": img["data"],
+                            "mime_type": img.get("mime_type", "image/png"),
+                        }
+                    )
+        if not normalized_reference_images and image_data is not None:
+            normalized_reference_images.append(
+                {
+                    "data": image_data,
+                    "mime_type": image_mime_type or "image/png",
+                }
+            )
+
+        is_image_to_video = len(normalized_reference_images) > 0
+        ref_count = len(normalized_reference_images)
         mode_str = "图生视频" if is_image_to_video else "文生视频"
 
         # 根据模式选择模型：图生视频优先使用 I2V 专用模型，未配置时回退到通用模型
@@ -122,7 +146,10 @@ class VideoGenerationService:
         else:
             model_name = default_model
 
-        log.info(f"使用模型 {model_name} 生成视频 ({mode_str}), 时长: {duration}s, 格式: {video_format}")
+        log.info(
+            f"使用模型 {model_name} 生成视频 ({mode_str}), "
+            f"时长: {duration}s, 格式: {video_format}, 参考图数量: {ref_count}"
+        )
 
         try:
             base_url = self._client["base_url"].rstrip("/")
@@ -135,23 +162,36 @@ class VideoGenerationService:
 
             # 构建消息内容
             if is_image_to_video:
-                # 图生视频：构建多模态消息（图片 + 文本）
+                # 图生视频：构建多模态消息（多图 + 文本）
                 import base64 as b64_module
-                image_b64 = b64_module.b64encode(image_data).decode("utf-8")
-                mime = image_mime_type or "image/png"
-                
-                content_parts = [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime};base64,{image_b64}"
+
+                content_parts = []
+                for ref_img in normalized_reference_images:
+                    image_b64 = b64_module.b64encode(ref_img["data"]).decode("utf-8")
+                    mime = ref_img.get("mime_type", "image/png")
+                    content_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime};base64,{image_b64}"
+                            },
                         }
-                    },
+                    )
+
+                if ref_count == 1:
+                    text_prompt = f"请根据这张参考图片生成一个视频：{prompt}\n视频时长：约{duration}秒"
+                else:
+                    text_prompt = (
+                        f"请根据这{ref_count}张参考图片生成一个视频：{prompt}\n视频时长：约{duration}秒\n"
+                        f"要求：综合所有参考图的主体特征与风格，输出统一且连贯的动态画面。"
+                    )
+
+                content_parts.append(
                     {
                         "type": "text",
-                        "text": f"请根据这张图片生成一个视频：{prompt}\n视频时长：约{duration}秒"
+                        "text": text_prompt,
                     }
-                ]
+                )
                 user_content = content_parts
             else:
                 # 文生视频：纯文本消息

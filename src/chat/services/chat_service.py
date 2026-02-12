@@ -217,6 +217,7 @@ class ChatService:
                 guild_name=guild_name,
                 location_name=location_name,
                 model_name=current_model,  # 传递模型名称
+                discord_message=message,  # 传递Discord Message对象，用于工具调用时添加反应
                 user_id_for_settings=user_id_for_settings,  # 传递用于工具设置的用户ID
             )
 
