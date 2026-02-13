@@ -170,6 +170,17 @@ async def edit_image(
                         }
                     except Exception as e:
                         log.error(f"读取附件图片失败: {e}")
+        # 附件未命中时，尝试从消息文本/Embed 的 URL 提取图片（支持 webp）
+        try:
+            from src.chat.features.tools.utils.discord_image_utils import (
+                extract_image_from_message_url,
+            )
+
+            url_image = await extract_image_from_message_url(msg)
+            if url_image:
+                return url_image
+        except Exception as e:
+            log.warning(f"从消息 URL 提取图片失败: {e}")
         return None
     
     # 1. 尝试获取参考图片（优先级：emoji > sticker > avatar_user_ids/avatar_user_id > 消息附件 > 回复 > 历史）

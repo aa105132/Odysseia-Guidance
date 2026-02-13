@@ -9,6 +9,10 @@ Discord 图片提取辅助工具
 import logging
 import re
 import io
+import os
+import asyncio
+from urllib.parse import urlparse
+
 import aiohttp
 import discord
 from typing import Optional, Dict, Any, List, Tuple
@@ -17,6 +21,24 @@ log = logging.getLogger(__name__)
 
 # Discord 自定义表情正则：匹配 <:name:id> 或 <a:name:id>
 CUSTOM_EMOJI_PATTERN = re.compile(r'<a?:(\w+):(\d+)>')
+IMAGE_URL_PATTERN = re.compile(
+    r'(https?://[^\s\)\]\"\'<>]+\.(?:png|jpg|jpeg|gif|webp|bmp|svg|tiff|avif)(?:\?[^\s\)\]\"\'<>]*)?)',
+    re.IGNORECASE,
+)
+MARKDOWN_IMAGE_PATTERN = re.compile(r'!\[[^\]]*\]\((https?://[^\)]+)\)', re.IGNORECASE)
+
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "tiff", "avif"}
+MIME_TO_EXTENSION = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/bmp": "bmp",
+    "image/svg+xml": "svg",
+    "image/tiff": "tiff",
+    "image/avif": "avif",
+}
 
 
 def extract_emoji_ids_from_text(text: str) -> List[Tuple[str, str]]:
@@ -34,6 +56,176 @@ def extract_emoji_ids_from_text(text: str) -> List[Tuple[str, str]]:
     if not text:
         return []
     return CUSTOM_EMOJI_PATTERN.findall(text)
+
+
+def extract_image_urls_from_text(text: str) -> List[str]:
+    """
+    从文本中提取可能的图片 URL（支持 markdown 和纯链接）。
+    """
+    if not text:
+        return []
+
+    urls: List[str] = []
+    seen = set()
+
+    for match in MARKDOWN_IMAGE_PATTERN.finditer(text):
+        url = match.group(1).strip()
+        if url and url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    for match in IMAGE_URL_PATTERN.finditer(text):
+        url = match.group(1).strip()
+        if url and url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    return urls
+
+
+def _guess_filename_from_url(url: str, fallback_ext: str = "png") -> str:
+    parsed = urlparse(url)
+    basename = os.path.basename(parsed.path) or "reference_image"
+    if "." not in basename:
+        basename = f"{basename}.{fallback_ext}"
+    return basename
+
+
+def _normalize_image_content_type(content_type: str) -> str:
+    if not content_type:
+        return ""
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def _guess_mime_from_url(url: str) -> Optional[str]:
+    parsed = urlparse(url)
+    path = parsed.path.lower()
+    for ext in ALLOWED_IMAGE_EXTENSIONS:
+        if path.endswith(f".{ext}"):
+            if ext == "jpg":
+                return "image/jpeg"
+            if ext == "svg":
+                return "image/svg+xml"
+            return f"image/{ext}"
+    return None
+
+
+async def fetch_image_from_url(
+    url: str,
+    timeout_seconds: int = 20,
+    max_size_bytes: int = 20 * 1024 * 1024,
+) -> Optional[Dict[str, Any]]:
+    """
+    从 URL 下载图片，返回统一的图像数据结构。
+    """
+    if not url or not isinstance(url, str):
+        return None
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+                headers={"User-Agent": "OdysseiaDiscordBot/1.0"},
+            ) as resp:
+                if resp.status != 200:
+                    return None
+
+                content_length = resp.headers.get("Content-Length")
+                if content_length:
+                    try:
+                        if int(content_length) > max_size_bytes:
+                            log.warning(f"URL 图片过大，跳过: {url[:120]}")
+                            return None
+                    except ValueError:
+                        pass
+
+                content_type_raw = resp.headers.get("Content-Type", "")
+                content_type = _normalize_image_content_type(content_type_raw)
+                guessed_mime = _guess_mime_from_url(url)
+
+                # 部分 CDN 会返回 application/octet-stream，这里允许通过扩展名推断
+                if not content_type.startswith("image/"):
+                    if content_type != "application/octet-stream" or not guessed_mime:
+                        return None
+                    content_type = guessed_mime
+
+                data = await resp.read()
+                if not data:
+                    return None
+
+                if len(data) > max_size_bytes:
+                    log.warning(f"URL 图片下载后体积超限，跳过: {url[:120]}")
+                    return None
+
+                ext = MIME_TO_EXTENSION.get(content_type, "png")
+                filename = _guess_filename_from_url(url, fallback_ext=ext)
+
+                return {
+                    "data": data,
+                    "mime_type": content_type if content_type.startswith("image/") else guessed_mime or "image/png",
+                    "filename": filename,
+                }
+    except asyncio.TimeoutError:
+        log.warning(f"下载 URL 图片超时: {url[:120]}")
+        return None
+    except Exception as e:
+        log.warning(f"下载 URL 图片失败: {e}, URL: {url[:120]}")
+        return None
+
+
+async def extract_image_from_message_url(
+    message: Optional[discord.Message],
+) -> Optional[Dict[str, Any]]:
+    """
+    从消息文本和 Embed 中提取第一张 URL 图片并下载。
+    """
+    if not message:
+        return None
+
+    candidate_urls: List[str] = []
+    seen = set()
+
+    def _append_url(url: Optional[str]):
+        if not url:
+            return
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return
+        if url not in seen:
+            seen.add(url)
+            candidate_urls.append(url)
+
+    if message.content:
+        for url in extract_image_urls_from_text(message.content):
+            _append_url(url)
+
+    for embed in getattr(message, "embeds", []) or []:
+        if getattr(embed, "image", None) and embed.image.url:
+            _append_url(embed.image.url)
+        if getattr(embed, "thumbnail", None) and embed.thumbnail.url:
+            _append_url(embed.thumbnail.url)
+        if getattr(embed, "url", None):
+            for url in extract_image_urls_from_text(embed.url):
+                _append_url(url)
+        if getattr(embed, "description", None):
+            for url in extract_image_urls_from_text(embed.description):
+                _append_url(url)
+        for field in getattr(embed, "fields", []) or []:
+            if getattr(field, "value", None):
+                for url in extract_image_urls_from_text(field.value):
+                    _append_url(url)
+
+    if not candidate_urls:
+        return None
+
+    for url in candidate_urls:
+        image = await fetch_image_from_url(url)
+        if image:
+            log.info(f"已从消息 URL 提取图片: {url[:120]}")
+            return image
+
+    return None
 
 
 async def auto_extract_emoji_from_message(
