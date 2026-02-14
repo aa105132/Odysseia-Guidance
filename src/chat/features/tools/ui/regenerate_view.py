@@ -243,6 +243,7 @@ class RegenerateView(discord.ui.View):
         # 获取 bot 实例
         if hasattr(interaction, "client"):
             params["bot"] = interaction.client
+        params["request_user"] = interaction.user
         
         # 不传入 message（因为这是按钮交互，不是原始消息）
         params.pop("message", None)
@@ -312,6 +313,7 @@ class RegenerateView(discord.ui.View):
                 "channel": channel,
                 "user_id": str(clicker_user_id),
                 "bot": interaction.client if hasattr(interaction, "client") else None,
+                "request_user": interaction.user,
             }
             result = await generate_image(**params)
         else:
@@ -423,6 +425,7 @@ class RegenerateView(discord.ui.View):
 
         if hasattr(interaction, "client"):
             params["bot"] = interaction.client
+        params["request_user"] = interaction.user
 
         params.pop("message", None)
         params.pop("original_success_message", None)
@@ -626,6 +629,7 @@ class SlashCommandRegenerateView(discord.ui.View):
             "channel": channel,
             "user_id": str(clicker_user_id),
             "bot": interaction.client if hasattr(interaction, "client") else None,
+            "request_user": interaction.user,
         }
         
         result = await generate_image(**params)
@@ -692,6 +696,7 @@ class SlashCommandRegenerateView(discord.ui.View):
                 "channel": channel,
                 "user_id": str(clicker_user_id),
                 "bot": interaction.client if hasattr(interaction, "client") else None,
+                "request_user": interaction.user,
             }
             result = await generate_image(**params)
         else:
@@ -799,6 +804,7 @@ class SlashCommandRegenerateView(discord.ui.View):
             "channel": channel,
             "user_id": str(clicker_user_id),
             "bot": interaction.client if hasattr(interaction, "client") else None,
+            "request_user": interaction.user,
         }
 
         # 如果有保存的参考图片数据,使用图生视频模式（兼容单图与多图）

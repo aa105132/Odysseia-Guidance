@@ -20,6 +20,21 @@ GENERATING_EMOJI = "🎬"  # 正在生成
 SUCCESS_EMOJI = "✅"      # 生成成功
 FAILED_EMOJI = "❌"       # 生成失败
 
+def _set_embed_author(embed: discord.Embed, message: Optional[discord.Message], request_user: Optional[discord.abc.User]) -> None:
+    """为 Embed 设置作者信息，优先使用显式传入的请求用户。"""
+    author_user = request_user
+    if not author_user and message and hasattr(message, "author") and message.author:
+        author_user = message.author
+
+    if not author_user:
+        return
+
+    author_name = getattr(author_user, "display_name", None) or getattr(author_user, "name", None)
+    author_avatar = getattr(author_user, "display_avatar", None)
+    author_icon_url = getattr(author_avatar, "url", None) if author_avatar else None
+
+    if author_name:
+        embed.set_author(name=author_name, icon_url=author_icon_url)
 
 async def generate_video(
     prompt: str,
@@ -457,11 +472,7 @@ async def generate_video(
                     color=0x2b2d31,
                 )
                 # 设置请求者头像和名称
-                if message and hasattr(message, 'author') and message.author:
-                    prompt_embed.set_author(
-                        name=message.author.display_name,
-                        icon_url=message.author.display_avatar.url if message.author.display_avatar else None,
-                    )
+                _set_embed_author(prompt_embed, message, kwargs.get("request_user"))
                 prompt_embed.add_field(
                     name="视频提示词",
                     value=f"```\n{prompt[:1016]}\n```",
