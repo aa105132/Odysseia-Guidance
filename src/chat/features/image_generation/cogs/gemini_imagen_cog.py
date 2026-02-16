@@ -478,7 +478,7 @@ class GeminiImagenCog(commands.Cog):
                 else:
                     embed.set_footer(text=f"消耗 {actual_cost} 月光币 | 余额: {new_balance} | 模型: {edit_imagen_model}")
                 
-                # 创建重新生成按钮（图生图重新生成时退化为普通图片生成，因为原图不可再用）
+                # 创建重新生成按钮（保留参考图数据，确保继续走图生图链路）
                 from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView
                 
                 regenerate_view = SlashCommandRegenerateView(
@@ -489,6 +489,11 @@ class GeminiImagenCog(commands.Cog):
                         "number_of_images": count,
                         "resolution": resolution,
                         "content_rating": content_rating,
+                        # 保存参考图，供“重新生成”继续执行图生图
+                        "reference_image_data": reference_image_bytes,
+                        "reference_image_mime_type": reference_mime_type,
+                        "reference_images_data": [reference_image_bytes],
+                        "reference_images_mime_types": [reference_mime_type],
                     },
                     user_id=user_id,
                 )
