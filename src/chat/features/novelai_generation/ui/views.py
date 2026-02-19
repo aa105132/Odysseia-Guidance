@@ -1311,10 +1311,294 @@ async def _slash_regenerate_novelai(
     log.info(f"斜杠命令 NovelAI 重新生成成功, 种子: {result.seed}")
 
 
+class ImagenEditPromptModal(discord.ui.Modal, title="修改提示词重新生成"):
+    """从 Imagen 切换结果修改提示词的模态框"""
+
+    prompt_input = discord.ui.TextInput(
+        label="提示词",
+        style=discord.TextStyle.paragraph,
+        placeholder="输入新的提示词...",
+        max_length=2000,
+        required=True,
+    )
+
+    def __init__(
+        self,
+        current_prompt: str,
+        user_id: int,
+        resolution: str = "default",
+        content_rating: str = "nsfw",
+    ):
+        super().__init__()
+        self.prompt_input.default = current_prompt
+        self._user_id = user_id
+        self._resolution = resolution
+        self._content_rating = content_rating
+
+    async def on_submit(self, interaction: discord.Interaction):
+        new_prompt = self.prompt_input.value.strip()
+        if not new_prompt:
+            await interaction.response.send_message("提示词不能为空哦！", ephemeral=True)
+            return
+
+        await interaction.response.defer(thinking=True)
+        try:
+            await _slash_regenerate_with_imagen(
+                interaction=interaction,
+                prompt=new_prompt,
+                user_id=self._user_id,
+                resolution=self._resolution,
+                content_rating=self._content_rating,
+            )
+        except Exception as e:
+            log.error(f"修改提示词 Imagen 重新生成失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"重新生成失败: {str(e)[:200]}", ephemeral=True)
+            except Exception:
+                pass
+
+
+def _build_imagen_model_options(current_resolution: str = "default", current_rating: str = "nsfw") -> list:
+    """构建 Imagen 分辨率×内容分级选项列表"""
+    options = []
+    combinations = [
+        ("default", "sfw", "标准 | SFW"),
+        ("default", "nsfw", "标准 | NSFW"),
+        ("2k", "sfw", "2K 高清 | SFW"),
+        ("2k", "nsfw", "2K 高清 | NSFW"),
+        ("4k", "sfw", "4K 超清 | SFW"),
+        ("4k", "nsfw", "4K 超清 | NSFW"),
+    ]
+    for resolution, rating, label in combinations:
+        value = f"{resolution}|{rating}"
+        is_default = (resolution == current_resolution and rating == current_rating)
+        options.append(
+            discord.SelectOption(
+                label=label,
+                value=value,
+                default=is_default,
+                description=f"分辨率: {resolution.upper()}, 内容: {rating.upper()}"
+            )
+        )
+    return options
+
+
+class ImagenSwitchResultView(discord.ui.View):
+    """从 NovelAI 切换到 Imagen 后的结果交互按钮"""
+
+    def __init__(
+        self,
+        prompt: str,
+        user_id: int,
+        cost: int,
+        resolution: str = "default",
+        content_rating: str = "nsfw",
+        timeout: float = 600,
+    ):
+        super().__init__(timeout=timeout)
+        self._prompt = prompt
+        self._user_id = user_id
+        self._cost = cost
+        self._resolution = resolution
+        self._content_rating = content_rating
+
+        # 添加模型选择下拉菜单
+        model_options = _build_imagen_model_options(resolution, content_rating)
+        if model_options:
+            self._model_select = discord.ui.Select(
+                placeholder="更换模型重新生成",
+                options=model_options,
+                min_values=1,
+                max_values=1,
+                row=1,
+            )
+            self._model_select.callback = self._on_model_select
+            self.add_item(self._model_select)
+
+    @discord.ui.button(label="重新生成", style=discord.ButtonStyle.primary, row=0)
+    async def regenerate_imagen_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """使用 Imagen 重新生成"""
+        if interaction.user.id != self._user_id:
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        await interaction.response.defer(thinking=True)
+        try:
+            await _slash_regenerate_with_imagen(
+                interaction=interaction,
+                prompt=self._prompt,
+                user_id=self._user_id,
+                resolution=self._resolution,
+                content_rating=self._content_rating,
+            )
+        except Exception as e:
+            log.error(f"Imagen 重新生成失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"重新生成失败: {str(e)[:200]}", ephemeral=True)
+            except Exception:
+                pass
+
+    @discord.ui.button(label="修改提示词", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_prompt_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """弹出 Modal 让用户编辑提示词"""
+        if interaction.user.id != self._user_id:
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        modal = ImagenEditPromptModal(
+            current_prompt=self._prompt,
+            user_id=self._user_id,
+            resolution=self._resolution,
+            content_rating=self._content_rating,
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="切换到 NovelAI", style=discord.ButtonStyle.success, row=0)
+    async def switch_to_novelai_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """切换回 NovelAI 重新生成"""
+        if interaction.user.id != self._user_id:
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        await interaction.response.defer(thinking=True)
+        try:
+            # 使用 AI 将自然语言 prompt 转换为 NovelAI Tag
+            from src.chat.features.novelai_generation.tag_rules import get_rewrite_prompt
+            import google.generativeai as genai
+            from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
+
+            api_key = GEMINI_IMAGEN_CONFIG.get("GEMINI_API_KEY", "")
+            if api_key:
+                model = genai.GenerativeModel("gemini-2.0-flash")
+                rewrite_prompt_text = get_rewrite_prompt(self._prompt)
+                response = await model.generate_content_async(rewrite_prompt_text)
+                nai_prompt = response.text.strip()
+            else:
+                # 如果没有 API Key，直接用原始 prompt
+                nai_prompt = self._prompt
+
+            # 生成 NovelAI 图片
+            result = await novelai_service.generate_image(
+                prompt=nai_prompt,
+                negative_prompt="lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
+                width=832,
+                height=1216,
+                steps=28,
+                scale=5.0,
+                sampler="k_euler_ancestral",
+                seed=None,
+            )
+
+            if result is None:
+                await interaction.followup.send("NovelAI 图片生成失败，请稍后重试。", ephemeral=True)
+                return
+
+            image_data, seed_used, cost_used = result
+
+            # 扣费
+            if cost_used > 0:
+                try:
+                    await coin_service.remove_coins(
+                        self._user_id, cost_used, f"NAI生图(切换): {nai_prompt[:25]}..."
+                    )
+                except Exception as e:
+                    log.error(f"扣除月光币失败: {e}")
+
+            # 构建 Embed
+            embed = discord.Embed(
+                title="NovelAI 图片生成（从 Imagen 切换）",
+                color=0xE91E63,
+            )
+            embed.set_author(
+                name=interaction.user.display_name,
+                icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+            )
+            embed.add_field(
+                name="提示词",
+                value=f"```\n{nai_prompt[:1016]}\n```",
+                inline=False,
+            )
+            embed.set_footer(text=f"Seed: {seed_used} | 消耗 {cost_used} 月光币 | 引擎: NovelAI")
+
+            image_file = discord.File(
+                io.BytesIO(image_data),
+                filename="nai_generated.png",
+                spoiler=True,
+            )
+
+            # 带交互按钮
+            view = SlashNovelAIResultView(
+                prompt=nai_prompt,
+                negative_prompt="lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
+                width=832,
+                height=1216,
+                steps=28,
+                scale=5.0,
+                sampler="k_euler_ancestral",
+                preset_name=None,
+                user_id=self._user_id,
+                cost=cost_used,
+            )
+
+            msg = await interaction.followup.send(embed=embed, file=image_file, view=view)
+            view.message = msg
+            log.info("已从 Imagen 切换回 NovelAI 生成图片")
+
+        except Exception as e:
+            log.error(f"切换到 NovelAI 失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"切换失败: {str(e)[:200]}", ephemeral=True)
+            except Exception:
+                pass
+
+    async def _on_model_select(self, interaction: discord.Interaction):
+        """处理模型选择下拉菜单的回调"""
+        if interaction.user.id != self._user_id:
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        await interaction.response.defer(thinking=True)
+
+        selected_value = self._model_select.values[0]  # 格式: "resolution|rating"
+        resolution, rating = selected_value.split("|")
+
+        try:
+            await _slash_regenerate_with_imagen(
+                interaction=interaction,
+                prompt=self._prompt,
+                user_id=self._user_id,
+                resolution=resolution,
+                content_rating=rating,
+            )
+        except Exception as e:
+            log.error(f"更换模型 Imagen 重新生成失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"重新生成失败: {str(e)[:200]}", ephemeral=True)
+            except Exception:
+                pass
+
+    async def on_timeout(self):
+        """超时后禁用所有按钮"""
+        for item in self.children:
+            if isinstance(item, (discord.ui.Button, discord.ui.Select)):
+                item.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
 async def _slash_regenerate_with_imagen(
     interaction: discord.Interaction,
     prompt: str,
     user_id: int,
+    resolution: str = "default",
+    content_rating: str = "nsfw",
 ):
     """内部函数：斜杠命令使用 Gemini Imagen 重新生成图片"""
     from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
@@ -1340,8 +1624,8 @@ async def _slash_regenerate_with_imagen(
         prompt=prompt,
         negative_prompt=None,
         aspect_ratio="3:4",
-        resolution="default",
-        content_rating="nsfw",
+        resolution=resolution,
+        content_rating=content_rating,
     )
 
     if not result:
@@ -1371,17 +1655,28 @@ async def _slash_regenerate_with_imagen(
         value=f"```\n{prompt[:1016]}\n```",
         inline=False,
     )
-    embed.set_footer(text=f"消耗 {cost_per_image} 月光币 | 引擎: Gemini Imagen")
+    # 显示模型信息
+    model_info = f"分辨率: {resolution.upper()}" if resolution != "default" else "标准分辨率"
+    embed.set_footer(text=f"消耗 {cost_per_image} 月光币 | {model_info} | {content_rating.upper()} | 引擎: Gemini Imagen")
 
     image_file = discord.File(
         io.BytesIO(result),
         filename="imagen_generated.png",
         spoiler=True,
     )
-    # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
-    await interaction.followup.send(embed=embed, file=image_file)
-    log.info("斜杠命令已切换到 Imagen 生成图片")
+    # 带交互按钮
+    view = ImagenSwitchResultView(
+        prompt=prompt,
+        user_id=user_id,
+        cost=cost_per_image,
+        resolution=resolution,
+        content_rating=content_rating,
+    )
+
+    msg = await interaction.followup.send(embed=embed, file=image_file, view=view)
+    view.message = msg
+    log.info(f"斜杠命令已切换到 Imagen 生成图片 (分辨率: {resolution}, 分级: {content_rating})")
 
 
 # ================================================================
