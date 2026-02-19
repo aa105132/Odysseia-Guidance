@@ -1,7 +1,7 @@
 import io
 import logging
 from PIL import Image
-from typing import Tuple
+from typing import Tuple, List, Dict, Any
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +15,88 @@ HIGH_QUALITY = 95  # 用于10MB以下图片的保存质量
 INITIAL_QUALITY = 85  # 用于10MB以上图片的初始保存质量
 MIN_QUALITY = 50  # 最低可接受质量
 QUALITY_STEP = 10  # 每次迭代降低的质量值
+
+
+def _calculate_sample_indices(total_frames: int, max_frames: int) -> List[int]:
+    """按均匀抽样策略计算帧索引，确保首尾帧优先保留。"""
+    safe_total_frames = max(1, int(total_frames))
+    safe_max_frames = max(1, int(max_frames))
+
+    if safe_total_frames <= safe_max_frames:
+        return list(range(safe_total_frames))
+
+    if safe_max_frames == 1:
+        return [0]
+
+    # 使用线性插值均匀抽样，天然包含首帧和尾帧
+    sampled = [
+        int(i * (safe_total_frames - 1) / (safe_max_frames - 1))
+        for i in range(safe_max_frames)
+    ]
+
+    # 去重，防止极端情况下出现重复索引
+    unique_indices: List[int] = []
+    seen = set()
+    for idx in sampled:
+        if idx not in seen:
+            unique_indices.append(idx)
+            seen.add(idx)
+
+    if unique_indices[-1] != safe_total_frames - 1:
+        unique_indices[-1] = safe_total_frames - 1
+
+    return unique_indices
+
+
+def extract_image_frames_for_ai(
+    image_bytes: bytes, mime_type: str = "", max_gif_frames: int = 4
+) -> Tuple[List[Image.Image], Dict[str, Any]]:
+    """
+    将输入图片转换为适合模型识别的帧列表。
+
+    - 静态图: 返回 1 帧。
+    - 动态图（GIF/APNG）: 按上限抽取关键帧并返回多帧。
+    """
+    if not image_bytes:
+        raise ValueError("输入图片为空，无法提取帧。")
+
+    safe_max_frames = max(1, int(max_gif_frames or 1))
+
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        source_format = (img.format or "").upper()
+        total_frames = max(1, int(getattr(img, "n_frames", 1) or 1))
+        is_animated = bool(getattr(img, "is_animated", False))
+
+        lower_mime_type = (mime_type or "").lower()
+        should_split_frames = (lower_mime_type == "image/gif" or is_animated) and total_frames > 1
+
+        frame_indices = (
+            _calculate_sample_indices(total_frames, safe_max_frames)
+            if should_split_frames
+            else [0]
+        )
+
+        extracted_frames: List[Image.Image] = []
+        for idx in frame_indices:
+            try:
+                img.seek(idx)
+                frame = img.copy()
+                if frame.mode != "RGBA":
+                    frame = frame.convert("RGBA")
+                extracted_frames.append(frame)
+            except Exception as e:
+                log.warning(f"提取第 {idx} 帧失败: {e}")
+
+        if not extracted_frames:
+            raise ValueError("未能从图片中提取任何可用帧。")
+
+        return extracted_frames, {
+            "is_animated": should_split_frames,
+            "total_frames": total_frames,
+            "sampled_frames": len(extracted_frames),
+            "frame_indices": frame_indices,
+            "source_format": source_format,
+        }
 
 
 def sanitize_image(image_bytes: bytes) -> Tuple[bytes, str]:

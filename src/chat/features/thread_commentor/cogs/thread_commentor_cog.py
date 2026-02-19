@@ -4,6 +4,8 @@ import logging
 import discord
 from discord.ext import commands
 import asyncio
+from datetime import datetime, timezone
+from typing import Optional
 
 from src.chat.features.thread_commentor.services.thread_commentor_service import (
     thread_commentor_service,
@@ -20,6 +22,192 @@ class ThreadCommentorCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._auto_speaker_task: Optional[asyncio.Task] = asyncio.create_task(
+            self._auto_speaker_loop()
+        )
+
+    def cog_unload(self):
+        if self._auto_speaker_task and not self._auto_speaker_task.done():
+            self._auto_speaker_task.cancel()
+
+    async def _fetch_recent_messages(
+        self, thread: discord.Thread, limit: int
+    ) -> list[discord.Message]:
+        """拉取帖子最近消息（按时间升序）。"""
+        messages = [message async for message in thread.history(limit=limit)]
+        messages.reverse()
+        return messages
+
+    def _analyze_thread_activity(
+        self, recent_messages: list[discord.Message]
+    ) -> dict[str, Optional[datetime]]:
+        """分析最近聊天活跃度，提取人类/机器人最后发言时间。"""
+        last_human_message_at: Optional[datetime] = None
+        last_human_user_id: Optional[int] = None
+        last_bot_message_at: Optional[datetime] = None
+
+        for message in reversed(recent_messages):
+            if message.author.bot:
+                if (
+                    message.author.id == self.bot.user.id
+                    and last_bot_message_at is None
+                ):
+                    last_bot_message_at = message.created_at
+                continue
+
+            if last_human_message_at is None:
+                last_human_message_at = message.created_at
+                last_human_user_id = message.author.id
+
+            if last_human_message_at and last_bot_message_at:
+                break
+
+        return {
+            "last_human_message_at": last_human_message_at,
+            "last_human_user_id": last_human_user_id,
+            "last_bot_message_at": last_bot_message_at,
+        }
+
+    async def _process_auto_speaker_for_thread(self, thread_id: int):
+        """处理单个帖子是否需要自动发言。"""
+        thread = self.bot.get_channel(thread_id)
+        if thread is None:
+            try:
+                fetched_channel = await self.bot.fetch_channel(thread_id)
+                thread = fetched_channel if isinstance(fetched_channel, discord.Thread) else None
+            except discord.NotFound:
+                log.warning(f"[ThreadCommentorCog] 自动发言配置的帖子不存在: {thread_id}")
+                return
+            except Exception as e:
+                log.error(
+                    f"[ThreadCommentorCog] 拉取帖子 {thread_id} 失败: {e}",
+                    exc_info=True,
+                )
+                return
+
+        if not isinstance(thread, discord.Thread):
+            return
+
+        if thread.archived or thread.locked:
+            return
+
+        if self.bot.user and thread.owner_id == self.bot.user.id:
+            return
+
+        context_limit = max(
+            5,
+            int(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_CONTEXT_MESSAGE_LIMIT", 20)),
+        )
+        history_limit = max(context_limit * 2, 40)
+        recent_messages = await self._fetch_recent_messages(thread, history_limit)
+        if not recent_messages:
+            return
+
+        activity = self._analyze_thread_activity(recent_messages)
+        last_human_message_at = activity["last_human_message_at"]
+        if last_human_message_at is None:
+            return
+
+        now_utc = datetime.now(timezone.utc)
+        last_bot_message_at = activity["last_bot_message_at"]
+
+        message_interval = max(
+            60,
+            int(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_MESSAGE_INTERVAL_SECONDS", 1800)),
+        )
+        idle_trigger = max(
+            300,
+            int(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_IDLE_TRIGGER_SECONDS", 7200)),
+        )
+        idle_reminder = max(
+            300,
+            int(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_IDLE_REMINDER_SECONDS", 3600)),
+        )
+
+        seconds_since_human = (now_utc - last_human_message_at).total_seconds()
+        seconds_since_bot = (
+            (now_utc - last_bot_message_at).total_seconds()
+            if last_bot_message_at
+            else None
+        )
+
+        regular_due = seconds_since_bot is None or seconds_since_bot >= message_interval
+        idle_due = seconds_since_human >= idle_trigger and (
+            seconds_since_bot is None or seconds_since_bot >= idle_reminder
+        )
+
+        if seconds_since_human >= idle_trigger:
+            if not idle_due:
+                return
+            is_idle_call = True
+        else:
+            if not regular_due:
+                return
+            is_idle_call = False
+
+        idle_minutes = int(seconds_since_human // 60)
+        target_user_id = activity.get("last_human_user_id")
+        target_user_mention = f"<@{target_user_id}>" if target_user_id else None
+
+        auto_message = await thread_commentor_service.generate_auto_thread_message(
+            thread=thread,
+            recent_messages=recent_messages,
+            is_idle_call=is_idle_call,
+            idle_minutes=idle_minutes,
+            target_user_mention=target_user_mention,
+        )
+        if not auto_message:
+            return
+
+        await thread.send(auto_message)
+        mode = "冷场召回" if is_idle_call else "常规暖聊"
+        log.info(
+            f"[ThreadCommentorCog] 已在帖子 '{thread.name}' 发送自动发言（{mode}）。"
+        )
+
+    async def _run_auto_speaker_cycle(self):
+        """执行一轮自动发言检查。"""
+        if not THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_ENABLED", False):
+            return
+
+        thread_ids = set(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_THREAD_IDS", set()))
+        if not thread_ids:
+            return
+
+        for thread_id in thread_ids:
+            try:
+                await self._process_auto_speaker_for_thread(int(thread_id))
+            except Exception as e:
+                log.error(
+                    f"[ThreadCommentorCog] 自动发言处理帖子 {thread_id} 失败: {e}",
+                    exc_info=True,
+                )
+
+    async def _auto_speaker_loop(self):
+        """后台自动发言轮询任务。"""
+        await self.bot.wait_until_ready()
+        log.info("[ThreadCommentorCog] 自动发言后台任务已启动。")
+
+        while not self.bot.is_closed():
+            try:
+                await self._run_auto_speaker_cycle()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.error(
+                    f"[ThreadCommentorCog] 自动发言后台轮询失败: {e}",
+                    exc_info=True,
+                )
+
+            check_interval = max(
+                30,
+                int(
+                    THREAD_COMMENTOR_CONFIG.get(
+                        "AUTO_CHAT_CHECK_INTERVAL_SECONDS", 300
+                    )
+                ),
+            )
+            await asyncio.sleep(check_interval)
 
     async def handle_new_thread_comment(self, thread: discord.Thread):
         """

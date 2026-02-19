@@ -2,14 +2,17 @@
 
 import logging
 import discord
-from typing import Optional
+from typing import Optional, List
 import sqlite3
 import json
 import os
 
 from src import config
 from src.chat.services.gemini_service import gemini_service
-from src.chat.config.thread_prompts import get_random_praise_prompt
+from src.chat.config.thread_prompts import (
+    get_random_praise_prompt,
+    get_random_auto_chat_prompt,
+)
 from src.chat.config.prompts import (
     PROMPT_CONFIG,
 )  # <--- 修正：从新的位置导入 PROMPT_CONFIG
@@ -233,6 +236,141 @@ class ThreadCommentorService:
         except Exception as e:
             log.error(
                 f"为帖子 '{thread.name}' (ID: {thread.id}) 生成评价时发生意外错误: {e}",
+                exc_info=True,
+            )
+            return None
+
+    def _format_recent_messages_for_prompt(
+        self, recent_messages: List[discord.Message], limit: int
+    ) -> str:
+        """将最近消息格式化为可供模型理解的上下文文本。"""
+        selected_messages = recent_messages[-limit:] if limit > 0 else recent_messages
+        context_lines: List[str] = []
+
+        for message in selected_messages:
+            content = (message.content or "").strip()
+            if not content:
+                if message.attachments:
+                    content = f"[发送了 {len(message.attachments)} 个附件]"
+                elif message.embeds:
+                    content = f"[发送了 {len(message.embeds)} 个嵌入内容]"
+                else:
+                    continue
+
+            if len(content) > 220:
+                content = content[:220] + "..."
+
+            author_name = getattr(message.author, "display_name", None) or getattr(
+                message.author, "name", "未知用户"
+            )
+            role_label = "机器人" if message.author.bot else "成员"
+            context_lines.append(f"{role_label} {author_name}: {content}")
+
+        if not context_lines:
+            return "最近没有可用的聊天内容。"
+
+        return "\n".join(context_lines)
+
+    async def generate_auto_thread_message(
+        self,
+        thread: discord.Thread,
+        recent_messages: List[discord.Message],
+        is_idle_call: bool = False,
+        idle_minutes: int = 0,
+        target_user_mention: Optional[str] = None,
+    ) -> Optional[str]:
+        """基于帖子上下文生成自动暖场或冷场召回发言。"""
+        try:
+            # 若帖主明确禁用暖贴，则尊重其偏好
+            if thread.owner_id and await coin_service.has_withered_sunflower(thread.owner_id):
+                log.info(
+                    f"帖子 '{thread.name}' 的作者禁用了暖贴功能，跳过自动发言。"
+                )
+                return None
+
+            if thread.owner_id and await coin_service.blocks_thread_replies(thread.owner_id):
+                log.info(
+                    f"帖子 '{thread.name}' 的作者禁用了帖子回复，跳过自动发言。"
+                )
+                return None
+
+            context_limit = int(
+                chat_config.THREAD_COMMENTOR_CONFIG.get(
+                    "AUTO_CHAT_CONTEXT_MESSAGE_LIMIT", 20
+                )
+            )
+            formatted_context = self._format_recent_messages_for_prompt(
+                recent_messages, context_limit
+            )
+
+            parent_name = thread.parent.name if thread.parent else "未知版区"
+            tags = ", ".join([tag.name for tag in thread.applied_tags]) or "无"
+
+            target_hint = (
+                f"如果语气自然，可以轻轻点名 {target_user_mention} 一起聊，但不要强制@所有人。"
+                if target_user_mention
+                else "没有合适点名对象时，使用自然的群体邀请语即可，不要生硬@人。"
+            )
+            task_prompt = get_random_auto_chat_prompt(is_idle_call).format(
+                thread_title=thread.name,
+                idle_minutes=max(1, int(idle_minutes)),
+                target_hint=target_hint,
+            )
+
+            core_persona = get_thread_commentor_persona()
+            conversation_history = [
+                {
+                    "role": "user",
+                    "parts": [PROMPT_CONFIG["default"]["JAILBREAK_USER_PROMPT"]],
+                },
+                {
+                    "role": "model",
+                    "parts": [PROMPT_CONFIG["default"]["JAILBREAK_MODEL_RESPONSE"]],
+                },
+                {"role": "user", "parts": [core_persona]},
+                {"role": "model", "parts": ["好的，我是月月，已经准备好了"]},
+                {"role": "user", "parts": [task_prompt]},
+                {
+                    "role": "model",
+                    "parts": ["明白了，我会以自然的聊天语气接住话题。"],
+                },
+            ]
+
+            # 注入最终指令到最后一条 model 消息
+            beijing_tz = timezone(timedelta(hours=8))
+            current_beijing_time = datetime.now(beijing_tz).strftime(
+                "%Y年%m月%d日 %H:%M"
+            )
+            final_injection_content = PROMPT_CONFIG["default"][
+                "JAILBREAK_FINAL_INSTRUCTION"
+            ].format(
+                guild_name=thread.guild.name,
+                location_name=parent_name,
+                current_time=current_beijing_time,
+            )
+
+            last_model_message = conversation_history[-1]
+            if last_model_message["role"] == "model" and last_model_message["parts"]:
+                last_model_message["parts"][0] += f" {final_injection_content}"
+
+            thread_context = (
+                f"帖子标题: {thread.name}\n"
+                f"所在版区: {parent_name}\n"
+                f"标签: {tags}\n"
+                f"最近聊天记录:\n{formatted_context}"
+            )
+            conversation_history.append({"role": "user", "parts": [thread_context]})
+
+            generated_text = await gemini_service.generate_thread_praise(
+                conversation_history=conversation_history
+            )
+            if not generated_text:
+                return None
+
+            return replace_emojis(generated_text)
+        except Exception as e:
+            log.error(
+                f"为帖子 '{thread.name}' 生成自动发言时出错: {e}",
                 exc_info=True,
             )
             return None

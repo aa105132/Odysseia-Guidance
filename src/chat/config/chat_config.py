@@ -7,6 +7,14 @@
 import os
 from src.config import _parse_ids
 
+
+def _parse_int_env(key: str, default: int) -> int:
+    """安全解析整数环境变量，解析失败时回退默认值。"""
+    try:
+        return int(os.getenv(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
 # --- Chat 功能总开关 ---
 CHAT_ENABLED = os.getenv("CHAT_ENABLED", "False").lower() == "true"
 
@@ -508,6 +516,31 @@ FORUM_SYNC_DELAY_SECONDS = 30
 # --- 帖子评价功能 ---
 THREAD_COMMENTOR_CONFIG = {
     "INITIAL_DELAY_SECONDS": 600,  # 暖贴功能的初始延迟（秒）
+    # 自动发言开关（按帖子ID轮询）
+    "AUTO_CHAT_ENABLED": os.getenv("THREAD_AUTO_SPEAKER_ENABLED", "false").lower()
+    == "true",
+    # 自动发言目标帖子ID集合（由 Dashboard 配置）
+    "AUTO_CHAT_THREAD_IDS": _parse_ids("THREAD_AUTO_SPEAKER_THREAD_IDS"),
+    # 后台轮询间隔（秒）
+    "AUTO_CHAT_CHECK_INTERVAL_SECONDS": _parse_int_env(
+        "THREAD_AUTO_SPEAKER_CHECK_INTERVAL_SECONDS", 300
+    ),
+    # 同一帖子常规暖聊最小间隔（秒）
+    "AUTO_CHAT_MESSAGE_INTERVAL_SECONDS": _parse_int_env(
+        "THREAD_AUTO_SPEAKER_MESSAGE_INTERVAL_SECONDS", 1800
+    ),
+    # 冷场阈值：超过该时间无人发言会触发喊人（秒）
+    "AUTO_CHAT_IDLE_TRIGGER_SECONDS": _parse_int_env(
+        "THREAD_AUTO_SPEAKER_IDLE_TRIGGER_SECONDS", 7200
+    ),
+    # 冷场提醒间隔（秒），防止反复刷屏
+    "AUTO_CHAT_IDLE_REMINDER_SECONDS": _parse_int_env(
+        "THREAD_AUTO_SPEAKER_IDLE_REMINDER_SECONDS", 3600
+    ),
+    # 自动发言构建上下文时读取的历史消息数量
+    "AUTO_CHAT_CONTEXT_MESSAGE_LIMIT": _parse_int_env(
+        "THREAD_AUTO_SPEAKER_CONTEXT_MESSAGE_LIMIT", 20
+    ),
 }
 
 # --- 好感度系统 ---
@@ -727,6 +760,14 @@ WARMUP_MESSAGES = {
     "consent_prompts": [
         "你正在刷群,像一个普通群友一样,偶然看到了 **{user_nickname}** 的新帖子。你的任务是模仿一个真实群友的语气,自然地去捧场。**核心要求:**请对帖子的内容给出一个**整体的、总结性的**夸赞或感想,**绝对不要逐条分析或引用原文**。你的回复应该简短、口语化,就像一条真实的朋友圈评论。别忘了用傲娇的方式号召大家给帖子点赞。"
     ],
+    "auto_chat_prompts": [
+        "你正在持续关注帖子《{thread_title}》。请基于最近聊天上下文，用月月的人设发一条自然、口语化的暖场回复（2-5句）。要顺着话题往下聊，禁止逐条复读原文。",
+        "这是社区里的持续讨论串《{thread_title}》。请结合上下文，用月月风格写一条轻松可爱的互动回复（2-5句），目标是让大家更愿意继续聊。"
+    ],
+    "idle_call_prompts": [
+        "帖子《{thread_title}》已经冷场有一会儿了（约 {idle_minutes} 分钟）。请用月月的人设发一条轻柔的喊人暖贴（2-4句），邀请大家继续聊天。{target_hint}",
+        "帖子《{thread_title}》好久没人说话啦（约 {idle_minutes} 分钟）。请写一条傲娇但不咄咄逼人的召回消息（2-4句），把气氛重新点起来。{target_hint}"
+    ],
     "consent_dm": (
         "哼!{user_mention}!本狐狸...不对,我是月月啦!\n"
         "我刚刚在你的新帖子里留了言...才、才不是特意去的,只是正好路过而已!\n\n"
@@ -755,6 +796,7 @@ CHANNEL_MUTE_CONFIG = {
 IMAGE_PROCESSING_CONFIG = {
     "SEQUENTIAL_PROCESSING": True,  # 顺序处理所有图片（一张一张处理，防止内存溢出）
     "MAX_IMAGES_PER_MESSAGE": 9,  # 单次消息最多处理的图片数量（Discord限制为9张）
+    "GIF_MAX_FRAMES": 4,  # 动图识别时最多抽取的关键帧数量（防止上下文过大）
 }
 
 # --- 调试配置 ---

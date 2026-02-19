@@ -211,6 +211,17 @@ class SpringFestivalConfigUpdate(BaseModel):
     reward_reason: Optional[str] = None
 
 
+class ThreadAutoSpeakerConfigUpdate(BaseModel):
+    """帖子自动发言配置更新"""
+    enabled: Optional[bool] = None
+    thread_ids: Optional[List[int]] = None
+    check_interval_seconds: Optional[int] = None
+    message_interval_seconds: Optional[int] = None
+    idle_trigger_seconds: Optional[int] = None
+    idle_reminder_seconds: Optional[int] = None
+    context_message_limit: Optional[int] = None
+
+
 class EmojiMapping(BaseModel):
     """单个表情映射"""
     placeholder: str  # 如 <微笑>
@@ -359,6 +370,33 @@ async def get_all_config(token: str = Depends(verify_token)):
             "grok_configured": bool(chat_config.WEB_SEARCH_CONFIG.get("grok_api_url") and chat_config.WEB_SEARCH_CONFIG.get("grok_api_key")),
             "tavily_configured": bool(chat_config.WEB_SEARCH_CONFIG.get("tavily_api_key")),
             "grok_model": chat_config.WEB_SEARCH_CONFIG.get("grok_model", "grok-3-mini"),
+        },
+        "thread_auto_speaker": {
+            "enabled": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "AUTO_CHAT_ENABLED", False
+            ),
+            "thread_ids": sorted(
+                list(
+                    chat_config.THREAD_COMMENTOR_CONFIG.get(
+                        "AUTO_CHAT_THREAD_IDS", set()
+                    )
+                )
+            ),
+            "check_interval_seconds": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "AUTO_CHAT_CHECK_INTERVAL_SECONDS", 300
+            ),
+            "message_interval_seconds": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "AUTO_CHAT_MESSAGE_INTERVAL_SECONDS", 1800
+            ),
+            "idle_trigger_seconds": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "AUTO_CHAT_IDLE_TRIGGER_SECONDS", 7200
+            ),
+            "idle_reminder_seconds": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "AUTO_CHAT_IDLE_REMINDER_SECONDS", 3600
+            ),
+            "context_message_limit": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "AUTO_CHAT_CONTEXT_MESSAGE_LIMIT", 20
+            ),
         },
     }
 
@@ -589,6 +627,52 @@ def update_env_file(updates: Dict[str, str]):
     # 写入文件
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
+
+
+def _normalize_thread_ids(thread_ids: Optional[List[int]]) -> List[int]:
+    """清洗并去重帖子ID列表。"""
+    if not thread_ids:
+        return []
+
+    normalized: set[int] = set()
+    for thread_id in thread_ids:
+        if thread_id is None:
+            continue
+        try:
+            parsed_id = int(thread_id)
+        except (TypeError, ValueError):
+            continue
+        if parsed_id > 0:
+            normalized.add(parsed_id)
+
+    return sorted(normalized)
+
+
+def _parse_thread_ids_text(thread_ids_text: Optional[str]) -> List[int]:
+    """解析数据库中的逗号分隔帖子 ID 字符串。"""
+    if not thread_ids_text:
+        return []
+    parsed: List[int] = []
+    for token in re.split(r"[\s,]+", thread_ids_text.strip()):
+        if not token:
+            continue
+        try:
+            thread_id = int(token)
+        except ValueError:
+            continue
+        if thread_id > 0:
+            parsed.append(thread_id)
+    return sorted(set(parsed))
+
+
+def _safe_int(value: Optional[str], fallback: int) -> int:
+    """将字符串设置安全转换为整数。"""
+    if value is None:
+        return fallback
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 @app.get("/api/config/imagen")
@@ -2125,6 +2209,182 @@ async def test_web_search_connection(token: str = Depends(verify_token)):
 
     overall_success = results["grok"].get("status", "").startswith("连接成功")
     return {"success": overall_success, "results": results}
+
+
+@app.get("/api/config/thread-auto-speaker")
+async def get_thread_auto_speaker_config(token: str = Depends(verify_token)):
+    """获取帖子自动发言配置。"""
+    from src.chat.utils.database import chat_db_manager
+
+    runtime = chat_config.THREAD_COMMENTOR_CONFIG
+
+    db_enabled = await chat_db_manager.get_global_setting("thread_auto_speaker_enabled")
+    db_thread_ids = await chat_db_manager.get_global_setting("thread_auto_speaker_thread_ids")
+    db_check_interval = await chat_db_manager.get_global_setting(
+        "thread_auto_speaker_check_interval_seconds"
+    )
+    db_message_interval = await chat_db_manager.get_global_setting(
+        "thread_auto_speaker_message_interval_seconds"
+    )
+    db_idle_trigger = await chat_db_manager.get_global_setting(
+        "thread_auto_speaker_idle_trigger_seconds"
+    )
+    db_idle_reminder = await chat_db_manager.get_global_setting(
+        "thread_auto_speaker_idle_reminder_seconds"
+    )
+    db_context_limit = await chat_db_manager.get_global_setting(
+        "thread_auto_speaker_context_message_limit"
+    )
+
+    return {
+        "enabled": (
+            db_enabled.lower() == "true"
+            if db_enabled is not None
+            else bool(runtime.get("AUTO_CHAT_ENABLED", False))
+        ),
+        "thread_ids": (
+            _parse_thread_ids_text(db_thread_ids)
+            if db_thread_ids is not None
+            else sorted(list(runtime.get("AUTO_CHAT_THREAD_IDS", set())))
+        ),
+        "check_interval_seconds": _safe_int(
+            db_check_interval,
+            int(runtime.get("AUTO_CHAT_CHECK_INTERVAL_SECONDS", 300)),
+        ),
+        "message_interval_seconds": _safe_int(
+            db_message_interval,
+            int(runtime.get("AUTO_CHAT_MESSAGE_INTERVAL_SECONDS", 1800)),
+        ),
+        "idle_trigger_seconds": _safe_int(
+            db_idle_trigger,
+            int(runtime.get("AUTO_CHAT_IDLE_TRIGGER_SECONDS", 7200)),
+        ),
+        "idle_reminder_seconds": _safe_int(
+            db_idle_reminder,
+            int(runtime.get("AUTO_CHAT_IDLE_REMINDER_SECONDS", 3600)),
+        ),
+        "context_message_limit": _safe_int(
+            db_context_limit,
+            int(runtime.get("AUTO_CHAT_CONTEXT_MESSAGE_LIMIT", 20)),
+        ),
+    }
+
+
+@app.put("/api/config/thread-auto-speaker")
+async def update_thread_auto_speaker_config(
+    config: ThreadAutoSpeakerConfigUpdate,
+    token: str = Depends(verify_token),
+):
+    """更新帖子自动发言配置（数据库持久化 + 运行时热更新）。"""
+    from src.chat.utils.database import chat_db_manager
+
+    updated: Dict[str, Any] = {}
+    env_updates: Dict[str, str] = {}
+    runtime = chat_config.THREAD_COMMENTOR_CONFIG
+
+    if config.enabled is not None:
+        enabled = bool(config.enabled)
+        runtime["AUTO_CHAT_ENABLED"] = enabled
+        await chat_db_manager.set_global_setting(
+            "thread_auto_speaker_enabled", str(enabled).lower()
+        )
+        env_updates["THREAD_AUTO_SPEAKER_ENABLED"] = str(enabled).lower()
+        updated["enabled"] = enabled
+
+    if config.thread_ids is not None:
+        normalized_ids = _normalize_thread_ids(config.thread_ids)
+        if len(normalized_ids) > 100:
+            raise HTTPException(400, "帖子 ID 数量不能超过 100 个")
+
+        runtime["AUTO_CHAT_THREAD_IDS"] = set(normalized_ids)
+        ids_text = ",".join(str(thread_id) for thread_id in normalized_ids)
+        await chat_db_manager.set_global_setting(
+            "thread_auto_speaker_thread_ids", ids_text
+        )
+        env_updates["THREAD_AUTO_SPEAKER_THREAD_IDS"] = ids_text
+        updated["thread_ids"] = normalized_ids
+
+    if config.check_interval_seconds is not None:
+        if not 30 <= config.check_interval_seconds <= 3600:
+            raise HTTPException(400, "轮询间隔必须在 30-3600 秒之间")
+        runtime["AUTO_CHAT_CHECK_INTERVAL_SECONDS"] = int(config.check_interval_seconds)
+        await chat_db_manager.set_global_setting(
+            "thread_auto_speaker_check_interval_seconds",
+            str(int(config.check_interval_seconds)),
+        )
+        env_updates["THREAD_AUTO_SPEAKER_CHECK_INTERVAL_SECONDS"] = str(
+            int(config.check_interval_seconds)
+        )
+        updated["check_interval_seconds"] = int(config.check_interval_seconds)
+
+    if config.message_interval_seconds is not None:
+        if not 60 <= config.message_interval_seconds <= 86400:
+            raise HTTPException(400, "发言间隔必须在 60-86400 秒之间")
+        runtime["AUTO_CHAT_MESSAGE_INTERVAL_SECONDS"] = int(
+            config.message_interval_seconds
+        )
+        await chat_db_manager.set_global_setting(
+            "thread_auto_speaker_message_interval_seconds",
+            str(int(config.message_interval_seconds)),
+        )
+        env_updates["THREAD_AUTO_SPEAKER_MESSAGE_INTERVAL_SECONDS"] = str(
+            int(config.message_interval_seconds)
+        )
+        updated["message_interval_seconds"] = int(config.message_interval_seconds)
+
+    if config.idle_trigger_seconds is not None:
+        if not 300 <= config.idle_trigger_seconds <= 604800:
+            raise HTTPException(400, "冷场阈值必须在 300-604800 秒之间")
+        runtime["AUTO_CHAT_IDLE_TRIGGER_SECONDS"] = int(config.idle_trigger_seconds)
+        await chat_db_manager.set_global_setting(
+            "thread_auto_speaker_idle_trigger_seconds",
+            str(int(config.idle_trigger_seconds)),
+        )
+        env_updates["THREAD_AUTO_SPEAKER_IDLE_TRIGGER_SECONDS"] = str(
+            int(config.idle_trigger_seconds)
+        )
+        updated["idle_trigger_seconds"] = int(config.idle_trigger_seconds)
+
+    if config.idle_reminder_seconds is not None:
+        if not 300 <= config.idle_reminder_seconds <= 604800:
+            raise HTTPException(400, "冷场提醒间隔必须在 300-604800 秒之间")
+        runtime["AUTO_CHAT_IDLE_REMINDER_SECONDS"] = int(config.idle_reminder_seconds)
+        await chat_db_manager.set_global_setting(
+            "thread_auto_speaker_idle_reminder_seconds",
+            str(int(config.idle_reminder_seconds)),
+        )
+        env_updates["THREAD_AUTO_SPEAKER_IDLE_REMINDER_SECONDS"] = str(
+            int(config.idle_reminder_seconds)
+        )
+        updated["idle_reminder_seconds"] = int(config.idle_reminder_seconds)
+
+    if config.context_message_limit is not None:
+        if not 5 <= config.context_message_limit <= 80:
+            raise HTTPException(400, "上下文消息条数必须在 5-80 之间")
+        runtime["AUTO_CHAT_CONTEXT_MESSAGE_LIMIT"] = int(config.context_message_limit)
+        await chat_db_manager.set_global_setting(
+            "thread_auto_speaker_context_message_limit",
+            str(int(config.context_message_limit)),
+        )
+        env_updates["THREAD_AUTO_SPEAKER_CONTEXT_MESSAGE_LIMIT"] = str(
+            int(config.context_message_limit)
+        )
+        updated["context_message_limit"] = int(config.context_message_limit)
+
+    if not updated:
+        return {"success": True, "message": "没有需要更新的配置"}
+
+    if env_updates:
+        try:
+            update_env_file(env_updates)
+        except Exception as e:
+            log.warning(f"更新自动发言配置到 .env 失败: {e}")
+
+    return {
+        "success": True,
+        "updated": updated,
+        "message": f"已更新 {len(updated)} 项自动发言配置",
+    }
 
 
 # --- 知识库管理 API ---

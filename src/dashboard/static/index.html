@@ -130,6 +130,12 @@
                         <i data-lucide="globe" class="w-5 h-5"></i>
                         <span>网络搜索</span>
                     </button>
+                    <button @click="currentTab = 'threadAutoSpeaker'"
+                            :class="currentTab === 'threadAutoSpeaker' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="message-circle" class="w-5 h-5"></i>
+                        <span>自动暖贴</span>
+                    </button>
                     <button @click="currentTab = 'springFestival'"
                             :class="currentTab === 'springFestival' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
                             class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
@@ -1852,6 +1858,76 @@
                 </div>
             </div>
             
+            <!-- 自动暖贴设置 -->
+            <div x-show="currentTab === 'threadAutoSpeaker'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">自动暖贴设置</h2>
+
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 mb-6 max-w-3xl">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <p class="font-medium">启用自动发言</p>
+                            <p class="text-sm text-slate-400">按配置的帖子 ID 定时暖聊，冷场时自动喊人续聊</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="threadAutoSpeakerForm.enabled" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:bg-green-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                        </label>
+                    </div>
+
+                    <div class="space-y-4" :class="!threadAutoSpeakerForm.enabled && 'opacity-60'">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">目标帖子 ID（每行一个）</label>
+                            <textarea x-model="threadAutoSpeakerForm.thread_ids_text"
+                                      rows="5"
+                                      placeholder="123456789012345678&#10;223456789012345679"
+                                      class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"></textarea>
+                            <p class="text-xs text-slate-500 mt-1">支持换行、逗号或空格分隔。建议只配置需要重点暖场的帖子。</p>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">轮询间隔（秒）</label>
+                                <input type="number" x-model.number="threadAutoSpeakerForm.check_interval_seconds"
+                                       min="30" max="3600"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">常规发言间隔（秒）</label>
+                                <input type="number" x-model.number="threadAutoSpeakerForm.message_interval_seconds"
+                                       min="60" max="86400"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">冷场阈值（秒）</label>
+                                <input type="number" x-model.number="threadAutoSpeakerForm.idle_trigger_seconds"
+                                       min="300" max="604800"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">冷场提醒间隔（秒）</label>
+                                <input type="number" x-model.number="threadAutoSpeakerForm.idle_reminder_seconds"
+                                       min="300" max="604800"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">上下文消息条数</label>
+                            <input type="number" x-model.number="threadAutoSpeakerForm.context_message_limit"
+                                   min="5" max="80"
+                                   class="w-full max-w-xs bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <button @click="saveThreadAutoSpeakerConfig()"
+                                :disabled="saving"
+                                class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                            <i data-lucide="save" class="w-4 h-4"></i>
+                            <span x-text="saving ? '保存中...' : '保存自动暖贴设置'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- 新春活动设置 -->
             <div x-show="currentTab === 'springFestival'" x-transition>
                 <h2 class="text-2xl font-bold mb-6">新春活动设置</h2>
@@ -2235,6 +2311,17 @@
                     reward_reason: '新春红包奖励'
                 },
 
+                // 自动暖贴配置
+                threadAutoSpeakerForm: {
+                    enabled: false,
+                    thread_ids_text: '',
+                    check_interval_seconds: 300,
+                    message_interval_seconds: 1800,
+                    idle_trigger_seconds: 7200,
+                    idle_reminder_seconds: 3600,
+                    context_message_limit: 20,
+                },
+
                 // 网络搜索数据
                 webSearchForm: { grok_api_url: '', grok_api_key: '', grok_model: 'grok-3-mini', tavily_api_url: '', tavily_api_key: '' },
                 webSearchConfig: { grok_configured: false, tavily_configured: false, has_grok_key: false, has_tavily_key: false },
@@ -2435,6 +2522,17 @@
                         this.springFestivalForm.claimed_label = this.config.spring_festival.claimed_label || '已领取';
                         this.springFestivalForm.reward_reason = this.config.spring_festival.reward_reason || '新春红包奖励';
                     }
+                    if (this.config.thread_auto_speaker) {
+                        const autoConfig = this.config.thread_auto_speaker;
+                        const threadIds = autoConfig.thread_ids || [];
+                        this.threadAutoSpeakerForm.enabled = autoConfig.enabled ?? false;
+                        this.threadAutoSpeakerForm.thread_ids_text = threadIds.join('\n');
+                        this.threadAutoSpeakerForm.check_interval_seconds = autoConfig.check_interval_seconds ?? 300;
+                        this.threadAutoSpeakerForm.message_interval_seconds = autoConfig.message_interval_seconds ?? 1800;
+                        this.threadAutoSpeakerForm.idle_trigger_seconds = autoConfig.idle_trigger_seconds ?? 7200;
+                        this.threadAutoSpeakerForm.idle_reminder_seconds = autoConfig.idle_reminder_seconds ?? 3600;
+                        this.threadAutoSpeakerForm.context_message_limit = autoConfig.context_message_limit ?? 20;
+                    }
                     // 加载表情配置
                     this.loadEmojiConfig();
                     // 加载知识库数据
@@ -2450,6 +2548,8 @@
                     this.loadSummaryConfig();
                     // 加载网络搜索配置
                     this.loadWebSearchConfig();
+                    // 加载自动暖贴配置
+                    this.loadThreadAutoSpeakerConfig();
                 },
                 
                 async loadEmbeddingConfig() {
@@ -2836,6 +2936,76 @@
                         }
                     } catch (e) {
                         this.showToast('保存失败: ' + e.message, 'error');
+                    }
+                    this.saving = false;
+                },
+
+                parseThreadIdsFromText(text) {
+                    if (!text) return [];
+                    const tokens = text.split(/[\s,]+/).map(item => item.trim()).filter(Boolean);
+                    const idSet = new Set();
+                    for (const token of tokens) {
+                        if (!/^\d+$/.test(token)) {
+                            throw new Error(`无效帖子 ID: ${token}`);
+                        }
+                        idSet.add(Number(token));
+                    }
+                    return Array.from(idSet).sort((left, right) => left - right);
+                },
+
+                async loadThreadAutoSpeakerConfig() {
+                    try {
+                        const response = await fetch('/api/config/thread-auto-speaker', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.threadAutoSpeakerForm.enabled = data.enabled ?? false;
+                            this.threadAutoSpeakerForm.thread_ids_text = (data.thread_ids || []).join('\n');
+                            this.threadAutoSpeakerForm.check_interval_seconds = data.check_interval_seconds ?? 300;
+                            this.threadAutoSpeakerForm.message_interval_seconds = data.message_interval_seconds ?? 1800;
+                            this.threadAutoSpeakerForm.idle_trigger_seconds = data.idle_trigger_seconds ?? 7200;
+                            this.threadAutoSpeakerForm.idle_reminder_seconds = data.idle_reminder_seconds ?? 3600;
+                            this.threadAutoSpeakerForm.context_message_limit = data.context_message_limit ?? 20;
+                        }
+                    } catch (e) {
+                        console.error('加载自动暖贴配置失败', e);
+                    }
+                },
+
+                async saveThreadAutoSpeakerConfig() {
+                    this.saving = true;
+                    try {
+                        const threadIds = this.parseThreadIdsFromText(this.threadAutoSpeakerForm.thread_ids_text);
+                        const payload = {
+                            enabled: this.threadAutoSpeakerForm.enabled,
+                            thread_ids: threadIds,
+                            check_interval_seconds: parseInt(this.threadAutoSpeakerForm.check_interval_seconds),
+                            message_interval_seconds: parseInt(this.threadAutoSpeakerForm.message_interval_seconds),
+                            idle_trigger_seconds: parseInt(this.threadAutoSpeakerForm.idle_trigger_seconds),
+                            idle_reminder_seconds: parseInt(this.threadAutoSpeakerForm.idle_reminder_seconds),
+                            context_message_limit: parseInt(this.threadAutoSpeakerForm.context_message_limit),
+                        };
+
+                        const response = await fetch('/api/config/thread-auto-speaker', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            this.showToast('自动暖贴配置已保存', 'success');
+                            await this.loadThreadAutoSpeakerConfig();
+                            await this.refreshConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast(e.message || '保存失败', 'error');
                     }
                     this.saving = false;
                 },

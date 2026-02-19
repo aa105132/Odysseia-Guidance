@@ -35,7 +35,7 @@ from src.chat.features.tools.tool_loader import load_tools_from_directory
 from src.chat.features.chat_settings.services.chat_settings_service import (
     chat_settings_service,
 )
-from src.chat.utils.image_utils import sanitize_image
+from src.chat.utils.image_utils import sanitize_image, extract_image_frames_for_ai
 from src.database.services.token_usage_service import token_usage_service
 from src.database.database import AsyncSessionLocal
 
@@ -2478,31 +2478,38 @@ class GeminiService:
         if not client:
             raise ValueError("装饰器未能提供客户端实例。")
 
-        # --- 新增：处理 GIF 图片 ---
-        if mime_type == "image/gif":
-            try:
-                log.info("检测到 GIF 图片，尝试提取第一帧...")
-                with Image.open(io.BytesIO(image_bytes)) as img:
-                    # 寻求第一帧并转换为 RGBA 以确保兼容性
-                    img.seek(0)
-                    # 创建一个新的 BytesIO 对象来保存转换后的图片
-                    output_buffer = io.BytesIO()
-                    # 将图片保存为 PNG 格式
-                    img.save(output_buffer, format="PNG")
-                    # 获取转换后的字节数据
-                    image_bytes = output_buffer.getvalue()
-                    # 更新 MIME 类型
-                    mime_type = "image/png"
-                    log.info("成功将 GIF 第一帧转换为 PNG。")
-            except Exception as e:
-                log.error(f"处理 GIF 图片时出错: {e}", exc_info=True)
-                return "呜哇，我的眼睛跟不上啦！有点看花眼了"
-        # --- GIF 处理结束 ---
+        request_contents: List[Any] = [prompt]
+        try:
+            frames, frame_meta = extract_image_frames_for_ai(
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+                max_gif_frames=app_config.IMAGE_PROCESSING_CONFIG.get(
+                    "GIF_MAX_FRAMES", 4
+                ),
+            )
 
-        request_contents = [
-            prompt,
-            types.Part(inline_data=types.Blob(mime_type=mime_type, data=image_bytes)),
-        ]
+            if frame_meta.get("is_animated"):
+                request_contents.append(
+                    "这是一个动态图输入，已抽取关键帧 "
+                    f"{frame_meta.get('sampled_frames', len(frames))}/"
+                    f"{frame_meta.get('total_frames', len(frames))} 供分析。"
+                )
+
+            for frame in frames:
+                with io.BytesIO() as output_buffer:
+                    frame.save(output_buffer, format="PNG")
+                    frame_bytes = output_buffer.getvalue()
+                request_contents.append(
+                    types.Part(
+                        inline_data=types.Blob(
+                            mime_type="image/png", data=frame_bytes
+                        )
+                    )
+                )
+        except Exception as e:
+            log.error(f"处理图文输入时出错: {e}", exc_info=True)
+            return "呜哇，我的眼睛跟不上啦！有点看花眼了"
+
         gen_config = types.GenerateContentConfig(
             **app_config.GEMINI_VISION_GEN_CONFIG, safety_settings=self.safety_settings
         )

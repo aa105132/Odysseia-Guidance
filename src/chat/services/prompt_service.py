@@ -12,6 +12,7 @@ import re
 from src.chat.config.prompts import PROMPT_CONFIG
 from src.chat.config import chat_config
 from src.chat.services.event_service import event_service
+from src.chat.utils.image_utils import extract_image_frames_for_ai
 from src.config import MASTER_USER_ID
 
 log = logging.getLogger(__name__)
@@ -462,10 +463,21 @@ class PromptService:
             current_user_parts.append(f"用户名:{user_name}, 用户消息:(图片消息)")
 
         # 追加所有附件图片到末尾
+        gif_max_frames = chat_config.IMAGE_PROCESSING_CONFIG.get("GIF_MAX_FRAMES", 4)
         for img_data in attachment_images:
             try:
-                pil_image = Image.open(io.BytesIO(img_data["data"]))
-                current_user_parts.append(pil_image)
+                frames, frame_meta = extract_image_frames_for_ai(
+                    image_bytes=img_data["data"],
+                    mime_type=img_data.get("mime_type", ""),
+                    max_gif_frames=gif_max_frames,
+                )
+
+                if frame_meta.get("is_animated"):
+                    current_user_parts.append(
+                        f"[检测到动态图，已抽取关键帧 {frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))} 供识别]"
+                    )
+
+                current_user_parts.extend(frames)
             except Exception as e:
                 log.error(f"Pillow 无法打开附件图片。错误: {e}。")
 
@@ -650,13 +662,23 @@ class PromptService:
         if description:
             text_part += f"\n描述: {description}"
 
-        # 创建图像部分 - 使用PIL Image对象格式
-        from PIL import Image
-        import io
-
         try:
-            pil_image = Image.open(io.BytesIO(image_data))
-            return {"role": "user", "parts": [text_part, pil_image]}
+            frames, frame_meta = extract_image_frames_for_ai(
+                image_bytes=image_data,
+                mime_type=mime_type,
+                max_gif_frames=chat_config.IMAGE_PROCESSING_CONFIG.get(
+                    "GIF_MAX_FRAMES", 4
+                ),
+            )
+
+            parts: List[Any] = [text_part]
+            if frame_meta.get("is_animated"):
+                parts.append(
+                    f"这是动态图输入，已抽取关键帧 {frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))}。"
+                )
+            parts.extend(frames)
+
+            return {"role": "user", "parts": parts}
         except Exception as e:
             log.error(f"无法将图像数据转换为PIL Image: {e}")
             return {"role": "user", "parts": [text_part + "\n错误: 无法处理图像数据"]}

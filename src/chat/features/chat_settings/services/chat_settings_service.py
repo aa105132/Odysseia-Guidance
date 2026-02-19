@@ -1,6 +1,7 @@
 import discord
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
+import re
 from src.chat.utils.database import chat_db_manager
 from src.chat.services.event_service import event_service
 from src import config
@@ -10,6 +11,22 @@ from src.chat.config import chat_config
 import logging
 
 log = logging.getLogger(__name__)
+
+
+def _parse_id_set_from_text(raw_value: Optional[str]) -> set[int]:
+    """将逗号/空白分隔的 ID 字符串解析为整数集合。"""
+    if not raw_value:
+        return set()
+
+    parsed_ids: set[int] = set()
+    for token in re.split(r"[\s,]+", raw_value.strip()):
+        if not token:
+            continue
+        try:
+            parsed_ids.add(int(token))
+        except ValueError:
+            continue
+    return parsed_ids
 
 
 class ChatSettingsService:
@@ -144,7 +161,65 @@ class ChatSettingsService:
         if db_video_duration:
             chat_config.VIDEO_GEN_CONFIG["MAX_DURATION"] = int(db_video_duration)
             log.info(f"  ✅ 视频最大时长: {db_video_duration}s")
-        
+
+        # --- 自动暖贴配置 ---
+        db_auto_enabled = await self.db_manager.get_global_setting(
+            "thread_auto_speaker_enabled"
+        )
+        if db_auto_enabled is not None:
+            chat_config.THREAD_COMMENTOR_CONFIG["AUTO_CHAT_ENABLED"] = (
+                db_auto_enabled.lower() == "true"
+            )
+            log.info(f"  ✅ 自动暖贴开关: {db_auto_enabled}")
+
+        db_auto_thread_ids = await self.db_manager.get_global_setting(
+            "thread_auto_speaker_thread_ids"
+        )
+        if db_auto_thread_ids is not None:
+            parsed_ids = _parse_id_set_from_text(db_auto_thread_ids)
+            chat_config.THREAD_COMMENTOR_CONFIG["AUTO_CHAT_THREAD_IDS"] = parsed_ids
+            log.info(f"  ✅ 自动暖贴帖子数: {len(parsed_ids)}")
+
+        db_auto_check_interval = await self.db_manager.get_global_setting(
+            "thread_auto_speaker_check_interval_seconds"
+        )
+        if db_auto_check_interval:
+            chat_config.THREAD_COMMENTOR_CONFIG["AUTO_CHAT_CHECK_INTERVAL_SECONDS"] = int(
+                db_auto_check_interval
+            )
+
+        db_auto_message_interval = await self.db_manager.get_global_setting(
+            "thread_auto_speaker_message_interval_seconds"
+        )
+        if db_auto_message_interval:
+            chat_config.THREAD_COMMENTOR_CONFIG[
+                "AUTO_CHAT_MESSAGE_INTERVAL_SECONDS"
+            ] = int(db_auto_message_interval)
+
+        db_auto_idle_trigger = await self.db_manager.get_global_setting(
+            "thread_auto_speaker_idle_trigger_seconds"
+        )
+        if db_auto_idle_trigger:
+            chat_config.THREAD_COMMENTOR_CONFIG["AUTO_CHAT_IDLE_TRIGGER_SECONDS"] = int(
+                db_auto_idle_trigger
+            )
+
+        db_auto_idle_reminder = await self.db_manager.get_global_setting(
+            "thread_auto_speaker_idle_reminder_seconds"
+        )
+        if db_auto_idle_reminder:
+            chat_config.THREAD_COMMENTOR_CONFIG[
+                "AUTO_CHAT_IDLE_REMINDER_SECONDS"
+            ] = int(db_auto_idle_reminder)
+
+        db_auto_context_limit = await self.db_manager.get_global_setting(
+            "thread_auto_speaker_context_message_limit"
+        )
+        if db_auto_context_limit:
+            chat_config.THREAD_COMMENTOR_CONFIG[
+                "AUTO_CHAT_CONTEXT_MESSAGE_LIMIT"
+            ] = int(db_auto_context_limit)
+
         log.info("数据库配置加载完成。")
 
     async def set_entity_settings(
