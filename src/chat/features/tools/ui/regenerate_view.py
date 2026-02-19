@@ -995,7 +995,7 @@ async def _do_novelai_regenerate(
         filename="novelai_generated.png",
         spoiler=True,
     )
-    embed.set_image(url="attachment://SPOILER_novelai_generated.png")
+    # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
     # 创建 NovelAI 结果的交互按钮
     from src.chat.features.tools.functions.generate_image_novelai import NovelAIResultView

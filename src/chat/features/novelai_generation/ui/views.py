@@ -19,28 +19,9 @@ import discord
 
 from src.chat.config.chat_config import NOVELAI_CONFIG
 from src.chat.features.novelai_generation.services.novelai_service import novelai_service
+from src.chat.features.novelai_generation.tag_rules import get_tag_generation_prompt, get_rewrite_prompt
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
 from src.chat.utils.database import chat_db_manager
-
-# AI 重写 prompt 的提示词
-AI_REWRITE_PROMPT = """You are an expert at creating NovelAI image generation tags. The user wants to improve/rewrite the following prompt while keeping the same theme and subject.
-
-Rules:
-- Keep the same subject, characters, and general theme
-- Improve quality tags, add more details, better composition
-- Use danbooru-style tags, comma-separated
-- Include quality tags: masterpiece, best quality, amazing quality, very aesthetic, absurdres
-- Use weight syntax where appropriate: 1.2::Tag:: for emphasis, 0.8::Tag:: for de-emphasis
-- Output ONLY the improved comma-separated tags, no explanation
-- Aim for 70+ tags with rich details
-
-Original prompt:
-{prompt}
-
-User's description of desired changes:
-{description}
-
-Improved tags:"""
 
 log = logging.getLogger(__name__)
 
@@ -55,20 +36,6 @@ SIZE_PRESETS = {
     "宽屏壁纸": (1344, 768),
 }
 
-# AI 描述转 Tag 的提示词
-AI_TAG_GENERATION_PROMPT = """You are an expert at creating NovelAI image generation tags. Convert the following user description into a comma-separated list of high-quality English tags suitable for NovelAI Diffusion.
-
-Rules:
-- Include quality tags like: masterpiece, best quality, amazing quality, very aesthetic, absurdres
-- Include artistic style, character details, pose, expression, clothing, background, lighting
-- Use danbooru-style tags
-- Output ONLY the comma-separated tags, no explanation, no numbering
-- Keep the output concise but detailed (aim for 30-60 tags)
-
-User description:
-{description}
-
-Tags:"""
 
 
 @dataclass
@@ -424,7 +391,8 @@ class NovelAIDrawPanel(discord.ui.View):
                 filename="novelai_generated.png",
                 spoiler=True,
             )
-            embed.set_image(url="attachment://SPOILER_novelai_generated.png")
+            # 注意：不使用 embed.set_image()，因为 embed 中的图片不会被 spoiler 遮罩
+            # 图片作为独立附件发送，这样 spoiler 标记才能正常生效
 
             # 创建交互按钮视图（重新生成/修改提示词/切换到Imagen/AI重写prompt）
             result_view = SlashNovelAIResultView(
@@ -470,7 +438,7 @@ class NovelAIDrawPanel(discord.ui.View):
             try:
                 from src.chat.services.gemini_service import gemini_service
 
-                prompt = AI_TAG_GENERATION_PROMPT.format(description=self.session.scene_prompt)
+                prompt = get_tag_generation_prompt(description=self.session.scene_prompt)
                 tags = await gemini_service.generate_simple_response(
                     prompt=prompt,
                     generation_config={
@@ -1064,7 +1032,7 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
             # 调用 AI 重写 prompt
             from src.chat.services.gemini_service import gemini_service
 
-            rewrite_prompt = AI_REWRITE_PROMPT.format(
+            rewrite_prompt = get_rewrite_prompt(
                 prompt=self._current_prompt,
                 description=description,
             )
@@ -1323,7 +1291,7 @@ async def _slash_regenerate_novelai(
         filename="novelai_generated.png",
         spoiler=True,
     )
-    embed.set_image(url="attachment://SPOILER_novelai_generated.png")
+    # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
     # 创建新的交互按钮
     new_view = SlashNovelAIResultView(
@@ -1410,7 +1378,7 @@ async def _slash_regenerate_with_imagen(
         filename="imagen_generated.png",
         spoiler=True,
     )
-    embed.set_image(url="attachment://SPOILER_imagen_generated.png")
+    # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
     await interaction.followup.send(embed=embed, file=image_file)
     log.info("斜杠命令已切换到 Imagen 生成图片")

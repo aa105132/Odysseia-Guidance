@@ -20,71 +20,13 @@ import discord
 from typing import Optional, List
 
 from src.chat.utils.prompt_utils import replace_emojis
-
-# AI 重写 prompt 的提示词
-AI_REWRITE_PROMPT_TOOL = """You are an expert at creating NovelAI image generation tags. The user wants to improve/rewrite the following prompt while keeping the same theme and subject.
-
-Rules:
-- Keep the same subject, characters, and general theme
-- Improve quality tags, add more details, better composition
-- Use danbooru-style tags, comma-separated
-- Include quality tags: masterpiece, best quality, amazing quality, very aesthetic, absurdres
-- Use weight syntax where appropriate: 1.2::Tag:: for emphasis, 0.8::Tag:: for de-emphasis
-- Output ONLY the improved comma-separated tags, no explanation
-- Aim for 70+ tags with rich details
-
-Original prompt:
-{prompt}
-
-User's description of desired changes:
-{description}
-
-Improved tags:"""
+from src.chat.features.novelai_generation.tag_rules import (
+    NOVELAI_TAG_RULES,
+    TAG_LIBRARY_COMPACT,
+    get_rewrite_prompt,
+)
 
 log = logging.getLogger(__name__)
-
-# NovelAI Tag 生成的系统提示词（嵌入工具 docstring，指导 AI 生成高质量 Tag）
-NOVELAI_TAG_GUIDE = """
-## Tag 构成规则 (Danbooru 格式)
-
-### Scene Composition (场景构成, 5~10%)
-- 场景类型: nsfw, sfw
-- 角色数量&性别: 1girl, 2boys, 2other, no humans
-- 角色关系: solo, hetero, harem
-
-### 背景 (10~20%)
-- 环境&背景: bedroom, park, alley, indoor, outdoor
-- 时间&天气: night, sunset, rain
-- 光源&光影: backlighting, rim lighting, sidelighting, dramatic shadows
-
-### 构图 (10~20%)
-- 区域: full body, upper body, cowboy shot
-- 远近: close-up, mid shot
-- 视角: front view, pov, from below, from above
-- 焦点: face focus, ass focus
-- 其他: depth of field, bokeh, cinematic angle
-
-### Character Prompt (50~70%)
-- 角色 DNA(身份): girl, boy, 姓名, 种族
-- 角色 DNA(外貌): 发型, 发色, 瞳色, 罩杯, 肤色
-- 角色 DNA(服饰): 核心服饰, 材质, 穿着状态, 裸露部位
-- 当前动作: 基础姿势, 肢体动作, 核心交互, 交互接触点
-- 当前表情: 视线, 眼, 嘴, 感官
-- 当前坐标: |centers:坐标 (A-E列, 1-5行)
-
-### Character UC (角色级负面 Tag)
-- 路人屏蔽: background characters
-- 多角色屏蔽: fused bodies
-- 动态排除: 排除不需要的元素
-
-### 权重调整
-- 增强: 1.2::Tag:: (1.2倍增强)
-- 减弱: 0.8::Tag:: (0.8倍减弱)
-- 调整 3~8 次增强, 2~4 次减弱
-
-### 质量 Tag (推荐添加)
-masterpiece, best quality, amazing quality, very aesthetic, absurdres
-"""
 
 
 async def generate_image_novelai(
@@ -106,49 +48,80 @@ async def generate_image_novelai(
 
     **重要：你必须生成 Danbooru 格式的英文 Tag 作为 prompt！不要使用自然语言描述！**
 
-    ## Tag 生成规则（必须严格遵守）：
+    ## Tag 生成核心规则（必须严格遵守）：
 
-    ### 1. Tag 格式
+    ### 1. 基本要求
     - 使用英文 Danbooru 格式 Tag，逗号分隔
     - 单图 Tag 数量 ≥ 70 个
     - 禁止使用中文或自然语言句子
+    - 定格画面：单图为同一时刻的静态瞬间，禁止连续动作过程
 
-    ### 2. Tag 构成顺序
+    ### 2. Tag 构成顺序（按优先级）
     按以下顺序构建 Tag：
-    1. **场景类型**: nsfw/sfw, 角色数量(1girl, solo)
-    2. **背景**: 环境, 时间, 光影
-    3. **构图**: 画面范围, 视角, 焦点
-    4. **角色 DNA(身份)**: 性别, 姓名, 种族
-    5. **角色 DNA(外貌)**: 发型, 发色, 瞳色, 罩杯, 肤色
-    6. **角色 DNA(服饰)**: 核心服饰, 材质, 穿着状态
-    7. **当前动作**: 姿势, 肢体, 交互, 接触点
-    8. **当前表情**: 视线, 眼, 嘴, 情绪
+    1. **质量 Tag**: masterpiece, best quality, amazing quality, very aesthetic, absurdres
+    2. **场景构成 (5~10%)**: nsfw/sfw, 角色数量(1girl, solo), 角色关系(hetero, harem)
+    3. **背景 (10~20%)**: 环境(bedroom, park, outdoor), 时间(night, sunset), 氛围(mystical atmosphere), 光影(backlighting, rim lighting, sidelighting, dramatic shadows, moonlight)
+    4. **构图 (10~20%)**: 区域(full body, upper body, cowboy shot), 远近(close-up, mid shot, wide shot), 透视(wide-angle, foreshortening), 视角(front view, from behind, from above, from below, pov, male pov), 焦点(face focus, ass focus, breast focus), 角度(cinematic angle, dynamic angle, dutch angle), 效果(depth of field, bokeh, motion blur)
+    5. **角色 DNA - 身份**: 性别(girl, boy), 姓名(同人角色用英文全名(来源), 原创用original), 身份(bishoujo, maid, loli, milf)
+    6. **角色 DNA - 外貌**: 发长/发色/瞳色/罩杯(flat chest=A, small breasts=B, medium breasts=C, large breasts=D, huge breasts=E, gigantic breasts=F+)/肤色/修饰(makeup, scar, tan lines, bangs, petite)
+    7. **角色 DNA - 服饰**: 核心服饰(上装/下装/内衣/袜子/鞋类/配饰, 含风格/品类/颜色), 材质(plaid, latex, satin, velvet, sheer fabric), 状态(wet clothes, torn clothes, see-through), 穿着状态(nude, open shirt, strap slip, no panties), 裸露部位(pussy, ass, nipples)
+    8. **当前动作**: 基础姿势(sitting, standing, lying, kneeling, all fours), 肢体动作(heart hands, head down, leg lift, v), 核心交互(walking, masturbation, hug, kiss), 物理反馈(bouncing breasts, ass ripple, skin indentation), 交互接触点(明确动作主体+做什么+放在哪, 如: hands, grabbing ass, hands on own ass)
+    9. **当前表情**: 视线(looking at viewer, looking down, looking back), 眼(tears, wide-eyed, dilated pupils), 嘴(smile, open mouth, tongue out, clenched teeth), 感官(blush, ahegao, excited)
+    10. **表现力/微细节**: 环境氛围(falling leaves, fireworks, steam, floating sakura), 生理反应(full-face blush, dilated pupils, drooling, heavy breathing, sweat), 动态互动(speed lines, motion lines, bouncing breasts, splashing fluids), 特效粒子(magical, ripple, glowing, light particles)
 
-    ### 3. 权重调整（重要）
+    ### 3. 碎片化转译（具象化，拒绝模糊）
+    将复合概念拆解为多个具体 Tag：
+    - 月下 -> moonlit, night, starry sky
+    - 战斗 -> battle, standing, holding sword
+    - 害羞 -> shy, blushing, looking down, fidgeting
+    - '好热' -> sweating, fanning self, loosening clothes
+
+    ### 4. 权重调整（重要）
     - 增强核心元素: `1.2::Tag::` 或 `1.3::Tag::`
     - 减弱次要元素: `0.8::Tag::` 或 `0.7::Tag::`
     - 增强 3~8 次，减弱 2~4 次
-    - 优先增强: 角色姓名 > 核心动作 > 服饰
+    - 增强优先级: 同人角色姓名 > 核心动作 > 服饰 > 特效 > 表情
 
-    ### 4. 质量 Tag（必须添加到开头）
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres
+    ### 5. 画面范围（只保留视觉可见 Tag）
+    - 构图导致不可见: 下身特写->排除上身元素
+    - 衣物覆盖导致不可见: 穿戴整齐->排除内衣Tag
+    - 遮盖导致不可见: 抱胸->hands, breast hold, covered nipples
 
-    ### 5. 画月月（自己）时的 Tag
+    ### 6. POV 建议（1女+1男且男=user时）
+    - 无互动: 1girl, solo
+    - 对视/对话: 1girl, solo, looking at viewer
+    - 物理接触: 1girl, 1boy, male pov, pov hands
+    - 性行为: 1girl, male pov, pov hands, penis
+
+    ### 7. 画月月（自己）时的 Tag
     如果用户要求画"你"、"月月"、"自己"：
     - 1girl, solo, silver hair, high ponytail, crescent hair ornament, blue grey eyes
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
     - watermelon earrings（西瓜形状耳坠）
 
-    ### 6. POV 建议（1女+1男时）
-    - 无互动: 1girl, solo
-    - 对视: 1girl, solo, looking at viewer
-    - 物理接触: 1girl, 1boy, male pov, pov hands
-    - 性行为: 1girl, male pov, pov hands, penis
+    ### 8. 参考标签库
+    表情: grin, smile, smug, seductive smile, glaring, pout, crying, sobbing, tears, surprised, flustered, blush, embarrassed, parted lips, open mouth, tongue out, ahegao, heart eyes, fucked silly, rolling eyes
+    表情组合: ahegao+drooling+tears+rolling eyes(高潮), open mouth+heavy breathing+blush(插入), smile+blush+looking at viewer(温柔)
+    姿势: standing, sitting, lying, kneeling, all fours, squatting, bent over, crawling, walking, running, jumping, contrapposto
+    手臂: arm support, arms behind head, arms behind back, arms up, crossed arms, victory pose, outstretched arm
+    腿部: crossed legs, spread legs, leg up, legs up, tiptoes, m legs, knees apart
+    手部: thumbs up, peace hand, heart hands, finger gun, fist, pillow hug
+    视线: looking at viewer, looking down, looking up, looking back, looking away, sideways glance, eye contact
+    衣物状态: nude, topless, bottomless, open shirt, no bra, no panties, strap slip, see-through, wet clothes, torn clothes, partially clothed
+    衣物开口: off-shoulder, bare shoulders, cleavage cutout, underboob cutout, center opening, navel cutout, back cutout, heart cutout
+    发型: long hair, short hair, ponytail, twintails, braid, bob cut, ahoge, bangs, sidelocks, wavy hair, straight hair, curly hair, drill hair, half updo
+    发色: black hair, blonde hair, brown hair, silver hair, white hair, red hair, blue hair, pink hair, purple hair, green hair, streaked hair
+    瞳色: blue eyes, red eyes, green eyes, brown eyes, purple eyes, yellow eyes, heterochromia, heart-shaped pupils
+    光影: backlighting, rim lighting, sidelighting, dramatic shadows, moonlight, sunlight, neon light, golden hour
+    性爱体位: doggystyle, missionary, cowgirl, reverse cowgirl, mating press, 69, girl on top, sex from behind, piledriver, spitroast, suspended congress
+    性行为: sex, vaginal, anal, oral, fellatio, handjob, footjob, paizuri, fingering, masturbation, deep penetration, cunnilingus
+    射精: cum, excessive cum, bukkake, facial, ejaculation, cumdrip, cum on body, internal cumshot, cum in mouth
+    双人互动: holding hands, eye contact, cuddling, princess carry, spooning, headpat, sitting on lap, neck biting, face to face
 
-    ### 7. 示例
+    ### 9. 示例
     用户说"画一个银发少女在月光下"，你应该生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, sfw, 1girl, solo, outdoors, night, 1.2::moonlight::, starry sky, rim lighting, backlighting, full body, front view, cinematic angle, depth of field, girl, 1.3::silver hair::, long hair, flowing hair, blue eyes, medium breasts, bishoujo, white skin, dress, white dress, long dress, elegant, standing, wind, hair flowing, looking at viewer, gentle smile, serene
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, sfw, 1girl, solo, outdoors, night, 1.2::moonlight::, starry sky, rim lighting, backlighting, full body, front view, cinematic angle, depth of field, girl, bishoujo, 1.3::silver hair::, long hair, flowing hair, blue eyes, medium breasts, white skin, dress, white dress, long dress, elegant, standing, wind, hair flowing, looking at viewer, gentle smile, serene, falling leaves, light particles
     ```
 
     Args:
@@ -376,7 +349,7 @@ async def generate_image_novelai(
                         filename="novelai_generated.png",
                         spoiler=True,
                     )
-                    embed.set_image(url="attachment://SPOILER_novelai_generated.png")
+                    # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
                     # 创建交互按钮 View
                     interaction_view = NovelAIResultView(
@@ -548,7 +521,7 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
             # 调用 AI 重写 prompt
             from src.chat.services.gemini_service import gemini_service
 
-            rewrite_prompt = AI_REWRITE_PROMPT_TOOL.format(
+            rewrite_prompt = get_rewrite_prompt(
                 prompt=self._current_prompt,
                 description=description,
             )
@@ -817,7 +790,7 @@ async def _regenerate_novelai(
         filename="novelai_generated.png",
         spoiler=True,
     )
-    embed.set_image(url="attachment://SPOILER_novelai_generated.png")
+    # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
     # 创建新的交互按钮
     new_view = NovelAIResultView(
@@ -913,7 +886,7 @@ async def _regenerate_with_imagen(
         filename="imagen_generated.png",
         spoiler=True,
     )
-    embed.set_image(url="attachment://SPOILER_imagen_generated.png")
+    # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
     await interaction.followup.send(embed=embed, file=image_file)
     log.info("已切换到 Imagen 生成图片")
