@@ -253,6 +253,8 @@ def _get_novelai_config():
         "SMEA_DYN": _parse_bool_env("NOVELAI_SMEA_DYN", "False"),
         # 月光币成本
         "IMAGE_GENERATION_COST": int(os.getenv("NOVELAI_GENERATION_COST", "5")),
+        # 429 重试次数（请求队列中的最大重试次数）
+        "MAX_RETRIES": int(os.getenv("NOVELAI_MAX_RETRIES", "3")),
         # 默认负面提示词
         "DEFAULT_NEGATIVE_PROMPT": os.getenv(
             "NOVELAI_DEFAULT_NEGATIVE",

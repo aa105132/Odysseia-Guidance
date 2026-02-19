@@ -987,6 +987,13 @@
                             <input type="number" x-model.number="novelaiForm.generation_cost" min="0"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
+                        <!-- 429 重试次数 -->
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">429 重试次数</label>
+                            <input type="number" x-model.number="novelaiForm.max_retries" min="0" max="10"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">遇到 429/409 错误时的最大重试次数（0=不重试）</p>
+                        </div>
                     </div>
                 </div>
 
@@ -2029,7 +2036,7 @@
                 imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto', sfw_model: '', sfw_edit_model: '', sfw_model_2k: '', sfw_edit_model_2k: '', sfw_model_4k: '', sfw_edit_model_4k: '', nsfw_model: '', nsfw_edit_model: '', nsfw_model_2k: '', nsfw_edit_model_2k: '', nsfw_model_4k: '', nsfw_edit_model_4k: '' },
                 videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8 },
                 videoConfig: {},
-                novelaiForm: { enabled: false, api_token: '', model: 'nai-diffusion-4-5-full', custom_model: '', default_sampler: 'k_euler', default_width: 832, default_height: 1216, default_steps: 28, default_scale: 5.0, quality_toggle: true, uc_preset: 0, cfg_rescale: 0, noise_schedule: 'native', smea: false, smea_dyn: false, generation_cost: 5, default_negative_prompt: '' },
+                novelaiForm: { enabled: false, api_token: '', model: 'nai-diffusion-4-5-full', custom_model: '', default_sampler: 'k_euler', default_width: 832, default_height: 1216, default_steps: 28, default_scale: 5.0, quality_toggle: true, uc_preset: 0, cfg_rescale: 0, noise_schedule: 'native', smea: false, smea_dyn: false, generation_cost: 5, default_negative_prompt: '', max_retries: 3 },
                 novelaiConfig: {},
                 novelaiPresets: [],
                 showNovelaiApiToken: false,
@@ -2227,6 +2234,7 @@
                                 this.novelaiForm.smea_dyn = data.smea_dyn || false;
                                 this.novelaiForm.generation_cost = data.generation_cost ?? 5;
                                 this.novelaiForm.default_negative_prompt = data.default_negative_prompt || '';
+                                this.novelaiForm.max_retries = data.max_retries ?? 3;
                             }
                         })
                         .catch(e => console.warn('加载 NovelAI 配置失败:', e));
@@ -3216,6 +3224,7 @@
                             smea_dyn: this.novelaiForm.smea_dyn,
                             generation_cost: parseInt(this.novelaiForm.generation_cost),
                             default_negative_prompt: this.novelaiForm.default_negative_prompt,
+                            max_retries: parseInt(this.novelaiForm.max_retries),
                         };
 
                         if (this.novelaiForm.api_token) {

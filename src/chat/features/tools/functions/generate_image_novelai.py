@@ -15,6 +15,7 @@ AI 需要生成符合 Danbooru 格式的英文 Tag 来作为 prompt。
 
 import logging
 import io
+import random
 import discord
 from typing import Optional, List
 
@@ -357,8 +358,22 @@ async def generate_image_novelai(
                     )
                     embed.set_image(url="attachment://SPOILER_novelai_generated.png")
 
-                    await channel.send(embed=embed, file=image_file)
-                    log.info("已发送 NovelAI 生成图片到频道")
+                    # 创建交互按钮 View
+                    interaction_view = NovelAIResultView(
+                        prompt=final_prompt,
+                        negative_prompt=negative_prompt,
+                        width=width,
+                        height=height,
+                        steps=steps,
+                        scale=scale,
+                        sampler=sampler,
+                        preset_name=preset_name,
+                        user_id=user_id,
+                        cost=cost,
+                    )
+
+                    await channel.send(embed=embed, file=image_file, view=interaction_view)
+                    log.info("已发送 NovelAI 生成图片到频道（含交互按钮）")
 
                 except Exception as e:
                     log.error(f"发送 NovelAI 图片到频道失败: {e}")
@@ -389,3 +404,388 @@ async def generate_image_novelai(
             "reason": "exception",
             "hint": f"NovelAI 图片生成时出现错误: {str(e)[:100]}。请用自己的语气告诉用户出了问题。"
         }
+
+
+# ==================== 交互按钮组件 ====================
+
+
+class EditPromptModal(discord.ui.Modal, title="修改提示词"):
+    """弹出 Modal 让用户编辑提示词后重新生成"""
+
+    prompt_input = discord.ui.TextInput(
+        label="正面提示词 (Danbooru Tag)",
+        style=discord.TextStyle.paragraph,
+        placeholder="masterpiece, best quality, 1girl, ...",
+        required=True,
+        max_length=4000,
+    )
+    negative_input = discord.ui.TextInput(
+        label="负面提示词（可选）",
+        style=discord.TextStyle.paragraph,
+        placeholder="lowres, bad anatomy, ...",
+        required=False,
+        max_length=2000,
+    )
+
+    def __init__(
+        self,
+        current_prompt: str,
+        current_negative: Optional[str],
+        width: int,
+        height: int,
+        steps: int,
+        scale: float,
+        sampler: str,
+        preset_name: Optional[str],
+        user_id: Optional[str],
+        cost: int,
+    ):
+        super().__init__()
+        self.prompt_input.default = current_prompt[:4000]
+        if current_negative:
+            self.negative_input.default = current_negative[:2000]
+        self._width = width
+        self._height = height
+        self._steps = steps
+        self._scale = scale
+        self._sampler = sampler
+        self._preset_name = preset_name
+        self._user_id = user_id
+        self._cost = cost
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+        try:
+            new_prompt = self.prompt_input.value.strip()
+            new_negative = self.negative_input.value.strip() if self.negative_input.value else None
+
+            if not new_prompt:
+                await interaction.followup.send("提示词不能为空！", ephemeral=True)
+                return
+
+            await _regenerate_novelai(
+                interaction=interaction,
+                prompt=new_prompt,
+                negative_prompt=new_negative,
+                width=self._width,
+                height=self._height,
+                steps=self._steps,
+                scale=self._scale,
+                sampler=self._sampler,
+                preset_name=self._preset_name,
+                user_id=self._user_id,
+                cost=self._cost,
+            )
+        except Exception as e:
+            log.error(f"修改提示词重新生成失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"生成失败: {str(e)[:200]}", ephemeral=True)
+            except Exception:
+                pass
+
+
+class NovelAIResultView(discord.ui.View):
+    """NovelAI 生成结果的交互按钮"""
+
+    def __init__(
+        self,
+        prompt: str,
+        negative_prompt: Optional[str],
+        width: int,
+        height: int,
+        steps: int,
+        scale: float,
+        sampler: str,
+        preset_name: Optional[str],
+        user_id: Optional[str],
+        cost: int,
+    ):
+        super().__init__(timeout=600)  # 10 分钟超时
+        self._prompt = prompt
+        self._negative_prompt = negative_prompt
+        self._width = width
+        self._height = height
+        self._steps = steps
+        self._scale = scale
+        self._sampler = sampler
+        self._preset_name = preset_name
+        self._user_id = user_id
+        self._cost = cost
+
+    @discord.ui.button(label="重新生成", style=discord.ButtonStyle.primary, row=0)
+    async def regenerate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """用相同 prompt 但新种子重新生成"""
+        # 权限检查：只有原始请求者或管理员可以操作
+        if self._user_id and str(interaction.user.id) != str(self._user_id):
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        await interaction.response.defer(thinking=True)
+        try:
+            await _regenerate_novelai(
+                interaction=interaction,
+                prompt=self._prompt,
+                negative_prompt=self._negative_prompt,
+                width=self._width,
+                height=self._height,
+                steps=self._steps,
+                scale=self._scale,
+                sampler=self._sampler,
+                preset_name=self._preset_name,
+                user_id=self._user_id,
+                cost=self._cost,
+            )
+        except Exception as e:
+            log.error(f"重新生成失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"重新生成失败: {str(e)[:200]}", ephemeral=True)
+            except Exception:
+                pass
+
+    @discord.ui.button(label="修改提示词", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_prompt_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """弹出 Modal 让用户编辑提示词"""
+        if self._user_id and str(interaction.user.id) != str(self._user_id):
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        modal = EditPromptModal(
+            current_prompt=self._prompt,
+            current_negative=self._negative_prompt,
+            width=self._width,
+            height=self._height,
+            steps=self._steps,
+            scale=self._scale,
+            sampler=self._sampler,
+            preset_name=self._preset_name,
+            user_id=self._user_id,
+            cost=self._cost,
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="切换到 Imagen", style=discord.ButtonStyle.success, row=0)
+    async def switch_to_imagen_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """使用 Gemini Imagen 重新生成"""
+        if self._user_id and str(interaction.user.id) != str(self._user_id):
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        await interaction.response.defer(thinking=True)
+        try:
+            await _regenerate_with_imagen(
+                interaction=interaction,
+                prompt=self._prompt,
+                user_id=self._user_id,
+            )
+        except Exception as e:
+            log.error(f"切换到 Imagen 失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"切换失败: {str(e)[:200]}", ephemeral=True)
+            except Exception:
+                pass
+
+    async def on_timeout(self):
+        """超时后禁用所有按钮"""
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        # 尝试编辑原消息来禁用按钮
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
+async def _regenerate_novelai(
+    interaction: discord.Interaction,
+    prompt: str,
+    negative_prompt: Optional[str],
+    width: int,
+    height: int,
+    steps: int,
+    scale: float,
+    sampler: str,
+    preset_name: Optional[str],
+    user_id: Optional[str],
+    cost: int,
+):
+    """内部函数：使用 NovelAI 重新生成图片"""
+    from src.chat.features.novelai_generation.services.novelai_service import novelai_service
+    from src.chat.config.chat_config import NOVELAI_CONFIG
+    from src.chat.features.odysseia_coin.service.coin_service import coin_service
+
+    # 检查余额
+    if user_id and cost > 0:
+        try:
+            user_id_int = int(user_id)
+            balance = await coin_service.get_balance(user_id_int)
+            if balance < cost:
+                await interaction.followup.send(
+                    f"月光币不足（需要 {cost}，当前 {balance}）",
+                    ephemeral=True,
+                )
+                return
+        except (ValueError, TypeError):
+            pass
+
+    # 生成图片（新种子）
+    result = await novelai_service.generate_image(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        width=width,
+        height=height,
+        steps=steps,
+        scale=scale,
+        sampler=sampler,
+        seed=None,  # 新种子
+    )
+
+    if result is None:
+        await interaction.followup.send("NovelAI 图片生成失败，请稍后重试。", ephemeral=True)
+        return
+
+    # 扣费
+    if user_id and cost > 0:
+        try:
+            user_id_int = int(user_id)
+            await coin_service.remove_coins(
+                user_id_int, cost, f"NovelAI重新生图: {prompt[:25]}..."
+            )
+        except Exception as e:
+            log.error(f"扣除月光币失败: {e}")
+
+    # 构建 Embed
+    embed = discord.Embed(
+        title="NovelAI 图片生成（重新生成）",
+        color=0x9B59B6,
+    )
+    embed.set_author(
+        name=interaction.user.display_name,
+        icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+    )
+    embed.add_field(
+        name="提示词",
+        value=f"```\n{prompt[:1016]}\n```",
+        inline=False,
+    )
+    if preset_name:
+        embed.add_field(name="预设", value=preset_name, inline=True)
+
+    model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
+    embed.set_footer(
+        text=(
+            f"消耗 {cost} 月光币 | "
+            f"尺寸: {result.width}x{result.height} | "
+            f"种子: {result.seed} | 模型: {model_name}"
+        )
+    )
+
+    image_file = discord.File(
+        io.BytesIO(result.image_data),
+        filename="novelai_generated.png",
+        spoiler=True,
+    )
+    embed.set_image(url="attachment://SPOILER_novelai_generated.png")
+
+    # 创建新的交互按钮
+    new_view = NovelAIResultView(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        width=width,
+        height=height,
+        steps=steps,
+        scale=scale,
+        sampler=sampler,
+        preset_name=preset_name,
+        user_id=user_id,
+        cost=cost,
+    )
+
+    await interaction.followup.send(embed=embed, file=image_file, view=new_view)
+    log.info(f"NovelAI 重新生成成功, 种子: {result.seed}")
+
+
+async def _regenerate_with_imagen(
+    interaction: discord.Interaction,
+    prompt: str,
+    user_id: Optional[str],
+):
+    """内部函数：使用 Gemini Imagen 重新生成图片"""
+    from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
+    from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
+    from src.chat.features.odysseia_coin.service.coin_service import coin_service
+
+    cost_per_image = GEMINI_IMAGEN_CONFIG.get("IMAGE_GENERATION_COST", 1)
+
+    if not gemini_imagen_service.is_available():
+        await interaction.followup.send("Gemini Imagen 服务当前不可用。", ephemeral=True)
+        return
+
+    # 检查余额
+    if user_id and cost_per_image > 0:
+        try:
+            user_id_int = int(user_id)
+            balance = await coin_service.get_balance(user_id_int)
+            if balance < cost_per_image:
+                await interaction.followup.send(
+                    f"月光币不足（需要 {cost_per_image}，当前 {balance}）",
+                    ephemeral=True,
+                )
+                return
+        except (ValueError, TypeError):
+            pass
+
+    # NovelAI 的 Danbooru Tag prompt 不太适合 Imagen 的自然语言风格
+    # 但我们仍然尝试用同样的 prompt 生成
+    result = await gemini_imagen_service.generate_single_image(
+        prompt=prompt,
+        negative_prompt=None,
+        aspect_ratio="3:4",  # 类似 832x1216 的竖图
+        resolution="default",
+        content_rating="nsfw",
+    )
+
+    if not result:
+        await interaction.followup.send("Gemini Imagen 图片生成失败，请稍后重试。", ephemeral=True)
+        return
+
+    # 扣费
+    if user_id and cost_per_image > 0:
+        try:
+            user_id_int = int(user_id)
+            await coin_service.remove_coins(
+                user_id_int, cost_per_image, f"Imagen生图(切换): {prompt[:25]}..."
+            )
+        except Exception as e:
+            log.error(f"扣除月光币失败: {e}")
+
+    # 构建 Embed
+    embed = discord.Embed(
+        title="Gemini Imagen 图片生成（从 NovelAI 切换）",
+        color=0x4285F4,
+    )
+    embed.set_author(
+        name=interaction.user.display_name,
+        icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+    )
+    embed.add_field(
+        name="提示词",
+        value=f"```\n{prompt[:1016]}\n```",
+        inline=False,
+    )
+    embed.set_footer(text=f"消耗 {cost_per_image} 月光币 | 引擎: Gemini Imagen")
+
+    # result 是图片 bytes
+    image_file = discord.File(
+        io.BytesIO(result),
+        filename="imagen_generated.png",
+        spoiler=True,
+    )
+    embed.set_image(url="attachment://SPOILER_imagen_generated.png")
+
+    await interaction.followup.send(embed=embed, file=image_file)
+    log.info("已切换到 Imagen 生成图片")

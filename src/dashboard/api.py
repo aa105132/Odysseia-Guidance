@@ -133,6 +133,7 @@ class NovelAIConfigUpdate(BaseModel):
     smea_dyn: Optional[bool] = None
     generation_cost: Optional[int] = None
     default_negative_prompt: Optional[str] = None
+    max_retries: Optional[int] = None
 
 
 class EmbeddingConfigUpdate(BaseModel):
@@ -1153,6 +1154,7 @@ async def get_novelai_config(token: str = Depends(verify_token)):
     db_smea_dyn = await chat_db_manager.get_global_setting("novelai_smea_dyn")
     db_generation_cost = await chat_db_manager.get_global_setting("novelai_generation_cost")
     db_default_negative = await chat_db_manager.get_global_setting("novelai_default_negative")
+    db_max_retries = await chat_db_manager.get_global_setting("novelai_max_retries")
 
     config = chat_config.NOVELAI_CONFIG
 
@@ -1173,6 +1175,7 @@ async def get_novelai_config(token: str = Depends(verify_token)):
     smea_dyn = db_smea_dyn == "true" if db_smea_dyn is not None else config.get("SMEA_DYN", False)
     generation_cost = int(db_generation_cost) if db_generation_cost else config.get("IMAGE_GENERATION_COST", 5)
     default_negative = db_default_negative or config.get("DEFAULT_NEGATIVE_PROMPT", "")
+    max_retries = int(db_max_retries) if db_max_retries else config.get("MAX_RETRIES", 3)
 
     # 掩码 API Token
     masked_token = api_token[:10] + "..." + api_token[-4:] if len(api_token) > 14 else ("***" if api_token else "")
@@ -1203,6 +1206,7 @@ async def get_novelai_config(token: str = Depends(verify_token)):
         "smea_dyn": smea_dyn,
         "generation_cost": generation_cost,
         "default_negative_prompt": default_negative,
+        "max_retries": max_retries,
         "service_available": service_available,
         "available_models": [
             "nai-diffusion-4-5-full",
@@ -1348,6 +1352,15 @@ async def update_novelai_config(config: NovelAIConfigUpdate, token: str = Depend
         env_updates["NOVELAI_DEFAULT_NEGATIVE"] = config.default_negative_prompt
         updated["default_negative_prompt"] = config.default_negative_prompt[:100] + "..."
         await chat_db_manager.set_global_setting("novelai_default_negative", config.default_negative_prompt)
+
+    if config.max_retries is not None:
+        if not 0 <= config.max_retries <= 10:
+            raise HTTPException(400, "重试次数必须在 0-10 之间")
+        chat_config.NOVELAI_CONFIG["MAX_RETRIES"] = config.max_retries
+        os.environ["NOVELAI_MAX_RETRIES"] = str(config.max_retries)
+        env_updates["NOVELAI_MAX_RETRIES"] = str(config.max_retries)
+        updated["max_retries"] = config.max_retries
+        await chat_db_manager.set_global_setting("novelai_max_retries", str(config.max_retries))
 
     # 更新 .env 文件
     if env_updates:

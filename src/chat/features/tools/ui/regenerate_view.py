@@ -7,6 +7,7 @@
 """
 
 import logging
+import io
 import discord
 from typing import Optional, Dict, Any, Callable, Awaitable, List
 
@@ -91,7 +92,8 @@ class RegenerateView(discord.ui.View):
     提供：
     1. 重新生成按钮 - 使用相同参数重新生成
     2. 修改提示词按钮 - 弹出模态框修改提示词后重新生成
-    3. 更换模型下拉菜单 - 切换分辨率和内容分级后重新生成（仅图片类型）
+    3. 切换到 NovelAI 按钮 - 使用 NovelAI 引擎重新生成（仅图片类型）
+    4. 更换模型下拉菜单 - 切换分辨率和内容分级后重新生成（仅图片类型）
     """
 
     def __init__(
@@ -105,6 +107,16 @@ class RegenerateView(discord.ui.View):
         self.generation_type = generation_type
         self.original_params = original_params
         self.user_id = user_id
+        
+        # 为图片类型添加"切换到 NovelAI"按钮
+        if generation_type in ("image", "edit_image"):
+            novelai_button = discord.ui.Button(
+                label="切换到 NovelAI",
+                style=discord.ButtonStyle.success,
+                row=0,
+            )
+            novelai_button.callback = self._switch_to_novelai
+            self.add_item(novelai_button)
         
         # 为图片类型添加模型选择下拉菜单
         if generation_type in ("image", "edit_image"):
@@ -187,6 +199,22 @@ class RegenerateView(discord.ui.View):
             log.error(f"更换模型重新生成失败: {e}", exc_info=True)
             try:
                 await interaction.followup.send("重新生成失败了，请稍后再试...", ephemeral=True)
+            except Exception:
+                pass
+
+    async def _switch_to_novelai(self, interaction: discord.Interaction):
+        """切换到 NovelAI 引擎生成图片"""
+        await interaction.response.defer()
+        try:
+            await _do_novelai_regenerate(
+                interaction=interaction,
+                prompt=self.original_params.get("prompt", ""),
+                user_id=interaction.user.id,
+            )
+        except Exception as e:
+            log.error(f"切换到 NovelAI 失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"切换到 NovelAI 失败: {str(e)[:200]}", ephemeral=True)
             except Exception:
                 pass
 
@@ -486,7 +514,8 @@ class SlashCommandRegenerateView(discord.ui.View):
     提供：
     1. 重新生成按钮
     2. 修改提示词按钮
-    3. 更换模型下拉菜单（仅图片类型）
+    3. 切换到 NovelAI 按钮（仅图片类型）
+    4. 更换模型下拉菜单（仅图片类型）
     """
 
     def __init__(
@@ -500,6 +529,16 @@ class SlashCommandRegenerateView(discord.ui.View):
         self.generation_type = generation_type
         self.original_params = original_params
         self.user_id = user_id
+        
+        # 为图片类型添加"切换到 NovelAI"按钮
+        if generation_type in ("image", "image_edit"):
+            novelai_button = discord.ui.Button(
+                label="切换到 NovelAI",
+                style=discord.ButtonStyle.success,
+                row=0,
+            )
+            novelai_button.callback = self._switch_to_novelai
+            self.add_item(novelai_button)
         
         # 为图片类型添加模型选择下拉菜单
         if generation_type in ("image", "image_edit"):
@@ -575,6 +614,22 @@ class SlashCommandRegenerateView(discord.ui.View):
             log.error(f"斜杠命令更换模型重新生成失败: {e}", exc_info=True)
             try:
                 await interaction.followup.send("重新生成失败了，请稍后再试...", ephemeral=True)
+            except Exception:
+                pass
+
+    async def _switch_to_novelai(self, interaction: discord.Interaction):
+        """切换到 NovelAI 引擎生成图片"""
+        await interaction.response.defer()
+        try:
+            await _do_novelai_regenerate(
+                interaction=interaction,
+                prompt=self.original_params.get("prompt", ""),
+                user_id=interaction.user.id,
+            )
+        except Exception as e:
+            log.error(f"切换到 NovelAI 失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"切换到 NovelAI 失败: {str(e)[:200]}", ephemeral=True)
             except Exception:
                 pass
 
@@ -852,3 +907,110 @@ class SlashCommandRegenerateView(discord.ui.View):
                 await interaction.followup.send(hint, ephemeral=True)
             except Exception:
                 pass
+
+
+# ==================== 切换到 NovelAI 的共享逻辑 ====================
+
+
+async def _do_novelai_regenerate(
+    interaction: discord.Interaction,
+    prompt: str,
+    user_id: int,
+):
+    """
+    使用 NovelAI 引擎重新生成图片（从 Imagen 切换过来）。
+    Imagen 使用自然语言 prompt，NovelAI 也会尝试直接使用。
+    """
+    from src.chat.features.novelai_generation.services.novelai_service import novelai_service
+    from src.chat.config.chat_config import NOVELAI_CONFIG
+    from src.chat.features.odysseia_coin.service.coin_service import coin_service
+
+    # 检查 NovelAI 服务可用性
+    if not novelai_service.is_available():
+        await interaction.followup.send("NovelAI 服务当前不可用，请在 Dashboard 中配置。", ephemeral=True)
+        return
+
+    cost = NOVELAI_CONFIG.get("IMAGE_GENERATION_COST", 5)
+
+    # 检查余额
+    if cost > 0:
+        try:
+            balance = await coin_service.get_balance(user_id)
+            if balance < cost:
+                await interaction.followup.send(
+                    f"月光币不足（需要 {cost}，当前 {balance}）",
+                    ephemeral=True,
+                )
+                return
+        except Exception:
+            pass
+
+    # 调用 NovelAI 生成
+    result = await novelai_service.generate_image(
+        prompt=prompt,
+        width=832,
+        height=1216,
+        seed=None,
+    )
+
+    if result is None:
+        await interaction.followup.send("NovelAI 图片生成失败，请稍后重试。", ephemeral=True)
+        return
+
+    # 扣费
+    if cost > 0:
+        try:
+            await coin_service.remove_coins(
+                user_id, cost, f"NovelAI生图(切换): {prompt[:25]}..."
+            )
+        except Exception as e:
+            log.error(f"扣除月光币失败: {e}")
+
+    # 构建 Embed
+    embed = discord.Embed(
+        title="NovelAI 图片生成（从 Imagen 切换）",
+        color=0x9B59B6,
+    )
+    embed.set_author(
+        name=interaction.user.display_name,
+        icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+    )
+    embed.add_field(
+        name="提示词",
+        value=f"```\n{prompt[:1016]}\n```",
+        inline=False,
+    )
+
+    model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
+    embed.set_footer(
+        text=(
+            f"消耗 {cost} 月光币 | "
+            f"尺寸: {result.width}x{result.height} | "
+            f"种子: {result.seed} | 模型: {model_name}"
+        )
+    )
+
+    image_file = discord.File(
+        io.BytesIO(result.image_data),
+        filename="novelai_generated.png",
+        spoiler=True,
+    )
+    embed.set_image(url="attachment://SPOILER_novelai_generated.png")
+
+    # 创建 NovelAI 结果的交互按钮
+    from src.chat.features.tools.functions.generate_image_novelai import NovelAIResultView
+    novelai_view = NovelAIResultView(
+        prompt=prompt,
+        negative_prompt=None,
+        width=832,
+        height=1216,
+        steps=28,
+        scale=5.0,
+        sampler="k_euler_ancestral",
+        preset_name=None,
+        user_id=str(user_id),
+        cost=cost,
+    )
+
+    await interaction.followup.send(embed=embed, file=image_file, view=novelai_view)
+    log.info(f"已从 Imagen 切换到 NovelAI 生成图片, 种子: {result.seed}")

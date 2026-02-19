@@ -14,6 +14,7 @@ import io
 import zipfile
 import random
 import base64
+import asyncio
 import aiohttp
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
@@ -84,6 +85,8 @@ class NovelAIService:
 
     def __init__(self):
         self._api_token: Optional[str] = None
+        # 请求队列: 同一时间只允许一个 NovelAI 请求，避免 429
+        self._request_semaphore = asyncio.Semaphore(1)
         self._initialize()
 
     def _initialize(self):
@@ -286,6 +289,9 @@ class NovelAIService:
             f"引导={final_scale}, 采样器={final_sampler}, 种子={final_seed}"
         )
 
+        # 从配置读取最大重试次数
+        max_retries = app_config.NOVELAI_CONFIG.get("MAX_RETRIES", 3)
+
         try:
             headers = {
                 "Authorization": f"Bearer {self._api_token}",
@@ -295,57 +301,96 @@ class NovelAIService:
 
             timeout = aiohttp.ClientTimeout(total=120)
 
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    NOVELAI_API_URL,
-                    json=request_body,
-                    headers=headers,
-                ) as response:
-                    if response.status in (200, 201):
-                        # 成功: 返回 ZIP 文件（官方文档为 201，但某些情况可能返回 200）
-                        zip_data = await response.read()
-                        image_data = self._extract_image_from_zip(zip_data)
+            # 使用 semaphore 确保同一时间只有一个请求（队列功能）
+            log.info("NovelAI 请求进入队列，等待获取许可...")
+            async with self._request_semaphore:
+                log.info("NovelAI 请求获取到许可，开始生成")
 
-                        if image_data:
-                            log.info(f"NovelAI 图片生成成功, 大小: {len(image_data)} bytes")
-                            return NovelAIResult(
-                                image_data=image_data,
-                                seed=final_seed,
-                                prompt=prompt,
-                                negative_prompt=final_negative,
-                                width=final_width,
-                                height=final_height,
-                                model=final_model,
-                            )
+                last_error = None
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        async with aiohttp.ClientSession(timeout=timeout) as session:
+                            async with session.post(
+                                NOVELAI_API_URL,
+                                json=request_body,
+                                headers=headers,
+                            ) as response:
+                                if response.status in (200, 201):
+                                    # 成功: 返回 ZIP 文件（官方文档为 201，但某些情况可能返回 200）
+                                    zip_data = await response.read()
+                                    image_data = self._extract_image_from_zip(zip_data)
+
+                                    if image_data:
+                                        log.info(f"NovelAI 图片生成成功 (第 {attempt} 次尝试), 大小: {len(image_data)} bytes")
+                                        return NovelAIResult(
+                                            image_data=image_data,
+                                            seed=final_seed,
+                                            prompt=prompt,
+                                            negative_prompt=final_negative,
+                                            width=final_width,
+                                            height=final_height,
+                                            model=final_model,
+                                        )
+                                    else:
+                                        log.error("NovelAI 响应的 ZIP 文件中没有找到图片")
+                                        return None
+
+                                elif response.status == 401:
+                                    log.error("NovelAI API 认证失败: Token 无效或过期")
+                                    return None  # 不可重试
+                                elif response.status == 402:
+                                    log.error("NovelAI API: Anlas 不足")
+                                    return None  # 不可重试
+                                elif response.status in (429, 409):
+                                    # 429 = 请求过多, 409 = 并发冲突 → 可重试
+                                    wait_time = min(2 ** attempt, 30)  # 指数退避: 2s, 4s, 8s, 16s, 30s
+                                    log.warning(
+                                        f"NovelAI API 返回 {response.status} "
+                                        f"(第 {attempt}/{max_retries} 次尝试), "
+                                        f"等待 {wait_time}s 后重试..."
+                                    )
+                                    last_error = f"HTTP {response.status}"
+                                    if attempt < max_retries:
+                                        await asyncio.sleep(wait_time)
+                                        continue
+                                    else:
+                                        log.error(
+                                            f"NovelAI API: 达到最大重试次数 ({max_retries}), "
+                                            f"最后一次状态码: {response.status}"
+                                        )
+                                        return None
+                                else:
+                                    # 其他错误
+                                    try:
+                                        error_bytes = await response.read()
+                                        error_text = error_bytes.decode("utf-8", errors="replace")
+                                    except Exception:
+                                        error_text = f"(无法读取响应体, Content-Type: {response.content_type})"
+                                    log.error(
+                                        f"NovelAI API 请求失败: HTTP {response.status}, "
+                                        f"响应: {error_text[:500]}"
+                                    )
+                                    return None  # 其他错误不重试
+
+                    except aiohttp.ClientError as e:
+                        # 网络错误也可以重试
+                        wait_time = min(2 ** attempt, 30)
+                        log.warning(
+                            f"NovelAI API 网络错误 (第 {attempt}/{max_retries} 次尝试): {e}, "
+                            f"等待 {wait_time}s 后重试..."
+                        )
+                        last_error = str(e)
+                        if attempt < max_retries:
+                            await asyncio.sleep(wait_time)
+                            continue
                         else:
-                            log.error("NovelAI 响应的 ZIP 文件中没有找到图片")
+                            log.error(f"NovelAI API 网络错误，已达最大重试次数: {e}")
                             return None
 
-                    elif response.status == 401:
-                        log.error("NovelAI API 认证失败: Token 无效或过期")
-                        return None
-                    elif response.status == 402:
-                        log.error("NovelAI API: Anlas 不足")
-                        return None
-                    elif response.status == 409:
-                        log.error("NovelAI API: 并发请求冲突，请稍后重试")
-                        return None
-                    else:
-                        # 使用 response.read() 而非 response.text() 避免二进制数据解码错误
-                        try:
-                            error_bytes = await response.read()
-                            error_text = error_bytes.decode("utf-8", errors="replace")
-                        except Exception:
-                            error_text = f"(无法读取响应体, Content-Type: {response.content_type})"
-                        log.error(
-                            f"NovelAI API 请求失败: HTTP {response.status}, "
-                            f"响应: {error_text[:500]}"
-                        )
-                        return None
+                # 理论上不会走到这里，但安全起见
+                log.error(f"NovelAI 请求失败, 最后错误: {last_error}")
+                return None
 
-        except aiohttp.ClientError as e:
-            log.error(f"NovelAI API 网络错误: {e}")
-            return None
         except Exception as e:
             log.error(f"NovelAI 图片生成异常: {e}", exc_info=True)
             return None
