@@ -298,7 +298,7 @@ def reload_novelai_config():
 # 控制 AI 在对话中自动调用绘图工具时使用哪个引擎
 # "imagen" = 使用现有的 Gemini Imagen 绘图
 # "novelai" = 使用 NovelAI 绘图（AI 会自动生成 Danbooru Tag）
-DEFAULT_IMAGE_ENGINE = os.getenv("DEFAULT_IMAGE_ENGINE", "imagen")
+DEFAULT_IMAGE_ENGINE = os.getenv("DEFAULT_IMAGE_ENGINE", "novelai")
 
 
 # --- 向量嵌入 (Embedding) 配置 ---

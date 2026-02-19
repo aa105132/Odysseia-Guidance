@@ -1518,7 +1518,7 @@ async def get_default_image_engine(token: str = Depends(verify_token)):
     from src.chat.utils.database import chat_db_manager
 
     db_engine = await chat_db_manager.get_global_setting("default_image_engine")
-    engine = db_engine or chat_config.DEFAULT_IMAGE_ENGINE or "imagen"
+    engine = db_engine or chat_config.DEFAULT_IMAGE_ENGINE or "novelai"
 
     return {
         "engine": engine,
