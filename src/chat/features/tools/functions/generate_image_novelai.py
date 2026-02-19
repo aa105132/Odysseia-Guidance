@@ -221,7 +221,8 @@ async def generate_image_novelai(
 
         preset_name: 画师串预设名称（可选）。
                 如果用户提到使用某个预设，填入预设名称。
-                预设的画师串会作为前缀添加到 prompt 开头。
+                若未填写，系统会自动尝试使用该用户最近保存的预设作为画师串前缀；
+                若用户没有任何预设，则回退到全局默认画师串。
 
         preview_message: （必填）在图片生成前先发送给用户的预告消息。
                 告诉用户你正在画图，例如："稍等一下，我来画~" 或 "让我想想怎么画..."
@@ -287,24 +288,73 @@ async def generate_image_novelai(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
-    # 如果指定了预设名称，获取预设内容；否则使用全局默认画师串
+    # 画师串应用策略：
+    # 1) 指定 preset_name 时，优先按名称匹配该用户预设（支持大小写不敏感）
+    # 2) 未指定 preset_name 时，自动使用该用户最近保存的预设（如存在）
+    # 3) 若用户没有预设，回退到全局默认画师串
     final_prompt = prompt
     applied_artist = False
-    if preset_name and user_id:
+    effective_preset_name = preset_name
+
+    user_presets = []
+    if user_id:
         try:
             user_id_int = int(user_id)
-            preset = await chat_db_manager.get_novelai_preset(user_id_int, preset_name)
-            if preset and preset.get("artist_string"):
-                final_prompt = f"{preset['artist_string']}, {prompt}"
-                applied_artist = True
-                log.info(f"应用画师串预设: {preset_name}")
-                # 如果预设有负面提示词且用户未指定
-                if not negative_prompt and preset.get("negative_prompt"):
-                    negative_prompt = preset["negative_prompt"]
+            user_presets = await chat_db_manager.get_novelai_presets(user_id_int)
+        except (ValueError, TypeError):
+            log.warning(f"无法解析用户ID用于读取预设: {user_id}")
         except Exception as e:
-            log.warning(f"获取预设失败: {e}")
+            log.warning(f"读取用户画师串预设失败: {e}")
 
-    # 如果没有通过预设应用画师串，则使用全局默认画师串
+    if user_presets:
+        selected_preset = None
+
+        # 优先使用用户显式指定的预设名
+        if preset_name:
+            requested_name = preset_name.strip()
+            selected_preset = next(
+                (p for p in user_presets if p.get("name") == requested_name),
+                None,
+            )
+            if not selected_preset:
+                requested_name_lower = requested_name.lower()
+                selected_preset = next(
+                    (
+                        p
+                        for p in user_presets
+                        if str(p.get("name", "")).lower() == requested_name_lower
+                    ),
+                    None,
+                )
+                if selected_preset:
+                    effective_preset_name = selected_preset.get("name")
+                    log.info(
+                        f"预设名大小写不一致，已匹配预设: {requested_name} -> {effective_preset_name}"
+                    )
+
+            if not selected_preset:
+                log.warning(
+                    f"未找到用户预设 '{preset_name}'，将继续使用全局默认画师串（或无前缀）"
+                )
+
+        # 未显式指定预设时，自动使用最近保存的预设
+        if not selected_preset and not preset_name:
+            selected_preset = user_presets[0]  # get_novelai_presets 已按 created_at DESC 排序
+            effective_preset_name = selected_preset.get("name")
+            if effective_preset_name:
+                log.info(f"未指定预设，自动应用用户最近画师串预设: {effective_preset_name}")
+
+        # 应用选中的预设
+        if selected_preset and selected_preset.get("artist_string"):
+            final_prompt = f"{selected_preset['artist_string']}, {prompt}"
+            applied_artist = True
+            effective_preset_name = selected_preset.get("name") or effective_preset_name
+            log.info(f"应用画师串预设: {effective_preset_name or 'unknown'}")
+            # 如果预设有负面提示词且用户未指定
+            if not negative_prompt and selected_preset.get("negative_prompt"):
+                negative_prompt = selected_preset["negative_prompt"]
+
+    # 如果没有通过用户预设应用画师串，则使用全局默认画师串
     if not applied_artist:
         default_artist = NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "")
         if default_artist:
@@ -401,8 +451,8 @@ async def generate_image_novelai(
                             value=processed_success[:1024],
                             inline=False,
                         )
-                    if preset_name:
-                        embed.add_field(name="预设", value=preset_name, inline=True)
+                    if effective_preset_name:
+                        embed.add_field(name="预设", value=effective_preset_name, inline=True)
 
                     model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
                     embed.set_footer(
@@ -429,7 +479,7 @@ async def generate_image_novelai(
                         steps=steps,
                         scale=scale,
                         sampler=sampler,
-                        preset_name=preset_name,
+                        preset_name=effective_preset_name,
                         user_id=user_id,
                         cost=cost,
                     )

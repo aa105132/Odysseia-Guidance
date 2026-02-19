@@ -544,34 +544,65 @@ class GeminiService:
 
         return urls
 
+    def _extract_markdown_links_from_text(self, text: str) -> List[tuple]:
+        """从文本中提取 Markdown 链接，返回 (title, url) 元组列表。
+        同时也捕获裸 URL（标题设为'来源链接'）。"""
+        if not text:
+            return []
+
+        links: List[tuple] = []
+        seen_urls: set = set()
+
+        # 先提取 Markdown 格式链接 [title](url)
+        markdown_link_pattern = re.compile(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)")
+        for m in markdown_link_pattern.finditer(text):
+            title = m.group(1).strip()
+            url = m.group(2).strip().rstrip(".,;:!?")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                links.append((title, url))
+
+        # 再提取裸 URL（去重）
+        bare_url_pattern = re.compile(r"(https?://[^\s<>\]\)]+)")
+        for m in bare_url_pattern.finditer(text):
+            url = m.group(1).strip().rstrip(".,;:!?")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                links.append(("来源链接", url))
+
+        return links
+
     def _append_message_sources_if_needed(
-        self, response_text: str, source_urls: List[str]
+        self, response_text: str, source_links: List[tuple]
     ) -> str:
         """
-        在最终回复末尾补充“消息源”链接（可点击 URL）：
+        在最终回复末尾补充"消息源"链接（Markdown 格式 [标题](URL)）：
         - 若回复里已包含全部来源链接，则保持不变。
-        - 若缺失来源链接，则追加“消息源”区块。
+        - 若缺失来源链接，则追加"消息源"区块。
         """
-        if not source_urls:
+        if not source_links:
             return response_text
 
-        unique_source_urls: List[str] = []
-        for u in source_urls:
-            if u and u not in unique_source_urls:
-                unique_source_urls.append(u)
+        # 去重
+        unique_links: List[tuple] = []
+        seen: set = set()
+        for title, url in source_links:
+            if url and url not in seen:
+                seen.add(url)
+                unique_links.append((title, url))
 
-        if not unique_source_urls:
+        if not unique_links:
             return response_text
 
         existing_urls = self._extract_urls_from_text(response_text)
-        missing_urls = [u for u in unique_source_urls if u not in existing_urls]
+        missing_links = [(t, u) for t, u in unique_links if u not in existing_urls]
 
-        if not missing_urls:
+        if not missing_links:
             return response_text
 
         source_lines = ["", "消息源："]
-        for idx, url in enumerate(missing_urls[:10], 1):
-            source_lines.append(f"{idx}. {url}")
+        for idx, (title, url) in enumerate(missing_links[:10], 1):
+            source_lines.append(f"{idx}. [{title}]({url})")
 
         return response_text.rstrip() + "\n" + "\n".join(source_lines)
 
@@ -1087,7 +1118,7 @@ class GeminiService:
         called_tool_names = []
         thinking_was_used = False
         max_calls = 5
-        web_search_source_urls: List[str] = []
+        web_search_source_links: List[tuple] = []
         for i in range(max_calls):
             log_detailed = app_config.DEBUG_CONFIG.get(
                 "LOG_DETAILED_GEMINI_PROCESS", False
@@ -1227,17 +1258,19 @@ class GeminiService:
                             "result", {}
                         )
 
-                    # 记录 web_search 工具返回的来源链接，用于最终回复兜底展示
+                    # 记录 web_search 工具返回的来源链接（标题+URL），用于最终回复兜底展示
                     if tool_name == "web_search":
                         search_result_text = (
                             original_result
                             if isinstance(original_result, str)
                             else json.dumps(original_result, ensure_ascii=False)
                         )
-                        extracted_urls = self._extract_urls_from_text(search_result_text)
-                        for u in extracted_urls:
-                            if u not in web_search_source_urls:
-                                web_search_source_urls.append(u)
+                        extracted_links = self._extract_markdown_links_from_text(search_result_text)
+                        seen_urls = {u for _, u in web_search_source_links}
+                        for title, url in extracted_links:
+                            if url not in seen_urls:
+                                seen_urls.add(url)
+                                web_search_source_links.append((title, url))
 
                     # --- 新增：处理工具返回的头像图片 ---
                     if isinstance(original_result, dict):
@@ -1379,7 +1412,7 @@ class GeminiService:
                 )
                 if "web_search" in called_tool_names:
                     formatted_response = self._append_message_sources_if_needed(
-                        formatted_response, web_search_source_urls
+                        formatted_response, web_search_source_links
                     )
                 # --- 新增：记录 Token 使用情况 ---
                 await self._record_token_usage(
@@ -1622,7 +1655,7 @@ class GeminiService:
         # 工具调用循环
         max_tool_calls = 5
         called_tool_names = []
-        web_search_source_urls: List[str] = []
+        web_search_source_links: List[tuple] = []
         
         for iteration in range(max_tool_calls):
             payload = {
@@ -1712,17 +1745,19 @@ class GeminiService:
                                     discord_message=discord_message,
                                 )
 
-                                # 记录 web_search 工具返回的来源链接，用于最终回复兜底展示
+                                # 记录 web_search 工具返回的来源链接（标题+URL），用于最终回复兜底展示
                                 if tool_name == "web_search":
                                     search_result_text = (
                                         json.dumps(tool_result, ensure_ascii=False)
                                         if isinstance(tool_result, (dict, list))
                                         else str(tool_result)
                                     )
-                                    extracted_urls = self._extract_urls_from_text(search_result_text)
-                                    for u in extracted_urls:
-                                        if u not in web_search_source_urls:
-                                            web_search_source_urls.append(u)
+                                    extracted_links = self._extract_markdown_links_from_text(search_result_text)
+                                    seen_urls = {u for _, u in web_search_source_links}
+                                    for title, url in extracted_links:
+                                        if url not in seen_urls:
+                                            seen_urls.add(url)
+                                            web_search_source_links.append((title, url))
                                 
                                 # 将工具结果添加到对话历史
                                 messages.append({
@@ -1752,7 +1787,7 @@ class GeminiService:
                         final_response = await self._post_process_response(raw_response, user_id, guild_id)
                         if "web_search" in called_tool_names:
                             final_response = self._append_message_sources_if_needed(
-                                final_response, web_search_source_urls
+                                final_response, web_search_source_links
                             )
                         return final_response
                         

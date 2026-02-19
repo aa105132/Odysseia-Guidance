@@ -10,12 +10,13 @@
 可通过 Dashboard 动态配置 API Key、URL 等参数。
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 import aiohttp
 
@@ -266,6 +267,100 @@ def _split_answer_and_sources(content: str) -> tuple:
 # Tavily 搜索引擎（补充信源）
 # ============================================================
 
+def _should_enable_tavily(use_tavily: bool, detail_level: str) -> bool:
+    if use_tavily:
+        return True
+
+    normalized_level = (detail_level or '').strip().lower()
+    deep_levels = {
+        'detail',
+        'detailed',
+        'deep',
+        'advanced',
+        'research',
+        'full',
+        '详细',
+        '深度',
+    }
+    return normalized_level in deep_levels
+
+
+def _build_query_list(query: str, batch_queries: str, max_queries: int = 8) -> List[str]:
+    query_list: List[str] = []
+
+    def add_query(raw_query: str):
+        normalized_query = (raw_query or '').strip()
+        if normalized_query and normalized_query not in query_list:
+            query_list.append(normalized_query)
+
+    add_query(query)
+
+    batch_text = (batch_queries or '').strip()
+    if not batch_text:
+        return query_list[:max_queries]
+
+    parsed_queries: List[str] = []
+    if batch_text.startswith('[') and batch_text.endswith(']'):
+        try:
+            data = json.loads(batch_text)
+            if isinstance(data, list):
+                parsed_queries = [str(item).strip() for item in data]
+        except Exception:
+            parsed_queries = []
+
+    if not parsed_queries:
+        parsed_queries = [line.strip().lstrip('- ') for line in batch_text.splitlines()]
+
+    for current_query in parsed_queries:
+        add_query(current_query)
+        if len(query_list) >= max_queries:
+            break
+
+    return query_list[:max_queries]
+
+
+def _parse_query_flags(raw_query: str) -> tuple[str, bool, str]:
+    text = (raw_query or '').strip()
+    if not text:
+        return '', False, ''
+
+    force_tavily = False
+    force_batch = False
+
+    while text.startswith('['):
+        upper_text = text.upper()
+        matched = False
+        for flag in ('[DEEP]', '[TAVILY]', '[BATCH]'):
+            if upper_text.startswith(flag):
+                matched = True
+                if flag in ('[DEEP]', '[TAVILY]'):
+                    force_tavily = True
+                if flag == '[BATCH]':
+                    force_batch = True
+                text = text[len(flag) :].lstrip()
+                break
+        if not matched:
+            break
+
+    if '||' in text:
+        segments = [segment.strip() for segment in text.split('||') if segment.strip()]
+        if not segments:
+            return '', force_tavily, ''
+        head_query = segments[0]
+        tail_queries = '\n'.join(segments[1:])
+        return head_query, force_tavily, tail_queries
+
+    if force_batch:
+        lines = [line.strip().lstrip('- ') for line in text.splitlines() if line.strip()]
+        if not lines:
+            return '', force_tavily, ''
+        head_query = lines[0]
+        tail_queries = '\n'.join(lines[1:])
+        return head_query, force_tavily, tail_queries
+
+    return text, force_tavily, ''
+
+
 async def _tavily_search(query: str, max_results: int = 5) -> list:
     """通过 Tavily API 执行搜索，获取补充信源"""
     api_key = await _config.get_tavily_api_key()
@@ -353,6 +448,7 @@ def _format_search_result(
     query: str,
     grok_result: dict,
     tavily_results: list = None,
+    include_guidance: bool = True,
 ) -> str:
     """
     将搜索结果格式化为供主 AI 消化的结构化文本。
@@ -394,29 +490,25 @@ def _format_search_result(
     # 格式化信源列表
     if all_sources:
         parts.append("")
-        parts.append("## 信息来源（可点击）")
+        parts.append("## 信息来源")
         for i, source in enumerate(all_sources[:10], 1):
             title = source.get("title", "").strip()
             url = source.get("url", "").strip()
             snippet = source.get("snippet", "").strip() if "snippet" in source else ""
             if url:
                 if title:
-                    parts.append(f"{i}. {title}")
-                    parts.append(f"   {url}")
+                    parts.append(f"{i}. [{title}]({url})")
                 else:
-                    parts.append(f"{i}. {url}")
+                    parts.append(f"{i}. [来源链接]({url})")
                 if snippet:
                     parts.append(f"   > {snippet}")
 
-        parts.append("")
-        parts.append("## 消息源")
-        for i, source in enumerate(all_sources[:10], 1):
-            url = source.get("url", "").strip()
-            if url:
-                parts.append(f"{i}. {url}")
-
     parts.append("")
-    parts.append("[请基于以上搜索结果回答用户。在最终回复末尾附上“消息源”小节，并保留可点击 URL 原文，禁止编造链接。]")
+    parts.append(
+        "[请基于以上搜索结果回答用户。"
+        "在最终回复末尾附上消息源小节，"
+        "使用 Markdown 链接格式如 [标题](URL)，禁止编造链接。]"
+    )
 
     return "\n".join(parts)
 
@@ -465,7 +557,7 @@ async def web_search(
     **kwargs,
 ) -> str:
     """
-    搜索互联网获取实时信息。使用 Grok AI 进行智能搜索，并结合 Tavily 获取补充信源。
+    搜索互联网获取实时信息。默认仅使用 Grok；需要更详细信息时可按标记启用 Tavily。
 
     适用场景:
     - 用户询问**实时新闻**、**最新事件**、**当前信息**
@@ -482,6 +574,10 @@ async def web_search(
 
     Args:
         query: 搜索查询语句，应为清晰、完整的自然语言问题。
+               可选标记：
+               - [DEEP] 或 [TAVILY]：启用 Tavily 深度补充
+               - [BATCH]：开启多条查询并发搜索（按行列出子查询）
+               - 也可使用 || 分隔多个查询实现并发
         platform: 可选的搜索聚焦平台，如 "Twitter", "GitHub", "Reddit"。
     """
     log.info(f"工具 'web_search' 被调用，查询: '{query}', 平台: '{platform}'")
@@ -490,26 +586,81 @@ async def web_search(
     if not await _config.is_grok_configured():
         return "网络搜索功能未配置。请联系管理员在 Dashboard 中设置 Grok API。"
 
-    # 并行执行 Grok 搜索和 Tavily 补充搜索
-    import asyncio
-
-    grok_task = _grok_search(query, platform)
-
-    # 如果 Tavily 已配置，同时进行补充搜索
-    tavily_task = None
-    if await _config.is_tavily_configured():
-        tavily_task = _tavily_search(query, max_results=5)
-
-    if tavily_task:
-        grok_result, tavily_results = await asyncio.gather(
-            grok_task, tavily_task
+    normalized_query, force_tavily, inline_batch_queries = _parse_query_flags(query)
+    extra_batch_queries = str(kwargs.get('batch_queries', '') or '').strip()
+    if extra_batch_queries:
+        inline_batch_queries = '\n'.join(
+            [item for item in (inline_batch_queries, extra_batch_queries) if item]
         )
-    else:
-        grok_result = await grok_task
-        tavily_results = []
 
-    # 格式化结果
-    formatted = _format_search_result(query, grok_result, tavily_results)
+    query_list = _build_query_list(normalized_query, inline_batch_queries)
+    if not query_list:
+        return '请至少提供一条有效的搜索 query。'
+
+    use_tavily_kw = bool(kwargs.get('use_tavily', False))
+    detail_level = str(kwargs.get('detail_level', 'normal') or 'normal')
+    wants_tavily = force_tavily or _should_enable_tavily(use_tavily_kw, detail_level)
+    tavily_available = await _config.is_tavily_configured()
+    enable_tavily = wants_tavily and tavily_available
+
+    max_parallel_raw = kwargs.get('max_parallel', 3)
+    try:
+        max_parallel = int(max_parallel_raw)
+    except Exception:
+        max_parallel = 3
+    max_parallel = max(1, min(max_parallel, 8, len(query_list)))
+
+    async def run_single(single_query: str) -> str:
+        grok_task = _grok_search(single_query, platform)
+        if enable_tavily:
+            grok_result, tavily_results = await asyncio.gather(
+                grok_task,
+                _tavily_search(single_query, max_results=5),
+            )
+        else:
+            grok_result = await grok_task
+            tavily_results = []
+        return _format_search_result(single_query, grok_result, tavily_results)
+
+    if len(query_list) == 1:
+        formatted = await run_single(query_list[0])
+        if wants_tavily and not tavily_available:
+            formatted = (
+                f'{formatted}\n\n[提示] 已请求详细模式，但 Tavily 未配置，本次仅使用 Grok。'
+            )
+    else:
+        semaphore = asyncio.Semaphore(max_parallel)
+
+        async def run_limited(single_query: str) -> tuple[str, str]:
+            async with semaphore:
+                try:
+                    return single_query, await run_single(single_query)
+                except Exception as exception:
+                    return single_query, f'搜索失败: {exception}'
+
+        results = await asyncio.gather(
+            *(run_limited(single_query) for single_query in query_list)
+        )
+
+        tavily_status = '启用' if enable_tavily else '关闭'
+        sections = [
+            f'[网络批量搜索结果 - 共 {len(query_list)} 条查询]',
+            f'- 并发上限: {max_parallel}',
+            f'- Tavily 补充: {tavily_status}',
+        ]
+
+        if wants_tavily and not tavily_available:
+            sections.append('- 提示: 已请求详细模式，但 Tavily 未配置，本次仅使用 Grok。')
+
+        sections.append('')
+
+        for index, (current_query, result_text) in enumerate(results, 1):
+            sections.append(f'--- 搜索结果 {index}/{len(query_list)} ---')
+            sections.append(f'查询: {current_query}')
+            sections.append(result_text)
+            sections.append('')
+
+        formatted = '\n'.join(sections).strip()
 
     if not formatted or formatted.strip() == "":
         return "搜索未返回任何结果。请尝试换一种方式描述你的问题。"
