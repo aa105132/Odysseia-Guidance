@@ -1265,8 +1265,12 @@ class GeminiService:
                             "result", {}
                         )
 
-                    # web_search 执行完成，加 ☑️ reaction
+                    # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
                     if tool_name == "web_search" and discord_message:
+                        try:
+                            await discord_message.remove_reaction("🔍", discord_message.guild.me)
+                        except Exception:
+                            pass
                         try:
                             await discord_message.add_reaction("☑️")
                         except Exception:
@@ -1767,8 +1771,12 @@ class GeminiService:
                                     discord_message=discord_message,
                                 )
 
-                                # web_search 执行完成，加 ☑️ reaction
+                                # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
                                 if tool_name == "web_search" and discord_message:
+                                    try:
+                                        await discord_message.remove_reaction("🔍", discord_message.guild.me)
+                                    except Exception:
+                                        pass
                                     try:
                                         await discord_message.add_reaction("☑️")
                                     except Exception:
