@@ -1924,10 +1924,10 @@ async def test_imagen_connection(token: str = Depends(verify_token)):
             aspect_ratio="1:1"
         )
         
-        if result.get("success"):
+        if result is not None:
             return {"success": True, "message": "连接测试成功"}
         else:
-            return {"success": False, "error": result.get("error", "未知错误")}
+            return {"success": False, "error": "API 返回成功但未生成图像数据，请检查 API 配置"}
     except Exception as e:
         log.error(f"Imagen API 测试失败: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
