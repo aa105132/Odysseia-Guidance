@@ -202,6 +202,12 @@ class AIChatCog(commands.Cog):
                         log.warning(
                             f"无法通过私信发送给 {message.author.display_name}，将在原频道回复提示信息。"
                         )
+                        sent_messages = await self._reply_text_safely(
+                            message, response_text, mention_author=True
+                        )
+                        if used_web_search:
+                            await self._suppress_link_previews(sent_messages)
+                        return
                         await message.reply(
                             "字太多啦，我不要刷屏。你的私信又关了，我就不给你讲啦！",
                             mention_author=True,
