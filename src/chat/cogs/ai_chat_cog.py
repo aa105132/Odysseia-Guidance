@@ -23,8 +23,6 @@ from src.chat.features.odysseia_coin.service.coin_service import coin_service
 
 log = logging.getLogger(__name__)
 
-# tmp marker
-
 
 class AIChatCog(commands.Cog):
     """处理AI聊天功能的Cog，包括@mention回复和斜杠命令"""
@@ -65,7 +63,7 @@ class AIChatCog(commands.Cog):
         if not chunks:
             return
 
-        first_with_intro = f{intro_text}\n\n{chunks[0]}
+        first_with_intro = f'{intro_text}\\n\\n{chunks[0]}'
         if len(first_with_intro) <= 2000:
             await user.send(first_with_intro)
             chunks = chunks[1:]
