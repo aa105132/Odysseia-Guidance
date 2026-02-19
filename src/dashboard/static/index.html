@@ -82,6 +82,12 @@
                         <i data-lucide="video" class="w-5 h-5"></i>
                         <span>视频设置</span>
                     </button>
+                    <button @click="currentTab = 'novelai'"
+                            :class="currentTab === 'novelai' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="palette" class="w-5 h-5"></i>
+                        <span>NovelAI 设置</span>
+                    </button>
                     <button @click="currentTab = 'coin'"
                             :class="currentTab === 'coin' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
                             class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
@@ -802,6 +808,274 @@
                 </div>
             </div>
             
+            <!-- NovelAI 设置 -->
+            <div x-show="currentTab === 'novelai'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">NovelAI 设置</h2>
+
+                <!-- 服务状态 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center"
+                                 :class="novelaiForm.enabled ? 'bg-green-500/20' : 'bg-red-500/20'">
+                                <i data-lucide="palette" class="w-6 h-6"
+                                   :class="novelaiForm.enabled ? 'text-green-400' : 'text-red-400'"></i>
+                            </div>
+                            <div>
+                                <p class="font-medium">NovelAI 图像生成服务</p>
+                                <p class="text-sm text-slate-400" x-text="novelaiForm.enabled ? '已启用' : '已禁用'"></p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="novelaiForm.enabled" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- API Token 配置 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6" :class="!novelaiForm.enabled && 'opacity-50'">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="key" class="w-5 h-5 text-yellow-400"></i>
+                        API Token
+                    </h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">NovelAI Persistent API Token</label>
+                            <div class="relative">
+                                <input :type="showNovelaiApiToken ? 'text' : 'password'" x-model="novelaiForm.api_token"
+                                       :placeholder="novelaiConfig.has_api_token ? '已配置（留空不修改）' : '输入你的 NovelAI API Token'"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <button @click="showNovelaiApiToken = !showNovelaiApiToken"
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200">
+                                    <i :data-lucide="showNovelaiApiToken ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">在 NovelAI 账户设置 > Account > API Settings 中获取</p>
+                        </div>
+
+                        <!-- 连接测试 -->
+                        <button @click="testNovelaiConnection()"
+                                :disabled="testing"
+                                class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 px-4 py-2 rounded-lg transition-all flex items-center gap-2">
+                            <i data-lucide="wifi" class="w-4 h-4"></i>
+                            <span x-text="testing ? '测试中...' : '测试连接'"></span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 模型和参数配置 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6" :class="!novelaiForm.enabled && 'opacity-50'">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="settings" class="w-5 h-5 text-blue-400"></i>
+                        模型与参数
+                    </h3>
+                    <div class="space-y-4">
+                        <!-- 模型选择 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">生成模型</label>
+                            <select x-model="novelaiForm.model"
+                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <option value="nai-diffusion-4-5-full">NAI Diffusion V4.5 Full</option>
+                                <option value="nai-diffusion-4-5-curated">NAI Diffusion V4.5 Curated</option>
+                                <option value="nai-diffusion-4-curated-preview">NAI Diffusion V4 Curated Preview</option>
+                                <option value="nai-diffusion-3">NAI Diffusion V3</option>
+                            </select>
+                        </div>
+
+                        <!-- 自定义模型 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">自定义模型名（可选）</label>
+                            <input type="text" x-model="novelaiForm.custom_model"
+                                   placeholder="留空使用上方选择的模型"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">如果需要使用预设列表中没有的模型，可在此填写</p>
+                        </div>
+
+                        <!-- 采样器 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">默认采样器</label>
+                            <select x-model="novelaiForm.default_sampler"
+                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <option value="k_euler">Euler</option>
+                                <option value="k_euler_ancestral">Euler Ancestral</option>
+                                <option value="k_dpmpp_2s_ancestral">DPM++ 2S Ancestral</option>
+                                <option value="k_dpmpp_2m">DPM++ 2M</option>
+                                <option value="k_dpmpp_sde">DPM++ SDE</option>
+                                <option value="ddim">DDIM</option>
+                            </select>
+                        </div>
+
+                        <!-- 默认尺寸 -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">默认宽度</label>
+                                <input type="number" x-model.number="novelaiForm.default_width" min="64" max="2048" step="64"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">默认高度</label>
+                                <input type="number" x-model.number="novelaiForm.default_height" min="64" max="2048" step="64"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+
+                        <!-- 步数和引导强度 -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">默认步数</label>
+                                <input type="number" x-model.number="novelaiForm.default_steps" min="1" max="50"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">默认引导强度 (CFG Scale)</label>
+                                <input type="number" x-model.number="novelaiForm.default_scale" min="1.0" max="10.0" step="0.1"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+
+                        <!-- 生成成本 -->
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">生成成本（月光币/次）</label>
+                            <input type="number" x-model.number="novelaiForm.generation_cost" min="0"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 高级参数 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6" :class="!novelaiForm.enabled && 'opacity-50'">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="sliders" class="w-5 h-5 text-orange-400"></i>
+                        高级参数
+                    </h3>
+                    <div class="space-y-4">
+                        <!-- Quality Toggle 和 UC Preset -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
+                                <span class="text-sm text-slate-300">Quality Toggle</span>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="novelaiForm.quality_toggle" class="sr-only peer">
+                                    <div class="w-9 h-5 bg-slate-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
+                                </label>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">UC Preset</label>
+                                <select x-model.number="novelaiForm.uc_preset"
+                                        class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm">
+                                    <option value="0">Preset 0 (Heavy)</option>
+                                    <option value="1">Preset 1 (Light)</option>
+                                    <option value="2">Preset 2 (Human Focus)</option>
+                                    <option value="3">Preset 3 (None)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- CFG Rescale 和 Noise Schedule -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">CFG Rescale</label>
+                                <input type="number" x-model.number="novelaiForm.cfg_rescale" min="0" max="1" step="0.01"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Noise Schedule</label>
+                                <select x-model="novelaiForm.noise_schedule"
+                                        class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm">
+                                    <option value="native">Native</option>
+                                    <option value="karras">Karras</option>
+                                    <option value="exponential">Exponential</option>
+                                    <option value="polyexponential">Polyexponential</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- SMEA -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
+                                <span class="text-sm text-slate-300">SMEA</span>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="novelaiForm.smea" class="sr-only peer">
+                                    <div class="w-9 h-5 bg-slate-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
+                                </label>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
+                                <span class="text-sm text-slate-300">SMEA + DYN</span>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="novelaiForm.smea_dyn" class="sr-only peer">
+                                    <div class="w-9 h-5 bg-slate-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- 默认负面提示词 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">默认负面提示词</label>
+                            <textarea x-model="novelaiForm.default_negative_prompt" rows="3"
+                                      placeholder="lowres, {bad}, error, fewer, extra, missing, worst quality..."
+                                      class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm resize-y"></textarea>
+                            <p class="text-xs text-slate-500 mt-1">用户未指定负面提示词时使用的默认值</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 预设管理 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="bookmark" class="w-5 h-5 text-pink-400"></i>
+                        画师串预设管理
+                    </h3>
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <p class="text-sm text-slate-400">用户在 Discord 中通过 /nai预设 命令保存的画师串预设</p>
+                            <button @click="loadNovelaiPresets()"
+                                    class="bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 px-3 py-1.5 rounded-lg transition-all text-sm flex items-center gap-1.5">
+                                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                                刷新
+                            </button>
+                        </div>
+
+                        <template x-if="novelaiPresets.length === 0">
+                            <p class="text-sm text-slate-500 text-center py-4">暂无预设</p>
+                        </template>
+
+                        <template x-for="preset in novelaiPresets" :key="preset.id">
+                            <div class="bg-slate-700/30 rounded-lg p-4 space-y-2">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <span class="font-medium text-sm" x-text="preset.name"></span>
+                                        <span class="text-xs text-slate-500 ml-2" x-text="'用户ID: ' + preset.user_id"></span>
+                                    </div>
+                                    <button @click="deleteNovelaiPreset(preset.id, preset.name)"
+                                            class="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded hover:bg-red-500/20 transition-all">
+                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                    </button>
+                                </div>
+                                <div class="text-xs text-slate-400 bg-slate-800/50 p-2 rounded font-mono break-all"
+                                     x-text="preset.artist_string.length > 200 ? preset.artist_string.slice(0, 200) + '...' : preset.artist_string">
+                                </div>
+                                <template x-if="preset.negative_prompt">
+                                    <div class="text-xs text-orange-400/70 bg-slate-800/50 p-2 rounded font-mono break-all">
+                                        <span class="text-orange-500 font-semibold">负面:</span>
+                                        <span x-text="preset.negative_prompt.length > 100 ? preset.negative_prompt.slice(0, 100) + '...' : preset.negative_prompt"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- 保存按钮 -->
+                <div class="max-w-2xl">
+                    <button @click="saveNovelaiConfig()"
+                            :disabled="saving"
+                            class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                        <i data-lucide="save" class="w-5 h-5"></i>
+                        <span x-text="saving ? '保存中...' : '保存 NovelAI 设置'"></span>
+                    </button>
+                </div>
+            </div>
+
             <!-- 货币设置 -->
             <div x-show="currentTab === 'coin'" x-transition>
                 <h2 class="text-2xl font-bold mb-6">货币设置</h2>
@@ -1708,6 +1982,10 @@
                 imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto', sfw_model: '', sfw_edit_model: '', sfw_model_2k: '', sfw_edit_model_2k: '', sfw_model_4k: '', sfw_edit_model_4k: '', nsfw_model: '', nsfw_edit_model: '', nsfw_model_2k: '', nsfw_edit_model_2k: '', nsfw_model_4k: '', nsfw_edit_model_4k: '' },
                 videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8 },
                 videoConfig: {},
+                novelaiForm: { enabled: false, api_token: '', model: 'nai-diffusion-4-5-full', custom_model: '', default_sampler: 'k_euler', default_width: 832, default_height: 1216, default_steps: 28, default_scale: 5.0, quality_toggle: true, uc_preset: 0, cfg_rescale: 0, noise_schedule: 'native', smea: false, smea_dyn: false, generation_cost: 5, default_negative_prompt: '' },
+                novelaiConfig: {},
+                novelaiPresets: [],
+                showNovelaiApiToken: false,
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
                 
@@ -1869,6 +2147,43 @@
                         this.imagenForm.nsfw_model_4k = this.config.imagen.nsfw_model_4k || '';
                         this.imagenForm.nsfw_edit_model_4k = this.config.imagen.nsfw_edit_model_4k || '';
                     }
+                    // 加载 NovelAI 配置
+                    fetch('/api/config/novelai', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
+                        .then(resp => {
+                            if (resp.ok) return resp.json();
+                            return null;
+                        })
+                        .then(data => {
+                            if (data) {
+                                this.novelaiConfig = data;
+                                this.novelaiForm.enabled = data.enabled || false;
+                                this.novelaiForm.api_token = '';
+                                this.novelaiForm.model = data.model || 'nai-diffusion-4-5-full';
+                                this.novelaiForm.custom_model = '';
+                                // 检查是否是预设模型
+                                const presetModels = data.available_models || [];
+                                if (!presetModels.includes(data.model)) {
+                                    this.novelaiForm.custom_model = data.model || '';
+                                    this.novelaiForm.model = presetModels[0] || 'nai-diffusion-4-5-full';
+                                }
+                                this.novelaiForm.default_sampler = data.default_sampler || 'k_euler';
+                                this.novelaiForm.default_width = data.default_width || 832;
+                                this.novelaiForm.default_height = data.default_height || 1216;
+                                this.novelaiForm.default_steps = data.default_steps || 28;
+                                this.novelaiForm.default_scale = data.default_scale || 5.0;
+                                this.novelaiForm.quality_toggle = data.quality_toggle ?? true;
+                                this.novelaiForm.uc_preset = data.uc_preset ?? 0;
+                                this.novelaiForm.cfg_rescale = data.cfg_rescale ?? 0;
+                                this.novelaiForm.noise_schedule = data.noise_schedule || 'native';
+                                this.novelaiForm.smea = data.smea || false;
+                                this.novelaiForm.smea_dyn = data.smea_dyn || false;
+                                this.novelaiForm.generation_cost = data.generation_cost ?? 5;
+                                this.novelaiForm.default_negative_prompt = data.default_negative_prompt || '';
+                            }
+                        })
+                        .catch(e => console.warn('加载 NovelAI 配置失败:', e));
+                    // 加载 NovelAI 预设
+                    this.loadNovelaiPresets();
                     // 加载视频配置（使用 .then() 避免在非 async 函数中使用 await）
                     fetch('/api/config/video', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
                         .then(resp => {
@@ -2750,6 +3065,117 @@
                     this.saving = false;
                 },
                 
+                async loadNovelaiPresets() {
+                    try {
+                        const response = await fetch('/api/config/novelai/presets', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.novelaiPresets = data.presets || [];
+                        }
+                    } catch (e) {
+                        console.error('加载 NovelAI 预设失败:', e);
+                    }
+                },
+
+                async deleteNovelaiPreset(presetId, presetName) {
+                    if (!confirm(`确定要删除预设「${presetName}」吗？`)) return;
+                    try {
+                        const response = await fetch(`/api/config/novelai/presets/${presetId}`, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            this.showToast(`已删除预设「${presetName}」`, 'success');
+                            await this.loadNovelaiPresets();
+                        } else {
+                            this.showToast('删除失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('删除失败', 'error');
+                    }
+                },
+
+                async testNovelaiConnection() {
+                    this.testing = true;
+                    try {
+                        // 如果用户输入了新 token，先保存
+                        if (this.novelaiForm.api_token) {
+                            await this.saveNovelaiConfig(true);
+                        }
+                        const response = await fetch('/api/config/test-novelai', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            this.showToast(data.message || 'NovelAI 连接成功', 'success');
+                        } else {
+                            this.showToast(data.error || '连接失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('测试连接失败', 'error');
+                    }
+                    this.testing = false;
+                },
+
+                async saveNovelaiConfig(silent = false) {
+                    this.saving = true;
+                    try {
+                        const payload = {
+                            enabled: this.novelaiForm.enabled,
+                            model: this.novelaiForm.custom_model || this.novelaiForm.model,
+                            default_sampler: this.novelaiForm.default_sampler,
+                            default_width: parseInt(this.novelaiForm.default_width),
+                            default_height: parseInt(this.novelaiForm.default_height),
+                            default_steps: parseInt(this.novelaiForm.default_steps),
+                            default_scale: parseFloat(this.novelaiForm.default_scale),
+                            quality_toggle: this.novelaiForm.quality_toggle,
+                            uc_preset: parseInt(this.novelaiForm.uc_preset),
+                            cfg_rescale: parseFloat(this.novelaiForm.cfg_rescale),
+                            noise_schedule: this.novelaiForm.noise_schedule,
+                            smea: this.novelaiForm.smea,
+                            smea_dyn: this.novelaiForm.smea_dyn,
+                            generation_cost: parseInt(this.novelaiForm.generation_cost),
+                            default_negative_prompt: this.novelaiForm.default_negative_prompt,
+                        };
+
+                        if (this.novelaiForm.api_token) {
+                            payload.api_token = this.novelaiForm.api_token;
+                        }
+
+                        const response = await fetch('/api/config/novelai', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            if (!silent) {
+                                this.showToast('NovelAI 设置已保存', 'success');
+                            }
+                            // 刷新配置
+                            const configResp = await fetch('/api/config/novelai', {
+                                headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                            });
+                            if (configResp.ok) {
+                                this.novelaiConfig = await configResp.json();
+                            }
+                            this.novelaiForm.api_token = '';
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+
                 async saveVideoConfig() {
                     this.saving = true;
                     try {

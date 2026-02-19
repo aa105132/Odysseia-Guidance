@@ -115,6 +115,26 @@ class VideoConfigUpdate(BaseModel):
     max_duration: Optional[int] = None
 
 
+class NovelAIConfigUpdate(BaseModel):
+    """NovelAI 配置更新"""
+    enabled: Optional[bool] = None
+    api_token: Optional[str] = None
+    model: Optional[str] = None
+    default_width: Optional[int] = None
+    default_height: Optional[int] = None
+    default_steps: Optional[int] = None
+    default_scale: Optional[float] = None
+    default_sampler: Optional[str] = None
+    quality_toggle: Optional[bool] = None
+    uc_preset: Optional[int] = None
+    cfg_rescale: Optional[float] = None
+    noise_schedule: Optional[str] = None
+    smea: Optional[bool] = None
+    smea_dyn: Optional[bool] = None
+    generation_cost: Optional[int] = None
+    default_negative_prompt: Optional[str] = None
+
+
 class EmbeddingConfigUpdate(BaseModel):
     """向量嵌入配置更新"""
     enabled: Optional[bool] = None
@@ -1107,6 +1127,274 @@ async def update_video_config(config: VideoConfigUpdate, token: str = Depends(ve
     
     log.info(f"视频生成配置已更新: {updated}")
     return {"success": True, "updated": updated}
+
+
+# --- NovelAI 配置 API ---
+
+@app.get("/api/config/novelai")
+async def get_novelai_config(token: str = Depends(verify_token)):
+    """获取 NovelAI 配置"""
+    from src.chat.utils.database import chat_db_manager
+
+    # 从数据库读取持久化配置
+    db_enabled = await chat_db_manager.get_global_setting("novelai_enabled")
+    db_api_token = await chat_db_manager.get_global_setting("novelai_api_token")
+    db_model = await chat_db_manager.get_global_setting("novelai_model")
+    db_default_width = await chat_db_manager.get_global_setting("novelai_default_width")
+    db_default_height = await chat_db_manager.get_global_setting("novelai_default_height")
+    db_default_steps = await chat_db_manager.get_global_setting("novelai_default_steps")
+    db_default_scale = await chat_db_manager.get_global_setting("novelai_default_scale")
+    db_default_sampler = await chat_db_manager.get_global_setting("novelai_default_sampler")
+    db_quality_toggle = await chat_db_manager.get_global_setting("novelai_quality_toggle")
+    db_uc_preset = await chat_db_manager.get_global_setting("novelai_uc_preset")
+    db_cfg_rescale = await chat_db_manager.get_global_setting("novelai_cfg_rescale")
+    db_noise_schedule = await chat_db_manager.get_global_setting("novelai_noise_schedule")
+    db_smea = await chat_db_manager.get_global_setting("novelai_smea")
+    db_smea_dyn = await chat_db_manager.get_global_setting("novelai_smea_dyn")
+    db_generation_cost = await chat_db_manager.get_global_setting("novelai_generation_cost")
+    db_default_negative = await chat_db_manager.get_global_setting("novelai_default_negative")
+
+    config = chat_config.NOVELAI_CONFIG
+
+    # 合并配置（数据库优先）
+    enabled = db_enabled == "true" if db_enabled is not None else config.get("ENABLED", False)
+    api_token = db_api_token or config.get("API_TOKEN", "")
+    model = db_model or config.get("MODEL", "nai-diffusion-4-5-full")
+    default_width = int(db_default_width) if db_default_width else config.get("DEFAULT_WIDTH", 832)
+    default_height = int(db_default_height) if db_default_height else config.get("DEFAULT_HEIGHT", 1216)
+    default_steps = int(db_default_steps) if db_default_steps else config.get("DEFAULT_STEPS", 28)
+    default_scale = float(db_default_scale) if db_default_scale else config.get("DEFAULT_SCALE", 5.0)
+    default_sampler = db_default_sampler or config.get("DEFAULT_SAMPLER", "k_euler")
+    quality_toggle = db_quality_toggle == "true" if db_quality_toggle is not None else config.get("QUALITY_TOGGLE", True)
+    uc_preset = int(db_uc_preset) if db_uc_preset else config.get("UC_PRESET", 0)
+    cfg_rescale = float(db_cfg_rescale) if db_cfg_rescale else config.get("CFG_RESCALE", 0)
+    noise_schedule = db_noise_schedule or config.get("NOISE_SCHEDULE", "native")
+    smea = db_smea == "true" if db_smea is not None else config.get("SMEA", False)
+    smea_dyn = db_smea_dyn == "true" if db_smea_dyn is not None else config.get("SMEA_DYN", False)
+    generation_cost = int(db_generation_cost) if db_generation_cost else config.get("IMAGE_GENERATION_COST", 5)
+    default_negative = db_default_negative or config.get("DEFAULT_NEGATIVE_PROMPT", "")
+
+    # 掩码 API Token
+    masked_token = api_token[:10] + "..." + api_token[-4:] if len(api_token) > 14 else ("***" if api_token else "")
+
+    # 检查服务状态
+    service_available = False
+    try:
+        from src.chat.features.novelai_generation.services.novelai_service import novelai_service
+        service_available = novelai_service.is_available()
+    except Exception:
+        pass
+
+    return {
+        "enabled": enabled,
+        "api_token_masked": masked_token,
+        "has_api_token": bool(api_token),
+        "model": model,
+        "default_width": default_width,
+        "default_height": default_height,
+        "default_steps": default_steps,
+        "default_scale": default_scale,
+        "default_sampler": default_sampler,
+        "quality_toggle": quality_toggle,
+        "uc_preset": uc_preset,
+        "cfg_rescale": cfg_rescale,
+        "noise_schedule": noise_schedule,
+        "smea": smea,
+        "smea_dyn": smea_dyn,
+        "generation_cost": generation_cost,
+        "default_negative_prompt": default_negative,
+        "service_available": service_available,
+        "available_models": [
+            "nai-diffusion-4-5-full",
+            "nai-diffusion-4-5-curated",
+            "nai-diffusion-4-curated-preview",
+            "nai-diffusion-3",
+        ],
+        "available_samplers": [
+            "k_euler",
+            "k_euler_ancestral",
+            "k_dpmpp_2s_ancestral",
+            "k_dpmpp_2m",
+            "k_dpmpp_sde",
+            "ddim",
+        ],
+        "available_noise_schedules": [
+            "native",
+            "karras",
+            "exponential",
+            "polyexponential",
+        ],
+    }
+
+
+@app.put("/api/config/novelai")
+async def update_novelai_config(config: NovelAIConfigUpdate, token: str = Depends(verify_token)):
+    """更新 NovelAI 配置"""
+    from src.chat.utils.database import chat_db_manager
+
+    updated = {}
+    env_updates = {}
+
+    if config.enabled is not None:
+        chat_config.NOVELAI_CONFIG["ENABLED"] = config.enabled
+        os.environ["NOVELAI_ENABLED"] = str(config.enabled).lower()
+        env_updates["NOVELAI_ENABLED"] = str(config.enabled).lower()
+        updated["enabled"] = config.enabled
+        await chat_db_manager.set_global_setting("novelai_enabled", str(config.enabled).lower())
+
+    if config.api_token is not None and config.api_token:
+        chat_config.NOVELAI_CONFIG["API_TOKEN"] = config.api_token
+        os.environ["NOVELAI_API_TOKEN"] = config.api_token
+        env_updates["NOVELAI_API_TOKEN"] = config.api_token
+        updated["api_token"] = "***"
+        await chat_db_manager.set_global_setting("novelai_api_token", config.api_token)
+
+    if config.model is not None:
+        chat_config.NOVELAI_CONFIG["MODEL"] = config.model
+        os.environ["NOVELAI_MODEL"] = config.model
+        env_updates["NOVELAI_MODEL"] = config.model
+        updated["model"] = config.model
+        await chat_db_manager.set_global_setting("novelai_model", config.model)
+
+    if config.default_width is not None:
+        chat_config.NOVELAI_CONFIG["DEFAULT_WIDTH"] = config.default_width
+        os.environ["NOVELAI_DEFAULT_WIDTH"] = str(config.default_width)
+        env_updates["NOVELAI_DEFAULT_WIDTH"] = str(config.default_width)
+        updated["default_width"] = config.default_width
+        await chat_db_manager.set_global_setting("novelai_default_width", str(config.default_width))
+
+    if config.default_height is not None:
+        chat_config.NOVELAI_CONFIG["DEFAULT_HEIGHT"] = config.default_height
+        os.environ["NOVELAI_DEFAULT_HEIGHT"] = str(config.default_height)
+        env_updates["NOVELAI_DEFAULT_HEIGHT"] = str(config.default_height)
+        updated["default_height"] = config.default_height
+        await chat_db_manager.set_global_setting("novelai_default_height", str(config.default_height))
+
+    if config.default_steps is not None:
+        if not 1 <= config.default_steps <= 50:
+            raise HTTPException(400, "步数必须在 1-50 之间")
+        chat_config.NOVELAI_CONFIG["DEFAULT_STEPS"] = config.default_steps
+        os.environ["NOVELAI_DEFAULT_STEPS"] = str(config.default_steps)
+        env_updates["NOVELAI_DEFAULT_STEPS"] = str(config.default_steps)
+        updated["default_steps"] = config.default_steps
+        await chat_db_manager.set_global_setting("novelai_default_steps", str(config.default_steps))
+
+    if config.default_scale is not None:
+        chat_config.NOVELAI_CONFIG["DEFAULT_SCALE"] = config.default_scale
+        os.environ["NOVELAI_DEFAULT_SCALE"] = str(config.default_scale)
+        env_updates["NOVELAI_DEFAULT_SCALE"] = str(config.default_scale)
+        updated["default_scale"] = config.default_scale
+        await chat_db_manager.set_global_setting("novelai_default_scale", str(config.default_scale))
+
+    if config.default_sampler is not None:
+        chat_config.NOVELAI_CONFIG["DEFAULT_SAMPLER"] = config.default_sampler
+        os.environ["NOVELAI_DEFAULT_SAMPLER"] = config.default_sampler
+        env_updates["NOVELAI_DEFAULT_SAMPLER"] = config.default_sampler
+        updated["default_sampler"] = config.default_sampler
+        await chat_db_manager.set_global_setting("novelai_default_sampler", config.default_sampler)
+
+    if config.quality_toggle is not None:
+        chat_config.NOVELAI_CONFIG["QUALITY_TOGGLE"] = config.quality_toggle
+        os.environ["NOVELAI_QUALITY_TOGGLE"] = str(config.quality_toggle).lower()
+        env_updates["NOVELAI_QUALITY_TOGGLE"] = str(config.quality_toggle).lower()
+        updated["quality_toggle"] = config.quality_toggle
+        await chat_db_manager.set_global_setting("novelai_quality_toggle", str(config.quality_toggle).lower())
+
+    if config.uc_preset is not None:
+        chat_config.NOVELAI_CONFIG["UC_PRESET"] = config.uc_preset
+        os.environ["NOVELAI_UC_PRESET"] = str(config.uc_preset)
+        env_updates["NOVELAI_UC_PRESET"] = str(config.uc_preset)
+        updated["uc_preset"] = config.uc_preset
+        await chat_db_manager.set_global_setting("novelai_uc_preset", str(config.uc_preset))
+
+    if config.cfg_rescale is not None:
+        chat_config.NOVELAI_CONFIG["CFG_RESCALE"] = config.cfg_rescale
+        os.environ["NOVELAI_CFG_RESCALE"] = str(config.cfg_rescale)
+        env_updates["NOVELAI_CFG_RESCALE"] = str(config.cfg_rescale)
+        updated["cfg_rescale"] = config.cfg_rescale
+        await chat_db_manager.set_global_setting("novelai_cfg_rescale", str(config.cfg_rescale))
+
+    if config.noise_schedule is not None:
+        chat_config.NOVELAI_CONFIG["NOISE_SCHEDULE"] = config.noise_schedule
+        os.environ["NOVELAI_NOISE_SCHEDULE"] = config.noise_schedule
+        env_updates["NOVELAI_NOISE_SCHEDULE"] = config.noise_schedule
+        updated["noise_schedule"] = config.noise_schedule
+        await chat_db_manager.set_global_setting("novelai_noise_schedule", config.noise_schedule)
+
+    if config.smea is not None:
+        chat_config.NOVELAI_CONFIG["SMEA"] = config.smea
+        os.environ["NOVELAI_SMEA"] = str(config.smea).lower()
+        env_updates["NOVELAI_SMEA"] = str(config.smea).lower()
+        updated["smea"] = config.smea
+        await chat_db_manager.set_global_setting("novelai_smea", str(config.smea).lower())
+
+    if config.smea_dyn is not None:
+        chat_config.NOVELAI_CONFIG["SMEA_DYN"] = config.smea_dyn
+        os.environ["NOVELAI_SMEA_DYN"] = str(config.smea_dyn).lower()
+        env_updates["NOVELAI_SMEA_DYN"] = str(config.smea_dyn).lower()
+        updated["smea_dyn"] = config.smea_dyn
+        await chat_db_manager.set_global_setting("novelai_smea_dyn", str(config.smea_dyn).lower())
+
+    if config.generation_cost is not None:
+        if config.generation_cost < 0:
+            raise HTTPException(400, "生成成本不能为负数")
+        chat_config.NOVELAI_CONFIG["IMAGE_GENERATION_COST"] = config.generation_cost
+        updated["generation_cost"] = config.generation_cost
+        await chat_db_manager.set_global_setting("novelai_generation_cost", str(config.generation_cost))
+
+    if config.default_negative_prompt is not None:
+        chat_config.NOVELAI_CONFIG["DEFAULT_NEGATIVE_PROMPT"] = config.default_negative_prompt
+        os.environ["NOVELAI_DEFAULT_NEGATIVE"] = config.default_negative_prompt
+        env_updates["NOVELAI_DEFAULT_NEGATIVE"] = config.default_negative_prompt
+        updated["default_negative_prompt"] = config.default_negative_prompt[:100] + "..."
+        await chat_db_manager.set_global_setting("novelai_default_negative", config.default_negative_prompt)
+
+    # 更新 .env 文件
+    if env_updates:
+        update_env_file(env_updates)
+
+    # 热重载 NovelAI 服务
+    try:
+        from src.chat.features.novelai_generation.services.novelai_service import novelai_service
+        novelai_service.reinitialize()
+        updated["service_reloaded"] = True
+    except Exception as e:
+        log.warning(f"热重载 NovelAI 服务失败: {e}")
+        updated["service_reload_error"] = str(e)
+
+    log.info(f"NovelAI 配置已更新: {updated}")
+    return {"success": True, "updated": updated}
+
+
+@app.post("/api/config/test-novelai")
+async def test_novelai_connection(token: str = Depends(verify_token)):
+    """测试 NovelAI API 连接"""
+    try:
+        from src.chat.features.novelai_generation.services.novelai_service import novelai_service
+        result = await novelai_service.test_connection()
+        return result
+    except Exception as e:
+        log.error(f"测试 NovelAI 连接失败: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/config/novelai/presets")
+async def get_novelai_presets(token: str = Depends(verify_token)):
+    """获取所有 NovelAI 画师串预设（Dashboard 管理用）"""
+    from src.chat.utils.database import chat_db_manager
+    presets = await chat_db_manager.get_all_novelai_presets()
+    return {"presets": presets, "total": len(presets)}
+
+
+@app.delete("/api/config/novelai/presets/{preset_id}")
+async def delete_novelai_preset(preset_id: int, token: str = Depends(verify_token)):
+    """删除 NovelAI 画师串预设（Dashboard 管理用）"""
+    from src.chat.utils.database import chat_db_manager
+    success = await chat_db_manager.delete_novelai_preset_by_id(preset_id)
+    if success:
+        return {"success": True}
+    else:
+        raise HTTPException(500, "删除预设失败")
 
 
 # --- 向量嵌入配置 API ---

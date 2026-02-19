@@ -582,6 +582,19 @@ class ChatDatabaseManager:
                 );
             """)
 
+            # --- NovelAI 画师串预设表 ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS novelai_presets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    artist_string TEXT NOT NULL,
+                    negative_prompt TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, name)
+                );
+            """)
+
             conn.commit()
             log.info(f"数据库表在 {self.db_path} 同步初始化成功。")
         except sqlite3.Error as e:
@@ -1654,6 +1667,84 @@ class ChatDatabaseManager:
         await self._execute(
             self._db_transaction, query, (date, user_id), commit=True
         )
+
+    # --- NovelAI 画师串预设 CRUD ---
+
+    async def get_novelai_presets(self, user_id: int) -> list:
+        """获取用户的所有 NovelAI 画师串预设。"""
+        query = "SELECT id, name, artist_string, negative_prompt, created_at FROM novelai_presets WHERE user_id = ? ORDER BY created_at DESC"
+        rows = await self._execute(
+            self._db_transaction, query, (user_id,), fetch="all"
+        )
+        return [dict(row) for row in rows] if rows else []
+
+    async def get_novelai_preset(self, user_id: int, name: str) -> Optional[dict]:
+        """获取用户的单个 NovelAI 画师串预设。"""
+        query = "SELECT id, name, artist_string, negative_prompt, created_at FROM novelai_presets WHERE user_id = ? AND name = ?"
+        row = await self._execute(
+            self._db_transaction, query, (user_id, name), fetch="one"
+        )
+        return dict(row) if row else None
+
+    async def save_novelai_preset(
+        self, user_id: int, name: str, artist_string: str, negative_prompt: str = ""
+    ) -> bool:
+        """保存或更新用户的 NovelAI 画师串预设。返回 True 表示成功。"""
+        query = """
+            INSERT INTO novelai_presets (user_id, name, artist_string, negative_prompt)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, name) DO UPDATE SET
+                artist_string = excluded.artist_string,
+                negative_prompt = excluded.negative_prompt;
+        """
+        try:
+            await self._execute(
+                self._db_transaction, query, (user_id, name, artist_string, negative_prompt), commit=True
+            )
+            return True
+        except Exception as e:
+            log.error(f"保存 NovelAI 预设失败: {e}")
+            return False
+
+    async def delete_novelai_preset(self, user_id: int, name: str) -> bool:
+        """删除用户的一个 NovelAI 画师串预设。返回 True 表示成功删除。"""
+        query = "DELETE FROM novelai_presets WHERE user_id = ? AND name = ?"
+        try:
+            await self._execute(
+                self._db_transaction, query, (user_id, name), commit=True
+            )
+            return True
+        except Exception as e:
+            log.error(f"删除 NovelAI 预设失败: {e}")
+            return False
+
+    async def get_all_novelai_presets(self) -> list:
+        """获取所有用户的 NovelAI 画师串预设（Dashboard 管理用）。"""
+        query = "SELECT id, user_id, name, artist_string, negative_prompt, created_at FROM novelai_presets ORDER BY created_at DESC"
+        rows = await self._execute(
+            self._db_transaction, query, fetch="all"
+        )
+        return [dict(row) for row in rows] if rows else []
+
+    async def delete_novelai_preset_by_id(self, preset_id: int) -> bool:
+        """通过 ID 删除 NovelAI 画师串预设（Dashboard 管理用）。"""
+        query = "DELETE FROM novelai_presets WHERE id = ?"
+        try:
+            await self._execute(
+                self._db_transaction, query, (preset_id,), commit=True
+            )
+            return True
+        except Exception as e:
+            log.error(f"删除 NovelAI 预设 (ID: {preset_id}) 失败: {e}")
+            return False
+
+    async def search_novelai_presets(self, user_id: int, keyword: str) -> list:
+        """搜索用户的 NovelAI 画师串预设名称（用于自动补全）。"""
+        query = "SELECT name, artist_string FROM novelai_presets WHERE user_id = ? AND name LIKE ? LIMIT 25"
+        rows = await self._execute(
+            self._db_transaction, query, (user_id, f"%{keyword}%"), fetch="all"
+        )
+        return [dict(row) for row in rows] if rows else []
 
 
 def get_database_url(sync: bool = False) -> str:

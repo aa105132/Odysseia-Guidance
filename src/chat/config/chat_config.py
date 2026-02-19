@@ -224,6 +224,59 @@ def reload_video_config():
     VIDEO_GEN_CONFIG.update(_get_video_config())
     return VIDEO_GEN_CONFIG
 
+
+# --- NovelAI 图像生成配置 ---
+def _get_novelai_config():
+    """获取 NovelAI 配置，从环境变量读取"""
+    return {
+        "ENABLED": _parse_bool_env("NOVELAI_ENABLED", "False"),
+        # NovelAI Persistent API Token (在账户设置中获取)
+        "API_TOKEN": os.getenv("NOVELAI_API_TOKEN", ""),
+        # 生成模型
+        "MODEL": os.getenv("NOVELAI_MODEL", "nai-diffusion-4-5-full"),
+        # 默认图片尺寸
+        "DEFAULT_WIDTH": int(os.getenv("NOVELAI_DEFAULT_WIDTH", "832")),
+        "DEFAULT_HEIGHT": int(os.getenv("NOVELAI_DEFAULT_HEIGHT", "1216")),
+        # 采样参数
+        "DEFAULT_STEPS": int(os.getenv("NOVELAI_DEFAULT_STEPS", "28")),
+        "DEFAULT_SCALE": float(os.getenv("NOVELAI_DEFAULT_SCALE", "5.0")),
+        "DEFAULT_SAMPLER": os.getenv("NOVELAI_DEFAULT_SAMPLER", "k_euler"),
+        # 质量与UC预设
+        "QUALITY_TOGGLE": _parse_bool_env("NOVELAI_QUALITY_TOGGLE", "True"),
+        "UC_PRESET": int(os.getenv("NOVELAI_UC_PRESET", "0")),
+        # CFG Rescale
+        "CFG_RESCALE": float(os.getenv("NOVELAI_CFG_RESCALE", "0")),
+        # 噪声调度
+        "NOISE_SCHEDULE": os.getenv("NOVELAI_NOISE_SCHEDULE", "native"),
+        # SMEA 设置
+        "SMEA": _parse_bool_env("NOVELAI_SMEA", "False"),
+        "SMEA_DYN": _parse_bool_env("NOVELAI_SMEA_DYN", "False"),
+        # 月光币成本
+        "IMAGE_GENERATION_COST": int(os.getenv("NOVELAI_GENERATION_COST", "5")),
+        # 默认负面提示词
+        "DEFAULT_NEGATIVE_PROMPT": os.getenv(
+            "NOVELAI_DEFAULT_NEGATIVE",
+            "lowres, {bad}, error, fewer, extra, missing, worst quality, jpeg artifacts, bad quality, watermark, unfinished, displeasing, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]"
+        ),
+    }
+
+NOVELAI_CONFIG = _get_novelai_config()
+
+
+def reload_novelai_config():
+    """重新加载 NovelAI 配置（从环境变量）"""
+    global NOVELAI_CONFIG
+    NOVELAI_CONFIG.update(_get_novelai_config())
+    return NOVELAI_CONFIG
+
+
+# --- 对话默认绘图引擎配置 ---
+# 控制 AI 在对话中自动调用绘图工具时使用哪个引擎
+# "imagen" = 使用现有的 Gemini Imagen 绘图
+# "novelai" = 使用 NovelAI 绘图（AI 会自动生成 Danbooru Tag）
+DEFAULT_IMAGE_ENGINE = os.getenv("DEFAULT_IMAGE_ENGINE", "imagen")
+
+
 # --- 向量嵌入 (Embedding) 配置 ---
 # 用于知识库检索和语义搜索功能
 EMBEDDING_CONFIG = {
