@@ -82,6 +82,19 @@ class ThreadCommentorCog(commands.Cog):
         if self.bot.user and thread.owner_id == self.bot.user.id:
             return
 
+        me = thread.guild.me
+        if me is not None:
+            perms = thread.permissions_for(me)
+            if (
+                not perms.view_channel
+                or not perms.read_message_history
+                or not perms.send_messages_in_threads
+            ):
+                log.warning(
+                    f"[ThreadCommentorCog] 对帖子 '{thread.name}' ({thread.id}) 缺少查看历史/在线程发言权限，跳过自动发言。"
+                )
+                return
+
         context_limit = max(
             5,
             int(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_CONTEXT_MESSAGE_LIMIT", 20)),
