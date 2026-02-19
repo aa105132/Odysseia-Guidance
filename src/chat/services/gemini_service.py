@@ -1116,12 +1116,15 @@ class GeminiService:
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for result in results:
+            for idx, result in enumerate(results):
+                # 获取对应的工具调用名称
+                actual_tool_name = function_calls[idx].name if idx < len(function_calls) else "unknown_tool"
+
                 if isinstance(result, Exception):
                     log.error(f"执行工具时发生异常: {result}", exc_info=result)
                     tool_result_parts.append(
                         types.Part.from_function_response(
-                            name="unknown_tool",
+                            name=actual_tool_name,
                             response={
                                 "error": f"An exception occurred during tool execution: {str(result)}"
                             },
@@ -1134,13 +1137,22 @@ class GeminiService:
                     and result.inline_data
                 ):
                     # 这是图片工具返回的图片数据，直接添加到结果中
-                    log.info("检测到图片工具返回的 inline_data，已添加到工具结果。")
+                    log.info(f"检测到工具 '{actual_tool_name}' 返回的 inline_data，已添加到工具结果。")
                     tool_result_parts.append(result)
-                    # 同时添加一个 FunctionResponse 告诉模型图片已生成
+                    # 根据工具类型生成不同的提示信息
+                    if actual_tool_name == "get_user_avatar":
+                        response_hint = (
+                            "已获取用户头像图片。上面的图片就是该用户的 Discord 头像。"
+                            "请仔细分析图中的外观特征（发色、发型、瞳色、服饰风格等），"
+                            "以便在后续为用户生成图片时参考这些视觉特征。"
+                        )
+                    else:
+                        response_hint = "图片已成功生成并展示给用户。请用自己的语气告诉用户图片已经画好了。"
+                    # 同时添加一个 FunctionResponse 告诉模型处理结果
                     tool_result_parts.append(
                         types.Part.from_function_response(
-                            name="generate_image",
-                            response={"result": "图片已成功生成并展示给用户。请用自己的语气告诉用户图片已经画好了。"},
+                            name=actual_tool_name,
+                            response={"result": response_hint},
                         )
                     )
                 # 确保 result 是 Part 类型，并且其 function_response 和 response 属性都存在
