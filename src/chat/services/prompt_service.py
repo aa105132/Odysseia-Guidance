@@ -157,8 +157,11 @@ class PromptService:
         # 动态知识块（世界之书、个人记忆）将作为独立消息注入，无需在此处处理占位符
         core_prompt_template = self.get_prompt("SYSTEM_PROMPT", model_name=model_name)
 
-        # 填充核心提示词
-        core_prompt = core_prompt_template
+        # 填充核心提示词（动态替换占位符）
+        from src.chat.config.chat_config import DEFAULT_IMAGE_ENGINE
+        core_prompt = core_prompt_template.replace(
+            "{default_image_engine}", DEFAULT_IMAGE_ENGINE
+        )
 
         final_conversation.append({"role": "user", "parts": [core_prompt]})
         final_conversation.append({"role": "model", "parts": ["我在线啦，随时开聊！"]})
@@ -257,6 +260,22 @@ class PromptService:
         if replied_message:
             # replied_message 已经包含了 "> [回复 xxx]:" 的头部和 markdown 引用格式
             reply_injection_prompt = f"上下文提示：{user_name} 正在进行回复操作。以下是ta所回复的原始消息内容和作者：\n{replied_message}"
+            
+            # 检查回复消息中是否包含图片（replied_attachment 类型）
+            has_replied_image = False
+            if images:
+                has_replied_image = any(
+                    img.get("source") == "replied_attachment" for img in images
+                )
+            
+            if has_replied_image:
+                reply_injection_prompt += (
+                    "\n\n⚠️ 重要：用户回复的消息中包含图片附件（已附在下方用户消息中）。"
+                    "如果用户请求与该图片相关的任何操作（修改、重画、调整、编辑、美化等），"
+                    "你必须使用 edit_image 工具而不是 generate_image，"
+                    "因为 edit_image 会自动从回复的消息中提取该图片作为参考。"
+                )
+            
             final_conversation.append(
                 {"role": "user", "parts": [reply_injection_prompt]}
             )
@@ -354,7 +373,7 @@ class PromptService:
             else {}
         )
         attachment_images = (
-            [img for img in images if img.get("source") == "attachment"]
+            [img for img in images if img.get("source") in ("attachment", "replied_attachment")]
             if images
             else []
         )

@@ -812,6 +812,53 @@
             <div x-show="currentTab === 'novelai'" x-transition>
                 <h2 class="text-2xl font-bold mb-6">NovelAI 设置</h2>
 
+                <!-- 默认绘图引擎选择 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="shuffle" class="w-5 h-5 text-cyan-400"></i>
+                        对话默认绘图引擎
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">控制 AI 在对话中自动调用绘图工具时使用哪个引擎</p>
+                    <div class="grid grid-cols-2 gap-4">
+                        <button @click="defaultImageEngine = 'imagen'; saveDefaultImageEngine()"
+                                :class="defaultImageEngine === 'imagen' ? 'border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/30' : 'border-slate-600 hover:border-slate-500'"
+                                class="border rounded-xl p-4 text-left transition-all">
+                            <div class="flex items-center gap-3 mb-2">
+                                <div class="w-10 h-10 rounded-lg flex items-center justify-center"
+                                     :class="defaultImageEngine === 'imagen' ? 'bg-blue-500/20' : 'bg-slate-700/50'">
+                                    <i data-lucide="image" class="w-5 h-5"
+                                       :class="defaultImageEngine === 'imagen' ? 'text-blue-400' : 'text-slate-400'"></i>
+                                </div>
+                                <div>
+                                    <p class="font-medium" :class="defaultImageEngine === 'imagen' ? 'text-blue-300' : 'text-slate-300'">Gemini Imagen</p>
+                                    <p class="text-xs text-slate-500">自然语言提示词</p>
+                                </div>
+                            </div>
+                            <p class="text-xs text-slate-400">使用 Gemini Imagen API，支持中文自然语言描述生成图片</p>
+                        </button>
+                        <button @click="defaultImageEngine = 'novelai'; saveDefaultImageEngine()"
+                                :class="defaultImageEngine === 'novelai' ? 'border-purple-500 bg-purple-500/10 ring-2 ring-purple-500/30' : 'border-slate-600 hover:border-slate-500'"
+                                class="border rounded-xl p-4 text-left transition-all">
+                            <div class="flex items-center gap-3 mb-2">
+                                <div class="w-10 h-10 rounded-lg flex items-center justify-center"
+                                     :class="defaultImageEngine === 'novelai' ? 'bg-purple-500/20' : 'bg-slate-700/50'">
+                                    <i data-lucide="palette" class="w-5 h-5"
+                                       :class="defaultImageEngine === 'novelai' ? 'text-purple-400' : 'text-slate-400'"></i>
+                                </div>
+                                <div>
+                                    <p class="font-medium" :class="defaultImageEngine === 'novelai' ? 'text-purple-300' : 'text-slate-300'">NovelAI</p>
+                                    <p class="text-xs text-slate-500">Danbooru Tag 格式</p>
+                                </div>
+                            </div>
+                            <p class="text-xs text-slate-400">使用 NovelAI API，AI 自动生成 Danbooru 格式英文 Tag</p>
+                        </button>
+                    </div>
+                    <div class="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                        <i data-lucide="info" class="w-3.5 h-3.5"></i>
+                        <span>当前选择: <span class="font-medium" :class="defaultImageEngine === 'novelai' ? 'text-purple-400' : 'text-blue-400'" x-text="defaultImageEngine === 'novelai' ? 'NovelAI (Danbooru Tag)' : 'Gemini Imagen (自然语言)'"></span></span>
+                    </div>
+                </div>
+
                 <!-- 服务状态 -->
                 <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
                     <div class="flex items-center justify-between">
@@ -1986,6 +2033,7 @@
                 novelaiConfig: {},
                 novelaiPresets: [],
                 showNovelaiApiToken: false,
+                defaultImageEngine: 'imagen',
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
                 
@@ -2184,6 +2232,15 @@
                         .catch(e => console.warn('加载 NovelAI 配置失败:', e));
                     // 加载 NovelAI 预设
                     this.loadNovelaiPresets();
+                    // 加载默认绘图引擎配置
+                    fetch('/api/config/default-image-engine', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
+                        .then(resp => resp.ok ? resp.json() : null)
+                        .then(data => {
+                            if (data) {
+                                this.defaultImageEngine = data.engine || 'imagen';
+                            }
+                        })
+                        .catch(e => console.warn('加载默认绘图引擎配置失败:', e));
                     // 加载视频配置（使用 .then() 避免在非 async 函数中使用 await）
                     fetch('/api/config/video', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
                         .then(resp => {
@@ -3065,6 +3122,26 @@
                     this.saving = false;
                 },
                 
+                async saveDefaultImageEngine() {
+                    try {
+                        const response = await fetch('/api/config/default-image-engine', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify({ engine: this.defaultImageEngine })
+                        });
+                        if (response.ok) {
+                            this.showToast(`默认绘图引擎已切换为 ${this.defaultImageEngine === 'novelai' ? 'NovelAI' : 'Gemini Imagen'}`, 'success');
+                        } else {
+                            this.showToast('保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                },
+
                 async loadNovelaiPresets() {
                     try {
                         const response = await fetch('/api/config/novelai/presets', {

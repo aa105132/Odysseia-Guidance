@@ -239,17 +239,45 @@ class NovelAIDrawPanel(discord.ui.View):
         presets = await chat_db_manager.get_novelai_presets(self.user_id)
         if not presets:
             return await interaction.response.send_message(
-                "你还没有保存预设。使用 `/nai预设 保存` 创建预设。",
+                "你还没有保存预设。点击下方「保存预设」按钮来创建一个！",
                 ephemeral=True,
             )
         view = PresetSelectView(self.session, self, presets)
         await interaction.response.send_message("选择一个画师串预设:", view=view, ephemeral=True)
 
     # ================================================================
-    # Row 2: 重置配置 + 开始绘制
+    # Row 2: 种子 + 保存预设 + 管理预设
     # ================================================================
 
-    @discord.ui.button(label="重置配置", style=discord.ButtonStyle.danger, emoji="🗑️", row=2)
+    @discord.ui.button(label="种子", style=discord.ButtonStyle.secondary, emoji="🎲", row=2)
+    async def btn_seed(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """设置随机种子"""
+        modal = SeedModal(self.session)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="保存预设", style=discord.ButtonStyle.secondary, emoji="💾", row=2)
+    async def btn_save_preset(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """保存当前画师串为预设"""
+        modal = SavePresetModal(self.user_id)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="预设列表", style=discord.ButtonStyle.secondary, emoji="📋", row=2)
+    async def btn_manage_presets(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """查看和管理预设列表"""
+        presets = await chat_db_manager.get_novelai_presets(self.user_id)
+        if not presets:
+            return await interaction.response.send_message(
+                "你还没有保存任何预设。点击「保存预设」来创建一个！",
+                ephemeral=True,
+            )
+        view = PresetManageView(self.session, self, presets, self.user_id)
+        await interaction.response.send_message("管理你的画师串预设:", view=view, ephemeral=True)
+
+    # ================================================================
+    # Row 3: 重置配置 + 开始绘制
+    # ================================================================
+
+    @discord.ui.button(label="重置配置", style=discord.ButtonStyle.danger, emoji="🗑️", row=3)
     async def btn_reset(self, interaction: discord.Interaction, button: discord.ui.Button):
         """重置所有参数为默认"""
         self.session.mode = "tag"
@@ -271,7 +299,7 @@ class NovelAIDrawPanel(discord.ui.View):
         embed = self.build_panel_embed()
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="开始绘制", style=discord.ButtonStyle.success, emoji="🖌️", row=2)
+    @discord.ui.button(label="开始绘制", style=discord.ButtonStyle.success, emoji="🖌️", row=3)
     async def btn_generate(self, interaction: discord.Interaction, button: discord.ui.Button):
         """开始生成图片"""
         if not self.session.scene_prompt and not self.session.preset_artist_string:
@@ -679,3 +707,244 @@ class PresetSelectView(discord.ui.View):
                 msg = "预设不存在"
 
         await interaction.response.send_message(msg, ephemeral=True)
+
+
+# ================================================================
+# 模态框：随机种子
+# ================================================================
+
+class SeedModal(discord.ui.Modal, title="设置随机种子"):
+    seed_input = discord.ui.TextInput(
+        label="种子 (留空或填0表示随机)",
+        placeholder="0",
+        required=False,
+        max_length=12,
+    )
+
+    def __init__(self, session: NovelAISession):
+        super().__init__()
+        self.session = session
+        if session.seed is not None:
+            self.seed_input.default = str(session.seed)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        value = self.seed_input.value.strip()
+        if not value or value == "0":
+            self.session.seed = None
+            msg = "种子已设为随机"
+        else:
+            try:
+                seed = int(value)
+                self.session.seed = max(0, min(4294967295, seed))
+                msg = f"种子已设为 {self.session.seed}"
+            except ValueError:
+                return await interaction.response.send_message("种子必须是整数。", ephemeral=True)
+
+        embed = NovelAIDrawPanel(self.session, interaction.user.id).build_panel_embed()
+        try:
+            await interaction.response.edit_message(embed=embed)
+        except Exception:
+            await interaction.response.send_message(msg, ephemeral=True)
+
+
+# ================================================================
+# 模态框：保存预设
+# ================================================================
+
+class SavePresetModal(discord.ui.Modal, title="保存画师串预设"):
+    preset_name_input = discord.ui.TextInput(
+        label="预设名称",
+        placeholder="例如: 赛博朋克风格",
+        required=True,
+        max_length=50,
+    )
+    artist_string_input = discord.ui.TextInput(
+        label="画师串 (英文Tag)",
+        style=discord.TextStyle.paragraph,
+        placeholder="artist:xxx, style:xxx, ...",
+        required=True,
+        max_length=2000,
+    )
+    negative_prompt_input = discord.ui.TextInput(
+        label="负面提示词 (可选)",
+        style=discord.TextStyle.paragraph,
+        placeholder="留空则不设置自定义负面提示词",
+        required=False,
+        max_length=2000,
+    )
+
+    def __init__(self, user_id: int):
+        super().__init__()
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        name = self.preset_name_input.value.strip()
+        artist_string = self.artist_string_input.value.strip()
+        negative_prompt = self.negative_prompt_input.value.strip()
+
+        if not name or not artist_string:
+            return await interaction.response.send_message(
+                "预设名称和画师串不能为空。", ephemeral=True
+            )
+
+        # 检查预设数量上限
+        existing = await chat_db_manager.get_novelai_presets(self.user_id)
+        existing_names = [p["name"] for p in existing]
+        if len(existing) >= 25 and name not in existing_names:
+            return await interaction.response.send_message(
+                f"已达预设上限（25个）。请先删除旧预设再保存。", ephemeral=True
+            )
+
+        success = await chat_db_manager.save_novelai_preset(
+            user_id=self.user_id,
+            name=name,
+            artist_string=artist_string,
+            negative_prompt=negative_prompt,
+        )
+
+        if success:
+            embed = discord.Embed(
+                title="预设已保存",
+                description=f"预设名称: **{name}**",
+                color=0x2ECC71,
+            )
+            embed.add_field(
+                name="画师串",
+                value=f"```\n{artist_string[:500]}\n```",
+                inline=False,
+            )
+            if negative_prompt:
+                embed.add_field(
+                    name="负面提示词",
+                    value=f"```\n{negative_prompt[:300]}\n```",
+                    inline=False,
+                )
+            embed.set_footer(text="可在绘图面板中通过「画师串」按钮选择此预设")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message("保存预设失败，请稍后重试。", ephemeral=True)
+
+
+# ================================================================
+# 预设管理视图 (查看 / 删除)
+# ================================================================
+
+class PresetManageView(discord.ui.View):
+    """展示预设列表，支持查看详情和删除"""
+
+    def __init__(
+        self,
+        session: NovelAISession,
+        parent_panel: NovelAIDrawPanel,
+        presets: list,
+        user_id: int,
+    ):
+        super().__init__(timeout=120)
+        self.session = session
+        self.parent_panel = parent_panel
+        self.presets = presets
+        self.user_id = user_id
+
+        # 构建选择菜单
+        options = []
+        for p in presets[:25]:
+            preview = p["artist_string"][:80]
+            if len(p["artist_string"]) > 80:
+                preview += "..."
+            options.append(
+                discord.SelectOption(
+                    label=p["name"][:100],
+                    value=p["name"][:100],
+                    description=preview[:100],
+                )
+            )
+
+        select = discord.ui.Select(
+            placeholder=f"选择预设查看详情 ({len(presets)}/25)",
+            options=options,
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        """选中预设时显示详情和操作按钮"""
+        name = interaction.data["values"][0]
+        preset = await chat_db_manager.get_novelai_preset(self.user_id, name)
+
+        if not preset:
+            return await interaction.response.send_message(
+                f"预设「{name}」不存在。", ephemeral=True
+            )
+
+        embed = discord.Embed(
+            title=f"预设详情: {preset['name']}",
+            color=0x9B59B6,
+        )
+        embed.add_field(
+            name="画师串",
+            value=f"```\n{preset['artist_string'][:1000]}\n```",
+            inline=False,
+        )
+        if preset.get("negative_prompt"):
+            embed.add_field(
+                name="负面提示词",
+                value=f"```\n{preset['negative_prompt'][:500]}\n```",
+                inline=False,
+            )
+        embed.set_footer(text=f"创建时间: {preset.get('created_at', '未知')}")
+
+        # 操作按钮视图
+        action_view = PresetActionView(
+            session=self.session,
+            parent_panel=self.parent_panel,
+            preset=preset,
+            user_id=self.user_id,
+        )
+
+        await interaction.response.send_message(
+            embed=embed, view=action_view, ephemeral=True
+        )
+
+
+class PresetActionView(discord.ui.View):
+    """单个预设的操作按钮：应用到面板 / 删除"""
+
+    def __init__(
+        self,
+        session: NovelAISession,
+        parent_panel: NovelAIDrawPanel,
+        preset: dict,
+        user_id: int,
+    ):
+        super().__init__(timeout=60)
+        self.session = session
+        self.parent_panel = parent_panel
+        self.preset = preset
+        self.user_id = user_id
+
+    @discord.ui.button(label="应用到面板", style=discord.ButtonStyle.primary, emoji="✅")
+    async def btn_apply(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """将预设应用到当前面板"""
+        self.session.preset_name = self.preset["name"]
+        self.session.preset_artist_string = self.preset["artist_string"]
+        if self.preset.get("negative_prompt") and not self.session.negative_prompt:
+            self.session.negative_prompt = self.preset["negative_prompt"]
+
+        await interaction.response.send_message(
+            f"已将预设「{self.preset['name']}」应用到面板！", ephemeral=True
+        )
+
+    @discord.ui.button(label="删除预设", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def btn_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """删除这个预设"""
+        success = await chat_db_manager.delete_novelai_preset(
+            self.user_id, self.preset["name"]
+        )
+        if success:
+            await interaction.response.send_message(
+                f"已删除预设「{self.preset['name']}」。", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "删除失败，请稍后重试。", ephemeral=True
+            )

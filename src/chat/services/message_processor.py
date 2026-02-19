@@ -174,11 +174,13 @@ class MessageProcessor:
                                 and snapshot.attachments
                             ):
                                 # snapshot.attachments 是 Attachment 对象的列表
-                                image_data_list.extend(
-                                    await self._extract_images_from_attachments(
-                                        snapshot.attachments
-                                    )
+                                snapshot_images = await self._extract_images_from_attachments(
+                                    snapshot.attachments
                                 )
+                                # 标记这些图片来自回复的转发消息
+                                for img in snapshot_images:
+                                    img["source"] = "replied_attachment"
+                                image_data_list.extend(snapshot_images)
 
                         snapshot_full_text = "\n".join(
                             filter(None, snapshot_content_parts)
@@ -266,11 +268,13 @@ class MessageProcessor:
                             )
 
                         if ref_msg.attachments:
-                            image_data_list.extend(
-                                await self._extract_images_from_attachments(
-                                    ref_msg.attachments
-                                )
+                            replied_images = await self._extract_images_from_attachments(
+                                ref_msg.attachments
                             )
+                            # 标记这些图片来自回复消息，以便 prompt_service 区分
+                            for img in replied_images:
+                                img["source"] = "replied_attachment"
+                            image_data_list.extend(replied_images)
 
             except (discord.NotFound, discord.Forbidden):
                 log.warning(

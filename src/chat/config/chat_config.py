@@ -240,14 +240,14 @@ def _get_novelai_config():
         # 采样参数
         "DEFAULT_STEPS": int(os.getenv("NOVELAI_DEFAULT_STEPS", "28")),
         "DEFAULT_SCALE": float(os.getenv("NOVELAI_DEFAULT_SCALE", "5.0")),
-        "DEFAULT_SAMPLER": os.getenv("NOVELAI_DEFAULT_SAMPLER", "k_euler"),
+        "DEFAULT_SAMPLER": os.getenv("NOVELAI_DEFAULT_SAMPLER", "k_euler_ancestral"),
         # 质量与UC预设
         "QUALITY_TOGGLE": _parse_bool_env("NOVELAI_QUALITY_TOGGLE", "True"),
         "UC_PRESET": int(os.getenv("NOVELAI_UC_PRESET", "0")),
         # CFG Rescale
         "CFG_RESCALE": float(os.getenv("NOVELAI_CFG_RESCALE", "0")),
         # 噪声调度
-        "NOISE_SCHEDULE": os.getenv("NOVELAI_NOISE_SCHEDULE", "native"),
+        "NOISE_SCHEDULE": os.getenv("NOVELAI_NOISE_SCHEDULE", "karras"),
         # SMEA 设置
         "SMEA": _parse_bool_env("NOVELAI_SMEA", "False"),
         "SMEA_DYN": _parse_bool_env("NOVELAI_SMEA_DYN", "False"),

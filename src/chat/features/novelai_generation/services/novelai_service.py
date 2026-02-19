@@ -199,8 +199,42 @@ class NovelAIService:
         final_smea_dyn = smea_dyn if smea_dyn is not None else config.get("SMEA_DYN", False)
         final_negative = negative_prompt if negative_prompt is not None else config.get("DEFAULT_NEGATIVE_PROMPT", "")
 
+        # 判断是否为 V4/V4.5 模型
+        is_v4_model = "nai-diffusion-4" in final_model
+
+        # 构建 V4 结构化 prompt（V4/V4.5 必需）
+        v4_prompt = None
+        v4_negative_prompt = None
+
+        if is_v4_model:
+            # 分离 base_caption (场景/风格) 和 char_captions (角色描述)
+            base_caption, char_captions = self._split_prompt_for_v4(prompt)
+
+            v4_prompt = {
+                "caption": {
+                    "base_caption": base_caption,
+                    "char_captions": char_captions,
+                },
+                "use_coords": False,
+                "use_order": True,
+            }
+
+            # 构建 V4 负面提示词结构
+            char_negative_captions = [
+                {"char_caption": "", "centers": [{"x": 0.5, "y": 0.5}]}
+                for _ in char_captions
+            ]
+            v4_negative_prompt = {
+                "caption": {
+                    "base_caption": final_negative,
+                    "char_captions": char_negative_captions,
+                },
+                "legacy_uc": False,
+            }
+
         # 构建请求参数
         parameters: Dict[str, Any] = {
+            "params_version": 3,
             "width": final_width,
             "height": final_height,
             "scale": final_scale,
@@ -215,8 +249,21 @@ class NovelAIService:
             "noise_schedule": final_noise_schedule,
             "sm": final_smea,
             "sm_dyn": final_smea_dyn,
-            "params_version": 3,
+            # V4/V4.5 必需的额外参数
+            "dynamic_thresholding": False,
+            "controlnet_strength": 1,
+            "legacy": False,
+            "add_original_image": True,
+            "uncond_scale": 1,
+            "skip_cfg_above_sigma": 58,  # Variety+ 开启
+            "deliberate_euler_ancestral_bug": False,
+            "prefer_brownian": True,
         }
+
+        # 注入 V4 结构化 prompt
+        if is_v4_model and v4_prompt and v4_negative_prompt:
+            parameters["v4_prompt"] = v4_prompt
+            parameters["v4_negative_prompt"] = v4_negative_prompt
 
         # 氛围转移（Vibe Transfer）
         if reference_image:
@@ -227,9 +274,9 @@ class NovelAIService:
 
         # 构建请求体
         request_body = {
+            "input": prompt,
             "model": final_model,
             "action": "generate",
-            "input": prompt,
             "parameters": parameters,
         }
 
@@ -298,6 +345,86 @@ class NovelAIService:
             log.error(f"NovelAI 图片生成异常: {e}", exc_info=True)
             return None
 
+    def _split_prompt_for_v4(self, prompt: str):
+        """
+        将提示词拆分为 base_caption 和 char_captions，用于 V4 结构化 prompt。
+
+        策略：
+        - 识别角色相关 Tag (如 1girl, 1boy 等) 作为角色分离依据
+        - 非角色相关的 Tag (场景、光影、质量等) 归入 base_caption
+        - 角色外貌/服饰/动作等 Tag 归入 char_caption
+        """
+        tags = [t.strip() for t in prompt.split(",") if t.strip()]
+
+        # 角色指示 Tag
+        char_indicators = {
+            "1girl", "2girls", "3girls", "4girls", "5girls", "6+girls",
+            "1boy", "2boys", "3boys", "4boys", "5boys", "6+boys",
+            "1other", "2others", "3others",
+            "multiple girls", "multiple boys",
+        }
+
+        # 场景/质量/构图类 Tag（归入 base_caption）
+        base_keywords = {
+            "masterpiece", "best quality", "amazing quality", "very aesthetic",
+            "absurdres", "highres", "ultra-detailed", "8k",
+            "nsfw", "sfw", "rating:general", "rating:sensitive", "rating:questionable", "rating:explicit",
+            "solo", "hetero", "harem", "yuri", "yaoi",
+            "full body", "upper body", "lower body", "cowboy shot", "portrait",
+            "close-up", "mid shot", "wide shot",
+            "front view", "side view", "back view", "from below", "from above", "from behind", "pov",
+            "face focus", "ass focus", "feet focus",
+            "depth of field", "bokeh", "cinematic angle", "dutch angle",
+            "indoors", "outdoors", "indoor", "outdoor",
+            "day", "night", "sunset", "sunrise", "dawn", "dusk",
+            "rain", "snow", "cloudy", "sunny",
+            "backlighting", "rim lighting", "sidelighting", "dramatic shadows",
+            "cinematic lighting", "soft lighting", "natural lighting",
+            "simple background", "white background", "black background", "gradient background",
+            "no background", "detailed background",
+        }
+
+        base_tags = []
+        char_tags = []
+
+        for tag in tags:
+            tag_lower = tag.lower().strip()
+            # 去除权重语法进行判断
+            clean_tag = tag_lower
+            if "::" in clean_tag:
+                parts = clean_tag.split("::")
+                if len(parts) >= 2:
+                    clean_tag = parts[1].strip()
+
+            if clean_tag in char_indicators:
+                base_tags.append(tag)
+                char_tags.append(tag)
+            elif clean_tag in base_keywords or any(kw in clean_tag for kw in [
+                "background", "lighting", "quality", "masterpiece", "aesthetic",
+                "absurdres", "highres", "resolution", "detailed",
+                "bokeh", "depth of field", "cinematic",
+            ]):
+                base_tags.append(tag)
+            else:
+                char_tags.append(tag)
+
+        base_caption = ", ".join(base_tags) if base_tags else prompt
+        char_caption = ", ".join(char_tags) if char_tags else ""
+
+        char_captions = []
+        if char_caption:
+            char_captions.append({
+                "char_caption": char_caption,
+                "centers": [{"x": 0.5, "y": 0.5}],
+            })
+        else:
+            char_captions.append({
+                "char_caption": "",
+                "centers": [{"x": 0.5, "y": 0.5}],
+            })
+
+        return base_caption, char_captions
+
     def _extract_image_from_zip(self, zip_data: bytes) -> Optional[bytes]:
         """从 ZIP 响应中提取第一张 PNG 图片"""
         try:
@@ -331,23 +458,54 @@ class NovelAIService:
             # 使用一个最小的请求来测试连接
             # NovelAI 没有专门的 ping 端点，所以我们尝试一个小请求
             # 使用最小参数和最小尺寸
+            test_model = app_config.NOVELAI_CONFIG.get("MODEL", "nai-diffusion-4-5-full")
+            test_params = {
+                "params_version": 3,
+                "width": 512,
+                "height": 512,
+                "scale": 5.0,
+                "sampler": "k_euler",
+                "steps": 1,
+                "seed": 1,
+                "n_samples": 1,
+                "negative_prompt": "",
+                "qualityToggle": False,
+                "ucPreset": 0,
+                "sm": False,
+                "sm_dyn": False,
+                "dynamic_thresholding": False,
+                "controlnet_strength": 1,
+                "legacy": False,
+                "add_original_image": True,
+                "uncond_scale": 1,
+                "cfg_rescale": 0,
+                "noise_schedule": "karras",
+                "skip_cfg_above_sigma": None,
+                "deliberate_euler_ancestral_bug": False,
+                "prefer_brownian": True,
+            }
+            # 为 V4 模型添加结构化 prompt
+            if "nai-diffusion-4" in test_model:
+                test_params["v4_prompt"] = {
+                    "caption": {
+                        "base_caption": "test",
+                        "char_captions": [{"char_caption": "", "centers": [{"x": 0.5, "y": 0.5}]}],
+                    },
+                    "use_coords": False,
+                    "use_order": True,
+                }
+                test_params["v4_negative_prompt"] = {
+                    "caption": {
+                        "base_caption": "",
+                        "char_captions": [{"char_caption": "", "centers": [{"x": 0.5, "y": 0.5}]}],
+                    },
+                    "legacy_uc": False,
+                }
             test_body = {
-                "model": app_config.NOVELAI_CONFIG.get("MODEL", "nai-diffusion-4-5-full"),
-                "action": "generate",
                 "input": "test",
-                "parameters": {
-                    "width": 512,
-                    "height": 512,
-                    "scale": 5.0,
-                    "sampler": "k_euler",
-                    "steps": 1,
-                    "seed": 1,
-                    "n_samples": 1,
-                    "negative_prompt": "",
-                    "qualityToggle": False,
-                    "ucPreset": 0,
-                    "params_version": 3,
-                },
+                "model": test_model,
+                "action": "generate",
+                "parameters": test_params,
             }
 
             timeout = aiohttp.ClientTimeout(total=30)

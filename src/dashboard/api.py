@@ -1397,6 +1397,46 @@ async def delete_novelai_preset(preset_id: int, token: str = Depends(verify_toke
         raise HTTPException(500, "删除预设失败")
 
 
+# --- 默认绘图引擎配置 API ---
+
+@app.get("/api/config/default-image-engine")
+async def get_default_image_engine(token: str = Depends(verify_token)):
+    """获取默认绘图引擎配置"""
+    from src.chat.utils.database import chat_db_manager
+
+    db_engine = await chat_db_manager.get_global_setting("default_image_engine")
+    engine = db_engine or chat_config.DEFAULT_IMAGE_ENGINE or "imagen"
+
+    return {
+        "engine": engine,
+        "available_engines": [
+            {"value": "imagen", "label": "Gemini Imagen", "description": "使用 Gemini Imagen API 生成图片（自然语言提示词）"},
+            {"value": "novelai", "label": "NovelAI", "description": "使用 NovelAI API 生成图片（Danbooru Tag 格式提示词）"},
+        ]
+    }
+
+
+class DefaultImageEngineUpdate(BaseModel):
+    """默认绘图引擎更新"""
+    engine: str  # "imagen" 或 "novelai"
+
+
+@app.put("/api/config/default-image-engine")
+async def update_default_image_engine(config: DefaultImageEngineUpdate, token: str = Depends(verify_token)):
+    """更新默认绘图引擎配置"""
+    from src.chat.utils.database import chat_db_manager
+
+    if config.engine not in ("imagen", "novelai"):
+        raise HTTPException(400, "无效的引擎类型，必须是 'imagen' 或 'novelai'")
+
+    await chat_db_manager.set_global_setting("default_image_engine", config.engine)
+
+    # 更新运行时配置
+    chat_config.DEFAULT_IMAGE_ENGINE = config.engine
+
+    return {"success": True, "engine": config.engine}
+
+
 # --- 向量嵌入配置 API ---
 
 @app.get("/api/config/embedding")
