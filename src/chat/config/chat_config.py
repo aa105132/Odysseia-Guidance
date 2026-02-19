@@ -15,6 +15,27 @@ def _parse_int_env(key: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
+
+def _parse_int_list_env(key: str, default: list[int]) -> list[int]:
+    """解析逗号分隔的整数列表环境变量，失败时回退默认值。"""
+    raw = os.getenv(key)
+    if not raw:
+        return default
+
+    values: list[int] = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            number = int(item)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            values.append(number)
+
+    return values or default
+
 # --- Chat 功能总开关 ---
 CHAT_ENABLED = os.getenv("CHAT_ENABLED", "False").lower() == "true"
 
@@ -790,6 +811,18 @@ CHANNEL_MUTE_CONFIG = {
     "VOTE_THRESHOLD": 5,  # 禁言投票通过所需的票数 (方便测试设为2)
     "VOTE_DURATION_MINUTES": 3,  # 投票的有效持续时间（分钟）
     "MUTE_DURATION_MINUTES": 30,  # 禁言的持续时间（分钟）
+}
+
+# --- 图片负反馈与绘图封禁配置 ---
+IMAGE_FEEDBACK_CONFIG = {
+    "REPORT_EMOJI": os.getenv("IMAGE_FEEDBACK_REPORT_EMOJI", "💩"),
+    "BAN_TRIGGER_COUNT": _parse_int_env("IMAGE_FEEDBACK_BAN_TRIGGER_COUNT", 3),
+    # 仅在该窗口内再次触发才会升级封禁档位；超出窗口重置为初始档位
+    "REPEAT_WINDOW_MINUTES": _parse_int_env("IMAGE_FEEDBACK_REPEAT_WINDOW_MINUTES", 60),
+    # 默认阶梯：10分钟 -> 30分钟 -> 60分钟 -> 180分钟 -> 720分钟
+    "BAN_DURATION_LADDER_MINUTES": _parse_int_list_env(
+        "IMAGE_FEEDBACK_BAN_LADDER_MINUTES", [10, 30, 60, 180, 720]
+    ),
 }
 
 # --- 图片处理配置 ---

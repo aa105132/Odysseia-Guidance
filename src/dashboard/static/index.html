@@ -1876,12 +1876,12 @@
 
                     <div class="space-y-4" :class="!threadAutoSpeakerForm.enabled && 'opacity-60'">
                         <div>
-                            <label class="block text-sm font-medium text-slate-300 mb-2">目标帖子 ID（每行一个）</label>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">目标 ID（每行一个）</label>
                             <textarea x-model="threadAutoSpeakerForm.thread_ids_text"
                                       rows="5"
                                       placeholder="123456789012345678&#10;223456789012345679"
                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"></textarea>
-                            <p class="text-xs text-slate-500 mt-1">支持换行、逗号或空格分隔。建议只配置需要重点暖场的帖子。</p>
+                            <p class="text-xs text-slate-500 mt-1">支持帖子 ID、论坛频道 ID、普通文本频道 ID（换行/逗号/空格分隔）。</p>
                         </div>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

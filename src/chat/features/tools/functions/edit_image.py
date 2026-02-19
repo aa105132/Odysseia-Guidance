@@ -132,6 +132,7 @@ async def edit_image(
     )
     from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
+    from src.chat.utils.database import chat_db_manager
     
     # 获取消息对象（用于获取图片和添加反应）
     message: Optional[discord.Message] = kwargs.get("message")
@@ -341,23 +342,37 @@ async def edit_image(
     
     # 获取用户ID（如果提供）用于扣费
     user_id = kwargs.get("user_id")
+    parsed_user_id: Optional[int] = None
+    if user_id:
+        try:
+            parsed_user_id = int(user_id)
+        except (ValueError, TypeError):
+            log.warning(f"无法解析用户ID: {user_id}")
+
+    # 检查是否处于绘图封禁状态
+    if parsed_user_id is not None:
+        ban_status = await chat_db_manager.get_image_generation_ban_status(parsed_user_id)
+        if ban_status.get("is_banned"):
+            remaining_text = ban_status.get("remaining_text", "未知时长")
+            return {
+                "edit_failed": True,
+                "reason": "image_generation_banned",
+                "hint": f"该用户因图片收到过多负反馈，绘图功能已被临时禁用，剩余封禁时长：{remaining_text}。"
+            }
+
     cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 40)
     
     # 检查用户余额（如果需要扣费）
-    if user_id and cost > 0:
-        try:
-            user_id_int = int(user_id)
-            balance = await coin_service.get_balance(user_id_int)
-            if balance < cost:
-                return {
-                    "edit_failed": True,
-                    "reason": "insufficient_balance",
-                    "cost": cost,
-                    "balance": balance,
-                    "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点月光币再来。"
-                }
-        except (ValueError, TypeError):
-            log.warning(f"无法解析用户ID: {user_id}")
+    if parsed_user_id is not None and cost > 0:
+        balance = await coin_service.get_balance(parsed_user_id)
+        if balance < cost:
+            return {
+                "edit_failed": True,
+                "reason": "insufficient_balance",
+                "cost": cost,
+                "balance": balance,
+                "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点月光币再来。"
+            }
     
     log.info(f"调用图生图工具，编辑指令: {edit_prompt[:100]}...")
     
@@ -421,13 +436,12 @@ async def edit_image(
             await add_reaction(SUCCESS_EMOJI)
             
             # 扣除月光币
-            if user_id and cost > 0:
+            if parsed_user_id is not None and cost > 0:
                 try:
-                    user_id_int = int(user_id)
                     await coin_service.remove_coins(
-                        user_id_int, cost, f"AI图生图: {edit_prompt[:30]}..."
+                        parsed_user_id, cost, f"AI图生图: {edit_prompt[:30]}..."
                     )
-                    log.info(f"用户 {user_id_int} 图生图成功，扣除 {cost} 月光币")
+                    log.info(f"用户 {parsed_user_id} 图生图成功，扣除 {cost} 月光币")
                 except Exception as e:
                     log.error(f"扣除月光币失败: {e}")
             
@@ -469,39 +483,42 @@ async def edit_image(
                     
                     # 创建重新生成按钮视图
                     regenerate_view = None
-                    if user_id:
-                        try:
-                            user_id_int_view = int(user_id)
-                            regenerate_view = RegenerateView(
-                                generation_type="edit_image",
-                                original_params={
-                                    "prompt": edit_prompt,
-                                    "aspect_ratio": aspect_ratio,
-                                    "resolution": resolution,
-                                    "content_rating": content_rating,
-                                    "original_success_message": success_message or "",
-                                    # 保存参考图片数据以便重新生成
-                                    "reference_image_data": reference_image["data"],
-                                    "reference_image_mime_type": reference_image["mime_type"],
-                                    "reference_images_data": [
-                                        ref["data"] for ref in reference_images if ref.get("data")
-                                    ] if reference_images else [reference_image["data"]],
-                                    "reference_images_mime_types": [
-                                        ref.get("mime_type", "image/png")
-                                        for ref in reference_images
-                                        if ref.get("data")
-                                    ] if reference_images else [reference_image["mime_type"]],
-                                },
-                                user_id=user_id_int_view,
-                            )
-                        except (ValueError, TypeError):
-                            pass
+                    if parsed_user_id is not None:
+                        regenerate_view = RegenerateView(
+                            generation_type="edit_image",
+                            original_params={
+                                "prompt": edit_prompt,
+                                "aspect_ratio": aspect_ratio,
+                                "resolution": resolution,
+                                "content_rating": content_rating,
+                                "original_success_message": success_message or "",
+                                # 保存参考图片数据以便重新生成
+                                "reference_image_data": reference_image["data"],
+                                "reference_image_mime_type": reference_image["mime_type"],
+                                "reference_images_data": [
+                                    ref["data"] for ref in reference_images if ref.get("data")
+                                ] if reference_images else [reference_image["data"]],
+                                "reference_images_mime_types": [
+                                    ref.get("mime_type", "image/png")
+                                    for ref in reference_images
+                                    if ref.get("data")
+                                ] if reference_images else [reference_image["mime_type"]],
+                            },
+                            user_id=parsed_user_id,
+                        )
                     
                     file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
                     send_kwargs = {"embed": embed, "file": file}
                     if regenerate_view:
                         send_kwargs["view"] = regenerate_view
-                    await channel.send(**send_kwargs)
+                    sent_message = await channel.send(**send_kwargs)
+                    if parsed_user_id is not None:
+                        await chat_db_manager.register_generated_image_message(
+                            message_id=sent_message.id,
+                            user_id=parsed_user_id,
+                            guild_id=sent_message.guild.id if sent_message.guild else None,
+                            channel_id=sent_message.channel.id,
+                        )
                     log.info("修改后的图片已直接发送到频道（Embed格式+重新生成按钮）")
                 except Exception as e:
                     log.error(f"发送图片到频道失败: {e}")

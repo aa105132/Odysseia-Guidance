@@ -112,7 +112,7 @@ async def generate_image_novelai(
     如果用户要求画"你"、"月月"、"自己"：
     - 1girl, solo, silver hair, high ponytail, crescent hair ornament, blue grey eyes
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
-    - watermelon earrings（西瓜形状耳坠）
+    - small triangular watermelon earrings（小巧的三角形西瓜耳坠）
     - white off-shoulder top, fur trim, detached sleeves, white high waist skirt, pink bow belt, silver necklace, jewelry
 
     ### 10. 参考标签库
@@ -183,7 +183,7 @@ async def generate_image_novelai(
 
     用户说"画月月在温泉里"，你应该生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, 1.3::silver hair::, high ponytail, crescent hair ornament, blue grey eyes, fox ears, white fox ears, fox tail, silver white tail, fluffy tail, medium breasts, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, watermelon earrings, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, 1.3::silver hair::, high ponytail, crescent hair ornament, blue grey eyes, fox ears, white fox ears, fox tail, silver white tail, fluffy tail, medium breasts, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, small triangular watermelon earrings, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
     ```
 
     Args:
@@ -270,23 +270,37 @@ async def generate_image_novelai(
 
     # 获取用户ID
     user_id = kwargs.get("user_id")
+    parsed_user_id: Optional[int] = None
+    if user_id:
+        try:
+            parsed_user_id = int(user_id)
+        except (ValueError, TypeError):
+            log.warning(f"无法解析用户ID: {user_id}")
+
+    # 检查是否处于绘图封禁状态
+    if parsed_user_id is not None:
+        ban_status = await chat_db_manager.get_image_generation_ban_status(parsed_user_id)
+        if ban_status.get("is_banned"):
+            remaining_text = ban_status.get("remaining_text", "未知时长")
+            return {
+                "generation_failed": True,
+                "reason": "image_generation_banned",
+                "hint": f"该用户因图片收到过多负反馈，绘图功能已被临时禁用，剩余封禁时长：{remaining_text}。"
+            }
+
     cost = NOVELAI_CONFIG.get("IMAGE_GENERATION_COST", 5)
 
     # 检查用户余额
-    if user_id and cost > 0:
-        try:
-            user_id_int = int(user_id)
-            balance = await coin_service.get_balance(user_id_int)
-            if balance < cost:
-                return {
-                    "generation_failed": True,
-                    "reason": "insufficient_balance",
-                    "cost": cost,
-                    "balance": balance,
-                    "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够。"
-                }
-        except (ValueError, TypeError):
-            log.warning(f"无法解析用户ID: {user_id}")
+    if parsed_user_id is not None and cost > 0:
+        balance = await coin_service.get_balance(parsed_user_id)
+        if balance < cost:
+            return {
+                "generation_failed": True,
+                "reason": "insufficient_balance",
+                "cost": cost,
+                "balance": balance,
+                "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够。"
+            }
 
     # 画师串应用策略：
     # 1) 指定 preset_name 时，优先按名称匹配该用户预设（支持大小写不敏感）
@@ -297,12 +311,9 @@ async def generate_image_novelai(
     effective_preset_name = preset_name
 
     user_presets = []
-    if user_id:
+    if parsed_user_id is not None:
         try:
-            user_id_int = int(user_id)
-            user_presets = await chat_db_manager.get_novelai_presets(user_id_int)
-        except (ValueError, TypeError):
-            log.warning(f"无法解析用户ID用于读取预设: {user_id}")
+            user_presets = await chat_db_manager.get_novelai_presets(parsed_user_id)
         except Exception as e:
             log.warning(f"读取用户画师串预设失败: {e}")
 
@@ -409,13 +420,12 @@ async def generate_image_novelai(
             await add_reaction("✅")
 
             # 扣除月光币
-            if user_id and cost > 0:
+            if parsed_user_id is not None and cost > 0:
                 try:
-                    user_id_int = int(user_id)
                     await coin_service.remove_coins(
-                        user_id_int, cost, f"NovelAI生图: {final_prompt[:25]}..."
+                        parsed_user_id, cost, f"NovelAI生图: {final_prompt[:25]}..."
                     )
-                    log.info(f"用户 {user_id_int} NovelAI 生图成功，扣除 {cost} 月光币")
+                    log.info(f"用户 {parsed_user_id} NovelAI 生图成功，扣除 {cost} 月光币")
                 except Exception as e:
                     log.error(f"扣除月光币失败: {e}")
 
@@ -484,7 +494,16 @@ async def generate_image_novelai(
                         cost=cost,
                     )
 
-                    await channel.send(embed=embed, file=image_file, view=interaction_view)
+                    sent_message = await channel.send(
+                        embed=embed, file=image_file, view=interaction_view
+                    )
+                    if parsed_user_id is not None:
+                        await chat_db_manager.register_generated_image_message(
+                            message_id=sent_message.id,
+                            user_id=parsed_user_id,
+                            guild_id=sent_message.guild.id if sent_message.guild else None,
+                            channel_id=sent_message.channel.id,
+                        )
                     log.info("已发送 NovelAI 生成图片到频道（含交互按钮）")
 
                 except Exception as e:
@@ -837,20 +856,34 @@ async def _regenerate_novelai(
     from src.chat.features.novelai_generation.services.novelai_service import novelai_service
     from src.chat.config.chat_config import NOVELAI_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
+    from src.chat.utils.database import chat_db_manager
 
-    # 检查余额
-    if user_id and cost > 0:
+    parsed_user_id: Optional[int] = None
+    if user_id:
         try:
-            user_id_int = int(user_id)
-            balance = await coin_service.get_balance(user_id_int)
-            if balance < cost:
-                await interaction.followup.send(
-                    f"月光币不足（需要 {cost}，当前 {balance}）",
-                    ephemeral=True,
-                )
-                return
+            parsed_user_id = int(user_id)
         except (ValueError, TypeError):
-            pass
+            parsed_user_id = None
+
+    # 检查封禁与余额
+    if parsed_user_id is not None:
+        ban_status = await chat_db_manager.get_image_generation_ban_status(parsed_user_id)
+        if ban_status.get("is_banned"):
+            remaining_text = ban_status.get("remaining_text", "未知时长")
+            await interaction.followup.send(
+                f"你的绘图功能当前已被临时禁用，剩余封禁时长：{remaining_text}",
+                ephemeral=True,
+            )
+            return
+
+    if parsed_user_id is not None and cost > 0:
+        balance = await coin_service.get_balance(parsed_user_id)
+        if balance < cost:
+            await interaction.followup.send(
+                f"月光币不足（需要 {cost}，当前 {balance}）",
+                ephemeral=True,
+            )
+            return
 
     # 生成图片（新种子）
     result = await novelai_service.generate_image(
@@ -869,11 +902,10 @@ async def _regenerate_novelai(
         return
 
     # 扣费
-    if user_id and cost > 0:
+    if parsed_user_id is not None and cost > 0:
         try:
-            user_id_int = int(user_id)
             await coin_service.remove_coins(
-                user_id_int, cost, f"NovelAI重新生图: {prompt[:25]}..."
+                parsed_user_id, cost, f"NovelAI重新生图: {prompt[:25]}..."
             )
         except Exception as e:
             log.error(f"扣除月光币失败: {e}")
@@ -925,7 +957,16 @@ async def _regenerate_novelai(
         cost=cost,
     )
 
-    await interaction.followup.send(embed=embed, file=image_file, view=new_view)
+    sent_message = await interaction.followup.send(
+        embed=embed, file=image_file, view=new_view, wait=True
+    )
+    if parsed_user_id is not None and sent_message:
+        await chat_db_manager.register_generated_image_message(
+            message_id=sent_message.id,
+            user_id=parsed_user_id,
+            guild_id=sent_message.guild.id if sent_message.guild else None,
+            channel_id=sent_message.channel.id,
+        )
     log.info(f"NovelAI 重新生成成功, 种子: {result.seed}")
 
 
@@ -938,6 +979,7 @@ async def _regenerate_with_imagen(
     from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
     from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
+    from src.chat.utils.database import chat_db_manager
 
     cost_per_image = GEMINI_IMAGEN_CONFIG.get("IMAGE_GENERATION_COST", 1)
 
@@ -945,19 +987,32 @@ async def _regenerate_with_imagen(
         await interaction.followup.send("Gemini Imagen 服务当前不可用。", ephemeral=True)
         return
 
-    # 检查余额
-    if user_id and cost_per_image > 0:
+    parsed_user_id: Optional[int] = None
+    if user_id:
         try:
-            user_id_int = int(user_id)
-            balance = await coin_service.get_balance(user_id_int)
-            if balance < cost_per_image:
-                await interaction.followup.send(
-                    f"月光币不足（需要 {cost_per_image}，当前 {balance}）",
-                    ephemeral=True,
-                )
-                return
+            parsed_user_id = int(user_id)
         except (ValueError, TypeError):
-            pass
+            parsed_user_id = None
+
+    if parsed_user_id is not None:
+        ban_status = await chat_db_manager.get_image_generation_ban_status(parsed_user_id)
+        if ban_status.get("is_banned"):
+            remaining_text = ban_status.get("remaining_text", "未知时长")
+            await interaction.followup.send(
+                f"你的绘图功能当前已被临时禁用，剩余封禁时长：{remaining_text}",
+                ephemeral=True,
+            )
+            return
+
+    # 检查余额
+    if parsed_user_id is not None and cost_per_image > 0:
+        balance = await coin_service.get_balance(parsed_user_id)
+        if balance < cost_per_image:
+            await interaction.followup.send(
+                f"月光币不足（需要 {cost_per_image}，当前 {balance}）",
+                ephemeral=True,
+            )
+            return
 
     # NovelAI 的 Danbooru Tag prompt 不太适合 Imagen 的自然语言风格
     # 但我们仍然尝试用同样的 prompt 生成
@@ -974,11 +1029,10 @@ async def _regenerate_with_imagen(
         return
 
     # 扣费
-    if user_id and cost_per_image > 0:
+    if parsed_user_id is not None and cost_per_image > 0:
         try:
-            user_id_int = int(user_id)
             await coin_service.remove_coins(
-                user_id_int, cost_per_image, f"Imagen生图(切换): {prompt[:25]}..."
+                parsed_user_id, cost_per_image, f"Imagen生图(切换): {prompt[:25]}..."
             )
         except Exception as e:
             log.error(f"扣除月光币失败: {e}")
@@ -1007,5 +1061,12 @@ async def _regenerate_with_imagen(
     )
     # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
-    await interaction.followup.send(embed=embed, file=image_file)
+    sent_message = await interaction.followup.send(embed=embed, file=image_file, wait=True)
+    if parsed_user_id is not None and sent_message:
+        await chat_db_manager.register_generated_image_message(
+            message_id=sent_message.id,
+            user_id=parsed_user_id,
+            guild_id=sent_message.guild.id if sent_message.guild else None,
+            channel_id=sent_message.channel.id,
+        )
     log.info("已切换到 Imagen 生成图片")

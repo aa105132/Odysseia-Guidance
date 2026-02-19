@@ -351,8 +351,19 @@ class RegenerateView(discord.ui.View):
                 from src.chat.features.odysseia_coin.service.coin_service import coin_service
                 from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
                 from src.chat.utils.prompt_utils import replace_emojis
+                from src.chat.utils.database import chat_db_manager
 
                 cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 40)
+
+                # 检查绘图封禁
+                ban_status = await chat_db_manager.get_image_generation_ban_status(clicker_user_id)
+                if ban_status.get("is_banned"):
+                    remaining_text = ban_status.get("remaining_text", "未知时长")
+                    await interaction.followup.send(
+                        f"你的绘图功能当前已被临时禁用，剩余封禁时长：{remaining_text}",
+                        ephemeral=True,
+                    )
+                    return
 
                 # 检查余额
                 balance = await coin_service.get_balance(clicker_user_id)
@@ -418,7 +429,14 @@ class RegenerateView(discord.ui.View):
                     new_view.original_params["content_rating"] = content_rating
 
                     file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
-                    await channel.send(embed=embed, file=file, view=new_view)
+                    sent_message = await channel.send(embed=embed, file=file, view=new_view)
+                    if sent_message:
+                        await chat_db_manager.register_generated_image_message(
+                            message_id=sent_message.id,
+                            user_id=clicker_user_id,
+                            guild_id=sent_message.guild.id if sent_message.guild else None,
+                            channel_id=sent_message.channel.id,
+                        )
                 else:
                     await interaction.followup.send("图片生成失败了，请稍后再试...", ephemeral=True)
 
@@ -761,8 +779,19 @@ class SlashCommandRegenerateView(discord.ui.View):
                 from src.chat.features.odysseia_coin.service.coin_service import coin_service
                 from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
                 from src.chat.utils.prompt_utils import replace_emojis
+                from src.chat.utils.database import chat_db_manager
 
                 cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 40)
+
+                # 检查绘图封禁
+                ban_status = await chat_db_manager.get_image_generation_ban_status(clicker_user_id)
+                if ban_status.get("is_banned"):
+                    remaining_text = ban_status.get("remaining_text", "未知时长")
+                    await interaction.followup.send(
+                        f"你的绘图功能当前已被临时禁用，剩余封禁时长：{remaining_text}",
+                        ephemeral=True,
+                    )
+                    return
 
                 # 检查余额
                 balance = await coin_service.get_balance(clicker_user_id)
@@ -825,7 +854,14 @@ class SlashCommandRegenerateView(discord.ui.View):
                     new_view.original_params["content_rating"] = content_rating
 
                     file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
-                    await channel.send(embed=embed, file=file, view=new_view)
+                    sent_message = await channel.send(embed=embed, file=file, view=new_view)
+                    if sent_message:
+                        await chat_db_manager.register_generated_image_message(
+                            message_id=sent_message.id,
+                            user_id=clicker_user_id,
+                            guild_id=sent_message.guild.id if sent_message.guild else None,
+                            channel_id=sent_message.channel.id,
+                        )
                 else:
                     await interaction.followup.send("图片生成失败了，请稍后再试...", ephemeral=True)
 
@@ -924,6 +960,7 @@ async def _do_novelai_regenerate(
     from src.chat.features.novelai_generation.services.novelai_service import novelai_service
     from src.chat.config.chat_config import NOVELAI_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
+    from src.chat.utils.database import chat_db_manager
 
     # 检查 NovelAI 服务可用性
     if not novelai_service.is_available():
@@ -931,6 +968,16 @@ async def _do_novelai_regenerate(
         return
 
     cost = NOVELAI_CONFIG.get("IMAGE_GENERATION_COST", 5)
+
+    # 检查绘图封禁
+    ban_status = await chat_db_manager.get_image_generation_ban_status(user_id)
+    if ban_status.get("is_banned"):
+        remaining_text = ban_status.get("remaining_text", "未知时长")
+        await interaction.followup.send(
+            f"你的绘图功能当前已被临时禁用，剩余封禁时长：{remaining_text}",
+            ephemeral=True,
+        )
+        return
 
     # 检查余额
     if cost > 0:
@@ -1012,5 +1059,14 @@ async def _do_novelai_regenerate(
         cost=cost,
     )
 
-    await interaction.followup.send(embed=embed, file=image_file, view=novelai_view)
+    sent_message = await interaction.followup.send(
+        embed=embed, file=image_file, view=novelai_view, wait=True
+    )
+    if sent_message:
+        await chat_db_manager.register_generated_image_message(
+            message_id=sent_message.id,
+            user_id=user_id,
+            guild_id=sent_message.guild.id if sent_message.guild else None,
+            channel_id=sent_message.channel.id,
+        )
     log.info(f"已从 Imagen 切换到 NovelAI 生成图片, 种子: {result.seed}")

@@ -121,6 +121,7 @@ async def generate_image(
     )
     from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
+    from src.chat.utils.database import chat_db_manager
     
     # 获取消息对象（用于添加反应）
     message: Optional[discord.Message] = kwargs.get("message")
@@ -158,24 +159,38 @@ async def generate_image(
     
     # 获取用户ID（如果提供）用于扣费
     user_id = kwargs.get("user_id")
+    parsed_user_id: Optional[int] = None
+    if user_id:
+        try:
+            parsed_user_id = int(user_id)
+        except (ValueError, TypeError):
+            log.warning(f"无法解析用户ID: {user_id}")
+
+    # 检查是否处于绘图封禁状态
+    if parsed_user_id is not None:
+        ban_status = await chat_db_manager.get_image_generation_ban_status(parsed_user_id)
+        if ban_status.get("is_banned"):
+            remaining_text = ban_status.get("remaining_text", "未知时长")
+            return {
+                "generation_failed": True,
+                "reason": "image_generation_banned",
+                "hint": f"该用户因图片收到过多负反馈，绘图功能已被临时禁用，剩余封禁时长：{remaining_text}。"
+            }
+
     cost_per_image = GEMINI_IMAGEN_CONFIG.get("IMAGE_GENERATION_COST", 1)
     total_cost = cost_per_image * number_of_images
     
     # 检查用户余额（如果需要扣费）
-    if user_id and total_cost > 0:
-        try:
-            user_id_int = int(user_id)
-            balance = await coin_service.get_balance(user_id_int)
-            if balance < total_cost:
-                return {
-                    "generation_failed": True,
-                    "reason": "insufficient_balance",
-                    "cost": total_cost,
-                    "balance": balance,
-                    "hint": f"用户月光币不足（需要{total_cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点月光币再来。"
-                }
-        except (ValueError, TypeError):
-            log.warning(f"无法解析用户ID: {user_id}")
+    if parsed_user_id is not None and total_cost > 0:
+        balance = await coin_service.get_balance(parsed_user_id)
+        if balance < total_cost:
+            return {
+                "generation_failed": True,
+                "reason": "insufficient_balance",
+                "cost": total_cost,
+                "balance": balance,
+                "hint": f"用户月光币不足（需要{total_cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点月光币再来。"
+            }
     
     log.info(f"调用图片生成工具，提示词: {prompt[:100]}...，数量: {number_of_images}")
     
@@ -264,13 +279,12 @@ async def generate_image(
             actual_cost = cost_per_image * actual_count
             
             # 扣除月光币（按实际生成数量）
-            if user_id and actual_cost > 0:
+            if parsed_user_id is not None and actual_cost > 0:
                 try:
-                    user_id_int = int(user_id)
                     await coin_service.remove_coins(
-                        user_id_int, actual_cost, f"AI图片生成x{actual_count}: {prompt[:25]}..."
+                        parsed_user_id, actual_cost, f"AI图片生成x{actual_count}: {prompt[:25]}..."
                     )
-                    log.info(f"用户 {user_id_int} 生成 {actual_count} 张图片成功，扣除 {actual_cost} 月光币")
+                    log.info(f"用户 {parsed_user_id} 生成 {actual_count} 张图片成功，扣除 {actual_cost} 月光币")
                 except Exception as e:
                     log.error(f"扣除月光币失败: {e}")
             
@@ -308,24 +322,20 @@ async def generate_image(
                     
                     # 创建重新生成按钮视图
                     regenerate_view = None
-                    if user_id:
-                        try:
-                            user_id_int = int(user_id)
-                            regenerate_view = RegenerateView(
-                                generation_type="image",
-                                original_params={
-                                    "prompt": prompt,
-                                    "negative_prompt": negative_prompt,
-                                    "aspect_ratio": aspect_ratio,
-                                    "number_of_images": number_of_images,
-                                    "resolution": resolution,
-                                    "content_rating": content_rating,
-                                    "original_success_message": success_message or "",
-                                },
-                                user_id=user_id_int,
-                            )
-                        except (ValueError, TypeError):
-                            pass
+                    if parsed_user_id is not None:
+                        regenerate_view = RegenerateView(
+                            generation_type="image",
+                            original_params={
+                                "prompt": prompt,
+                                "negative_prompt": negative_prompt,
+                                "aspect_ratio": aspect_ratio,
+                                "number_of_images": number_of_images,
+                                "resolution": resolution,
+                                "content_rating": content_rating,
+                                "original_success_message": success_message or "",
+                            },
+                            user_id=parsed_user_id,
+                        )
                     
                     # 将图片分批，每批最多10张（Discord上限）
                     MAX_FILES_PER_MESSAGE = 10
@@ -341,13 +351,22 @@ async def generate_image(
                                 )
                             )
                         # 只在第一批图片时附带 Embed 和重新生成按钮
+                        sent_message: Optional[discord.Message] = None
                         if batch_start == 0:
                             send_kwargs = {"embed": embed, "files": batch_files}
                             if regenerate_view:
                                 send_kwargs["view"] = regenerate_view
-                            await channel.send(**send_kwargs)
+                            sent_message = await channel.send(**send_kwargs)
                         else:
-                            await channel.send(files=batch_files)
+                            sent_message = await channel.send(files=batch_files)
+
+                        if sent_message and parsed_user_id is not None:
+                            await chat_db_manager.register_generated_image_message(
+                                message_id=sent_message.id,
+                                user_id=parsed_user_id,
+                                guild_id=sent_message.guild.id if sent_message.guild else None,
+                                channel_id=sent_message.channel.id,
+                            )
                     
                     log.info(f"已发送 {len(images_list)} 张图片到频道（每条消息最多10张）")
                 except Exception as e:
@@ -458,6 +477,7 @@ async def generate_images_batch(
     )
     from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
+    from src.chat.utils.database import chat_db_manager
     
     # 获取消息对象
     message: Optional[discord.Message] = kwargs.get("message")
@@ -498,24 +518,38 @@ async def generate_images_batch(
     
     # 获取用户ID用于扣费
     user_id = kwargs.get("user_id")
+    parsed_user_id: Optional[int] = None
+    if user_id:
+        try:
+            parsed_user_id = int(user_id)
+        except (ValueError, TypeError):
+            log.warning(f"无法解析用户ID: {user_id}")
+
+    # 检查是否处于绘图封禁状态
+    if parsed_user_id is not None:
+        ban_status = await chat_db_manager.get_image_generation_ban_status(parsed_user_id)
+        if ban_status.get("is_banned"):
+            remaining_text = ban_status.get("remaining_text", "未知时长")
+            return {
+                "generation_failed": True,
+                "reason": "image_generation_banned",
+                "hint": f"该用户因图片收到过多负反馈，绘图功能已被临时禁用，剩余封禁时长：{remaining_text}。"
+            }
+
     cost_per_image = GEMINI_IMAGEN_CONFIG.get("IMAGE_GENERATION_COST", 1)
     total_cost = cost_per_image * number_of_images
     
     # 检查用户余额
-    if user_id and total_cost > 0:
-        try:
-            user_id_int = int(user_id)
-            balance = await coin_service.get_balance(user_id_int)
-            if balance < total_cost:
-                return {
-                    "generation_failed": True,
-                    "reason": "insufficient_balance",
-                    "cost": total_cost,
-                    "balance": balance,
-                    "hint": f"用户月光币不足（需要{total_cost}，只有{balance}）。请用自己的语气告诉用户余额不够。"
-                }
-        except (ValueError, TypeError):
-            log.warning(f"无法解析用户ID: {user_id}")
+    if parsed_user_id is not None and total_cost > 0:
+        balance = await coin_service.get_balance(parsed_user_id)
+        if balance < total_cost:
+            return {
+                "generation_failed": True,
+                "reason": "insufficient_balance",
+                "cost": total_cost,
+                "balance": balance,
+                "hint": f"用户月光币不足（需要{total_cost}，只有{balance}）。请用自己的语气告诉用户余额不够。"
+            }
     
     log.info(f"调用批量图片生成工具，共 {number_of_images} 个提示词")
     
@@ -583,13 +617,12 @@ async def generate_images_batch(
             actual_cost = cost_per_image * actual_count
             
             # 扣除月光币
-            if user_id and actual_cost > 0:
+            if parsed_user_id is not None and actual_cost > 0:
                 try:
-                    user_id_int = int(user_id)
                     await coin_service.remove_coins(
-                        user_id_int, actual_cost, f"AI批量图片生成x{actual_count}"
+                        parsed_user_id, actual_cost, f"AI批量图片生成x{actual_count}"
                     )
-                    log.info(f"用户 {user_id_int} 批量生成 {actual_count} 张图片，扣除 {actual_cost} 月光币")
+                    log.info(f"用户 {parsed_user_id} 批量生成 {actual_count} 张图片，扣除 {actual_cost} 月光币")
                 except Exception as e:
                     log.error(f"扣除月光币失败: {e}")
             
@@ -643,10 +676,19 @@ async def generate_images_batch(
                                 )
                             )
                         # 只在第一批图片时附带 Embed
+                        sent_message: Optional[discord.Message] = None
                         if batch_start == 0:
-                            await channel.send(embed=embed, files=batch_files)
+                            sent_message = await channel.send(embed=embed, files=batch_files)
                         else:
-                            await channel.send(files=batch_files)
+                            sent_message = await channel.send(files=batch_files)
+
+                        if sent_message and parsed_user_id is not None:
+                            await chat_db_manager.register_generated_image_message(
+                                message_id=sent_message.id,
+                                user_id=parsed_user_id,
+                                guild_id=sent_message.guild.id if sent_message.guild else None,
+                                channel_id=sent_message.channel.id,
+                            )
                     
                     log.info(f"已发送 {len(all_images)} 张图片到频道")
                 except Exception as e:

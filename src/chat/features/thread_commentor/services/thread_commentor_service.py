@@ -271,28 +271,31 @@ class ThreadCommentorService:
 
         return "\n".join(context_lines)
 
-    async def generate_auto_thread_message(
+    async def generate_auto_target_message(
         self,
-        thread: discord.Thread,
+        target: discord.Thread | discord.TextChannel,
         recent_messages: List[discord.Message],
         is_idle_call: bool = False,
         idle_minutes: int = 0,
         target_user_mention: Optional[str] = None,
     ) -> Optional[str]:
-        """基于帖子上下文生成自动暖场或冷场召回发言。"""
+        """基于目标会话（帖子或普通文本频道）生成自动暖场/召回发言。"""
         try:
-            # 若帖主明确禁用暖贴，则尊重其偏好
-            if thread.owner_id and await coin_service.has_withered_sunflower(thread.owner_id):
-                log.info(
-                    f"帖子 '{thread.name}' 的作者禁用了暖贴功能，跳过自动发言。"
-                )
-                return None
+            is_thread = isinstance(target, discord.Thread)
 
-            if thread.owner_id and await coin_service.blocks_thread_replies(thread.owner_id):
-                log.info(
-                    f"帖子 '{thread.name}' 的作者禁用了帖子回复，跳过自动发言。"
-                )
-                return None
+            # 帖子场景下尊重帖主对暖贴的偏好；普通频道不做此限制
+            if is_thread and target.owner_id:
+                if await coin_service.has_withered_sunflower(target.owner_id):
+                    log.info(
+                        f"帖子 '{target.name}' 的作者禁用了暖贴功能，跳过自动发言。"
+                    )
+                    return None
+
+                if await coin_service.blocks_thread_replies(target.owner_id):
+                    log.info(
+                        f"帖子 '{target.name}' 的作者禁用了帖子回复，跳过自动发言。"
+                    )
+                    return None
 
             context_limit = int(
                 chat_config.THREAD_COMMENTOR_CONFIG.get(
@@ -303,16 +306,41 @@ class ThreadCommentorService:
                 recent_messages, context_limit
             )
 
-            parent_name = thread.parent.name if thread.parent else "未知版区"
-            tags = ", ".join([tag.name for tag in thread.applied_tags]) or "无"
+            if is_thread:
+                location_name = target.parent.name if target.parent else "未知版区"
+                extra_info = ", ".join([tag.name for tag in target.applied_tags]) or "无"
+                task_title = target.name
+                context_header = (
+                    f"帖子标题: {target.name}\n"
+                    f"所在版区: {location_name}\n"
+                    f"标签: {extra_info}\n"
+                )
+                target_kind = "帖子"
+            else:
+                location_name = target.category.name if target.category else "无分类"
+                extra_info = f"频道ID: {target.id}"
+                task_title = target.name
+                context_header = (
+                    f"频道名称: {target.name}\n"
+                    f"频道分类: {location_name}\n"
+                    f"附加信息: {extra_info}\n"
+                )
+                target_kind = "频道"
 
             target_hint = (
                 f"如果语气自然，可以轻轻点名 {target_user_mention} 一起聊，但不要强制@所有人。"
                 if target_user_mention
                 else "没有合适点名对象时，使用自然的群体邀请语即可，不要生硬@人。"
             )
-            task_prompt = get_random_auto_chat_prompt(is_idle_call).format(
-                thread_title=thread.name,
+
+            prompt_template = get_random_auto_chat_prompt(is_idle_call)
+            if not is_thread:
+                prompt_template = prompt_template.replace("帖子", "频道").replace(
+                    "讨论串", "聊天频道"
+                )
+
+            task_prompt = prompt_template.format(
+                thread_title=task_title,
                 idle_minutes=max(1, int(idle_minutes)),
                 target_hint=target_hint,
             )
@@ -344,8 +372,8 @@ class ThreadCommentorService:
             final_injection_content = PROMPT_CONFIG["default"][
                 "JAILBREAK_FINAL_INSTRUCTION"
             ].format(
-                guild_name=thread.guild.name,
-                location_name=parent_name,
+                guild_name=target.guild.name,
+                location_name=location_name,
                 current_time=current_beijing_time,
             )
 
@@ -353,13 +381,12 @@ class ThreadCommentorService:
             if last_model_message["role"] == "model" and last_model_message["parts"]:
                 last_model_message["parts"][0] += f" {final_injection_content}"
 
-            thread_context = (
-                f"帖子标题: {thread.name}\n"
-                f"所在版区: {parent_name}\n"
-                f"标签: {tags}\n"
+            target_context = (
+                f"目标类型: {target_kind}\n"
+                f"{context_header}"
                 f"最近聊天记录:\n{formatted_context}"
             )
-            conversation_history.append({"role": "user", "parts": [thread_context]})
+            conversation_history.append({"role": "user", "parts": [target_context]})
 
             generated_text = await gemini_service.generate_thread_praise(
                 conversation_history=conversation_history
@@ -370,10 +397,27 @@ class ThreadCommentorService:
             return replace_emojis(generated_text)
         except Exception as e:
             log.error(
-                f"为帖子 '{thread.name}' 生成自动发言时出错: {e}",
+                f"为目标 '{getattr(target, 'name', '未知')}' 生成自动发言时出错: {e}",
                 exc_info=True,
             )
             return None
+
+    async def generate_auto_thread_message(
+        self,
+        thread: discord.Thread,
+        recent_messages: List[discord.Message],
+        is_idle_call: bool = False,
+        idle_minutes: int = 0,
+        target_user_mention: Optional[str] = None,
+    ) -> Optional[str]:
+        """兼容旧调用：为帖子生成自动发言。"""
+        return await self.generate_auto_target_message(
+            target=thread,
+            recent_messages=recent_messages,
+            is_idle_call=is_idle_call,
+            idle_minutes=idle_minutes,
+            target_user_mention=target_user_mention,
+        )
 
 
 thread_commentor_service = ThreadCommentorService()

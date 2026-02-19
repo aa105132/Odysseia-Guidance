@@ -2303,7 +2303,7 @@ async def update_thread_auto_speaker_config(
     if config.thread_ids is not None:
         normalized_ids = _normalize_thread_ids(config.thread_ids)
         if len(normalized_ids) > 100:
-            raise HTTPException(400, "帖子 ID 数量不能超过 100 个")
+            raise HTTPException(400, "目标 ID 数量不能超过 100 个")
 
         runtime["AUTO_CHAT_THREAD_IDS"] = set(normalized_ids)
         ids_text = ",".join(str(thread_id) for thread_id in normalized_ids)

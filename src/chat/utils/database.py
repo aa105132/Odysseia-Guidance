@@ -595,6 +595,28 @@ class ChatDatabaseManager:
                 );
             """)
 
+            # --- 图片消息记录表（用于反应举报归属） ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS generated_image_messages (
+                    message_id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    guild_id INTEGER,
+                    channel_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    processed_for_ban BOOLEAN NOT NULL DEFAULT 0
+                );
+            """)
+
+            # --- 绘图权限封禁表（按用户递增封禁） ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS image_generation_bans (
+                    user_id INTEGER PRIMARY KEY,
+                    offense_count INTEGER NOT NULL DEFAULT 0,
+                    banned_until TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
             conn.commit()
             log.info(f"数据库表在 {self.db_path} 同步初始化成功。")
         except sqlite3.Error as e:
@@ -1450,6 +1472,236 @@ class ChatDatabaseManager:
                 return True
         # 不在禁言列表
         return False
+
+    # --- 图片消息举报与绘图权限封禁 ---
+    @staticmethod
+    def _parse_utc_datetime(value: Any) -> Optional[datetime]:
+        """将数据库时间值解析为 UTC datetime。"""
+        if not value:
+            return None
+
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+        text_value = str(value)
+        try:
+            parsed = datetime.fromisoformat(text_value)
+        except ValueError:
+            try:
+                parsed = datetime.strptime(text_value, "%Y-%m-%d %H:%M:%S.%f")
+            except ValueError:
+                return None
+
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _format_duration(total_seconds: int) -> str:
+        """将秒数格式化为友好的中文时长。"""
+        total_seconds = max(0, int(total_seconds))
+        days, remain = divmod(total_seconds, 86400)
+        hours, remain = divmod(remain, 3600)
+        minutes, seconds = divmod(remain, 60)
+
+        if days > 0:
+            return f"{days}天{hours}小时"
+        if hours > 0:
+            return f"{hours}小时{minutes}分钟"
+        if minutes > 0:
+            return f"{minutes}分钟{seconds}秒"
+        return f"{seconds}秒"
+
+    async def register_generated_image_message(
+        self,
+        message_id: int,
+        user_id: int,
+        guild_id: Optional[int] = None,
+        channel_id: Optional[int] = None,
+    ) -> None:
+        """登记一条由某用户触发的生成图片消息。"""
+        query = """
+            INSERT INTO generated_image_messages (message_id, user_id, guild_id, channel_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(message_id) DO UPDATE SET
+                user_id = excluded.user_id,
+                guild_id = excluded.guild_id,
+                channel_id = excluded.channel_id;
+        """
+        await self._execute(
+            self._db_transaction,
+            query,
+            (message_id, user_id, guild_id, channel_id),
+            commit=True,
+        )
+
+    async def get_generated_image_message(
+        self, message_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """获取生成图片消息的归属信息。"""
+        query = """
+            SELECT message_id, user_id, guild_id, channel_id, processed_for_ban
+            FROM generated_image_messages
+            WHERE message_id = ?
+        """
+        row = await self._execute(
+            self._db_transaction, query, (message_id,), fetch="one"
+        )
+        return dict(row) if row else None
+
+    async def mark_generated_image_message_processed(self, message_id: int) -> bool:
+        """将消息标记为已处理封禁，返回是否首次标记成功。"""
+        query = """
+            UPDATE generated_image_messages
+            SET processed_for_ban = 1
+            WHERE message_id = ? AND processed_for_ban = 0
+        """
+        rowcount = await self._execute(
+            self._db_transaction,
+            query,
+            (message_id,),
+            fetch="rowcount",
+            commit=True,
+        )
+        return bool(rowcount and rowcount > 0)
+
+    async def get_image_generation_ban_status(self, user_id: int) -> Dict[str, Any]:
+        """查询用户当前绘图封禁状态。"""
+        query = "SELECT offense_count, banned_until FROM image_generation_bans WHERE user_id = ?"
+        row = await self._execute(self._db_transaction, query, (user_id,), fetch="one")
+
+        if not row:
+            return {
+                "is_banned": False,
+                "offense_count": 0,
+                "remaining_seconds": 0,
+                "remaining_text": "0秒",
+                "banned_until": None,
+            }
+
+        offense_count = int(row["offense_count"] or 0)
+        banned_until = self._parse_utc_datetime(row["banned_until"])
+        if not banned_until:
+            return {
+                "is_banned": False,
+                "offense_count": offense_count,
+                "remaining_seconds": 0,
+                "remaining_text": "0秒",
+                "banned_until": None,
+            }
+
+        now = datetime.now(timezone.utc)
+        remaining_seconds = int((banned_until - now).total_seconds())
+        if remaining_seconds <= 0:
+            return {
+                "is_banned": False,
+                "offense_count": offense_count,
+                "remaining_seconds": 0,
+                "remaining_text": "0秒",
+                "banned_until": banned_until.isoformat(),
+            }
+
+        return {
+            "is_banned": True,
+            "offense_count": offense_count,
+            "remaining_seconds": remaining_seconds,
+            "remaining_text": self._format_duration(remaining_seconds),
+            "banned_until": banned_until.isoformat(),
+        }
+
+    async def apply_image_generation_ban(self, user_id: int) -> Dict[str, Any]:
+        """
+        对用户应用一次封禁（窗口内递增，窗口外重置）：
+        - 在窗口内再次触发：封禁档位 +1
+        - 超出窗口再次触发：重置为第1档
+        - 封禁时长按档位覆盖，不做历史累计叠加
+        """
+        row = await self._execute(
+            self._db_transaction,
+            "SELECT offense_count, banned_until, updated_at FROM image_generation_bans WHERE user_id = ?",
+            (user_id,),
+            fetch="one",
+        )
+
+        current_offense_count = int(row["offense_count"] or 0) if row else 0
+        current_banned_until = (
+            self._parse_utc_datetime(row["banned_until"]) if row else None
+        )
+        last_updated_at = self._parse_utc_datetime(row["updated_at"]) if row else None
+
+        feedback_config = getattr(chat_config, "IMAGE_FEEDBACK_CONFIG", {}) or {}
+
+        try:
+            repeat_window_minutes = int(
+                feedback_config.get("REPEAT_WINDOW_MINUTES", 60)
+            )
+        except (TypeError, ValueError):
+            repeat_window_minutes = 60
+        repeat_window_minutes = max(1, repeat_window_minutes)
+
+        duration_ladder_raw = feedback_config.get(
+            "BAN_DURATION_LADDER_MINUTES", [10, 30, 60, 180, 720]
+        )
+        duration_ladder_minutes: List[int] = []
+        if isinstance(duration_ladder_raw, (list, tuple)):
+            for item in duration_ladder_raw:
+                try:
+                    value = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    duration_ladder_minutes.append(value)
+
+        if not duration_ladder_minutes:
+            duration_ladder_minutes = [10, 30, 60, 180, 720]
+
+        now = datetime.now(timezone.utc)
+        in_repeat_window = bool(
+            last_updated_at
+            and (now - last_updated_at)
+            <= timedelta(minutes=repeat_window_minutes)
+        )
+
+        if in_repeat_window:
+            new_offense_count = current_offense_count + 1
+        else:
+            new_offense_count = 1
+
+        duration_minutes = duration_ladder_minutes[
+            min(new_offense_count - 1, len(duration_ladder_minutes) - 1)
+        ]
+        candidate_banned_until = now + timedelta(minutes=duration_minutes)
+
+        if current_banned_until and current_banned_until > now:
+            new_banned_until = max(current_banned_until, candidate_banned_until)
+        else:
+            new_banned_until = candidate_banned_until
+
+        upsert_query = """
+            INSERT INTO image_generation_bans (user_id, offense_count, banned_until, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                offense_count = excluded.offense_count,
+                banned_until = excluded.banned_until,
+                updated_at = CURRENT_TIMESTAMP;
+        """
+        await self._execute(
+            self._db_transaction,
+            upsert_query,
+            (user_id, new_offense_count, new_banned_until.isoformat()),
+            commit=True,
+        )
+
+        remaining_seconds = max(0, int((new_banned_until - now).total_seconds()))
+        return {
+            "user_id": user_id,
+            "offense_count": new_offense_count,
+            "duration_minutes": duration_minutes,
+            "duration_text": self._format_duration(duration_minutes * 60),
+            "repeat_window_minutes": repeat_window_minutes,
+            "in_repeat_window": in_repeat_window,
+            "banned_until": new_banned_until.isoformat(),
+            "remaining_seconds": remaining_seconds,
+            "remaining_text": self._format_duration(remaining_seconds),
+        }
 
     # --- AI模型使用计数 ---
     async def increment_model_usage(self, model_name: str) -> None:

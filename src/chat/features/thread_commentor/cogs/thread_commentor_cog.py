@@ -31,10 +31,10 @@ class ThreadCommentorCog(commands.Cog):
             self._auto_speaker_task.cancel()
 
     async def _fetch_recent_messages(
-        self, thread: discord.Thread, limit: int
+        self, target_channel: discord.TextChannel | discord.Thread, limit: int
     ) -> list[discord.Message]:
-        """拉取帖子最近消息（按时间升序）。"""
-        messages = [message async for message in thread.history(limit=limit)]
+        """拉取目标会话最近消息（按时间升序）。"""
+        messages = [message async for message in target_channel.history(limit=limit)]
         messages.reverse()
         return messages
 
@@ -68,26 +68,8 @@ class ThreadCommentorCog(commands.Cog):
             "last_bot_message_at": last_bot_message_at,
         }
 
-    async def _process_auto_speaker_for_thread(self, thread_id: int):
-        """处理单个帖子是否需要自动发言。"""
-        thread = self.bot.get_channel(thread_id)
-        if thread is None:
-            try:
-                fetched_channel = await self.bot.fetch_channel(thread_id)
-                thread = fetched_channel if isinstance(fetched_channel, discord.Thread) else None
-            except discord.NotFound:
-                log.warning(f"[ThreadCommentorCog] 自动发言配置的帖子不存在: {thread_id}")
-                return
-            except Exception as e:
-                log.error(
-                    f"[ThreadCommentorCog] 拉取帖子 {thread_id} 失败: {e}",
-                    exc_info=True,
-                )
-                return
-
-        if not isinstance(thread, discord.Thread):
-            return
-
+    async def _process_auto_speaker_thread(self, thread: discord.Thread):
+        """处理单个帖子对象是否需要自动发言。"""
         if thread.archived or thread.locked:
             return
 
@@ -149,8 +131,8 @@ class ThreadCommentorCog(commands.Cog):
         target_user_id = activity.get("last_human_user_id")
         target_user_mention = f"<@{target_user_id}>" if target_user_id else None
 
-        auto_message = await thread_commentor_service.generate_auto_thread_message(
-            thread=thread,
+        auto_message = await thread_commentor_service.generate_auto_target_message(
+            target=thread,
             recent_messages=recent_messages,
             is_idle_call=is_idle_call,
             idle_minutes=idle_minutes,
@@ -163,6 +145,137 @@ class ThreadCommentorCog(commands.Cog):
         mode = "冷场召回" if is_idle_call else "常规暖聊"
         log.info(
             f"[ThreadCommentorCog] 已在帖子 '{thread.name}' 发送自动发言（{mode}）。"
+        )
+
+    async def _process_auto_speaker_text_channel(
+        self, channel: discord.TextChannel
+    ):
+        """处理普通文本频道的自动发言。"""
+        me = channel.guild.me
+        if me is not None:
+            perms = channel.permissions_for(me)
+            if not perms.view_channel or not perms.send_messages:
+                log.warning(
+                    f"[ThreadCommentorCog] 对频道 '{channel.name}' ({channel.id}) 缺少查看/发言权限，跳过自动发言。"
+                )
+                return
+
+        context_limit = max(
+            5,
+            int(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_CONTEXT_MESSAGE_LIMIT", 20)),
+        )
+        history_limit = max(context_limit * 2, 40)
+        recent_messages = await self._fetch_recent_messages(channel, history_limit)
+        if not recent_messages:
+            return
+
+        activity = self._analyze_thread_activity(recent_messages)
+        last_human_message_at = activity["last_human_message_at"]
+        if last_human_message_at is None:
+            return
+
+        now_utc = datetime.now(timezone.utc)
+        last_bot_message_at = activity["last_bot_message_at"]
+
+        message_interval = max(
+            60,
+            int(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_MESSAGE_INTERVAL_SECONDS", 1800)),
+        )
+        idle_trigger = max(
+            300,
+            int(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_IDLE_TRIGGER_SECONDS", 7200)),
+        )
+        idle_reminder = max(
+            300,
+            int(THREAD_COMMENTOR_CONFIG.get("AUTO_CHAT_IDLE_REMINDER_SECONDS", 3600)),
+        )
+
+        seconds_since_human = (now_utc - last_human_message_at).total_seconds()
+        seconds_since_bot = (
+            (now_utc - last_bot_message_at).total_seconds()
+            if last_bot_message_at
+            else None
+        )
+
+        regular_due = seconds_since_bot is None or seconds_since_bot >= message_interval
+        idle_due = seconds_since_human >= idle_trigger and (
+            seconds_since_bot is None or seconds_since_bot >= idle_reminder
+        )
+
+        if seconds_since_human >= idle_trigger:
+            if not idle_due:
+                return
+            is_idle_call = True
+        else:
+            if not regular_due:
+                return
+            is_idle_call = False
+
+        idle_minutes = int(seconds_since_human // 60)
+        target_user_id = activity.get("last_human_user_id")
+        target_user_mention = f"<@{target_user_id}>" if target_user_id else None
+
+        auto_message = await thread_commentor_service.generate_auto_target_message(
+            target=channel,
+            recent_messages=recent_messages,
+            is_idle_call=is_idle_call,
+            idle_minutes=idle_minutes,
+            target_user_mention=target_user_mention,
+        )
+        if not auto_message:
+            return
+
+        await channel.send(auto_message)
+        mode = "冷场召回" if is_idle_call else "常规暖聊"
+        log.info(
+            f"[ThreadCommentorCog] 已在频道 '{channel.name}' 发送自动发言（{mode}）。"
+        )
+
+    async def _process_auto_speaker_for_thread(self, thread_id: int):
+        """处理自动发言目标ID（支持帖子ID、论坛频道ID、文本频道ID）。"""
+        target = self.bot.get_channel(thread_id)
+        if target is None:
+            try:
+                target = await self.bot.fetch_channel(thread_id)
+            except discord.NotFound:
+                log.warning(
+                    f"[ThreadCommentorCog] 自动发言目标ID不存在或机器人不可见: {thread_id}。"
+                    f"请确认这是帖子ID/论坛频道ID/文本频道ID，且机器人有查看权限。"
+                )
+                return
+            except Exception as e:
+                log.error(
+                    f"[ThreadCommentorCog] 拉取自动发言目标 {thread_id} 失败: {e}",
+                    exc_info=True,
+                )
+                return
+
+        if isinstance(target, discord.Thread):
+            await self._process_auto_speaker_thread(target)
+            return
+
+        if isinstance(target, discord.ForumChannel):
+            active_threads = [
+                forum_thread
+                for forum_thread in target.threads
+                if not forum_thread.archived and not forum_thread.locked
+            ]
+            if not active_threads:
+                log.info(
+                    f"[ThreadCommentorCog] 论坛频道 '{target.name}' ({target.id}) 当前没有活跃帖子，跳过自动发言。"
+                )
+                return
+
+            for forum_thread in active_threads:
+                await self._process_auto_speaker_thread(forum_thread)
+            return
+
+        if isinstance(target, discord.TextChannel):
+            await self._process_auto_speaker_text_channel(target)
+            return
+
+        log.warning(
+            f"[ThreadCommentorCog] 自动发言目标ID {thread_id} 不是帖子、论坛频道或普通文本频道。"
         )
 
     async def _run_auto_speaker_cycle(self):

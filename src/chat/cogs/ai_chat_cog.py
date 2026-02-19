@@ -3,7 +3,7 @@
 import discord
 from discord.ext import commands
 import logging
-from typing import Optional
+from typing import Optional, List
 import re
 import io
 
@@ -23,6 +23,8 @@ from src.chat.features.odysseia_coin.service.coin_service import coin_service
 
 log = logging.getLogger(__name__)
 
+# tmp marker
+
 
 class AIChatCog(commands.Cog):
     """处理AI聊天功能的Cog，包括@mention回复和斜杠命令"""
@@ -37,6 +39,48 @@ class AIChatCog(commands.Cog):
         emoji_pattern = r"<a?:.+?:\d+>"
         text_without_emojis = re.sub(emoji_pattern, "", text)
         return len(text_without_emojis)
+
+    def _split_text_for_discord(self, text: str, max_length: int = 2000) -> List[str]:
+        if len(text) <= max_length:
+            return [text]
+        return [text[i:i + max_length] for i in range(0, len(text), max_length)]
+
+    async def _reply_text_safely(
+        self, message: discord.Message, text: str, mention_author: bool = True
+    ) -> List[discord.Message]:
+        chunks = self._split_text_for_discord(text)
+        sent_messages: List[discord.Message] = []
+        for index, chunk in enumerate(chunks):
+            if index == 0:
+                sent_msg = await message.reply(chunk, mention_author=mention_author)
+            else:
+                sent_msg = await message.channel.send(chunk)
+            sent_messages.append(sent_msg)
+        return sent_messages
+
+    async def _send_dm_text_safely(
+        self, user: discord.abc.User, intro_text: str, text: str
+    ) -> None:
+        chunks = self._split_text_for_discord(text)
+        if not chunks:
+            return
+
+        first_with_intro = f{intro_text}\n\n{chunks[0]}
+        if len(first_with_intro) <= 2000:
+            await user.send(first_with_intro)
+            chunks = chunks[1:]
+        else:
+            await user.send(intro_text)
+
+        for chunk in chunks:
+            await user.send(chunk)
+
+    async def _suppress_link_previews(self, sent_messages: List[discord.Message]) -> None:
+        for sent_msg in sent_messages:
+            try:
+                await sent_msg.edit(suppress=True)
+            except Exception:
+                pass
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -122,12 +166,11 @@ class AIChatCog(commands.Cog):
                     or isinstance(message.channel, discord.Thread)
                 )
                 if is_unrestricted:
-                    sent_msg = await message.reply(response_text, mention_author=True)
+                    sent_messages = await self._reply_text_safely(
+                        message, response_text, mention_author=True
+                    )
                     if used_web_search:
-                        try:
-                            await sent_msg.edit(suppress=True)
-                        except Exception:
-                            pass
+                        await self._suppress_link_previews(sent_messages)
                     return
 
                 # 3. 如果以上都不是，则检查是否为需要发送私信的普通长消息
@@ -144,6 +187,11 @@ class AIChatCog(commands.Cog):
                             else "你们的私信"
                         )
 
+                        if len(response_text) > 1800:
+                            await self._send_dm_text_safely(
+                                message.author, 'Long reply split in DM:', response_text
+                            )
+                            return
                         await message.author.send(
                             f"刚刚在 {channel_mention} 频道里，你想听我说的话有点多，在这里悄悄告诉你哦：\n\n{response_text}"
                         )
@@ -161,12 +209,11 @@ class AIChatCog(commands.Cog):
                     return
 
                 # 4. 默认情况：直接在频道回复短消息
-                sent_msg = await message.reply(response_text, mention_author=True)
+                sent_messages = await self._reply_text_safely(
+                    message, response_text, mention_author=True
+                )
                 if used_web_search:
-                    try:
-                        await sent_msg.edit(suppress=True)
-                    except Exception:
-                        pass
+                    await self._suppress_link_previews(sent_messages)
 
             except discord.errors.HTTPException as e:
                 log.warning(f"发送回复时发生HTTP错误: {e}")
