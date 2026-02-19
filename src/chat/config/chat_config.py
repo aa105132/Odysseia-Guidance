@@ -35,6 +35,18 @@ DISABLED_TOOLS = (
 # 这些工具是系统必须保留的，不应该让用户控制
 HIDDEN_TOOLS = ["issue_user_warning"]
 
+# --- 网络搜索配置 ---
+# Grok API（OpenAI 兼容格式）- 用于 AI 驱动的网络搜索
+# Tavily API - 用于网页内容抓取和补充搜索信源
+# 这些值作为默认值，可通过 Dashboard 动态修改（持久化到数据库）
+WEB_SEARCH_CONFIG = {
+    "grok_api_url": os.getenv("GROK_API_URL", ""),
+    "grok_api_key": os.getenv("GROK_API_KEY", ""),
+    "grok_model": os.getenv("GROK_MODEL", "grok-3-mini"),
+    "tavily_api_url": os.getenv("TAVILY_API_URL", "https://api.tavily.com"),
+    "tavily_api_key": os.getenv("TAVILY_API_KEY", ""),
+}
+
 # --- 年度总结配置 ---
 # 这些值作为默认值，可通过 Dashboard 动态修改
 SUMMARY_CONFIG = {

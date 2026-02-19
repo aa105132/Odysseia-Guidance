@@ -354,7 +354,12 @@ async def get_all_config(token: str = Depends(verify_token)):
         },
         "shop": {
             "items": chat_config.SHOP_ITEMS if hasattr(chat_config, 'SHOP_ITEMS') else [],
-        }
+        },
+        "web_search": {
+            "grok_configured": bool(chat_config.WEB_SEARCH_CONFIG.get("grok_api_url") and chat_config.WEB_SEARCH_CONFIG.get("grok_api_key")),
+            "tavily_configured": bool(chat_config.WEB_SEARCH_CONFIG.get("tavily_api_key")),
+            "grok_model": chat_config.WEB_SEARCH_CONFIG.get("grok_model", "grok-3-mini"),
+        },
     }
 
 
@@ -1942,6 +1947,150 @@ async def test_imagen_connection(token: str = Depends(verify_token)):
     except Exception as e:
         log.error(f"Imagen API 测试失败: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+# --- 网络搜索配置 API ---
+
+class WebSearchConfigUpdate(BaseModel):
+    """网络搜索配置更新"""
+    grok_api_url: Optional[str] = None
+    grok_api_key: Optional[str] = None
+    grok_model: Optional[str] = None
+    tavily_api_url: Optional[str] = None
+    tavily_api_key: Optional[str] = None
+
+
+@app.get("/api/config/web-search")
+async def get_web_search_config(token: str = Depends(verify_token)):
+    """获取网络搜索配置 - 优先从数据库读取持久化设置"""
+    from src.chat.utils.database import chat_db_manager
+
+    # 从数据库读取持久化设置
+    db_grok_api_url = await chat_db_manager.get_global_setting("web_search_grok_api_url")
+    db_grok_api_key = await chat_db_manager.get_global_setting("web_search_grok_api_key")
+    db_grok_model = await chat_db_manager.get_global_setting("web_search_grok_model")
+    db_tavily_api_url = await chat_db_manager.get_global_setting("web_search_tavily_api_url")
+    db_tavily_api_key = await chat_db_manager.get_global_setting("web_search_tavily_api_key")
+
+    # 回退到环境变量
+    grok_api_url = db_grok_api_url or os.getenv("GROK_API_URL", "")
+    grok_api_key = db_grok_api_key or os.getenv("GROK_API_KEY", "")
+    grok_model = db_grok_model or os.getenv("GROK_MODEL", "grok-3-mini")
+    tavily_api_url = db_tavily_api_url or os.getenv("TAVILY_API_URL", "https://api.tavily.com")
+    tavily_api_key = db_tavily_api_key or os.getenv("TAVILY_API_KEY", "")
+
+    # Key 脱敏
+    grok_masked = grok_api_key[:8] + "..." + grok_api_key[-4:] if len(grok_api_key) > 12 else ("***" if grok_api_key else "")
+    tavily_masked = tavily_api_key[:8] + "..." + tavily_api_key[-4:] if len(tavily_api_key) > 12 else ("***" if tavily_api_key else "")
+
+    return {
+        "grok_api_url": grok_api_url,
+        "grok_api_key_masked": grok_masked,
+        "has_grok_api_key": bool(grok_api_key),
+        "grok_model": grok_model,
+        "tavily_api_url": tavily_api_url,
+        "tavily_api_key_masked": tavily_masked,
+        "has_tavily_api_key": bool(tavily_api_key),
+        "grok_configured": bool(grok_api_url and grok_api_key),
+        "tavily_configured": bool(tavily_api_key),
+    }
+
+
+@app.put("/api/config/web-search")
+async def update_web_search_config(config: WebSearchConfigUpdate, token: str = Depends(verify_token)):
+    """更新网络搜索配置 - 写入数据库持久化"""
+    from src.chat.utils.database import chat_db_manager
+
+    updated = {}
+
+    if config.grok_api_url is not None:
+        await chat_db_manager.set_global_setting("web_search_grok_api_url", config.grok_api_url)
+        updated["grok_api_url"] = config.grok_api_url[:30] + "..." if len(config.grok_api_url) > 30 else config.grok_api_url
+        log.info(f"✅ 网络搜索 Grok API URL 已更新")
+
+    if config.grok_api_key is not None:
+        await chat_db_manager.set_global_setting("web_search_grok_api_key", config.grok_api_key)
+        updated["grok_api_key"] = "已更新"
+        log.info(f"✅ 网络搜索 Grok API Key 已更新")
+
+    if config.grok_model is not None:
+        await chat_db_manager.set_global_setting("web_search_grok_model", config.grok_model)
+        updated["grok_model"] = config.grok_model
+        log.info(f"✅ 网络搜索 Grok 模型已设置为: {config.grok_model}")
+
+    if config.tavily_api_url is not None:
+        await chat_db_manager.set_global_setting("web_search_tavily_api_url", config.tavily_api_url)
+        updated["tavily_api_url"] = config.tavily_api_url[:30] + "..." if len(config.tavily_api_url) > 30 else config.tavily_api_url
+        log.info(f"✅ 网络搜索 Tavily API URL 已更新")
+
+    if config.tavily_api_key is not None:
+        await chat_db_manager.set_global_setting("web_search_tavily_api_key", config.tavily_api_key)
+        updated["tavily_api_key"] = "已更新"
+        log.info(f"✅ 网络搜索 Tavily API Key 已更新")
+
+    if not updated:
+        return {"success": True, "message": "没有需要更新的配置"}
+
+    return {"success": True, "updated": updated, "message": f"已更新 {len(updated)} 项网络搜索配置"}
+
+
+@app.post("/api/config/test-web-search")
+async def test_web_search_connection(token: str = Depends(verify_token)):
+    """测试网络搜索 API 连接"""
+    from src.chat.utils.database import chat_db_manager
+
+    results = {"grok": {"status": "未配置"}, "tavily": {"status": "未配置"}}
+
+    # 测试 Grok API
+    db_grok_url = await chat_db_manager.get_global_setting("web_search_grok_api_url")
+    db_grok_key = await chat_db_manager.get_global_setting("web_search_grok_api_key")
+    grok_url = db_grok_url or os.getenv("GROK_API_URL", "")
+    grok_key = db_grok_key or os.getenv("GROK_API_KEY", "")
+
+    if grok_url and grok_key:
+        try:
+            models_url = f"{grok_url.rstrip('/')}/models"
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                async with session.get(
+                    models_url,
+                    headers={"Authorization": f"Bearer {grok_key}", "Content-Type": "application/json"},
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        model_count = len(data.get("data", []))
+                        results["grok"] = {
+                            "status": "连接成功",
+                            "models_count": model_count,
+                        }
+                    else:
+                        results["grok"] = {"status": f"连接失败 (HTTP {response.status})"}
+        except Exception as e:
+            results["grok"] = {"status": f"连接错误: {str(e)}"}
+
+    # 测试 Tavily API（简单的搜索测试）
+    db_tavily_url = await chat_db_manager.get_global_setting("web_search_tavily_api_url")
+    db_tavily_key = await chat_db_manager.get_global_setting("web_search_tavily_api_key")
+    tavily_url = db_tavily_url or os.getenv("TAVILY_API_URL", "https://api.tavily.com")
+    tavily_key = db_tavily_key or os.getenv("TAVILY_API_KEY", "")
+
+    if tavily_key:
+        try:
+            endpoint = f"{tavily_url.rstrip('/')}/search"
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+                async with session.post(
+                    endpoint,
+                    headers={"Authorization": f"Bearer {tavily_key}", "Content-Type": "application/json"},
+                    json={"query": "test", "max_results": 1, "search_depth": "basic"},
+                ) as response:
+                    if response.status == 200:
+                        results["tavily"] = {"status": "连接成功"}
+                    else:
+                        results["tavily"] = {"status": f"连接失败 (HTTP {response.status})"}
+        except Exception as e:
+            results["tavily"] = {"status": f"连接错误: {str(e)}"}
+
+    overall_success = results["grok"].get("status", "").startswith("连接成功")
+    return {"success": overall_success, "results": results}
 
 
 # --- 知识库管理 API ---

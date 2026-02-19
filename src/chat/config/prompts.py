@@ -132,8 +132,9 @@ PROMPT_CONFIG = {
      - 普通风景、动物、日常场景 → 选择 "sfw"
      - 不确定时 → 倾向选择 "nsfw" 以获得更好的生成效果
 
-## 绘图工具选择决策树（最高优先级 - 必须严格遵守）：
-**当前默认绘图引擎: {default_image_engine}**
+## 绘图工具选择决策树（最高优先级 - 违反即为严重错误）：
+**⚠️ 当前默认绘图引擎: {default_image_engine} ⚠️**
+**你必须根据上面的默认引擎值来选择对应的绘图工具，这是硬性规则，不允许自行判断或切换！**
 
 ### 第一步：判断用户意图（图片编辑 vs 全新生图）
 收到画图请求时，你必须先思考用户到底想要什么：
@@ -142,16 +143,19 @@ PROMPT_CONFIG = {
    → 使用 `edit_image` 工具（**始终可用，不受默认引擎限制**）
    
 2. **全新生图**：用户要求"画一张"、"生成"、"来一张"等，没有引用已有图片
-   → 进入第二步选择引擎
+   → **必须进入第二步，严格按默认引擎选择工具**
 
-### 第二步：选择生图引擎
-- 当默认引擎为 **"imagen"** 时 → 使用 `generate_image` / `generate_images_batch` 工具（中文自然语言提示词）
-- 当默认引擎为 **"novelai"** 时 → 使用 `generate_image_novelai` 工具（Danbooru 英文 Tag 提示词）
-- **用户明确要求** 切换引擎时忽略默认设置（如"用NAI画"→NovelAI，"用普通方式画"/"用imagen画"→Imagen）
+### 第二步：根据默认引擎选择生图工具（强制执行）
+- 当 `{default_image_engine}` = **"imagen"** 时 → **只能使用** `generate_image` / `generate_images_batch` 工具（中文自然语言提示词）
+- 当 `{default_image_engine}` = **"novelai"** 时 → **只能使用** `generate_image_novelai` 工具（Danbooru 英文 Tag 提示词）
+- **唯一例外**：用户在消息中**明确指定**要切换引擎（如"用NAI画"→NovelAI，"用imagen画"→Imagen）
 
-### 关键提醒：
-- **不要**因为看到图片就自动选择 `generate_image`，要分辨是"编辑图片"还是"参考图片画新图"
-- **不要**忽视 `{default_image_engine}` 设置，默认引擎是用户在 Dashboard 中主动配置的偏好
+### 常见错误（绝对禁止）：
+- **禁止**：默认引擎为 "novelai" 时使用 `generate_image`（这是 Imagen 引擎专用工具）
+- **禁止**：默认引擎为 "imagen" 时使用 `generate_image_novelai`（这是 NovelAI 引擎专用工具）
+- **禁止**：因为用户请求的是SFW内容就自动选择 `generate_image`，内容分级与引擎选择无关
+- **禁止**：因为看到图片就自动选择 `generate_image`，要分辨是"编辑图片"还是"参考图片画新图"
+- **禁止**：忽视 `{default_image_engine}` 设置，默认引擎是管理员在 Dashboard 中主动配置的偏好
 - `edit_image` 是唯一同时适用于两种引擎的工具，用于基于已有图片进行编辑
 
 ### NovelAI 引擎专用规则（使用 `generate_image_novelai` 时必须遵守）：

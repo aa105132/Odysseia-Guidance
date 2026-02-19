@@ -7,10 +7,11 @@ AI 需要生成符合 Danbooru 格式的英文 Tag 来作为 prompt。
 
 遵循 NAI 预设规则:
 - Tag 必须是 Danbooru 格式的英文单词/词语，逗号分隔
-- 单图 Tag 数量 ≥ 70 个
+- 单图 Tag 数量 ≥ 90 个
 - 使用权重语法: n::Tag:: (n>1 增强, n<1 减弱)
 - 支持角色 DNA 系统确保角色一致性
 - 支持 Character Prompt + Character UC 分离
+- 支持场景模板库关键词匹配
 """
 
 import logging
@@ -44,7 +45,7 @@ async def generate_image_novelai(
     **kwargs
 ) -> dict:
     """
-    使用 NovelAI 生成图片。当用户请求生成、绘制、画图片时，且默认绘图引擎为 NovelAI 时调用此工具。
+    使用 NovelAI 引擎生成图片。当默认绘图引擎为 "novelai" 时，所有画图请求都必须使用此工具，不要使用 generate_image。
 
     **重要：你必须生成 Danbooru 格式的英文 Tag 作为 prompt！不要使用自然语言描述！**
 
@@ -52,22 +53,23 @@ async def generate_image_novelai(
 
     ### 1. 基本要求
     - 使用英文 Danbooru 格式 Tag，逗号分隔
-    - 单图 Tag 数量 ≥ 70 个
+    - 单图 Tag 数量 ≥ 90 个
     - 禁止使用中文或自然语言句子
     - 定格画面：单图为同一时刻的静态瞬间，禁止连续动作过程
+    - 单图最多 4 个角色，最多 2 个女性角色
 
     ### 2. Tag 构成顺序（按优先级）
     按以下顺序构建 Tag：
     1. **质量 Tag**: masterpiece, best quality, amazing quality, very aesthetic, absurdres
-    2. **场景构成 (5~10%)**: nsfw/sfw, 角色数量(1girl, solo), 角色关系(hetero, harem)
-    3. **背景 (10~20%)**: 环境(bedroom, park, outdoor), 时间(night, sunset), 氛围(mystical atmosphere), 光影(backlighting, rim lighting, sidelighting, dramatic shadows, moonlight)
-    4. **构图 (10~20%)**: 区域(full body, upper body, cowboy shot), 远近(close-up, mid shot, wide shot), 透视(wide-angle, foreshortening), 视角(front view, from behind, from above, from below, pov, male pov), 焦点(face focus, ass focus, breast focus), 角度(cinematic angle, dynamic angle, dutch angle), 效果(depth of field, bokeh, motion blur)
-    5. **角色 DNA - 身份**: 性别(girl, boy), 姓名(同人角色用英文全名(来源), 原创用original), 身份(bishoujo, maid, loli, milf)
-    6. **角色 DNA - 外貌**: 发长/发色/瞳色/罩杯(flat chest=A, small breasts=B, medium breasts=C, large breasts=D, huge breasts=E, gigantic breasts=F+)/肤色/修饰(makeup, scar, tan lines, bangs, petite)
-    7. **角色 DNA - 服饰**: 核心服饰(上装/下装/内衣/袜子/鞋类/配饰, 含风格/品类/颜色), 材质(plaid, latex, satin, velvet, sheer fabric), 状态(wet clothes, torn clothes, see-through), 穿着状态(nude, open shirt, strap slip, no panties), 裸露部位(pussy, ass, nipples)
-    8. **当前动作**: 基础姿势(sitting, standing, lying, kneeling, all fours), 肢体动作(heart hands, head down, leg lift, v), 核心交互(walking, masturbation, hug, kiss), 物理反馈(bouncing breasts, ass ripple, skin indentation), 交互接触点(明确动作主体+做什么+放在哪, 如: hands, grabbing ass, hands on own ass)
-    9. **当前表情**: 视线(looking at viewer, looking down, looking back), 眼(tears, wide-eyed, dilated pupils), 嘴(smile, open mouth, tongue out, clenched teeth), 感官(blush, ahegao, excited)
-    10. **表现力/微细节**: 环境氛围(falling leaves, fireworks, steam, floating sakura), 生理反应(full-face blush, dilated pupils, drooling, heavy breathing, sweat), 动态互动(speed lines, motion lines, bouncing breasts, splashing fluids), 特效粒子(magical, ripple, glowing, light particles)
+    2. **场景构成 (5~10%)**: nsfw/sfw, 角色数量(1girl, solo), 角色关系(hetero, harem, yuri)
+    3. **背景 (10~20%)**: 年代(modern, medieval, fantasy), 环境(bedroom, park, outdoor, onsen, train interior), 时间(night, sunset, golden hour), 氛围(mystical atmosphere), 光影(backlighting, rim lighting, sidelighting, dramatic shadows, moonlight, neon light, spotlight, tyndall effect)
+    4. **构图 (10~20%)**: 区域(full body, upper body, cowboy shot), 远近(close-up, mid shot, wide shot), 透视(wide-angle, foreshortening, fisheye), 视角(front view, from behind, from above, from below, from side, pov, male pov), 焦点(face focus, ass focus, breast focus, foot focus, crotch focus), 角度(cinematic angle, dynamic angle, dutch angle), 效果(depth of field, bokeh, motion blur)
+    5. **角色 DNA - 身份**: 性别(girl, boy), 姓名(同人角色用英文全名(来源), 原创用original), 身份(bishoujo, maid, loli, milf, office lady)
+    6. **角色 DNA - 外貌**: 发长/发型/发色/瞳色/罩杯(flat chest=A, small breasts=B, medium breasts=C, large breasts=D, huge breasts=E, gigantic breasts=F+)/肤色/修饰(makeup, scar, tan lines, bangs, petite, curvy, narrow waist, wide hips)
+    7. **角色 DNA - 服饰**: 核心服饰(上装/下装/内衣/袜子/鞋类/配饰, 含风格/品类/颜色), 材质(plaid, latex, satin, velvet, sheer fabric, lace), 状态(wet clothes, torn clothes, see-through), 穿着状态(nude, open shirt, strap slip, no panties, clothes lift, skirt lift), 裸露部位(pussy, ass, nipples, navel)
+    8. **当前动作**: 基础姿势(sitting, standing, lying, kneeling, all fours, squatting), 肢体动作(heart hands, head down, leg lift, v, arms up, peace sign), 核心交互(walking, masturbation, hug, kiss, sex, fellatio), 物理反馈(bouncing breasts, ass ripple, skin indentation, motion lines), 交互接触点(明确动作主体+做什么+放在哪, 如: grabbing own breasts, grabbing another's ass, holding phone)
+    9. **当前表情**: 视线(looking at viewer, looking down, looking back, looking away), 眼(tears, wide-eyed, dilated pupils, half-closed eyes, empty eyes), 嘴(smile, open mouth, tongue out, clenched teeth, :3, pout), 感官(blush, ahegao, excited, embarrassed, flustered)
+    10. **表现力/微细节**: 环境氛围(falling leaves, fireworks, steam, floating sakura, light particles), 生理反应(full-face blush, dilated pupils, drooling, heavy breathing, sweat, steaming body, shiny skin, wet body), 动态互动(speed lines, motion lines, bouncing breasts, splashing fluids, motion blur), 特效粒子(magical, ripple, glowing, light particles, sound effects)
 
     ### 3. 碎片化转译（具象化，拒绝模糊）
     将复合概念拆解为多个具体 Tag：
@@ -75,6 +77,8 @@ async def generate_image_novelai(
     - 战斗 -> battle, standing, holding sword
     - 害羞 -> shy, blushing, looking down, fidgeting
     - '好热' -> sweating, fanning self, loosening clothes
+    - 色情浴室 -> bathroom, steam, wet body, shiny skin, nude
+    - 上课无聊 -> classroom, sitting, chin rest, looking away, yawning
 
     ### 4. 权重调整（重要）
     - 增强核心元素: `1.2::Tag::` 或 `1.3::Tag::`
@@ -93,36 +97,93 @@ async def generate_image_novelai(
     - 物理接触: 1girl, 1boy, male pov, pov hands
     - 性行为: 1girl, male pov, pov hands, penis
 
-    ### 7. 画月月（自己）时的 Tag
+    ### 7. 多角色互动前缀
+    - source#: 动作发起方 (如 source#grabbing another's breasts)
+    - target#: 动作接收方 (如 target#being grabbed)
+    - mutual#: 双方互动 (如 mutual#kissing)
+
+    ### 8. 男性配角默认 Tag
+    - 大几把路人男: 1boy, faceless male, muscular male, large penis, hetero
+    - 黑人男: dark-skinned male, dark skin, muscular male
+    - 正太: shota, age difference, size difference
+    - 胖男: fat man, faceless male, ugly man
+
+    ### 9. 画月月（自己）时的 Tag
     如果用户要求画"你"、"月月"、"自己"：
     - 1girl, solo, silver hair, high ponytail, crescent hair ornament, blue grey eyes
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
     - watermelon earrings（西瓜形状耳坠）
     - white off-shoulder top, fur trim, detached sleeves, pink high waist skirt, pink bow, silver necklace, jewelry
 
-    ### 8. 参考标签库
-    表情: grin, smile, smug, seductive smile, glaring, pout, crying, sobbing, tears, surprised, flustered, blush, embarrassed, parted lips, open mouth, tongue out, ahegao, heart eyes, fucked silly, rolling eyes
-    表情组合: ahegao+drooling+tears+rolling eyes(高潮), open mouth+heavy breathing+blush(插入), smile+blush+looking at viewer(温柔)
-    姿势: standing, sitting, lying, kneeling, all fours, squatting, bent over, crawling, walking, running, jumping, contrapposto
-    手臂: arm support, arms behind head, arms behind back, arms up, crossed arms, victory pose, outstretched arm
-    腿部: crossed legs, spread legs, leg up, legs up, tiptoes, m legs, knees apart
-    手部: thumbs up, peace hand, heart hands, finger gun, fist, pillow hug
-    视线: looking at viewer, looking down, looking up, looking back, looking away, sideways glance, eye contact
-    衣物状态: nude, topless, bottomless, open shirt, no bra, no panties, strap slip, see-through, wet clothes, torn clothes, partially clothed
-    衣物开口: off-shoulder, bare shoulders, cleavage cutout, underboob cutout, center opening, navel cutout, back cutout, heart cutout
-    发型: long hair, short hair, ponytail, twintails, braid, bob cut, ahoge, bangs, sidelocks, wavy hair, straight hair, curly hair, drill hair, half updo
-    发色: black hair, blonde hair, brown hair, silver hair, white hair, red hair, blue hair, pink hair, purple hair, green hair, streaked hair
-    瞳色: blue eyes, red eyes, green eyes, brown eyes, purple eyes, yellow eyes, heterochromia, heart-shaped pupils
-    光影: backlighting, rim lighting, sidelighting, dramatic shadows, moonlight, sunlight, neon light, golden hour
-    性爱体位: doggystyle, missionary, cowgirl, reverse cowgirl, mating press, 69, girl on top, sex from behind, piledriver, spitroast, suspended congress
-    性行为: sex, vaginal, anal, oral, fellatio, handjob, footjob, paizuri, fingering, masturbation, deep penetration, cunnilingus
-    射精: cum, excessive cum, bukkake, facial, ejaculation, cumdrip, cum on body, internal cumshot, cum in mouth
-    双人互动: holding hands, eye contact, cuddling, princess carry, spooning, headpat, sitting on lap, neck biting, face to face
+    ### 10. 参考标签库
+    === 表情 ===
+    grin, smile, smug, seductive smile, naughty face, glaring, pout, crying, sobbing, tears, surprised, flustered, blush, embarrassed, parted lips, open mouth, tongue out, ahegao, heart eyes, heart-shaped pupils, fucked silly, rolling eyes, empty eyes, half-closed eyes, wavy mouth, clenched teeth, :3, expressionless, evil smile, shaded face
+    表情组合: ahegao+drooling+tears+rolling eyes(高潮), open mouth+heavy breathing+blush(插入), smile+blush+looking at viewer(温柔), clenched teeth+tears+blush(忍耐), tongue out+saliva+half-closed eyes(口交), empty eyes+expressionless(精神崩坏)
 
-    ### 9. 示例
+    === 姿势 ===
+    standing, sitting, lying, kneeling, all fours, squatting, bent over, crawling, walking, running, jumping, contrapposto, seiza, wariza, leaning forward, leaning back, on stomach, on back, on side, top-down bottom-up, dogeza
+
+    === 肢体 ===
+    手臂: arm support, arms behind head, arms behind back, arms up, crossed arms, victory pose, outstretched arm, waving, beckoning
+    腿部: crossed legs, spread legs, leg up, legs up, tiptoes, m legs, knees apart, legs together, standing split, leg lock
+    手部: thumbs up, peace sign, double peace sign, heart hands, finger gun, v, double v, finger to mouth, shushing
+    视线: looking at viewer, looking down, looking up, looking back, looking away, sideways glance, eye contact, upturned eyes
+
+    === 衣物 ===
+    状态: nude, completely nude, topless, bottomless, open shirt, no bra, no panties, strap slip, see-through, wet clothes, torn clothes, clothed female nude male, naked shirt, naked apron, clothes lift, skirt lift, shirt lift, panty pull
+    开口: off-shoulder, bare shoulders, cleavage cutout, underboob cutout, center opening, navel cutout, back cutout, sideless dress, crotchless, nipple cutout
+    类型: school uniform, sailor uniform, maid outfit, bikini, swimsuit, wedding dress, kimono, yukata, hanfu, gothic lolita, bunny girl, santa costume, leotard, bodysuit, latex, lingerie, babydoll, gym uniform, pajamas, naked apron, cheerleader
+    配饰: choker, collar, leash, thigh strap, garter straps, thighhighs, pantyhose, high heels, boots, glasses, earrings, necklace, blindfold, ball gag
+
+    === 发型/发色/瞳色 ===
+    发型: long hair, short hair, ponytail, high ponytail, twintails, braid, bob cut, ahoge, bangs, sidelocks, wavy hair, curly hair, drill hair, messy hair, wet hair
+    发色: black hair, blonde hair, brown hair, silver hair, white hair, red hair, blue hair, pink hair, purple hair, green hair, gradient hair
+    瞳色: blue eyes, red eyes, green eyes, brown eyes, purple eyes, yellow eyes, heterochromia, heart-shaped pupils, slit pupils
+
+    === 光影/氛围 ===
+    光影: backlighting, rim lighting, sidelighting, dramatic shadows, moonlight, sunlight, neon light, golden hour, spotlight, tyndall effect, volumetric light, dimly lit, dark theme
+    氛围: falling leaves, fireworks, steam, floating sakura, light particles, glowing, starry sky, rain, snow, petals, lens flare
+    生理: sweat, heavy breathing, steaming body, trembling, drooling, tears, blush, shiny skin, oiled skin, wet body, twitching, flying sweatdrops
+    动态: speed lines, motion lines, motion blur, bouncing breasts, ass ripple, sound effects
+
+    === 性爱 ===
+    体位: doggystyle, missionary, cowgirl position, reverse cowgirl, mating press, 69, girl on top, sex from behind, piledriver, spitroast, suspended congress, standing sex, prone bone, leg lock
+    行为: sex, vaginal, anal, oral, fellatio, deepthroat, handjob, footjob, paizuri, thigh sex, buttjob, fingering, masturbation, deep penetration, cunnilingus, double penetration
+    射精: cum, excessive cum, bukkake, facial, ejaculation, cumdrip, cum on body, internal cumshot, cum in mouth, cum in pussy, cum on breasts, cum string, cum overflow, after ejaculation, used condom
+    BDSM: bondage, rope bondage, shibari, handcuffs, chains, blindfold, ball gag, collar, leash, pet play, spanking, slap mark, breast bondage, suspension
+    双人: holding hands, eye contact, cuddling, princess carry, hug, hug from behind, breast press, grabbing another's breasts, lifting person, headpat, sitting on lap, face to face
+    玩具: vibrator, dildo, egg vibrator, remote control vibrator, vibrator under panties, anal beads, butt plug, dildo riding, object insertion
+    特殊: x-ray, cross section, stomach bulge, livestream, fake screenshot, exhibitionism, public indecency
+
+    === 场景 ===
+    室内: bedroom, bathroom, kitchen, classroom, library, office, hotel room, love hotel, bar, elevator, train interior, car interior, dungeon, church
+    室外: beach, forest, park, alley, rooftop, garden, pool, shrine, street, ruins
+
+    === 场景模板参考 ===
+    骑乘: cowgirl position, girl on top, straddling, spread legs, sex, penis, motion lines
+    后入: doggystyle, sex from behind, all fours, ass, from behind, grabbing hips
+    传教士: missionary, on back, lying, spread legs, on bed, from above
+    口交: fellatio, oral, kneeling, penis, pov, looking up, tongue out, saliva
+    洗澡: bathroom, steam, completely nude, wet, wet hair, shiny skin, standing
+    温泉: onsen, partially submerged, steam, wet body, nude, outdoors, rocks
+    做饭: kitchen, cooking, apron, holding spatula, stove, steam
+    自慰: female masturbation, fingering, spread legs, blush, heavy breathing, solo
+    绳缚: bondage, rope bondage, shibari, bound wrists, nude, breast bondage, tears
+    触手: tentacles, tentacle sex, restrained, spread legs, suspended, nude
+    露出: exhibitionism, public indecency, outdoors, crowd, embarrassed, blush
+    钢管舞: pole dancing, stripper pole, holding pole, armpits, spotlight, sweat
+    酒吧: bar (place), cocktail, dim lighting, neon light, looking at viewer
+    直播: livestream, chat log, fake screenshot, sitting, gaming chair, webcam
+
+    ### 11. 示例
     用户说"画一个银发少女在月光下"，你应该生成：
     ```
     masterpiece, best quality, amazing quality, very aesthetic, absurdres, sfw, 1girl, solo, outdoors, night, 1.2::moonlight::, starry sky, rim lighting, backlighting, full body, front view, cinematic angle, depth of field, girl, bishoujo, 1.3::silver hair::, long hair, flowing hair, blue eyes, medium breasts, white skin, dress, white dress, long dress, elegant, standing, wind, hair flowing, looking at viewer, gentle smile, serene, falling leaves, light particles
+    ```
+
+    用户说"画月月在温泉里"，你应该生成：
+    ```
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, 1.3::silver hair::, high ponytail, crescent hair ornament, blue grey eyes, fox ears, white fox ears, fox tail, silver white tail, fluffy tail, medium breasts, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, watermelon earrings, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
     ```
 
     Args:
@@ -140,12 +201,10 @@ async def generate_image_novelai(
                 - 竖图(人物): 832x1216
                 - 横图(风景): 1216x832
                 - 正方形: 1024x1024
-                - 大竖图: 1024x1536
-                - 手机壁纸: 768x1344
 
         height: 图片高度，默认 1216。
 
-        steps: 采样步数(1-50)，默认 28。步数越高细节越好但速度越慢。
+        steps: 采样步数(1-28)，默认 28。步数越高细节越好但速度越慢。
 
         scale: 引导强度 CFG Scale(1.0-10.0)，默认 5.0。
                 越高越贴近提示词但可能过饱和。
