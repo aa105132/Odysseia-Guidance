@@ -243,8 +243,63 @@ class ThreadCommentorCog(commands.Cog):
             f"[ThreadCommentorCog] 已在频道 '{channel.name}' 发送自动发言（{mode}）。"
         )
 
+    async def _process_auto_speaker_for_forum_channel(
+        self, forum_channel: discord.ForumChannel
+    ):
+        """处理论坛频道，遍历其中可发言的活跃帖子。"""
+        active_threads: dict[int, discord.Thread] = {}
+
+        for forum_thread in forum_channel.threads:
+            if forum_thread.archived or forum_thread.locked:
+                continue
+            active_threads[forum_thread.id] = forum_thread
+
+        # 兜底：从 guild 级缓存补充该论坛下的活跃帖子，降低 forum_channel.threads 缓存不足导致的漏发。
+        for guild_thread in forum_channel.guild.threads:
+            if guild_thread.parent_id != forum_channel.id:
+                continue
+            if guild_thread.archived or guild_thread.locked:
+                continue
+            active_threads[guild_thread.id] = guild_thread
+
+        if not active_threads:
+            log.info(
+                f"[ThreadCommentorCog] 论坛频道 '{forum_channel.name}' ({forum_channel.id}) 当前没有可发言的活跃帖子，跳过自动发言。"
+            )
+            return
+
+        for forum_thread in active_threads.values():
+            await self._process_auto_speaker_thread(forum_thread)
+
+    async def _process_auto_speaker_for_category(
+        self, category_channel: discord.CategoryChannel
+    ):
+        """处理子区（分类）频道，自动遍历其中论坛/文本频道。"""
+        child_channels = list(category_channel.channels)
+        if not child_channels:
+            log.info(
+                f"[ThreadCommentorCog] 子区 '{category_channel.name}' ({category_channel.id}) 下无可处理频道。"
+            )
+            return
+
+        processed = 0
+        for child in child_channels:
+            if isinstance(child, discord.ForumChannel):
+                processed += 1
+                await self._process_auto_speaker_for_forum_channel(child)
+                continue
+
+            if isinstance(child, discord.TextChannel):
+                processed += 1
+                await self._process_auto_speaker_text_channel(child)
+
+        if processed == 0:
+            log.info(
+                f"[ThreadCommentorCog] 子区 '{category_channel.name}' ({category_channel.id}) 下仅包含不支持的频道类型，跳过自动发言。"
+            )
+
     async def _process_auto_speaker_for_thread(self, thread_id: int):
-        """处理自动发言目标ID（支持帖子ID、论坛频道ID、文本频道ID）。"""
+        """处理自动发言目标ID（支持帖子ID、论坛频道ID、文本频道ID、子区分类ID）。"""
         target = self.bot.get_channel(thread_id)
         if target is None:
             try:
@@ -252,7 +307,7 @@ class ThreadCommentorCog(commands.Cog):
             except discord.NotFound:
                 log.warning(
                     f"[ThreadCommentorCog] 自动发言目标ID不存在或机器人不可见: {thread_id}。"
-                    f"请确认这是帖子ID/论坛频道ID/文本频道ID，且机器人有查看权限。"
+                    f"请确认这是帖子ID/论坛频道ID/文本频道ID/子区分类ID，且机器人有查看权限。"
                 )
                 return
             except Exception as e:
@@ -267,27 +322,19 @@ class ThreadCommentorCog(commands.Cog):
             return
 
         if isinstance(target, discord.ForumChannel):
-            active_threads = [
-                forum_thread
-                for forum_thread in target.threads
-                if not forum_thread.archived and not forum_thread.locked
-            ]
-            if not active_threads:
-                log.info(
-                    f"[ThreadCommentorCog] 论坛频道 '{target.name}' ({target.id}) 当前没有活跃帖子，跳过自动发言。"
-                )
-                return
-
-            for forum_thread in active_threads:
-                await self._process_auto_speaker_thread(forum_thread)
+            await self._process_auto_speaker_for_forum_channel(target)
             return
 
         if isinstance(target, discord.TextChannel):
             await self._process_auto_speaker_text_channel(target)
             return
 
+        if isinstance(target, discord.CategoryChannel):
+            await self._process_auto_speaker_for_category(target)
+            return
+
         log.warning(
-            f"[ThreadCommentorCog] 自动发言目标ID {thread_id} 不是帖子、论坛频道或普通文本频道。"
+            f"[ThreadCommentorCog] 自动发言目标ID {thread_id} 不是帖子、论坛频道、普通文本频道或子区分类。"
         )
 
     async def _run_auto_speaker_cycle(self):
