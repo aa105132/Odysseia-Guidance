@@ -5,7 +5,6 @@ from sqlalchemy import update
 from src.database.database import AsyncSessionLocal
 from src.database.models import CommunityMemberProfile
 from src.chat.config import chat_config
-from src.chat.services.gemini_service import gemini_service
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +71,9 @@ class PersonalMemoryService:
     async def _summarize_memory(self, user_id: int, conversation_history: list):
         """私有方法：获取历史，生成摘要，并清空计数和历史。"""
         log.info(f"开始为用户 {user_id} 生成记忆摘要。")
+
+        # 延迟导入，避免在 GeminiService 初始化工具加载阶段触发循环依赖
+        from src.chat.services.gemini_service import gemini_service
 
         async with AsyncSessionLocal() as session:
             stmt = select(CommunityMemberProfile.personal_summary).where(
