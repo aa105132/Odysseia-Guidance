@@ -81,28 +81,19 @@ def _api_key_handler(func: Callable) -> Callable:
             try:
                 key_obj = await self.key_rotation_service.acquire_key()
                 client = self._create_client_with_key(key_obj.key)
-
-                failure_penalty = 25  # 默认的失败惩罚
-                key_should_be_cooled_down = False
-                key_is_invalid = False
-
-                max_attempts = app_config.API_RETRY_CONFIG["MAX_ATTEMPTS_PER_KEY"]
+                max_attempts = max(1, app_config.API_RETRY_CONFIG["MAX_ATTEMPTS_PER_KEY"])
                 for attempt in range(max_attempts):
                     try:
                         log.info(
                             f"使用密钥 ...{key_obj.key[-4:]} (尝试 {attempt + 1}/{max_attempts}) 调用 {func.__name__}"
                         )
 
-                        # 将 client 作为关键字参数传递给原始函数
                         kwargs["client"] = client
                         result = await func(self, *args, **kwargs)
 
-                        safety_penalty = 0
                         is_blocked_by_safety = False
                         if isinstance(result, types.GenerateContentResponse):
-                            safety_penalty = self._handle_safety_ratings(
-                                result, key_obj.key
-                            )
+                            self._handle_safety_ratings(result, key_obj.key)
                             if (
                                 not result.parts
                                 and result.prompt_feedback
@@ -112,114 +103,57 @@ def _api_key_handler(func: Callable) -> Callable:
 
                         if is_blocked_by_safety:
                             log.warning(
-                                f"密钥 ...{key_obj.key[-4:]} 因安全策略被阻止 (原因: {result.prompt_feedback.block_reason if result.prompt_feedback else '未知'})。将进入冷却且不扣分。"
+                                f"密钥 ...{key_obj.key[-4:]} 因安全策略被阻止 (原因: {result.prompt_feedback.block_reason if result.prompt_feedback else '未知'})。"
                             )
-                            failure_penalty = 0  # 明确设置为0，不扣分
-                            key_should_be_cooled_down = True
                             break
 
-                        await self.key_rotation_service.release_key(
-                            key_obj.key, success=True, safety_penalty=safety_penalty
-                        )
+                        await self.key_rotation_service.release_key(key_obj.key, success=True)
                         return result
 
-                    except (
-                        genai_errors.ClientError,
-                        genai_errors.ServerError,
-                    ) as e:
+                    except (genai_errors.ClientError, genai_errors.ServerError) as e:
                         error_str = str(e)
                         match = re.match(r"(\d{3})", error_str)
                         status_code = int(match.group(1)) if match else None
 
-                        is_retryable = status_code in [429, 503]
+                        retryable_status_codes = {403, 429, 500, 502, 503, 504, 520, 522, 524}
+                        is_retryable = status_code in retryable_status_codes
+
                         if (
                             not is_retryable
                             and isinstance(e, genai_errors.ServerError)
-                            and "503" in error_str
+                            and any(code in error_str for code in ["500", "502", "503", "504", "520", "522", "524"])
                         ):
                             is_retryable = True
-                            status_code = 503
 
-                        if is_retryable:
+                        if is_retryable and attempt < max_attempts - 1:
+                            delay = app_config.API_RETRY_CONFIG["RETRY_DELAY_SECONDS"]
                             log.warning(
-                                f"密钥 ...{key_obj.key[-4:]} 遇到可重试错误 (状态码: {status_code})。"
+                                f"密钥 ...{key_obj.key[-4:]} 遇到可重试错误 (状态码: {status_code})，{delay} 秒后重试。"
                             )
-                            if attempt < max_attempts - 1:
-                                delay = app_config.API_RETRY_CONFIG[
-                                    "RETRY_DELAY_SECONDS"
-                                ]
-                                log.info(f"等待 {delay} 秒后重试。")
-                                await asyncio.sleep(delay)
-                            else:
-                                log.warning(
-                                    f"密钥 ...{key_obj.key[-4:]} 的所有 {max_attempts} 次重试均失败。将进入冷却。"
-                                )
-                                # --- 渐进式惩罚逻辑 ---
-                                base_penalty = 10
-                                consecutive_failures = (
-                                    key_obj.consecutive_failures + 1
-                                )  # +1 是因为本次失败也要计算在内
-                                failure_penalty = base_penalty * consecutive_failures
-                                log.warning(
-                                    f"密钥 ...{key_obj.key[-4:]} 已连续失败 {consecutive_failures} 次。"
-                                    f"本次惩罚分值: {failure_penalty}"
-                                )
-                                key_should_be_cooled_down = True
+                            await asyncio.sleep(delay)
+                            continue
 
-                        elif status_code == 403 or (
-                            status_code == 400
-                            and "API_KEY_INVALID" in error_str.upper()
-                        ):
-                            log.error(
-                                f"密钥 ...{key_obj.key[-4:]} 无效 (状态码: {status_code})。将施加毁灭性惩罚。"
-                            )
-                            failure_penalty = 101  # 毁灭性惩罚
-                            key_should_be_cooled_down = True
-                            break  # 直接跳出重试循环
-
-                        else:
-                            log.error(
-                                f"使用密钥 ...{key_obj.key[-4:]} 时发生意外的致命API错误 (状态码: {status_code}): {e}",
-                                exc_info=True,
-                            )
-                            if isinstance(e, genai_errors.ServerError):
-                                # 对于服务器错误，也采用渐进式惩罚
-                                base_penalty = 15  # 服务器错误的基础惩罚可以稍高
-                                consecutive_failures = key_obj.consecutive_failures + 1
-                                failure_penalty = base_penalty * consecutive_failures
-                                log.warning(
-                                    f"密钥 ...{key_obj.key[-4:]} 遭遇服务器错误，已连续失败 {consecutive_failures} 次。"
-                                    f"本次惩罚分值: {failure_penalty}"
-                                )
-                                key_should_be_cooled_down = True
-                                break
-                            else:
-                                await self.key_rotation_service.release_key(
-                                    key_obj.key, success=True
-                                )
-                                return (
-                                    "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
-                                )
+                        log.error(
+                            f"使用密钥 ...{key_obj.key[-4:]} 时发生API错误 (状态码: {status_code}): {e}",
+                            exc_info=True,
+                        )
+                        break
 
                     except Exception as e:
                         log.error(
                             f"使用密钥 ...{key_obj.key[-4:]} 时发生未知错误: {e}",
                             exc_info=True,
                         )
-                        await self.key_rotation_service.release_key(
-                            key_obj.key, success=True
-                        )
+                        await self.key_rotation_service.release_key(key_obj.key, success=True)
                         if func.__name__ == "generate_embedding":
                             return None
                         return "呜哇，有点晕嘞，等我休息一会儿 <伤心>"
 
-                if key_is_invalid:
-                    continue
+                if key_obj:
+                    await self.key_rotation_service.release_key(key_obj.key, success=True)
 
-                if key_should_be_cooled_down:
-                    await self.key_rotation_service.release_key(
-                        key_obj.key, success=False, failure_penalty=failure_penalty
-                    )
+                # 避免单个故障密钥导致的紧循环
+                await asyncio.sleep(0.5)
 
             except NoAvailableKeyError:
                 log.error(
