@@ -1998,33 +1998,38 @@ async def get_web_search_config(token: str = Depends(verify_token)):
 
 @app.put("/api/config/web-search")
 async def update_web_search_config(config: WebSearchConfigUpdate, token: str = Depends(verify_token)):
-    """更新网络搜索配置 - 写入数据库持久化"""
+    """更新网络搜索配置 - 写入数据库持久化 + 同步更新运行时配置"""
     from src.chat.utils.database import chat_db_manager
 
     updated = {}
 
     if config.grok_api_url is not None:
         await chat_db_manager.set_global_setting("web_search_grok_api_url", config.grok_api_url)
+        chat_config.WEB_SEARCH_CONFIG["grok_api_url"] = config.grok_api_url
         updated["grok_api_url"] = config.grok_api_url[:30] + "..." if len(config.grok_api_url) > 30 else config.grok_api_url
         log.info(f"✅ 网络搜索 Grok API URL 已更新")
 
     if config.grok_api_key is not None:
         await chat_db_manager.set_global_setting("web_search_grok_api_key", config.grok_api_key)
+        chat_config.WEB_SEARCH_CONFIG["grok_api_key"] = config.grok_api_key
         updated["grok_api_key"] = "已更新"
         log.info(f"✅ 网络搜索 Grok API Key 已更新")
 
     if config.grok_model is not None:
         await chat_db_manager.set_global_setting("web_search_grok_model", config.grok_model)
+        chat_config.WEB_SEARCH_CONFIG["grok_model"] = config.grok_model
         updated["grok_model"] = config.grok_model
         log.info(f"✅ 网络搜索 Grok 模型已设置为: {config.grok_model}")
 
     if config.tavily_api_url is not None:
         await chat_db_manager.set_global_setting("web_search_tavily_api_url", config.tavily_api_url)
+        chat_config.WEB_SEARCH_CONFIG["tavily_api_url"] = config.tavily_api_url
         updated["tavily_api_url"] = config.tavily_api_url[:30] + "..." if len(config.tavily_api_url) > 30 else config.tavily_api_url
         log.info(f"✅ 网络搜索 Tavily API URL 已更新")
 
     if config.tavily_api_key is not None:
         await chat_db_manager.set_global_setting("web_search_tavily_api_key", config.tavily_api_key)
+        chat_config.WEB_SEARCH_CONFIG["tavily_api_key"] = config.tavily_api_key
         updated["tavily_api_key"] = "已更新"
         log.info(f"✅ 网络搜索 Tavily API Key 已更新")
 
@@ -2049,25 +2054,52 @@ async def test_web_search_connection(token: str = Depends(verify_token)):
 
     if grok_url and grok_key:
         try:
+            # 先尝试 /models 端点
             models_url = f"{grok_url.rstrip('/')}/models"
+            grok_connected = False
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.get(
-                    models_url,
-                    headers={"Authorization": f"Bearer {grok_key}", "Content-Type": "application/json"},
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        model_count = len(data.get("data", []))
-                        results["grok"] = {
-                            "status": "连接成功",
-                            "models_count": model_count,
-                        }
-                    else:
-                        results["grok"] = {"status": f"连接失败 (HTTP {response.status})"}
+                try:
+                    async with session.get(
+                        models_url,
+                        headers={"Authorization": f"Bearer {grok_key}", "Content-Type": "application/json"},
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            model_count = len(data.get("data", []))
+                            results["grok"] = {
+                                "status": "连接成功",
+                                "models_count": model_count,
+                            }
+                            grok_connected = True
+                except Exception:
+                    pass
+
+                # 如果 /models 不可用，回退到 chat/completions 简单测试
+                if not grok_connected:
+                    try:
+                        chat_url = f"{grok_url.rstrip('/')}/chat/completions"
+                        async with session.post(
+                            chat_url,
+                            headers={"Authorization": f"Bearer {grok_key}", "Content-Type": "application/json"},
+                            json={
+                                "model": "grok-3-mini",
+                                "messages": [{"role": "user", "content": "hi"}],
+                                "max_tokens": 5,
+                            },
+                        ) as response:
+                            if response.status == 200:
+                                results["grok"] = {"status": "连接成功"}
+                            elif response.status == 401:
+                                results["grok"] = {"status": "连接失败 (API Key 无效)"}
+                            else:
+                                body_text = await response.text()
+                                results["grok"] = {"status": f"连接失败 (HTTP {response.status})"}
+                    except Exception as e:
+                        results["grok"] = {"status": f"连接错误: {str(e)}"}
         except Exception as e:
             results["grok"] = {"status": f"连接错误: {str(e)}"}
 
-    # 测试 Tavily API（简单的搜索测试）
+    # 测试 Tavily API（简单的搜索测试，api_key 在请求体中传递）
     db_tavily_url = await chat_db_manager.get_global_setting("web_search_tavily_api_url")
     db_tavily_key = await chat_db_manager.get_global_setting("web_search_tavily_api_key")
     tavily_url = db_tavily_url or os.getenv("TAVILY_API_URL", "https://api.tavily.com")
@@ -2079,11 +2111,13 @@ async def test_web_search_connection(token: str = Depends(verify_token)):
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
                 async with session.post(
                     endpoint,
-                    headers={"Authorization": f"Bearer {tavily_key}", "Content-Type": "application/json"},
-                    json={"query": "test", "max_results": 1, "search_depth": "basic"},
+                    headers={"Content-Type": "application/json"},
+                    json={"api_key": tavily_key, "query": "test", "max_results": 1, "search_depth": "basic"},
                 ) as response:
                     if response.status == 200:
                         results["tavily"] = {"status": "连接成功"}
+                    elif response.status == 401:
+                        results["tavily"] = {"status": "连接失败 (API Key 无效)"}
                     else:
                         results["tavily"] = {"status": f"连接失败 (HTTP {response.status})"}
         except Exception as e:

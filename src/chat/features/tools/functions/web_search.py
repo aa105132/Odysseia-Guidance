@@ -276,10 +276,10 @@ async def _tavily_search(query: str, max_results: int = 5) -> list:
 
     endpoint = f"{api_url.rstrip('/')}/search"
     headers = {
-        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     body = {
+        "api_key": api_key,
         "query": query,
         "max_results": max_results,
         "search_depth": "advanced",
@@ -322,10 +322,9 @@ async def _tavily_extract(url: str) -> Optional[str]:
 
     endpoint = f"{api_url.rstrip('/')}/extract"
     headers = {
-        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    body = {"urls": [url], "format": "markdown"}
+    body = {"api_key": api_key, "urls": [url]}
 
     try:
         timeout = aiohttp.ClientTimeout(total=60, connect=10)

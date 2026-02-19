@@ -3456,10 +3456,10 @@
                         if (response.ok) {
                             const data = await response.json();
                             this.webSearchConfig = {
-                                grok_configured: !!(data.grok_api_url && data.has_grok_key),
-                                tavily_configured: !!(data.tavily_api_url && data.has_tavily_key),
-                                has_grok_key: data.has_grok_key || false,
-                                has_tavily_key: data.has_tavily_key || false,
+                                grok_configured: data.grok_configured || false,
+                                tavily_configured: data.tavily_configured || false,
+                                has_grok_key: data.has_grok_api_key || false,
+                                has_tavily_key: data.has_tavily_api_key || false,
                             };
                             this.webSearchForm.grok_api_url = data.grok_api_url || '';
                             this.webSearchForm.grok_model = data.grok_model || 'grok-3-mini';
@@ -3467,6 +3467,7 @@
                             // 不回填 API Key（安全考虑）
                             this.webSearchForm.grok_api_key = '';
                             this.webSearchForm.tavily_api_key = '';
+                            this.$nextTick(() => lucide.createIcons());
                         }
                     } catch (e) {
                         console.warn('加载网络搜索配置失败:', e);
@@ -3515,22 +3516,19 @@
                         });
                         const data = await response.json();
                         if (response.ok) {
+                            const r = data.results || {};
                             let msg = '';
-                            if (data.grok?.status === 'ok') {
-                                msg += 'Grok: 连接成功';
-                                if (data.grok.models_count) msg += ` (${data.grok.models_count} 个模型)`;
+                            const grokStatus = r.grok?.status || '未配置';
+                            if (grokStatus.includes('成功')) {
+                                msg += 'Grok: ' + grokStatus;
+                                if (r.grok.models_count) msg += ` (${r.grok.models_count} 个模型)`;
                             } else {
-                                msg += 'Grok: ' + (data.grok?.message || '连接失败');
+                                msg += 'Grok: ' + grokStatus;
                             }
                             msg += ' | ';
-                            if (data.tavily?.status === 'ok') {
-                                msg += 'Tavily: 连接成功';
-                            } else if (data.tavily?.status === 'not_configured') {
-                                msg += 'Tavily: 未配置';
-                            } else {
-                                msg += 'Tavily: ' + (data.tavily?.message || '连接失败');
-                            }
-                            const allOk = data.grok?.status === 'ok';
+                            const tavilyStatus = r.tavily?.status || '未配置';
+                            msg += 'Tavily: ' + tavilyStatus;
+                            const allOk = grokStatus.includes('成功');
                             this.showToast(msg, allOk ? 'success' : 'error');
                         } else {
                             this.showToast(data.detail || '测试失败', 'error');
