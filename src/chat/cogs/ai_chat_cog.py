@@ -98,6 +98,8 @@ class AIChatCog(commands.Cog):
                 # --- 响应发送逻辑 ---
                 # 动态获取上次调用的工具列表，如果不存在则为空列表
                 last_tools = getattr(gemini_service, "last_called_tools", [])
+                # 判断是否使用了搜索工具，用于后续抑制链接预览
+                used_web_search = "web_search" in last_tools
 
                 # 1. 如果调用了总结工具，总是转换为图片发送
                 if "summarize_channel" in last_tools:
@@ -120,7 +122,12 @@ class AIChatCog(commands.Cog):
                     or isinstance(message.channel, discord.Thread)
                 )
                 if is_unrestricted:
-                    await message.reply(response_text, mention_author=True)
+                    sent_msg = await message.reply(response_text, mention_author=True)
+                    if used_web_search:
+                        try:
+                            await sent_msg.edit(suppress=True)
+                        except Exception:
+                            pass
                     return
 
                 # 3. 如果以上都不是，则检查是否为需要发送私信的普通长消息
@@ -154,7 +161,12 @@ class AIChatCog(commands.Cog):
                     return
 
                 # 4. 默认情况：直接在频道回复短消息
-                await message.reply(response_text, mention_author=True)
+                sent_msg = await message.reply(response_text, mention_author=True)
+                if used_web_search:
+                    try:
+                        await sent_msg.edit(suppress=True)
+                    except Exception:
+                        pass
 
             except discord.errors.HTTPException as e:
                 log.warning(f"发送回复时发生HTTP错误: {e}")

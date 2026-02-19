@@ -602,7 +602,7 @@ class GeminiService:
 
         source_lines = ["", "消息源："]
         for idx, (title, url) in enumerate(missing_links[:10], 1):
-            source_lines.append(f"{idx}. [{title}]({url})")
+            source_lines.append(f"{idx}. [{title}](<{url}>)")
 
         return response_text.rstrip() + "\n" + "\n".join(source_lines)
 
@@ -1176,6 +1176,13 @@ class GeminiService:
             for call in function_calls:
                 called_tool_names.append(call.name)
 
+            # 如果调用了 web_search，给用户消息加 🔍 reaction 表示正在搜索
+            if any(call.name == "web_search" for call in function_calls) and discord_message:
+                try:
+                    await discord_message.add_reaction("🔍")
+                except Exception:
+                    pass
+
             if (
                 response
                 and response.candidates
@@ -1257,6 +1264,13 @@ class GeminiService:
                         original_result = result.function_response.response.get(
                             "result", {}
                         )
+
+                    # web_search 执行完成，加 ☑️ reaction
+                    if tool_name == "web_search" and discord_message:
+                        try:
+                            await discord_message.add_reaction("☑️")
+                        except Exception:
+                            pass
 
                     # 记录 web_search 工具返回的来源链接（标题+URL），用于最终回复兜底展示
                     if tool_name == "web_search":
@@ -1729,6 +1743,14 @@ class GeminiService:
                                 tool_call_id = tool_call.get("id", "")
                                 
                                 called_tool_names.append(tool_name)
+                                
+                                # 如果调用了 web_search，给用户消息加 🔍 reaction 表示正在搜索
+                                if tool_name == "web_search" and discord_message:
+                                    try:
+                                        await discord_message.add_reaction("🔍")
+                                    except Exception:
+                                        pass
+                                
                                 log.info(f"执行工具: {tool_name}, 参数: {tool_args_str}")
                                 
                                 try:
@@ -1744,6 +1766,13 @@ class GeminiService:
                                     user_id=user_id,
                                     discord_message=discord_message,
                                 )
+
+                                # web_search 执行完成，加 ☑️ reaction
+                                if tool_name == "web_search" and discord_message:
+                                    try:
+                                        await discord_message.add_reaction("☑️")
+                                    except Exception:
+                                        pass
 
                                 # 记录 web_search 工具返回的来源链接（标题+URL），用于最终回复兜底展示
                                 if tool_name == "web_search":
