@@ -30,10 +30,7 @@ SIZE_PRESETS = {
     "竖图": (832, 1216),
     "横图": (1216, 832),
     "正方形": (1024, 1024),
-    "大竖图": (1024, 1536),
-    "大横图": (1536, 1024),
-    "手机壁纸": (768, 1344),
-    "宽屏壁纸": (1344, 768),
+
 }
 
 
@@ -429,9 +426,14 @@ class NovelAIDrawPanel(discord.ui.View):
         """根据模式构建最终的英文提示词"""
         parts = []
 
-        # 添加画师串前缀
+        # 添加画师串前缀（优先使用用户选择的预设画师串，否则使用全局默认画师串）
         if self.session.preset_artist_string:
             parts.append(self.session.preset_artist_string)
+        else:
+            default_artist = NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "")
+            if default_artist:
+                parts.append(default_artist)
+                log.info(f"/draw 面板应用全局默认画师串: {default_artist[:60]}...")
 
         if self.session.mode == "ai_describe" and self.session.scene_prompt:
             # AI 描述模式：调用 AI 将中文描述转换为英文 Tag
@@ -527,7 +529,7 @@ class NegativePromptModal(discord.ui.Modal, title="设置负面提示词"):
 
 class StepsModal(discord.ui.Modal, title="设置步数"):
     steps_input = discord.ui.TextInput(
-        label="步数 (1-50)",
+        label="步数 (1-28)",
         placeholder="28",
         required=True,
         max_length=3,
@@ -541,7 +543,9 @@ class StepsModal(discord.ui.Modal, title="设置步数"):
     async def on_submit(self, interaction: discord.Interaction):
         try:
             steps = int(self.steps_input.value)
-            self.session.steps = max(1, min(50, steps))
+            if steps > 28:
+                return await interaction.response.send_message("步数最大为 28，已超出限制。", ephemeral=True)
+            self.session.steps = max(1, min(28, steps))
         except ValueError:
             return await interaction.response.send_message("步数必须是整数。", ephemeral=True)
         embed = NovelAIDrawPanel(self.session, interaction.user.id).build_panel_embed()

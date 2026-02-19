@@ -260,6 +260,8 @@ def _get_novelai_config():
             "NOVELAI_DEFAULT_NEGATIVE",
             "lowres, {bad}, error, fewer, extra, missing, worst quality, jpeg artifacts, bad quality, watermark, unfinished, displeasing, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]"
         ),
+        # 默认画师串（全局，会自动添加到所有 NovelAI 生图提示词前面）
+        "DEFAULT_ARTIST_STRING": os.getenv("NOVELAI_DEFAULT_ARTIST_STRING", ""),
     }
 
 NOVELAI_CONFIG = _get_novelai_config()

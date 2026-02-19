@@ -134,6 +134,7 @@ class NovelAIConfigUpdate(BaseModel):
     generation_cost: Optional[int] = None
     default_negative_prompt: Optional[str] = None
     max_retries: Optional[int] = None
+    default_artist_string: Optional[str] = None
 
 
 class EmbeddingConfigUpdate(BaseModel):
@@ -1155,6 +1156,7 @@ async def get_novelai_config(token: str = Depends(verify_token)):
     db_generation_cost = await chat_db_manager.get_global_setting("novelai_generation_cost")
     db_default_negative = await chat_db_manager.get_global_setting("novelai_default_negative")
     db_max_retries = await chat_db_manager.get_global_setting("novelai_max_retries")
+    db_default_artist_string = await chat_db_manager.get_global_setting("novelai_default_artist_string")
 
     config = chat_config.NOVELAI_CONFIG
 
@@ -1176,6 +1178,7 @@ async def get_novelai_config(token: str = Depends(verify_token)):
     generation_cost = int(db_generation_cost) if db_generation_cost else config.get("IMAGE_GENERATION_COST", 5)
     default_negative = db_default_negative or config.get("DEFAULT_NEGATIVE_PROMPT", "")
     max_retries = int(db_max_retries) if db_max_retries else config.get("MAX_RETRIES", 3)
+    default_artist_string = db_default_artist_string or config.get("DEFAULT_ARTIST_STRING", "")
 
     # 掩码 API Token
     masked_token = api_token[:10] + "..." + api_token[-4:] if len(api_token) > 14 else ("***" if api_token else "")
@@ -1206,6 +1209,7 @@ async def get_novelai_config(token: str = Depends(verify_token)):
         "smea_dyn": smea_dyn,
         "generation_cost": generation_cost,
         "default_negative_prompt": default_negative,
+        "default_artist_string": default_artist_string,
         "max_retries": max_retries,
         "service_available": service_available,
         "available_models": [
@@ -1361,6 +1365,13 @@ async def update_novelai_config(config: NovelAIConfigUpdate, token: str = Depend
         env_updates["NOVELAI_MAX_RETRIES"] = str(config.max_retries)
         updated["max_retries"] = config.max_retries
         await chat_db_manager.set_global_setting("novelai_max_retries", str(config.max_retries))
+
+    if config.default_artist_string is not None:
+        chat_config.NOVELAI_CONFIG["DEFAULT_ARTIST_STRING"] = config.default_artist_string
+        os.environ["NOVELAI_DEFAULT_ARTIST_STRING"] = config.default_artist_string
+        env_updates["NOVELAI_DEFAULT_ARTIST_STRING"] = config.default_artist_string
+        updated["default_artist_string"] = config.default_artist_string[:100] + ("..." if len(config.default_artist_string) > 100 else "")
+        await chat_db_manager.set_global_setting("novelai_default_artist_string", config.default_artist_string)
 
     # 更新 .env 文件
     if env_updates:

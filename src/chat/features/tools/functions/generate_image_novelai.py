@@ -228,20 +228,29 @@ async def generate_image_novelai(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
-    # 如果指定了预设名称，获取预设内容
+    # 如果指定了预设名称，获取预设内容；否则使用全局默认画师串
     final_prompt = prompt
+    applied_artist = False
     if preset_name and user_id:
         try:
             user_id_int = int(user_id)
             preset = await chat_db_manager.get_novelai_preset(user_id_int, preset_name)
             if preset and preset.get("artist_string"):
                 final_prompt = f"{preset['artist_string']}, {prompt}"
+                applied_artist = True
                 log.info(f"应用画师串预设: {preset_name}")
                 # 如果预设有负面提示词且用户未指定
                 if not negative_prompt and preset.get("negative_prompt"):
                     negative_prompt = preset["negative_prompt"]
         except Exception as e:
             log.warning(f"获取预设失败: {e}")
+
+    # 如果没有通过预设应用画师串，则使用全局默认画师串
+    if not applied_artist:
+        default_artist = NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "")
+        if default_artist:
+            final_prompt = f"{default_artist}, {prompt}"
+            log.info(f"应用全局默认画师串: {default_artist[:60]}...")
 
     log.info(f"调用 NovelAI 图片生成工具，Tag: {final_prompt[:100]}..., 尺寸: {width}x{height}")
 
