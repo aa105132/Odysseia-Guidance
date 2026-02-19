@@ -44,6 +44,7 @@ class ThreadCommentorCog(commands.Cog):
         """分析最近聊天活跃度，提取人类/机器人最后发言时间。"""
         last_human_message_at: Optional[datetime] = None
         last_human_user_id: Optional[int] = None
+        last_human_username: Optional[str] = None
         last_bot_message_at: Optional[datetime] = None
 
         for message in reversed(recent_messages):
@@ -58,6 +59,10 @@ class ThreadCommentorCog(commands.Cog):
             if last_human_message_at is None:
                 last_human_message_at = message.created_at
                 last_human_user_id = message.author.id
+                last_human_username = (
+                    getattr(message.author, "display_name", None)
+                    or getattr(message.author, "name", None)
+                )
 
             if last_human_message_at and last_bot_message_at:
                 break
@@ -65,6 +70,7 @@ class ThreadCommentorCog(commands.Cog):
         return {
             "last_human_message_at": last_human_message_at,
             "last_human_user_id": last_human_user_id,
+            "last_human_username": last_human_username,
             "last_bot_message_at": last_bot_message_at,
         }
 
@@ -129,6 +135,7 @@ class ThreadCommentorCog(commands.Cog):
 
         idle_minutes = int(seconds_since_human // 60)
         target_user_id = activity.get("last_human_user_id")
+        target_username = activity.get("last_human_username")
         target_user_mention = f"<@{target_user_id}>" if target_user_id else None
 
         auto_message = await thread_commentor_service.generate_auto_target_message(
@@ -137,6 +144,8 @@ class ThreadCommentorCog(commands.Cog):
             is_idle_call=is_idle_call,
             idle_minutes=idle_minutes,
             target_user_mention=target_user_mention,
+            target_user_id=target_user_id,
+            target_username=target_username,
         )
         if not auto_message:
             return
@@ -213,6 +222,7 @@ class ThreadCommentorCog(commands.Cog):
 
         idle_minutes = int(seconds_since_human // 60)
         target_user_id = activity.get("last_human_user_id")
+        target_username = activity.get("last_human_username")
         target_user_mention = f"<@{target_user_id}>" if target_user_id else None
 
         auto_message = await thread_commentor_service.generate_auto_target_message(
@@ -221,6 +231,8 @@ class ThreadCommentorCog(commands.Cog):
             is_idle_call=is_idle_call,
             idle_minutes=idle_minutes,
             target_user_mention=target_user_mention,
+            target_user_id=target_user_id,
+            target_username=target_username,
         )
         if not auto_message:
             return

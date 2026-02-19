@@ -26,11 +26,42 @@ from src.chat.config import chat_config
 log = logging.getLogger(__name__)
 
 
+class _SafeFormatDict(dict):
+    """用于 format_map 的容错字典，缺失键时保留占位符。"""
+
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
 class ThreadCommentorService:
     """处理新帖子评价功能的服务"""
 
     def __init__(self):
         self.world_book_db_path = os.path.join(config.DATA_DIR, "world_book.sqlite3")
+
+    def _format_final_instruction(
+        self,
+        guild_name: str,
+        location_name: str,
+        current_time: str,
+        user_id: Optional[int] = None,
+        username: Optional[str] = None,
+    ) -> str:
+        """安全格式化最终注入指令，避免占位符缺失导致 KeyError。"""
+        template = PROMPT_CONFIG["default"].get("JAILBREAK_FINAL_INSTRUCTION", "")
+        payload = _SafeFormatDict(
+            guild_name=guild_name,
+            location_name=location_name,
+            current_time=current_time,
+            user_id=str(user_id) if user_id is not None else "unknown_user",
+            username=username or "未知用户",
+            master_id=(
+                str(config.MASTER_USER_ID)
+                if getattr(config, "MASTER_USER_ID", None) is not None
+                else "unknown_master"
+            ),
+        )
+        return template.format_map(payload)
 
     async def _get_user_memory(self, user_id: int) -> str:
         """
@@ -199,12 +230,12 @@ class ThreadCommentorService:
             current_beijing_time = datetime.now(beijing_tz).strftime(
                 "%Y年%m月%d日 %H:%M"
             )
-            final_injection_content = PROMPT_CONFIG["default"][
-                "JAILBREAK_FINAL_INSTRUCTION"
-            ].format(
+            final_injection_content = self._format_final_instruction(
                 guild_name=thread.guild.name,
                 location_name=thread.parent.name if thread.parent else "未知版区",
                 current_time=current_beijing_time,
+                user_id=user_id,
+                username=user_nickname,
             )
 
             last_model_message = conversation_history[-1]
@@ -278,6 +309,8 @@ class ThreadCommentorService:
         is_idle_call: bool = False,
         idle_minutes: int = 0,
         target_user_mention: Optional[str] = None,
+        target_user_id: Optional[int] = None,
+        target_username: Optional[str] = None,
     ) -> Optional[str]:
         """基于目标会话（帖子或普通文本频道）生成自动暖场/召回发言。"""
         try:
@@ -369,12 +402,12 @@ class ThreadCommentorService:
             current_beijing_time = datetime.now(beijing_tz).strftime(
                 "%Y年%m月%d日 %H:%M"
             )
-            final_injection_content = PROMPT_CONFIG["default"][
-                "JAILBREAK_FINAL_INSTRUCTION"
-            ].format(
+            final_injection_content = self._format_final_instruction(
                 guild_name=target.guild.name,
                 location_name=location_name,
                 current_time=current_beijing_time,
+                user_id=target_user_id,
+                username=target_username,
             )
 
             last_model_message = conversation_history[-1]
@@ -409,6 +442,8 @@ class ThreadCommentorService:
         is_idle_call: bool = False,
         idle_minutes: int = 0,
         target_user_mention: Optional[str] = None,
+        target_user_id: Optional[int] = None,
+        target_username: Optional[str] = None,
     ) -> Optional[str]:
         """兼容旧调用：为帖子生成自动发言。"""
         return await self.generate_auto_target_message(
@@ -417,6 +452,8 @@ class ThreadCommentorService:
             is_idle_call=is_idle_call,
             idle_minutes=idle_minutes,
             target_user_mention=target_user_mention,
+            target_user_id=target_user_id,
+            target_username=target_username,
         )
 
 
