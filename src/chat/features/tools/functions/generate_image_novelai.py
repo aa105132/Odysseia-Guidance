@@ -113,7 +113,7 @@ async def generate_image_novelai(
     - 1girl, solo, silver hair, high ponytail, crescent hair ornament, blue grey eyes
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
     - watermelon earrings（西瓜形状耳坠）
-    - white off-shoulder top, fur trim, detached sleeves, pink high waist skirt, pink bow, silver necklace, jewelry
+    - white off-shoulder top, fur trim, detached sleeves, white high waist skirt, pink bow belt, silver necklace, jewelry
 
     ### 10. 参考标签库
     === 表情 ===
