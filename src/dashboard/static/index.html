@@ -124,6 +124,12 @@
                         <i data-lucide="calendar-check" class="w-5 h-5"></i>
                         <span>年度总结</span>
                     </button>
+                    <button @click="currentTab = 'webSearch'"
+                            :class="currentTab === 'webSearch' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="globe" class="w-5 h-5"></i>
+                        <span>网络搜索</span>
+                    </button>
                     <button @click="currentTab = 'springFestival'"
                             :class="currentTab === 'springFestival' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
                             class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
@@ -808,6 +814,130 @@
                 </div>
             </div>
             
+            <!-- 网络搜索设置 -->
+            <div x-show="currentTab === 'webSearch'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">网络搜索设置</h2>
+
+                <!-- 服务状态卡片 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center"
+                                 :class="webSearchConfig.grok_configured ? 'bg-green-500/20' : 'bg-red-500/20'">
+                                <i data-lucide="globe" class="w-6 h-6"
+                                   :class="webSearchConfig.grok_configured ? 'text-green-400' : 'text-red-400'"></i>
+                            </div>
+                            <div>
+                                <p class="font-medium">Grok 搜索引擎</p>
+                                <p class="text-sm text-slate-400" x-text="webSearchConfig.grok_configured ? '已配置' : '未配置'"></p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <div class="flex items-center gap-2 text-sm" :class="webSearchConfig.tavily_configured ? 'text-green-400' : 'text-slate-500'">
+                                <i data-lucide="search-check" class="w-4 h-4"></i>
+                                <span x-text="webSearchConfig.tavily_configured ? 'Tavily 已配置' : 'Tavily 未配置'"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Grok API 配置 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="bot" class="w-5 h-5 text-blue-400"></i>
+                        Grok API 配置
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">Grok 是 AI 驱动的智能搜索引擎（通过 OpenAI 兼容接口）</p>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
+                            <input type="url" x-model="webSearchForm.grok_api_url"
+                                   placeholder="https://api.x.ai/v1"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">OpenAI 兼容的 API 端点地址</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                API Key
+                                <span x-show="webSearchConfig.has_grok_key" class="text-green-400 text-xs ml-2">
+                                    <i data-lucide="check-circle" class="w-3 h-3 inline"></i> 已配置
+                                </span>
+                            </label>
+                            <div class="relative">
+                                <input :type="showWebSearchGrokKey ? 'text' : 'password'" x-model="webSearchForm.grok_api_key"
+                                       placeholder="留空保持不变"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <button @click="showWebSearchGrokKey = !showWebSearchGrokKey" type="button"
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                                    <i :data-lucide="showWebSearchGrokKey ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">搜索模型</label>
+                            <input type="text" x-model="webSearchForm.grok_model"
+                                   placeholder="grok-3-mini"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">用于网络搜索的 Grok 模型名称</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tavily API 配置 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="search" class="w-5 h-5 text-emerald-400"></i>
+                        Tavily API 配置
+                        <span class="text-xs text-slate-500 font-normal">（可选 - 补充信源 & 网页抓取）</span>
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">Tavily 提供网页内容抓取和补充搜索信源，不配置也能使用基本搜索功能</p>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
+                            <input type="url" x-model="webSearchForm.tavily_api_url"
+                                   placeholder="https://api.tavily.com"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                API Key
+                                <span x-show="webSearchConfig.has_tavily_key" class="text-green-400 text-xs ml-2">
+                                    <i data-lucide="check-circle" class="w-3 h-3 inline"></i> 已配置
+                                </span>
+                            </label>
+                            <div class="relative">
+                                <input :type="showWebSearchTavilyKey ? 'text' : 'password'" x-model="webSearchForm.tavily_api_key"
+                                       placeholder="留空保持不变"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <button @click="showWebSearchTavilyKey = !showWebSearchTavilyKey" type="button"
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                                    <i :data-lucide="showWebSearchTavilyKey ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="max-w-2xl flex gap-4">
+                    <button @click="saveWebSearchConfig()"
+                            :disabled="saving"
+                            class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                        <i data-lucide="save" class="w-5 h-5"></i>
+                        <span x-text="saving ? '保存中...' : '保存设置'"></span>
+                    </button>
+                    <button @click="testWebSearchConfig()"
+                            :disabled="testing"
+                            class="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-semibold py-3 px-6 rounded-lg transition-all flex items-center justify-center gap-2">
+                        <i data-lucide="wifi" class="w-5 h-5"></i>
+                        <span x-text="testing ? '测试中...' : '测试连接'"></span>
+                    </button>
+                </div>
+            </div>
+
             <!-- NovelAI 设置 -->
             <div x-show="currentTab === 'novelai'" x-transition>
                 <h2 class="text-2xl font-bold mb-6">NovelAI 设置</h2>
@@ -2104,6 +2234,12 @@
                     claimed_label: '已领取',
                     reward_reason: '新春红包奖励'
                 },
+
+                // 网络搜索数据
+                webSearchForm: { grok_api_url: '', grok_api_key: '', grok_model: 'grok-3-mini', tavily_api_url: '', tavily_api_key: '' },
+                webSearchConfig: { grok_configured: false, tavily_configured: false, has_grok_key: false, has_tavily_key: false },
+                showWebSearchGrokKey: false,
+                showWebSearchTavilyKey: false,
                 
                 async init() {
                     // 检查是否有保存的密钥
@@ -2312,6 +2448,8 @@
                     this.loadSpringFestivalConfig();
                     // 加载总结配置
                     this.loadSummaryConfig();
+                    // 加载网络搜索配置
+                    this.loadWebSearchConfig();
                 },
                 
                 async loadEmbeddingConfig() {
@@ -3307,6 +3445,100 @@
                         this.showToast('保存失败', 'error');
                     }
                     this.saving = false;
+                },
+
+                // ===== 网络搜索配置方法 =====
+                async loadWebSearchConfig() {
+                    try {
+                        const response = await fetch('/api/config/web-search', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.webSearchConfig = {
+                                grok_configured: !!(data.grok_api_url && data.has_grok_key),
+                                tavily_configured: !!(data.tavily_api_url && data.has_tavily_key),
+                                has_grok_key: data.has_grok_key || false,
+                                has_tavily_key: data.has_tavily_key || false,
+                            };
+                            this.webSearchForm.grok_api_url = data.grok_api_url || '';
+                            this.webSearchForm.grok_model = data.grok_model || 'grok-3-mini';
+                            this.webSearchForm.tavily_api_url = data.tavily_api_url || '';
+                            // 不回填 API Key（安全考虑）
+                            this.webSearchForm.grok_api_key = '';
+                            this.webSearchForm.tavily_api_key = '';
+                        }
+                    } catch (e) {
+                        console.warn('加载网络搜索配置失败:', e);
+                    }
+                },
+
+                async saveWebSearchConfig() {
+                    this.saving = true;
+                    try {
+                        const payload = {};
+                        if (this.webSearchForm.grok_api_url) payload.grok_api_url = this.webSearchForm.grok_api_url;
+                        if (this.webSearchForm.grok_api_key) payload.grok_api_key = this.webSearchForm.grok_api_key;
+                        if (this.webSearchForm.grok_model) payload.grok_model = this.webSearchForm.grok_model;
+                        if (this.webSearchForm.tavily_api_url) payload.tavily_api_url = this.webSearchForm.tavily_api_url;
+                        if (this.webSearchForm.tavily_api_key) payload.tavily_api_key = this.webSearchForm.tavily_api_key;
+
+                        const response = await fetch('/api/config/web-search', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            this.showToast('网络搜索设置已保存', 'success');
+                            await this.loadWebSearchConfig();
+                            lucide.createIcons();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+
+                async testWebSearchConfig() {
+                    this.testing = true;
+                    try {
+                        const response = await fetch('/api/config/test-web-search', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        const data = await response.json();
+                        if (response.ok) {
+                            let msg = '';
+                            if (data.grok?.status === 'ok') {
+                                msg += 'Grok: 连接成功';
+                                if (data.grok.models_count) msg += ` (${data.grok.models_count} 个模型)`;
+                            } else {
+                                msg += 'Grok: ' + (data.grok?.message || '连接失败');
+                            }
+                            msg += ' | ';
+                            if (data.tavily?.status === 'ok') {
+                                msg += 'Tavily: 连接成功';
+                            } else if (data.tavily?.status === 'not_configured') {
+                                msg += 'Tavily: 未配置';
+                            } else {
+                                msg += 'Tavily: ' + (data.tavily?.message || '连接失败');
+                            }
+                            const allOk = data.grok?.status === 'ok';
+                            this.showToast(msg, allOk ? 'success' : 'error');
+                        } else {
+                            this.showToast(data.detail || '测试失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('测试连接失败', 'error');
+                    }
+                    this.testing = false;
                 },
                 
                 async saveCoinConfig() {
