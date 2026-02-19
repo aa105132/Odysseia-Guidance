@@ -301,8 +301,8 @@ class NovelAIService:
                     json=request_body,
                     headers=headers,
                 ) as response:
-                    if response.status == 201:
-                        # 成功: 返回 ZIP 文件
+                    if response.status in (200, 201):
+                        # 成功: 返回 ZIP 文件（官方文档为 201，但某些情况可能返回 200）
                         zip_data = await response.read()
                         image_data = self._extract_image_from_zip(zip_data)
 
@@ -331,7 +331,12 @@ class NovelAIService:
                         log.error("NovelAI API: 并发请求冲突，请稍后重试")
                         return None
                     else:
-                        error_text = await response.text()
+                        # 使用 response.read() 而非 response.text() 避免二进制数据解码错误
+                        try:
+                            error_bytes = await response.read()
+                            error_text = error_bytes.decode("utf-8", errors="replace")
+                        except Exception:
+                            error_text = f"(无法读取响应体, Content-Type: {response.content_type})"
                         log.error(
                             f"NovelAI API 请求失败: HTTP {response.status}, "
                             f"响应: {error_text[:500]}"
@@ -443,8 +448,8 @@ class NovelAIService:
 
     async def test_connection(self) -> Dict[str, Any]:
         """
-        测试 API 连接（使用一个最小参数的请求测试，实际上不生成）。
-        这里通过检查认证头是否有效来测试。
+        测试 API 连接 - 使用 /user/subscription 端点验证 Token 有效性。
+        不消耗 Anlas，快速验证认证是否有效。
         """
         if not self._api_token:
             return {"success": False, "error": "API Token 未配置"}
@@ -452,81 +457,44 @@ class NovelAIService:
         try:
             headers = {
                 "Authorization": f"Bearer {self._api_token}",
-                "Content-Type": "application/json",
             }
 
-            # 使用一个最小的请求来测试连接
-            # NovelAI 没有专门的 ping 端点，所以我们尝试一个小请求
-            # 使用最小参数和最小尺寸
-            test_model = app_config.NOVELAI_CONFIG.get("MODEL", "nai-diffusion-4-5-full")
-            test_params = {
-                "params_version": 3,
-                "width": 512,
-                "height": 512,
-                "scale": 5.0,
-                "sampler": "k_euler",
-                "steps": 1,
-                "seed": 1,
-                "n_samples": 1,
-                "negative_prompt": "",
-                "qualityToggle": False,
-                "ucPreset": 0,
-                "sm": False,
-                "sm_dyn": False,
-                "dynamic_thresholding": False,
-                "controlnet_strength": 1,
-                "legacy": False,
-                "add_original_image": True,
-                "uncond_scale": 1,
-                "cfg_rescale": 0,
-                "noise_schedule": "karras",
-                "skip_cfg_above_sigma": None,
-                "deliberate_euler_ancestral_bug": False,
-                "prefer_brownian": True,
-            }
-            # 为 V4 模型添加结构化 prompt
-            if "nai-diffusion-4" in test_model:
-                test_params["v4_prompt"] = {
-                    "caption": {
-                        "base_caption": "test",
-                        "char_captions": [{"char_caption": "", "centers": [{"x": 0.5, "y": 0.5}]}],
-                    },
-                    "use_coords": False,
-                    "use_order": True,
-                }
-                test_params["v4_negative_prompt"] = {
-                    "caption": {
-                        "base_caption": "",
-                        "char_captions": [{"char_caption": "", "centers": [{"x": 0.5, "y": 0.5}]}],
-                    },
-                    "legacy_uc": False,
-                }
-            test_body = {
-                "input": "test",
-                "model": test_model,
-                "action": "generate",
-                "parameters": test_params,
-            }
-
-            timeout = aiohttp.ClientTimeout(total=30)
+            timeout = aiohttp.ClientTimeout(total=15)
 
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    NOVELAI_API_URL,
-                    json=test_body,
+                # 使用 /user/subscription 端点验证 token
+                # 该端点返回用户订阅信息，不消耗任何资源
+                async with session.get(
+                    "https://api.novelai.net/user/subscription",
                     headers=headers,
                 ) as response:
-                    if response.status == 201:
-                        return {"success": True, "message": "连接成功，Token 有效"}
+                    if response.status == 200:
+                        try:
+                            data = await response.json()
+                            tier = data.get("tier", 0)
+                            # tier: 0=free, 1=tablet, 2=scroll, 3=opus
+                            tier_names = {0: "Free", 1: "Tablet", 2: "Scroll", 3: "Opus"}
+                            tier_name = tier_names.get(tier, f"Tier {tier}")
+
+                            # 获取 Anlas 信息
+                            training_steps = data.get("trainingStepsLeft", {})
+                            anlas = training_steps.get("fixedTrainingStepsLeft", 0) + training_steps.get("purchasedTrainingSteps", 0)
+
+                            return {
+                                "success": True,
+                                "message": f"连接成功 | 订阅等级: {tier_name} | Anlas: {anlas}"
+                            }
+                        except Exception:
+                            return {"success": True, "message": "连接成功，Token 有效"}
+
                     elif response.status == 401:
                         return {"success": False, "error": "Token 无效或已过期"}
-                    elif response.status == 402:
-                        # 402 说明 token 有效但 Anlas 不足 - 连接本身是成功的
-                        return {"success": True, "message": "Token 有效（Anlas 余额不足）"}
-                    elif response.status == 409:
-                        return {"success": True, "message": "Token 有效（请求冲突，稍后重试）"}
                     else:
-                        error_text = await response.text()
+                        try:
+                            error_bytes = await response.read()
+                            error_text = error_bytes.decode("utf-8", errors="replace")
+                        except Exception:
+                            error_text = "未知错误"
                         return {
                             "success": False,
                             "error": f"HTTP {response.status}: {error_text[:200]}"
