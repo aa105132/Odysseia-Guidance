@@ -394,21 +394,29 @@ def _format_search_result(
     # 格式化信源列表
     if all_sources:
         parts.append("")
-        parts.append("## 信息来源")
+        parts.append("## 信息来源（可点击）")
         for i, source in enumerate(all_sources[:10], 1):
             title = source.get("title", "").strip()
             url = source.get("url", "").strip()
             snippet = source.get("snippet", "").strip() if "snippet" in source else ""
             if url:
                 if title:
-                    parts.append(f"{i}. [{title}]({url})")
+                    parts.append(f"{i}. {title}")
+                    parts.append(f"   {url}")
                 else:
                     parts.append(f"{i}. {url}")
                 if snippet:
                     parts.append(f"   > {snippet}")
 
+        parts.append("")
+        parts.append("## 消息源")
+        for i, source in enumerate(all_sources[:10], 1):
+            url = source.get("url", "").strip()
+            if url:
+                parts.append(f"{i}. {url}")
+
     parts.append("")
-    parts.append("[请根据以上搜索结果，用你自己的风格来回答用户的问题。可以适当引用信息来源链接。]")
+    parts.append("[请基于以上搜索结果回答用户。在最终回复末尾附上“消息源”小节，并保留可点击 URL 原文，禁止编造链接。]")
 
     return "\n".join(parts)
 
@@ -464,10 +472,13 @@ async def web_search(
     - 需要查找**技术文档**、**API 参考**、**开源项目信息**
     - 查询**产品价格**、**发布日期**、**版本信息**等时效性内容
     - 用户明确要求"搜索"、"查一下"、"帮我找"等
+    - 你对当前问题的事实信息**不确定**，需要先检索再回答
+    - 用户请求绘图且涉及不熟悉的真实人物/作品角色，需要先检索人物特征再写提示词
+    - 酒馆/SillyTavern 相关教程
 
     不适用场景:
     - 日常闲聊、角色扮演、情感交流
-    - 酒馆/SillyTavern 相关教程（使用 query_tutorial_knowledge_base）
+
 
     Args:
         query: 搜索查询语句，应为清晰、完整的自然语言问题。
