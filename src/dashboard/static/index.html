@@ -2948,9 +2948,14 @@
                         if (!/^\d+$/.test(token)) {
                             throw new Error(`无效帖子 ID: ${token}`);
                         }
-                        idSet.add(Number(token));
+                        idSet.add(token);
                     }
-                    return Array.from(idSet).sort((left, right) => left - right);
+                    return Array.from(idSet).sort((left, right) => {
+                        if (left.length !== right.length) {
+                            return left.length - right.length;
+                        }
+                        return left.localeCompare(right);
+                    });
                 },
 
                 async loadThreadAutoSpeakerConfig() {

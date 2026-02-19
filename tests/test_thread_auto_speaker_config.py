@@ -30,7 +30,7 @@ from src.chat.features.chat_settings.services.chat_settings_service import (
 
 
 def test_normalize_thread_ids_deduplicate_and_filter_invalid_values():
-    source_ids = [123, 456, 123, 0, -1, None]
+    source_ids = ["123", "456", "123", "0", "-1", None, "abc"]
     assert _normalize_thread_ids(source_ids) == [123, 456]
 
 

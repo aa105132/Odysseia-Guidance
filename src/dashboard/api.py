@@ -214,7 +214,7 @@ class SpringFestivalConfigUpdate(BaseModel):
 class ThreadAutoSpeakerConfigUpdate(BaseModel):
     """帖子自动发言配置更新"""
     enabled: Optional[bool] = None
-    thread_ids: Optional[List[int]] = None
+    thread_ids: Optional[List[str]] = None
     check_interval_seconds: Optional[int] = None
     message_interval_seconds: Optional[int] = None
     idle_trigger_seconds: Optional[int] = None
@@ -375,10 +375,12 @@ async def get_all_config(token: str = Depends(verify_token)):
             "enabled": chat_config.THREAD_COMMENTOR_CONFIG.get(
                 "AUTO_CHAT_ENABLED", False
             ),
-            "thread_ids": sorted(
-                list(
-                    chat_config.THREAD_COMMENTOR_CONFIG.get(
-                        "AUTO_CHAT_THREAD_IDS", set()
+            "thread_ids": _serialize_thread_ids(
+                sorted(
+                    list(
+                        chat_config.THREAD_COMMENTOR_CONFIG.get(
+                            "AUTO_CHAT_THREAD_IDS", set()
+                        )
                     )
                 )
             ),
@@ -629,7 +631,7 @@ def update_env_file(updates: Dict[str, str]):
         f.writelines(new_lines)
 
 
-def _normalize_thread_ids(thread_ids: Optional[List[int]]) -> List[int]:
+def _normalize_thread_ids(thread_ids: Optional[List[str]]) -> List[int]:
     """清洗并去重帖子ID列表。"""
     if not thread_ids:
         return []
@@ -639,13 +641,18 @@ def _normalize_thread_ids(thread_ids: Optional[List[int]]) -> List[int]:
         if thread_id is None:
             continue
         try:
-            parsed_id = int(thread_id)
+            parsed_id = int(str(thread_id).strip())
         except (TypeError, ValueError):
             continue
         if parsed_id > 0:
             normalized.add(parsed_id)
 
     return sorted(normalized)
+
+
+def _serialize_thread_ids(thread_ids: List[int]) -> List[str]:
+    """将线程 ID 列表安全序列化为字符串列表（避免前端精度丢失）。"""
+    return [str(thread_id) for thread_id in thread_ids]
 
 
 def _parse_thread_ids_text(thread_ids_text: Optional[str]) -> List[int]:
@@ -2243,9 +2250,11 @@ async def get_thread_auto_speaker_config(token: str = Depends(verify_token)):
             else bool(runtime.get("AUTO_CHAT_ENABLED", False))
         ),
         "thread_ids": (
-            _parse_thread_ids_text(db_thread_ids)
+            _serialize_thread_ids(_parse_thread_ids_text(db_thread_ids))
             if db_thread_ids is not None
-            else sorted(list(runtime.get("AUTO_CHAT_THREAD_IDS", set())))
+            else _serialize_thread_ids(
+                sorted(list(runtime.get("AUTO_CHAT_THREAD_IDS", set())))
+            )
         ),
         "check_interval_seconds": _safe_int(
             db_check_interval,
@@ -2302,7 +2311,7 @@ async def update_thread_auto_speaker_config(
             "thread_auto_speaker_thread_ids", ids_text
         )
         env_updates["THREAD_AUTO_SPEAKER_THREAD_IDS"] = ids_text
-        updated["thread_ids"] = normalized_ids
+        updated["thread_ids"] = _serialize_thread_ids(normalized_ids)
 
     if config.check_interval_seconds is not None:
         if not 30 <= config.check_interval_seconds <= 3600:
