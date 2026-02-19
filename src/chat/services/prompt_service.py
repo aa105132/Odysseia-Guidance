@@ -159,9 +159,9 @@ class PromptService:
         core_prompt_template = self.get_prompt("SYSTEM_PROMPT", model_name=model_name)
 
         # 填充核心提示词（动态替换占位符）
-        from src.chat.config.chat_config import DEFAULT_IMAGE_ENGINE
+        # 必须通过模块引用读取，而非 from import，因为 Dashboard 会动态修改该值
         core_prompt = core_prompt_template.replace(
-            "{default_image_engine}", DEFAULT_IMAGE_ENGINE
+            "{default_image_engine}", chat_config.DEFAULT_IMAGE_ENGINE
         )
 
         final_conversation.append({"role": "user", "parts": [core_prompt]})
