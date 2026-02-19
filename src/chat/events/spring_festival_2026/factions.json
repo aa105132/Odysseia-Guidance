@@ -1,0 +1,18 @@
+[
+  {
+    "faction_id": "spring_festival_eve",
+    "faction_name": "除夕",
+    "description": "辞旧迎新的守岁之夜，适合温暖陪伴、回顾与祝福。",
+    "response_images": {
+      "feeding": "https://cdn.discordapp.com/attachments/1403347767912562728/1472646436318347367/chifan.png"
+    }
+  },
+  {
+    "faction_id": "spring_festival_day",
+    "faction_name": "大年初一",
+    "description": "新年启程的第一天，主打喜庆、祝贺与开门红氛围。",
+    "response_images": {
+      "feeding": "https://cdn.discordapp.com/attachments/1403347767912562728/1472646436318347367/chifan.png"
+    }
+  }
+]

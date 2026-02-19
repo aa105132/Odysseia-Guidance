@@ -176,6 +176,19 @@ class SummaryConfigUpdate(BaseModel):
     tier2_threshold: Optional[int] = None    # Tier 2 好感度阈值
 
 
+class SpringFestivalConfigUpdate(BaseModel):
+    """新春活动配置更新"""
+    enabled: Optional[bool] = None
+    daily_limit_enabled: Optional[bool] = None
+    min_reward: Optional[int] = None
+    max_reward: Optional[int] = None
+    dm_title: Optional[str] = None
+    dm_description: Optional[str] = None
+    button_label: Optional[str] = None
+    claimed_label: Optional[str] = None
+    reward_reason: Optional[str] = None
+
+
 class EmojiMapping(BaseModel):
     """单个表情映射"""
     placeholder: str  # 如 <微笑>
@@ -295,6 +308,27 @@ async def get_all_config(token: str = Depends(verify_token)):
             "warning_threshold": chat_config.BLACKLIST_WARNING_THRESHOLD,
             "ban_duration_min": chat_config.BLACKLIST_BAN_DURATION_MINUTES[0],
             "ban_duration_max": chat_config.BLACKLIST_BAN_DURATION_MINUTES[1],
+        },
+        "spring_festival": {
+            "enabled": chat_config.SPRING_FESTIVAL_CONFIG.get("enabled", True),
+            "daily_limit_enabled": chat_config.SPRING_FESTIVAL_CONFIG.get(
+                "daily_limit_enabled", True
+            ),
+            "min_reward": chat_config.SPRING_FESTIVAL_CONFIG.get("min_reward", 500),
+            "max_reward": chat_config.SPRING_FESTIVAL_CONFIG.get("max_reward", 1000),
+            "dm_title": chat_config.SPRING_FESTIVAL_CONFIG.get("dm_title", "新春红包"),
+            "dm_description": chat_config.SPRING_FESTIVAL_CONFIG.get(
+                "dm_description", "你收到了一份新春祝福，点击按钮开启吧。"
+            ),
+            "button_label": chat_config.SPRING_FESTIVAL_CONFIG.get(
+                "button_label", "开启红包"
+            ),
+            "claimed_label": chat_config.SPRING_FESTIVAL_CONFIG.get(
+                "claimed_label", "已领取"
+            ),
+            "reward_reason": chat_config.SPRING_FESTIVAL_CONFIG.get(
+                "reward_reason", "新春红包奖励"
+            ),
         },
         "shop": {
             "items": chat_config.SHOP_ITEMS if hasattr(chat_config, 'SHOP_ITEMS') else [],
@@ -1889,6 +1923,181 @@ async def get_knowledge_stats(token: str = Depends(verify_token)):
         raise HTTPException(500, f"获取统计失败: {str(e)}")
     finally:
         conn.close()
+
+
+# --- 新春活动配置 ---
+@app.get("/api/config/spring-festival")
+async def get_spring_festival_config(token: str = Depends(verify_token)):
+    """获取新春活动配置 - 优先从数据库读取持久化设置"""
+    from src.chat.utils.database import chat_db_manager
+    from src.chat.config.chat_config import SPRING_FESTIVAL_CONFIG
+
+    db_enabled = await chat_db_manager.get_global_setting("spring_festival_enabled")
+    db_daily_limit_enabled = await chat_db_manager.get_global_setting(
+        "spring_festival_daily_limit_enabled"
+    )
+    db_min_reward = await chat_db_manager.get_global_setting("spring_festival_min_reward")
+    db_max_reward = await chat_db_manager.get_global_setting("spring_festival_max_reward")
+    db_dm_title = await chat_db_manager.get_global_setting("spring_festival_dm_title")
+    db_dm_description = await chat_db_manager.get_global_setting(
+        "spring_festival_dm_description"
+    )
+    db_button_label = await chat_db_manager.get_global_setting(
+        "spring_festival_button_label"
+    )
+    db_claimed_label = await chat_db_manager.get_global_setting(
+        "spring_festival_claimed_label"
+    )
+    db_reward_reason = await chat_db_manager.get_global_setting(
+        "spring_festival_reward_reason"
+    )
+
+    return {
+        "enabled": (
+            db_enabled == "true"
+            if db_enabled is not None
+            else SPRING_FESTIVAL_CONFIG.get("enabled", True)
+        ),
+        "daily_limit_enabled": (
+            db_daily_limit_enabled == "true"
+            if db_daily_limit_enabled is not None
+            else SPRING_FESTIVAL_CONFIG.get("daily_limit_enabled", True)
+        ),
+        "min_reward": (
+            int(db_min_reward)
+            if db_min_reward
+            else int(SPRING_FESTIVAL_CONFIG.get("min_reward", 500))
+        ),
+        "max_reward": (
+            int(db_max_reward)
+            if db_max_reward
+            else int(SPRING_FESTIVAL_CONFIG.get("max_reward", 1000))
+        ),
+        "dm_title": db_dm_title or str(
+            SPRING_FESTIVAL_CONFIG.get("dm_title", "新春红包")
+        ),
+        "dm_description": db_dm_description
+        or str(
+            SPRING_FESTIVAL_CONFIG.get(
+                "dm_description", "你收到了一份新春祝福，点击按钮开启吧。"
+            )
+        ),
+        "button_label": db_button_label
+        or str(SPRING_FESTIVAL_CONFIG.get("button_label", "开启红包")),
+        "claimed_label": db_claimed_label
+        or str(SPRING_FESTIVAL_CONFIG.get("claimed_label", "已领取")),
+        "reward_reason": db_reward_reason
+        or str(SPRING_FESTIVAL_CONFIG.get("reward_reason", "新春红包奖励")),
+    }
+
+
+@app.put("/api/config/spring-festival")
+async def update_spring_festival_config(
+    config: SpringFestivalConfigUpdate, token: str = Depends(verify_token)
+):
+    """更新新春活动配置 - 写入数据库持久化并同步到内存"""
+    from src.chat.utils.database import chat_db_manager
+    from src.chat.config.chat_config import SPRING_FESTIVAL_CONFIG
+
+    updated = {}
+    env_updates = {}
+
+    if config.enabled is not None:
+        SPRING_FESTIVAL_CONFIG["enabled"] = bool(config.enabled)
+        value = str(bool(config.enabled)).lower()
+        await chat_db_manager.set_global_setting("spring_festival_enabled", value)
+        env_updates["SPRING_FESTIVAL_ENABLED"] = value
+        updated["enabled"] = bool(config.enabled)
+
+    if config.daily_limit_enabled is not None:
+        SPRING_FESTIVAL_CONFIG["daily_limit_enabled"] = bool(config.daily_limit_enabled)
+        value = str(bool(config.daily_limit_enabled)).lower()
+        await chat_db_manager.set_global_setting(
+            "spring_festival_daily_limit_enabled", value
+        )
+        env_updates["SPRING_FESTIVAL_DAILY_LIMIT"] = value
+        updated["daily_limit_enabled"] = bool(config.daily_limit_enabled)
+
+    if config.min_reward is not None:
+        if config.min_reward <= 0:
+            raise HTTPException(400, "最小红包金额必须大于 0")
+        SPRING_FESTIVAL_CONFIG["min_reward"] = int(config.min_reward)
+        await chat_db_manager.set_global_setting(
+            "spring_festival_min_reward", str(int(config.min_reward))
+        )
+        env_updates["SPRING_FESTIVAL_MIN_REWARD"] = str(int(config.min_reward))
+        updated["min_reward"] = int(config.min_reward)
+
+    if config.max_reward is not None:
+        if config.max_reward <= 0:
+            raise HTTPException(400, "最大红包金额必须大于 0")
+        SPRING_FESTIVAL_CONFIG["max_reward"] = int(config.max_reward)
+        await chat_db_manager.set_global_setting(
+            "spring_festival_max_reward", str(int(config.max_reward))
+        )
+        env_updates["SPRING_FESTIVAL_MAX_REWARD"] = str(int(config.max_reward))
+        updated["max_reward"] = int(config.max_reward)
+
+    current_min = int(SPRING_FESTIVAL_CONFIG.get("min_reward", 500))
+    current_max = int(SPRING_FESTIVAL_CONFIG.get("max_reward", 1000))
+    if current_max < current_min:
+        raise HTTPException(400, "最大红包金额不能小于最小红包金额")
+
+    if config.dm_title is not None:
+        value = config.dm_title.strip()
+        if not value:
+            raise HTTPException(400, "红包标题不能为空")
+        SPRING_FESTIVAL_CONFIG["dm_title"] = value
+        await chat_db_manager.set_global_setting("spring_festival_dm_title", value)
+        env_updates["SPRING_FESTIVAL_DM_TITLE"] = value
+        updated["dm_title"] = value
+
+    if config.dm_description is not None:
+        value = config.dm_description.strip()
+        if not value:
+            raise HTTPException(400, "红包描述不能为空")
+        SPRING_FESTIVAL_CONFIG["dm_description"] = value
+        await chat_db_manager.set_global_setting(
+            "spring_festival_dm_description", value
+        )
+        env_updates["SPRING_FESTIVAL_DM_DESCRIPTION"] = value
+        updated["dm_description"] = value
+
+    if config.button_label is not None:
+        value = config.button_label.strip()
+        if not value:
+            raise HTTPException(400, "按钮文案不能为空")
+        SPRING_FESTIVAL_CONFIG["button_label"] = value
+        await chat_db_manager.set_global_setting("spring_festival_button_label", value)
+        env_updates["SPRING_FESTIVAL_BUTTON_LABEL"] = value
+        updated["button_label"] = value
+
+    if config.claimed_label is not None:
+        value = config.claimed_label.strip()
+        if not value:
+            raise HTTPException(400, "已领取文案不能为空")
+        SPRING_FESTIVAL_CONFIG["claimed_label"] = value
+        await chat_db_manager.set_global_setting("spring_festival_claimed_label", value)
+        env_updates["SPRING_FESTIVAL_CLAIMED_LABEL"] = value
+        updated["claimed_label"] = value
+
+    if config.reward_reason is not None:
+        value = config.reward_reason.strip()
+        if not value:
+            raise HTTPException(400, "奖励原因不能为空")
+        SPRING_FESTIVAL_CONFIG["reward_reason"] = value
+        await chat_db_manager.set_global_setting("spring_festival_reward_reason", value)
+        env_updates["SPRING_FESTIVAL_REWARD_REASON"] = value
+        updated["reward_reason"] = value
+
+    if env_updates:
+        try:
+            update_env_file(env_updates)
+        except Exception as e:
+            log.warning(f"写入新春活动环境变量失败: {e}")
+
+    log.info(f"新春活动配置已更新: {updated}")
+    return {"success": True, "updated": updated}
 
 
 # --- 年度总结配置 ---

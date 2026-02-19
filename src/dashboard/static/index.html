@@ -118,6 +118,12 @@
                         <i data-lucide="calendar-check" class="w-5 h-5"></i>
                         <span>年度总结</span>
                     </button>
+                    <button @click="currentTab = 'springFestival'"
+                            :class="currentTab === 'springFestival' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="gift" class="w-5 h-5"></i>
+                        <span>新春活动</span>
+                    </button>
                 </nav>
             </div>
             
@@ -1379,6 +1385,121 @@
                 </div>
             </div>
             
+            <!-- 新春活动设置 -->
+            <div x-show="currentTab === 'springFestival'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">新春活动设置</h2>
+
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 mb-6">
+                    <div class="flex items-center gap-3 mb-4 text-amber-300">
+                        <i data-lucide="sparkles" class="w-5 h-5"></i>
+                        <span class="text-sm">配置新春红包工具的启用状态、每日限制、奖励区间与文案。配置保存后将即时生效。</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-slate-400">活动状态</span>
+                            <i data-lucide="power" class="w-5 h-5" :class="springFestivalForm.enabled ? 'text-green-400' : 'text-red-400'"></i>
+                        </div>
+                        <p class="text-2xl font-bold" :class="springFestivalForm.enabled ? 'text-green-400' : 'text-red-400'" x-text="springFestivalForm.enabled ? '已启用' : '已禁用'"></p>
+                    </div>
+                    <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-slate-400">每日限制</span>
+                            <i data-lucide="calendar-days" class="w-5 h-5" :class="springFestivalForm.daily_limit_enabled ? 'text-blue-400' : 'text-slate-400'"></i>
+                        </div>
+                        <p class="text-2xl font-bold" :class="springFestivalForm.daily_limit_enabled ? 'text-blue-300' : 'text-slate-400'" x-text="springFestivalForm.daily_limit_enabled ? '已开启' : '已关闭'"></p>
+                    </div>
+                </div>
+
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 mb-6">
+                    <h3 class="text-lg font-semibold mb-6 flex items-center gap-2">
+                        <i data-lucide="settings" class="w-5 h-5 text-purple-400"></i>
+                        基础配置
+                    </h3>
+
+                    <div class="space-y-6">
+                        <div class="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg">
+                            <div>
+                                <p class="font-medium">启用新春活动</p>
+                                <p class="text-sm text-slate-400">关闭后将不再发送新春红包</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" x-model="springFestivalForm.enabled" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-600 rounded-full peer peer-checked:bg-purple-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                            </label>
+                        </div>
+
+                        <div class="flex items-center justify-between p-4 bg-slate-700/30 rounded-lg">
+                            <div>
+                                <p class="font-medium">开启每日领取限制</p>
+                                <p class="text-sm text-slate-400">开启后每位用户每天最多领取一次</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" x-model="springFestivalForm.daily_limit_enabled" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-600 rounded-full peer peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                            </label>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">最小红包金额</label>
+                                <input type="number" x-model.number="springFestivalForm.min_reward"
+                                       min="1" max="1000000"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">最大红包金额</label>
+                                <input type="number" x-model.number="springFestivalForm.max_reward"
+                                       min="1" max="1000000"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">私信标题</label>
+                            <input type="text" x-model="springFestivalForm.dm_title"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">私信描述</label>
+                            <textarea x-model="springFestivalForm.dm_description"
+                                      rows="3"
+                                      class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">领取按钮文案</label>
+                                <input type="text" x-model="springFestivalForm.button_label"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">已领取文案</label>
+                                <input type="text" x-model="springFestivalForm.claimed_label"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">奖励记录原因</label>
+                            <input type="text" x-model="springFestivalForm.reward_reason"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">用于账本中的交易记录文案。</p>
+                        </div>
+
+                        <button @click="saveSpringFestivalConfig()"
+                                :disabled="saving"
+                                class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                            <i data-lucide="save" class="w-4 h-4"></i>
+                            <span x-text="saving ? '保存中...' : '保存配置'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- 年度总结设置 -->
             <div x-show="currentTab === 'summary'" x-transition>
                 <h2 class="text-2xl font-bold mb-6">年度总结设置</h2>
@@ -1628,6 +1749,19 @@
                 // 年度总结数据
                 summaryForm: { enabled: true, year: 2025, generation_limit: 3, tier2_threshold: 75 },
                 summaryStats: { total_generated: 0, unique_users: 0 },
+
+                // 新春活动数据
+                springFestivalForm: {
+                    enabled: true,
+                    daily_limit_enabled: true,
+                    min_reward: 500,
+                    max_reward: 1000,
+                    dm_title: '新春红包',
+                    dm_description: '你收到了一份新春祝福，点击按钮开启吧。',
+                    button_label: '开启红包',
+                    claimed_label: '已领取',
+                    reward_reason: '新春红包奖励'
+                },
                 
                 async init() {
                     // 检查是否有保存的密钥
@@ -1764,6 +1898,17 @@
                         this.moderationForm.ban_duration_min = this.config.moderation.ban_duration_min;
                         this.moderationForm.ban_duration_max = this.config.moderation.ban_duration_max;
                     }
+                    if (this.config.spring_festival) {
+                        this.springFestivalForm.enabled = this.config.spring_festival.enabled ?? true;
+                        this.springFestivalForm.daily_limit_enabled = this.config.spring_festival.daily_limit_enabled ?? true;
+                        this.springFestivalForm.min_reward = this.config.spring_festival.min_reward ?? 500;
+                        this.springFestivalForm.max_reward = this.config.spring_festival.max_reward ?? 1000;
+                        this.springFestivalForm.dm_title = this.config.spring_festival.dm_title || '新春红包';
+                        this.springFestivalForm.dm_description = this.config.spring_festival.dm_description || '你收到了一份新春祝福，点击按钮开启吧。';
+                        this.springFestivalForm.button_label = this.config.spring_festival.button_label || '开启红包';
+                        this.springFestivalForm.claimed_label = this.config.spring_festival.claimed_label || '已领取';
+                        this.springFestivalForm.reward_reason = this.config.spring_festival.reward_reason || '新春红包奖励';
+                    }
                     // 加载表情配置
                     this.loadEmojiConfig();
                     // 加载知识库数据
@@ -1773,6 +1918,8 @@
                     this.loadEmbeddingConfig();
                     // 加载管理配置
                     this.loadModerationConfig();
+                    // 加载新春活动配置
+                    this.loadSpringFestivalConfig();
                     // 加载总结配置
                     this.loadSummaryConfig();
                 },
@@ -2096,6 +2243,75 @@
                     }
                 },
                 
+                async loadSpringFestivalConfig() {
+                    try {
+                        const response = await fetch('/api/config/spring-festival', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.springFestivalForm.enabled = data.enabled ?? true;
+                            this.springFestivalForm.daily_limit_enabled = data.daily_limit_enabled ?? true;
+                            this.springFestivalForm.min_reward = data.min_reward ?? 500;
+                            this.springFestivalForm.max_reward = data.max_reward ?? 1000;
+                            this.springFestivalForm.dm_title = data.dm_title || '新春红包';
+                            this.springFestivalForm.dm_description = data.dm_description || '你收到了一份新春祝福，点击按钮开启吧。';
+                            this.springFestivalForm.button_label = data.button_label || '开启红包';
+                            this.springFestivalForm.claimed_label = data.claimed_label || '已领取';
+                            this.springFestivalForm.reward_reason = data.reward_reason || '新春红包奖励';
+                            this.$nextTick(() => lucide.createIcons());
+                        }
+                    } catch (e) {
+                        console.error('加载新春活动配置失败', e);
+                    }
+                },
+
+                async saveSpringFestivalConfig() {
+                    if ((this.springFestivalForm.min_reward ?? 0) <= 0 || (this.springFestivalForm.max_reward ?? 0) <= 0) {
+                        this.showToast('红包金额必须大于 0', 'error');
+                        return;
+                    }
+                    if (this.springFestivalForm.max_reward < this.springFestivalForm.min_reward) {
+                        this.showToast('最大红包金额不能小于最小红包金额', 'error');
+                        return;
+                    }
+
+                    this.saving = true;
+                    try {
+                        const payload = {
+                            enabled: this.springFestivalForm.enabled,
+                            daily_limit_enabled: this.springFestivalForm.daily_limit_enabled,
+                            min_reward: parseInt(this.springFestivalForm.min_reward),
+                            max_reward: parseInt(this.springFestivalForm.max_reward),
+                            dm_title: this.springFestivalForm.dm_title,
+                            dm_description: this.springFestivalForm.dm_description,
+                            button_label: this.springFestivalForm.button_label,
+                            claimed_label: this.springFestivalForm.claimed_label,
+                            reward_reason: this.springFestivalForm.reward_reason,
+                        };
+
+                        const response = await fetch('/api/config/spring-festival', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            this.showToast('新春活动配置已保存', 'success');
+                            await this.loadSpringFestivalConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败: ' + e.message, 'error');
+                    }
+                    this.saving = false;
+                },
+
                 async loadSummaryConfig() {
                     try {
                         const response = await fetch('/api/config/summary', {

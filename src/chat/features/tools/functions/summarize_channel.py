@@ -128,7 +128,7 @@ async def summarize_channel(
 
 
 def text_to_summary_image(
-    text: str, title: str = "Eternum 的总结时间到!"
+    text: str, title: str = "月月的总结时间到!"
 ) -> Optional[bytes]:
     """
     将文本转换为一张自适应高度的长图，能正确处理换行和避让右上角的Logo。

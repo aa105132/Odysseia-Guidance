@@ -44,6 +44,23 @@ SUMMARY_CONFIG = {
     "tier2_threshold": 75,    # Tier 2 好感度阈值
 }
 
+# --- 新春活动配置 ---
+# 这些值作为默认值，可通过 Dashboard 动态修改
+SPRING_FESTIVAL_CONFIG = {
+    "enabled": os.getenv("SPRING_FESTIVAL_ENABLED", "true").lower() == "true",
+    "daily_limit_enabled": os.getenv("SPRING_FESTIVAL_DAILY_LIMIT", "true").lower()
+    == "true",
+    "min_reward": int(os.getenv("SPRING_FESTIVAL_MIN_REWARD", "500")),
+    "max_reward": int(os.getenv("SPRING_FESTIVAL_MAX_REWARD", "1000")),
+    "dm_title": os.getenv("SPRING_FESTIVAL_DM_TITLE", "新春红包"),
+    "dm_description": os.getenv(
+        "SPRING_FESTIVAL_DM_DESCRIPTION", "你收到了一份新春祝福，点击按钮开启吧。"
+    ),
+    "button_label": os.getenv("SPRING_FESTIVAL_BUTTON_LABEL", "开启红包"),
+    "claimed_label": os.getenv("SPRING_FESTIVAL_CLAIMED_LABEL", "已领取"),
+    "reward_reason": os.getenv("SPRING_FESTIVAL_REWARD_REASON", "新春红包奖励"),
+}
+
 
 # --- Gemini AI 配置 ---
 # 定义要使用的 Gemini 模型名称（从环境变量读取）
