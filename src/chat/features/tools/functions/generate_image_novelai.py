@@ -21,6 +21,26 @@ from typing import Optional, List
 
 from src.chat.utils.prompt_utils import replace_emojis
 
+# AI 重写 prompt 的提示词
+AI_REWRITE_PROMPT_TOOL = """You are an expert at creating NovelAI image generation tags. The user wants to improve/rewrite the following prompt while keeping the same theme and subject.
+
+Rules:
+- Keep the same subject, characters, and general theme
+- Improve quality tags, add more details, better composition
+- Use danbooru-style tags, comma-separated
+- Include quality tags: masterpiece, best quality, amazing quality, very aesthetic, absurdres
+- Use weight syntax where appropriate: 1.2::Tag:: for emphasis, 0.8::Tag:: for de-emphasis
+- Output ONLY the improved comma-separated tags, no explanation
+- Aim for 70+ tags with rich details
+
+Original prompt:
+{prompt}
+
+User's description of desired changes:
+{description}
+
+Improved tags:"""
+
 log = logging.getLogger(__name__)
 
 # NovelAI Tag 生成的系统提示词（嵌入工具 docstring，指导 AI 生成高质量 Tag）
@@ -484,6 +504,91 @@ class EditPromptModal(discord.ui.Modal, title="修改提示词"):
                 pass
 
 
+class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
+    """对话工具生成结果 - AI 重写提示词弹窗"""
+
+    description_input = discord.ui.TextInput(
+        label="描述你想要的变化",
+        style=discord.TextStyle.paragraph,
+        placeholder="例如：换成夜晚的场景，加上星空和月亮\n或：改为更动感的姿势，添加战斗元素\n留空则自动优化当前提示词",
+        required=False,
+        max_length=1000,
+    )
+
+    def __init__(
+        self,
+        current_prompt: str,
+        negative_prompt: Optional[str],
+        width: int,
+        height: int,
+        steps: int,
+        scale: float,
+        sampler: str,
+        preset_name: Optional[str],
+        user_id: Optional[str],
+        cost: int,
+    ):
+        super().__init__()
+        self._current_prompt = current_prompt
+        self._negative_prompt = negative_prompt
+        self._width = width
+        self._height = height
+        self._steps = steps
+        self._scale = scale
+        self._sampler = sampler
+        self._preset_name = preset_name
+        self._user_id = user_id
+        self._cost = cost
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+        try:
+            description = self.description_input.value.strip() if self.description_input.value else "自动优化和增强提示词，使画面更精美细腻"
+
+            # 调用 AI 重写 prompt
+            from src.chat.services.gemini_service import gemini_service
+
+            rewrite_prompt = AI_REWRITE_PROMPT_TOOL.format(
+                prompt=self._current_prompt,
+                description=description,
+            )
+            new_tags = await gemini_service.generate_simple_response(
+                prompt=rewrite_prompt,
+                generation_config={
+                    "temperature": 0.8,
+                    "max_output_tokens": 2000,
+                },
+            )
+
+            if not new_tags or not new_tags.strip():
+                await interaction.followup.send("AI 重写失败，请稍后重试。", ephemeral=True)
+                return
+
+            new_prompt = new_tags.strip().strip('"').strip("'")
+            log.info(f"对话工具 AI 重写 prompt 成功: {new_prompt[:100]}...")
+
+            await _regenerate_novelai(
+                interaction=interaction,
+                prompt=new_prompt,
+                negative_prompt=self._negative_prompt,
+                width=self._width,
+                height=self._height,
+                steps=self._steps,
+                scale=self._scale,
+                sampler=self._sampler,
+                preset_name=self._preset_name,
+                user_id=self._user_id,
+                cost=self._cost,
+                title_suffix="（AI 重写）",
+            )
+        except Exception as e:
+            log.error(f"对话工具 AI 重写 prompt 失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"AI 重写失败: {str(e)[:200]}", ephemeral=True)
+            except Exception:
+                pass
+
+
 class NovelAIResultView(discord.ui.View):
     """NovelAI 生成结果的交互按钮"""
 
@@ -587,6 +692,28 @@ class NovelAIResultView(discord.ui.View):
             except Exception:
                 pass
 
+    @discord.ui.button(label="AI 重写", style=discord.ButtonStyle.secondary, row=1)
+    async def ai_rewrite_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """让 AI 根据用户描述重新生成 prompt"""
+        if self._user_id and str(interaction.user.id) != str(self._user_id):
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        modal = ToolAIRewriteModal(
+            current_prompt=self._prompt,
+            negative_prompt=self._negative_prompt,
+            width=self._width,
+            height=self._height,
+            steps=self._steps,
+            scale=self._scale,
+            sampler=self._sampler,
+            preset_name=self._preset_name,
+            user_id=self._user_id,
+            cost=self._cost,
+        )
+        await interaction.response.send_modal(modal)
+
     async def on_timeout(self):
         """超时后禁用所有按钮"""
         for item in self.children:
@@ -612,6 +739,7 @@ async def _regenerate_novelai(
     preset_name: Optional[str],
     user_id: Optional[str],
     cost: int,
+    title_suffix: str = "（重新生成）",
 ):
     """内部函数：使用 NovelAI 重新生成图片"""
     from src.chat.features.novelai_generation.services.novelai_service import novelai_service
@@ -660,7 +788,7 @@ async def _regenerate_novelai(
 
     # 构建 Embed
     embed = discord.Embed(
-        title="NovelAI 图片生成（重新生成）",
+        title=f"NovelAI 图片生成{title_suffix}",
         color=0x9B59B6,
     )
     embed.set_author(
