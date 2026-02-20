@@ -2526,16 +2526,11 @@ class GeminiService:
         if not client:
             raise ValueError("装饰器未能提供客户端实例。")
 
-        loop = asyncio.get_event_loop()
-        gen_config = types.GenerateContentConfig(
-            **generation_config, safety_settings=self.safety_settings
-        )
-
-        response = await loop.run_in_executor(
-            self.executor,
-            lambda: client.models.generate_content(
-                model=model_name, contents=[prompt], config=gen_config
-            ),
+        response = await self._generate_sync_content_with_param_fallback(
+            client=client,
+            model_name=model_name,
+            prompt=prompt,
+            generation_config=generation_config,
         )
 
         if response.parts:
@@ -2650,13 +2645,12 @@ class GeminiService:
             safety_settings=self.safety_settings,
         )
 
+        final_model_name = self.default_model_name
         if thinking_budget is not None and not self._is_no_thinking_model(final_model_name):
             gen_config.thinking_config = types.ThinkingConfig(
                 include_thoughts=True, thinking_budget=thinking_budget
             )
             log.info(f"已为暖贴功能启用思维链 (Thinking)，预算: {thinking_budget}。")
-
-        final_model_name = self.default_model_name
 
         final_contents = self._prepare_api_contents(conversation_history)
 

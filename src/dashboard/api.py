@@ -1958,7 +1958,7 @@ async def _update_emoji_config_route(
 def _persist_emoji_mappings_or_raise() -> None:
     try:
         emoji_config.save_emoji_mappings_to_file()
-    except OSError as e:
+    except Exception as e:
         raise HTTPException(500, f'表情映射持久化失败: {e}') from e
 
 

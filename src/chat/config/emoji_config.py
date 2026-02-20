@@ -484,9 +484,12 @@ def save_emoji_mappings_to_file(file_path: str = None) -> None:
     target_file = file_path or EMOJI_MAPPINGS_PERSIST_FILE
     os.makedirs(os.path.dirname(target_file), exist_ok=True)
     payload = _serialize_default_emoji_mappings()
+    temp_file = f'{target_file}.tmp'
 
-    with open(target_file, 'w', encoding='utf-8') as f:
+    with open(temp_file, 'w', encoding='utf-8') as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    os.replace(temp_file, target_file)
 
 
 load_emoji_mappings_from_file()
