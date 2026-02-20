@@ -441,6 +441,10 @@ def _get_voice_config():
         "SPEED_RATIO": float(os.getenv("VOICE_SPEED_RATIO", "1.0")),
         "VOLUME_RATIO": float(os.getenv("VOICE_VOLUME_RATIO", "1.0")),
         "PITCH_RATIO": float(os.getenv("VOICE_PITCH_RATIO", "1.0")),
+        # 豆包情感参数（主要影响语气风格，如开心/愤怒/悲伤）
+        "EMOTION": os.getenv("VOICE_EMOTION", "").strip(),
+        "ENABLE_EMOTION": _parse_bool_env("VOICE_ENABLE_EMOTION", "False"),
+        "EMOTION_SCALE": float(os.getenv("VOICE_EMOTION_SCALE", "4.0")),
         # 成本与限制
         "VOICE_GENERATION_COST": int(os.getenv("VOICE_GEN_COST", "3")),
         "MAX_TEXT_LENGTH": int(os.getenv("VOICE_MAX_TEXT_LENGTH", "500")),

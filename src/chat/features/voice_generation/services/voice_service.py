@@ -107,6 +107,19 @@ class VoiceGenerationService:
         return max(minimum, min(maximum, v))
 
     @staticmethod
+    def _safe_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return default
+
+    @staticmethod
     def _normalize_format(audio_format: str) -> str:
         fmt = (audio_format or "mp3").strip().lower()
         mapping = {
@@ -245,6 +258,9 @@ class VoiceGenerationService:
         speed_ratio: Optional[float] = None,
         volume_ratio: Optional[float] = None,
         pitch_ratio: Optional[float] = None,
+        emotion: Optional[str] = None,
+        enable_emotion: Optional[bool] = None,
+        emotion_scale: Optional[float] = None,
         user_id: Optional[str] = None,
     ) -> Optional[VoiceResult]:
         if not self.is_available():
@@ -271,6 +287,9 @@ class VoiceGenerationService:
                 speed_ratio=speed_ratio,
                 volume_ratio=volume_ratio,
                 pitch_ratio=pitch_ratio,
+                emotion=emotion,
+                enable_emotion=enable_emotion,
+                emotion_scale=emotion_scale,
                 user_id=user_id,
             )
 
@@ -290,6 +309,9 @@ class VoiceGenerationService:
         speed_ratio: Optional[float],
         volume_ratio: Optional[float],
         pitch_ratio: Optional[float],
+        emotion: Optional[str],
+        enable_emotion: Optional[bool],
+        emotion_scale: Optional[float],
         user_id: Optional[str],
     ) -> Optional[VoiceResult]:
         config = app_config.VOICE_CONFIG
@@ -314,6 +336,13 @@ class VoiceGenerationService:
                 cluster,
                 selected_voice,
             )
+        log.info(
+            "豆包语音路由: voice_type=%s, cluster=%s, resource_id=%s, clone_voice=%s",
+            selected_voice,
+            cluster,
+            resource_id,
+            self._is_doubao_clone_voice(selected_voice),
+        )
 
         requested_format = str(config.get("AUDIO_FORMAT", "mp3")).strip().lower()
         doubao_encoding_map = {
@@ -344,6 +373,35 @@ class VoiceGenerationService:
             minimum=0.1,
             maximum=3.0,
         )
+        selected_emotion = (
+            str(emotion).strip()
+            if emotion is not None
+            else str(config.get("EMOTION", "")).strip()
+        )
+        selected_enable_emotion = (
+            bool(enable_emotion)
+            if enable_emotion is not None
+            else self._safe_bool(config.get("ENABLE_EMOTION", False), False)
+        )
+        selected_emotion_scale = self._safe_float(
+            emotion_scale if emotion_scale is not None else config.get("EMOTION_SCALE", 4.0),
+            default=4.0,
+            minimum=1.0,
+            maximum=5.0,
+        )
+
+        audio_payload = {
+            "voice_type": selected_voice,
+            "encoding": encoding,
+            "speed_ratio": speed,
+            "volume_ratio": volume,
+            "pitch_ratio": pitch,
+        }
+        if selected_emotion:
+            audio_payload["emotion"] = selected_emotion
+        if selected_emotion or selected_enable_emotion or enable_emotion is not None:
+            audio_payload["enable_emotion"] = bool(selected_enable_emotion)
+            audio_payload["emotion_scale"] = selected_emotion_scale
 
         payload = {
             "app": {
@@ -354,13 +412,7 @@ class VoiceGenerationService:
             "user": {
                 "uid": str(user_id or "odysseia-guidance"),
             },
-            "audio": {
-                "voice_type": selected_voice,
-                "encoding": encoding,
-                "speed_ratio": speed,
-                "volume_ratio": volume,
-                "pitch_ratio": pitch,
-            },
+            "audio": audio_payload,
             "request": {
                 "reqid": str(uuid.uuid4()),
                 "text": text,

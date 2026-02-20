@@ -137,6 +137,9 @@ class VoiceConfigUpdate(BaseModel):
     speed_ratio: Optional[float] = None
     volume_ratio: Optional[float] = None
     pitch_ratio: Optional[float] = None
+    emotion: Optional[str] = None
+    enable_emotion: Optional[bool] = None
+    emotion_scale: Optional[float] = None
     generation_cost: Optional[int] = None
     max_text_length: Optional[int] = None
     request_timeout_seconds: Optional[int] = None
@@ -146,6 +149,9 @@ class VoiceTestRequest(BaseModel):
     """语音测试请求"""
     text: str
     voice_type: Optional[str] = None
+    emotion: Optional[str] = None
+    enable_emotion: Optional[bool] = None
+    emotion_scale: Optional[float] = None
 
 
 class NovelAIConfigUpdate(BaseModel):
@@ -643,6 +649,9 @@ async def get_all_config(token: str = Depends(verify_token)):
             "speed_ratio": voice_config.get("SPEED_RATIO", 1.0),
             "volume_ratio": voice_config.get("VOLUME_RATIO", 1.0),
             "pitch_ratio": voice_config.get("PITCH_RATIO", 1.0),
+            "emotion": str(voice_config.get("EMOTION", "")).strip(),
+            "enable_emotion": bool(voice_config.get("ENABLE_EMOTION", False)),
+            "emotion_scale": float(voice_config.get("EMOTION_SCALE", 4.0)),
             "generation_cost": voice_config.get("VOICE_GENERATION_COST", 3),
             "max_text_length": voice_config.get("MAX_TEXT_LENGTH", 500),
             "request_timeout_seconds": voice_config.get("REQUEST_TIMEOUT_SECONDS", 120),
@@ -1634,6 +1643,9 @@ async def get_voice_config(token: str = Depends(verify_token)):
     db_speed_ratio = await chat_db_manager.get_global_setting("voice_speed_ratio")
     db_volume_ratio = await chat_db_manager.get_global_setting("voice_volume_ratio")
     db_pitch_ratio = await chat_db_manager.get_global_setting("voice_pitch_ratio")
+    db_emotion = await chat_db_manager.get_global_setting("voice_emotion")
+    db_enable_emotion = await chat_db_manager.get_global_setting("voice_enable_emotion")
+    db_emotion_scale = await chat_db_manager.get_global_setting("voice_emotion_scale")
     db_generation_cost = await chat_db_manager.get_global_setting("voice_generation_cost")
     db_max_text_length = await chat_db_manager.get_global_setting("voice_max_text_length")
     db_timeout_seconds = await chat_db_manager.get_global_setting("voice_timeout_seconds")
@@ -1687,6 +1699,23 @@ async def get_voice_config(token: str = Depends(verify_token)):
     speed_ratio = float(db_speed_ratio) if db_speed_ratio is not None else float(config.get("SPEED_RATIO", 1.0))
     volume_ratio = float(db_volume_ratio) if db_volume_ratio is not None else float(config.get("VOLUME_RATIO", 1.0))
     pitch_ratio = float(db_pitch_ratio) if db_pitch_ratio is not None else float(config.get("PITCH_RATIO", 1.0))
+    emotion = str(
+        db_emotion if db_emotion is not None else config.get("EMOTION", "")
+    ).strip()
+    enable_emotion = (
+        str(db_enable_emotion).strip().lower() == "true"
+        if db_enable_emotion is not None
+        else bool(config.get("ENABLE_EMOTION", False))
+    )
+    emotion_scale = (
+        float(db_emotion_scale)
+        if db_emotion_scale is not None
+        else float(config.get("EMOTION_SCALE", 4.0))
+    )
+    if emotion_scale < 1.0:
+        emotion_scale = 1.0
+    elif emotion_scale > 5.0:
+        emotion_scale = 5.0
     generation_cost = (
         int(db_generation_cost)
         if db_generation_cost is not None
@@ -1748,6 +1777,9 @@ async def get_voice_config(token: str = Depends(verify_token)):
         "speed_ratio": speed_ratio,
         "volume_ratio": volume_ratio,
         "pitch_ratio": pitch_ratio,
+        "emotion": emotion,
+        "enable_emotion": enable_emotion,
+        "emotion_scale": emotion_scale,
         "generation_cost": generation_cost,
         "max_text_length": max_text_length,
         "request_timeout_seconds": request_timeout_seconds,
@@ -1965,6 +1997,34 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
         updated["pitch_ratio"] = pitch_ratio
         await chat_db_manager.set_global_setting("voice_pitch_ratio", str(pitch_ratio))
 
+    if config.emotion is not None:
+        emotion = str(config.emotion).strip()
+        chat_config.VOICE_CONFIG["EMOTION"] = emotion
+        os.environ["VOICE_EMOTION"] = emotion
+        env_updates["VOICE_EMOTION"] = emotion
+        updated["emotion"] = emotion
+        await chat_db_manager.set_global_setting("voice_emotion", emotion)
+
+    if config.enable_emotion is not None:
+        enable_emotion = bool(config.enable_emotion)
+        chat_config.VOICE_CONFIG["ENABLE_EMOTION"] = enable_emotion
+        os.environ["VOICE_ENABLE_EMOTION"] = str(enable_emotion).lower()
+        env_updates["VOICE_ENABLE_EMOTION"] = str(enable_emotion).lower()
+        updated["enable_emotion"] = enable_emotion
+        await chat_db_manager.set_global_setting(
+            "voice_enable_emotion", str(enable_emotion).lower()
+        )
+
+    if config.emotion_scale is not None:
+        emotion_scale = float(config.emotion_scale)
+        if not 1.0 <= emotion_scale <= 5.0:
+            raise HTTPException(400, "情感强度必须在 1.0 到 5.0 之间")
+        chat_config.VOICE_CONFIG["EMOTION_SCALE"] = emotion_scale
+        os.environ["VOICE_EMOTION_SCALE"] = str(emotion_scale)
+        env_updates["VOICE_EMOTION_SCALE"] = str(emotion_scale)
+        updated["emotion_scale"] = emotion_scale
+        await chat_db_manager.set_global_setting("voice_emotion_scale", str(emotion_scale))
+
     if config.generation_cost is not None:
         if config.generation_cost < 0:
             raise HTTPException(400, "语音生成成本不能为负数")
@@ -2026,6 +2086,11 @@ async def test_voice_generation(
         raise HTTPException(400, "测试文本不能超过 5000 字符")
 
     selected_voice_type = (payload.voice_type or "").strip() or None
+    selected_emotion = (payload.emotion or "").strip() or None
+    selected_enable_emotion = payload.enable_emotion
+    selected_emotion_scale = payload.emotion_scale
+    if selected_emotion_scale is not None and not (1.0 <= float(selected_emotion_scale) <= 5.0):
+        raise HTTPException(400, "测试情感强度必须在 1.0 到 5.0 之间")
 
     try:
         from src.chat.features.voice_generation.services.voice_service import (
@@ -2042,6 +2107,9 @@ async def test_voice_generation(
         voice_result = await vs.generate_voice(
             text=text,
             voice_type=selected_voice_type,
+            emotion=selected_emotion,
+            enable_emotion=selected_enable_emotion,
+            emotion_scale=selected_emotion_scale,
         )
         if voice_result is None or not voice_result.audio_bytes:
             raise HTTPException(500, "语音生成失败，请检查配置或稍后重试")

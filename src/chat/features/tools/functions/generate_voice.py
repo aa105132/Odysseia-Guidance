@@ -205,6 +205,9 @@ async def generate_voice(
     speed_ratio: Optional[float] = None,
     volume_ratio: Optional[float] = None,
     pitch_ratio: Optional[float] = None,
+    emotion: Optional[str] = None,
+    enable_emotion: Optional[bool] = None,
+    emotion_scale: Optional[float] = None,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     force_send: bool = False,
@@ -217,7 +220,7 @@ async def generate_voice(
     - 这个工具是「可选工具」，不是每轮都必须调用。
     - 当你（月月）想用语音表达时，可以主动调用（想发就发，不想发就不用发）。
     - 当用户明确说“发语音”“语音回复”“念出来”等需求时，也可以调用。
-    - 支持通过参数覆盖音色、语速、音量、音调。
+    - 支持通过参数覆盖音色、语速、音量、音调、情感风格。
 
     Args:
         text: 要合成语音的文本内容。
@@ -225,6 +228,9 @@ async def generate_voice(
         speed_ratio: （可选）语速倍率，建议 0.2~3.0。
         volume_ratio: （可选）音量倍率，建议 0.2~3.0。
         pitch_ratio: （可选）音调倍率，建议 0.1~3.0。
+        emotion: （可选）情感风格，例如 happy / angry / sad（具体以提供商支持为准）。
+        enable_emotion: （可选）是否启用情感增强。
+        emotion_scale: （可选）情感强度，建议 1.0~5.0。
         preview_message: （已弃用）请保持为空。语音模式下不再发送预告文字。
         success_message: （已弃用）请保持为空。语音模式下不再发送成功补充文字。
         force_send: 是否强制执行发送。默认 False。通常无需设置，除非你明确要无条件发语音。
@@ -307,6 +313,9 @@ async def generate_voice(
             speed_ratio=speed_ratio,
             volume_ratio=volume_ratio,
             pitch_ratio=pitch_ratio,
+            emotion=emotion,
+            enable_emotion=enable_emotion,
+            emotion_scale=emotion_scale,
             user_id=str(parsed_user_id) if parsed_user_id is not None else None,
         )
 
