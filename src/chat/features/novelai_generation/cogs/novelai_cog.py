@@ -72,7 +72,21 @@ class NovelAICog(commands.Cog):
         user_id = interaction.user.id
         session = NovelAISession()
 
-        # 会话默认参数直接跟随 Dashboard NovelAI 全局配置
+        # 用户持久化参数优先；无持久化时回退 Dashboard 全局参数
+        try:
+            generation_settings = await chat_db_manager.get_novelai_generation_settings(user_id)
+            if generation_settings.get("_from_user"):
+                session.width = int(generation_settings.get("width", session.width))
+                session.height = int(generation_settings.get("height", session.height))
+                session.steps = int(generation_settings.get("steps", session.steps))
+                session.scale = float(generation_settings.get("scale", session.scale))
+                session.sampler = str(generation_settings.get("sampler", session.sampler))
+                log.info(f"/draw 已加载用户 {user_id} 的持久化生图参数")
+            else:
+                log.info(f"/draw 用户 {user_id} 无持久化生图参数，使用 Dashboard 默认参数")
+        except Exception as e:
+            log.warning(f"加载用户 {user_id} 的 NovelAI 持久化生图参数失败: {e}")
+
         size_label = None
         for label, (w, h) in SIZE_PRESETS.items():
             if w == session.width and h == session.height:

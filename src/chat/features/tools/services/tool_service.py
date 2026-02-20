@@ -223,6 +223,17 @@ class ToolService:
                     )
                 tool_args["user_id"] = user_id_str
 
+            # --- 安全加固：图片生成工具始终绑定当前用户（用于读取用户持久化参数）---
+            image_tools_bind_user = {"generate_image_novelai", "generate_image", "edit_image"}
+            if tool_name in image_tools_bind_user and user_id is not None:
+                user_id_str = str(user_id)
+                if tool_args.get("user_id") != user_id_str:
+                    log.info(
+                        f"图片工具 {tool_name} 强制使用当前用户 user_id={user_id_str} "
+                        f"(原始值: {tool_args.get('user_id')})"
+                    )
+                tool_args["user_id"] = user_id_str
+
             # 步骤 5: 执行工具函数
             result = await tool_function(**tool_args)
             if log_detailed:

@@ -2079,7 +2079,7 @@ class ChatDatabaseManager:
         )
 
         if not row:
-            return defaults
+            return {**defaults, "_from_user": False}
 
         valid_samplers = {
             "k_euler", "k_euler_ancestral", "k_dpmpp_2s_ancestral",
@@ -2103,6 +2103,7 @@ class ChatDatabaseManager:
             "scale": max(1.0, min(10.0, scale)),
             "sampler": sampler,
             "model": model,
+            "_from_user": True,
         }
 
     async def set_novelai_generation_settings(

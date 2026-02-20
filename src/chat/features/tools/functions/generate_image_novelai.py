@@ -18,7 +18,7 @@ import logging
 import io
 import random
 import discord
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Dict
 
 from src.chat.utils.prompt_utils import replace_emojis
 from src.chat.config.chat_config import NOVELAI_CONFIG
@@ -55,95 +55,6 @@ def _prompt_already_contains_artist(prompt: str, artist_string: str) -> bool:
     return match_count > len(artist_tags) // 2
 
 
-def _extract_preset_name_tokens(name: str) -> List[str]:
-    """提取预设名称中的可匹配关键词。"""
-    import re
-
-    if not name:
-        return []
-
-    raw_tokens = re.findall(r"[a-zA-Z0-9_]{2,}|[\u4e00-\u9fff]{2,}", name.lower())
-    tokens: List[str] = []
-    seen = set()
-    for token in raw_tokens:
-        normalized = token.strip("_- ")
-        if len(normalized) < 2:
-            continue
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        tokens.append(normalized)
-    return tokens
-
-
-def _extract_artist_hints(artist_string: str, limit: int = 10) -> List[str]:
-    """从画师串中提取可用于场景匹配的提示片段。"""
-    import re
-
-    if not artist_string:
-        return []
-
-    hints: List[str] = []
-    for raw_tag in artist_string.split(","):
-        tag = raw_tag.strip().lower()
-        if not tag:
-            continue
-
-        # 去掉权重语法前后缀，例如 1.3::tag::
-        tag = re.sub(r"^\d+(?:\.\d+)?::", "", tag)
-        tag = re.sub(r"::$", "", tag)
-        tag = tag.replace("_", " ")
-        tag = re.sub(r"\s+", " ", tag).strip()
-        if not tag:
-            continue
-
-        hints.append(tag)
-        if len(hints) >= limit:
-            break
-
-    return hints
-
-
-def _score_preset_for_prompt(prompt: str, preset: dict) -> int:
-    """根据 prompt 与预设内容计算匹配分数。"""
-    prompt_lower = (prompt or "").lower()
-    if not prompt_lower:
-        return 0
-
-    score = 0
-
-    preset_name = str(preset.get("name") or "")
-    for token in _extract_preset_name_tokens(preset_name):
-        if token in prompt_lower:
-            score += 6
-
-    artist_string = str(preset.get("artist_string") or "")
-    for hint in _extract_artist_hints(artist_string):
-        if hint and hint in prompt_lower:
-            score += 3
-
-    return score
-
-
-def _select_scene_matched_preset(
-    prompt: str,
-    user_presets: List[dict],
-    admin_presets: List[dict],
-) -> Tuple[Optional[dict], Optional[str], int]:
-    """按场景 prompt 自动挑选最匹配的预设。"""
-    best_preset: Optional[dict] = None
-    best_scope: Optional[str] = None
-    best_score = 0
-
-    for scope, presets in (("user", user_presets), ("admin", admin_presets)):
-        for preset in presets:
-            score = _score_preset_for_prompt(prompt, preset)
-            if score > best_score:
-                best_score = score
-                best_preset = preset
-                best_scope = scope
-
-    return best_preset, best_scope, best_score
 
 
 async def generate_image_novelai(
@@ -423,7 +334,30 @@ async def generate_image_novelai(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
-    # 读取数据库中的实时全局配置（优先于进程内缓存）
+    # 兜底：若工具参数里的 user_id 异常，尝试从上下文对象恢复
+    if parsed_user_id is None:
+        request_user = kwargs.get("request_user")
+        if request_user is not None and hasattr(request_user, "id"):
+            try:
+                parsed_user_id = int(request_user.id)
+            except (ValueError, TypeError):
+                parsed_user_id = None
+
+    if parsed_user_id is None and message is not None and hasattr(message, "author") and getattr(message, "author", None):
+        try:
+            parsed_user_id = int(message.author.id)
+        except (ValueError, TypeError):
+            parsed_user_id = None
+
+    if parsed_user_id is None:
+        author_id = kwargs.get("author_id")
+        if author_id is not None:
+            try:
+                parsed_user_id = int(author_id)
+            except (ValueError, TypeError):
+                parsed_user_id = None
+
+    # 读取数据库中的实时全局配置（Dashboard），作为兜底默认值
     default_width = int(NOVELAI_CONFIG.get("DEFAULT_WIDTH", 832))
     default_height = int(NOVELAI_CONFIG.get("DEFAULT_HEIGHT", 1216))
     default_steps = int(NOVELAI_CONFIG.get("DEFAULT_STEPS", 28))
@@ -458,12 +392,62 @@ async def generate_image_novelai(
     except Exception as e:
         log.warning(f"读取 NovelAI 实时全局配置失败，将回退到进程内配置: {e}")
 
-    width = default_width if width is None else width
-    height = default_height if height is None else height
-    steps = default_steps if steps is None else steps
-    scale = default_scale if scale is None else scale
-    sampler = default_sampler if not sampler else sampler
-    model = default_model if not model else model
+    # 用户持久化参数优先；仅在用户无持久化时回退 Dashboard 全局参数
+    user_generation_settings: Dict[str, object] = {}
+    has_user_generation_settings = False
+    if parsed_user_id is not None:
+        try:
+            user_generation_settings = await chat_db_manager.get_novelai_generation_settings(parsed_user_id)
+            has_user_generation_settings = bool(user_generation_settings.get("_from_user"))
+        except Exception as e:
+            log.warning(f"读取用户 {parsed_user_id} 的 NovelAI 持久化参数失败: {e}")
+
+    user_width = int(user_generation_settings.get("width", default_width))
+    user_height = int(user_generation_settings.get("height", default_height))
+    user_steps = int(user_generation_settings.get("steps", default_steps))
+    user_scale = float(user_generation_settings.get("scale", default_scale))
+    user_sampler = str(user_generation_settings.get("sampler", default_sampler))
+    user_model = str(user_generation_settings.get("model", default_model))
+
+    def _resolve_int_param(incoming_value, user_value: int, global_default: int) -> int:
+        if incoming_value is None:
+            return user_value if has_user_generation_settings else global_default
+        try:
+            normalized = int(incoming_value)
+        except (TypeError, ValueError):
+            normalized = global_default
+
+        if has_user_generation_settings and normalized == global_default and user_value != global_default:
+            return user_value
+        return normalized
+
+    def _resolve_float_param(incoming_value, user_value: float, global_default: float) -> float:
+        if incoming_value is None:
+            return user_value if has_user_generation_settings else global_default
+        try:
+            normalized = float(incoming_value)
+        except (TypeError, ValueError):
+            normalized = global_default
+
+        if has_user_generation_settings and normalized == global_default and user_value != global_default:
+            return user_value
+        return normalized
+
+    def _resolve_str_param(incoming_value, user_value: str, global_default: str) -> str:
+        normalized = str(incoming_value).strip() if incoming_value is not None else ""
+        if not normalized:
+            return user_value if has_user_generation_settings else global_default
+
+        if has_user_generation_settings and normalized == global_default and user_value != global_default:
+            return user_value
+        return normalized
+
+    width = _resolve_int_param(width, user_width, default_width)
+    height = _resolve_int_param(height, user_height, default_height)
+    steps = _resolve_int_param(steps, user_steps, default_steps)
+    scale = _resolve_float_param(scale, user_scale, default_scale)
+    sampler = _resolve_str_param(sampler, user_sampler, default_sampler)
+    model = _resolve_str_param(model, user_model, default_model)
 
     # 检查是否处于绘图封禁状态
     if parsed_user_id is not None:
@@ -494,9 +478,7 @@ async def generate_image_novelai(
     # skip_artist_prefix=True 时跳过所有画师串拼接
     # 1) 指定 preset_name 时，先匹配用户预设，再匹配管理员预设（均支持大小写不敏感）
     # 2) 未指定 preset_name 时，优先读取用户持久化画师串模式（default/preset/none）
-    # 3) 若仍未指定：先按 prompt 自动匹配最合适预设（用户+管理员）
-    # 4) 若自动匹配分数不足（不稳定判断），回退用户预设（最新一条）
-    # 5) 若用户无预设，再回退全局默认画师串
+    # 3) 若仍无可用预设，则回退全局默认画师串
     final_prompt = prompt
     applied_artist = False
     effective_preset_name: Optional[str] = None
@@ -633,31 +615,9 @@ async def generate_image_novelai(
                     f"未找到用户或管理员预设 '{normalized_preset_name}'，将继续使用全局默认画师串（或无前缀）"
                 )
         else:
-            # 未指定预设名：先自动匹配；若不稳定则回退用户预设；再回退全局默认
-            AUTO_PRESET_CONFIDENCE_SCORE = 10
-            best_preset, best_scope, best_score = _select_scene_matched_preset(
-                prompt=prompt,
-                user_presets=user_presets,
-                admin_presets=admin_presets,
-            )
-
-            if best_preset and best_scope and best_score >= AUTO_PRESET_CONFIDENCE_SCORE:
-                selected_preset = best_preset
-                selected_scope = best_scope
-                matched_name = str(best_preset.get('name') or 'unknown')
-                log.info(f'Auto-selected artist preset by scene: {best_scope}/{matched_name} (score={best_score})')
-            else:
-                selected_preset = next(
-                    (p for p in user_presets if str(p.get('artist_string') or '').strip()),
-                    None,
-                )
-                if selected_preset:
-                    selected_scope = 'user'
-                    fallback_name = str(selected_preset.get('name') or 'unknown')
-                    log.info(f'Scene match not confident (score={best_score}), fallback to user preset: {fallback_name}')
-                else:
-                    selected_scope = None
-                    log.info('No confident scene preset and no user preset; fallback to global default artist string')
+            # 未指定预设名：不自动套“最近预设/场景匹配预设”，仅使用用户持久化模式或全局默认
+            selected_preset = None
+            selected_scope = None
 
         if selected_preset and selected_preset.get("artist_string"):
             artist_str = selected_preset["artist_string"]

@@ -331,6 +331,8 @@ class NovelAIDrawPanel(discord.ui.View):
         await interaction.response.defer(thinking=True)
 
         try:
+            await _persist_novelai_generation_settings(self.user_id, self.session)
+
             # === 根据模式构建最终提示词 ===
             final_prompt = await self._build_final_prompt()
 
