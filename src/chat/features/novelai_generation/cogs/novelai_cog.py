@@ -12,9 +12,34 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.chat.features.novelai_generation.services.novelai_service import novelai_service
+from src.chat.config.chat_config import NOVELAI_CONFIG
 from src.chat.utils.database import chat_db_manager
 
 log = logging.getLogger(__name__)
+
+
+async def _sync_novelai_runtime_config_from_db() -> None:
+    """将数据库中的 NovelAI 全局配置同步到运行时配置。"""
+    mapping = [
+        ("novelai_model", "MODEL", str),
+        ("novelai_default_width", "DEFAULT_WIDTH", int),
+        ("novelai_default_height", "DEFAULT_HEIGHT", int),
+        ("novelai_default_steps", "DEFAULT_STEPS", int),
+        ("novelai_default_scale", "DEFAULT_SCALE", float),
+        ("novelai_default_sampler", "DEFAULT_SAMPLER", str),
+        ("novelai_generation_cost", "IMAGE_GENERATION_COST", int),
+        ("novelai_default_negative", "DEFAULT_NEGATIVE_PROMPT", str),
+        ("novelai_default_artist_string", "DEFAULT_ARTIST_STRING", str),
+    ]
+
+    for db_key, config_key, caster in mapping:
+        try:
+            raw_value = await chat_db_manager.get_global_setting(db_key)
+            if raw_value is None:
+                continue
+            NOVELAI_CONFIG[config_key] = caster(raw_value)
+        except Exception as e:
+            log.warning(f"同步 NovelAI 配置失败: {db_key} -> {config_key}, error={e}")
 
 
 class NovelAICog(commands.Cog):
@@ -32,6 +57,11 @@ class NovelAICog(commands.Cog):
         """打开 NovelAI 绘图面板"""
         from ..ui.views import NovelAIDrawPanel, NovelAISession, SIZE_PRESETS
 
+        try:
+            await _sync_novelai_runtime_config_from_db()
+        except Exception as e:
+            log.warning(f"打开 /draw 前同步 NovelAI 运行时配置失败: {e}")
+
         if not novelai_service.is_available():
             await interaction.response.send_message(
                 "NovelAI 绘图服务当前未启用。请联系管理员在 Dashboard 中配置。",
@@ -42,23 +72,13 @@ class NovelAICog(commands.Cog):
         user_id = interaction.user.id
         session = NovelAISession()
 
-        # 读取用户持久化的生成参数偏好
-        try:
-            generation_settings = await chat_db_manager.get_novelai_generation_settings(user_id)
-            session.width = generation_settings.get("width", session.width)
-            session.height = generation_settings.get("height", session.height)
-            session.steps = generation_settings.get("steps", session.steps)
-            session.scale = generation_settings.get("scale", session.scale)
-            session.sampler = generation_settings.get("sampler", session.sampler)
-
-            size_label = None
-            for label, (w, h) in SIZE_PRESETS.items():
-                if w == session.width and h == session.height:
-                    size_label = label
-                    break
-            session.size_label = size_label or f"{session.width}x{session.height}"
-        except Exception as e:
-            log.warning(f"加载用户 {user_id} 的 NovelAI 生成参数偏好失败: {e}")
+        # 会话默认参数直接跟随 Dashboard NovelAI 全局配置
+        size_label = None
+        for label, (w, h) in SIZE_PRESETS.items():
+            if w == session.width and h == session.height:
+                size_label = label
+                break
+        session.size_label = size_label or f"{session.width}x{session.height}"
 
         # 读取用户持久化的画师串模式
         try:

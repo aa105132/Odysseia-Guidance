@@ -1244,8 +1244,14 @@
                         <div class="flex items-center gap-2">
                             <button @click="saveNovelaiAdminPreset()"
                                     class="bg-purple-600/80 hover:bg-purple-500/80 text-white px-3 py-2 rounded-lg transition-all text-sm flex items-center gap-1.5">
-                                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
-                                保存/更新
+                                <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                                <span x-text="novelaiAdminPresetEditingId ? '保存修改' : '保存/更新'"></span>
+                            </button>
+                            <button x-show="novelaiAdminPresetEditingId"
+                                    @click="cancelEditNovelaiAdminPreset()"
+                                    class="bg-slate-700/60 hover:bg-slate-600/60 text-slate-200 px-3 py-2 rounded-lg transition-all text-sm flex items-center gap-1.5">
+                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                                取消编辑
                             </button>
                             <button @click="loadNovelaiAdminPresets()"
                                     class="bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 px-3 py-2 rounded-lg transition-all text-sm flex items-center gap-1.5">
@@ -1262,10 +1268,16 @@
                             <div class="bg-slate-700/30 rounded-lg p-4 space-y-2">
                                 <div class="flex items-center justify-between">
                                     <span class="font-medium text-sm" x-text="preset.name"></span>
-                                    <button @click="deleteNovelaiAdminPreset(preset.id, preset.name)"
-                                            class="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded hover:bg-red-500/20 transition-all">
-                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                                    </button>
+                                    <div class="flex items-center gap-2">
+                                        <button @click="startEditNovelaiAdminPreset(preset)"
+                                                class="text-sky-400 hover:text-sky-300 text-xs px-2 py-1 rounded hover:bg-sky-500/20 transition-all">
+                                            <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                                        </button>
+                                        <button @click="deleteNovelaiAdminPreset(preset.id, preset.name)"
+                                                class="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded hover:bg-red-500/20 transition-all">
+                                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="text-xs text-slate-400 bg-slate-800/50 p-2 rounded font-mono break-all"
                                      x-text="preset.artist_string.length > 260 ? preset.artist_string.slice(0, 260) + '...' : preset.artist_string">
@@ -2313,6 +2325,7 @@
                 novelaiPresets: [],
                 novelaiAdminPresets: [],
                 novelaiAdminPresetForm: { name: '', artist_string: '' },
+                novelaiAdminPresetEditingId: null,
                 showNovelaiApiToken: false,
                 defaultImageEngine: 'imagen',
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
@@ -3547,6 +3560,19 @@
                     }
                 },
 
+                startEditNovelaiAdminPreset(preset) {
+                    this.novelaiAdminPresetEditingId = preset.id;
+                    this.novelaiAdminPresetForm.name = preset.name || '';
+                    this.novelaiAdminPresetForm.artist_string = preset.artist_string || '';
+                    this.showToast(`正在编辑「${preset.name}」`, 'success');
+                },
+
+                cancelEditNovelaiAdminPreset() {
+                    this.novelaiAdminPresetEditingId = null;
+                    this.novelaiAdminPresetForm.name = '';
+                    this.novelaiAdminPresetForm.artist_string = '';
+                },
+
                 async saveNovelaiAdminPreset() {
                     const name = (this.novelaiAdminPresetForm.name || '').trim();
                     const artistString = (this.novelaiAdminPresetForm.artist_string || '').trim();
@@ -3557,8 +3583,14 @@
                     }
 
                     try {
-                        const response = await fetch('/api/config/novelai/admin-presets', {
-                            method: 'POST',
+                        const editingId = this.novelaiAdminPresetEditingId;
+                        const url = editingId
+                            ? `/api/config/novelai/admin-presets/${editingId}`
+                            : '/api/config/novelai/admin-presets';
+                        const method = editingId ? 'PUT' : 'POST';
+
+                        const response = await fetch(url, {
+                            method,
                             headers: {
                                 'Content-Type': 'application/json',
                                 'Authorization': `Bearer ${this.secretKey}`
@@ -3570,9 +3602,11 @@
                         });
 
                         if (response.ok) {
-                            this.showToast(`已保存管理员预设「${name}」`, 'success');
-                            this.novelaiAdminPresetForm.name = '';
-                            this.novelaiAdminPresetForm.artist_string = '';
+                            this.showToast(
+                                editingId ? `已更新管理员预设「${name}」` : `已保存管理员预设「${name}」`,
+                                'success'
+                            );
+                            this.cancelEditNovelaiAdminPreset();
                             await this.loadNovelaiAdminPresets();
                         } else {
                             const data = await response.json();
@@ -3592,6 +3626,9 @@
                         });
                         if (response.ok) {
                             this.showToast(`已删除管理员预设「${presetName}」`, 'success');
+                            if (this.novelaiAdminPresetEditingId === presetId) {
+                                this.cancelEditNovelaiAdminPreset();
+                            }
                             await this.loadNovelaiAdminPresets();
                         } else {
                             this.showToast('删除管理员预设失败', 'error');

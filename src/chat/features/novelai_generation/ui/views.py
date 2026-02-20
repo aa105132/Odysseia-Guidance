@@ -1360,6 +1360,16 @@ async def _slash_regenerate_novelai(
     title_suffix: str = "（重新生成）",
 ):
     """内部函数：斜杠命令 NovelAI 重新生成图片"""
+    from src.chat.utils.database import chat_db_manager
+
+    # 成本实时读取数据库配置（避免旧消息按钮使用到历史成本）
+    try:
+        db_generation_cost = await chat_db_manager.get_global_setting("novelai_generation_cost")
+        if db_generation_cost is not None:
+            cost = int(db_generation_cost)
+    except Exception as e:
+        log.warning(f"斜杠重新生成读取实时成本配置失败，回退到当前值 {cost}: {e}")
+
     # 检查余额
     if cost > 0:
         balance = await coin_service.get_balance(user_id)

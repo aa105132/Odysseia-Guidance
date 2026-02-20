@@ -18,9 +18,10 @@ import logging
 import io
 import random
 import discord
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 from src.chat.utils.prompt_utils import replace_emojis
+from src.chat.config.chat_config import NOVELAI_CONFIG
 from src.chat.features.novelai_generation.tag_rules import (
     NOVELAI_TAG_RULES,
     TAG_LIBRARY_COMPACT,
@@ -374,6 +375,14 @@ async def generate_image_novelai(
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
     from src.chat.utils.database import chat_db_manager
 
+    # 成本实时读取数据库配置（避免旧消息按钮使用到历史成本）
+    try:
+        db_generation_cost = await chat_db_manager.get_global_setting("novelai_generation_cost")
+        if db_generation_cost is not None:
+            cost = int(db_generation_cost)
+    except Exception as e:
+        log.warning(f"重新生成读取实时成本配置失败，回退到当前值 {cost}: {e}")
+
     # 获取消息对象
     message: Optional[discord.Message] = kwargs.get("message")
 
@@ -412,27 +421,47 @@ async def generate_image_novelai(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
-    # 读取用户持久化的生成参数（用于补全未显式传入的参数）
-    generation_settings = {}
-    if parsed_user_id is not None:
-        try:
-            generation_settings = await chat_db_manager.get_novelai_generation_settings(parsed_user_id)
-        except Exception as e:
-            log.warning(f"读取用户生成参数偏好失败: {e}")
-
+    # 读取数据库中的实时全局配置（优先于进程内缓存）
     default_width = int(NOVELAI_CONFIG.get("DEFAULT_WIDTH", 832))
     default_height = int(NOVELAI_CONFIG.get("DEFAULT_HEIGHT", 1216))
     default_steps = int(NOVELAI_CONFIG.get("DEFAULT_STEPS", 28))
     default_scale = float(NOVELAI_CONFIG.get("DEFAULT_SCALE", 5.0))
     default_sampler = str(NOVELAI_CONFIG.get("DEFAULT_SAMPLER", "k_euler_ancestral"))
     default_model = str(NOVELAI_CONFIG.get("MODEL", "nai-diffusion-4-5-full"))
+    generation_cost = int(NOVELAI_CONFIG.get("IMAGE_GENERATION_COST", 5))
 
-    width = generation_settings.get("width", default_width) if width is None else width
-    height = generation_settings.get("height", default_height) if height is None else height
-    steps = generation_settings.get("steps", default_steps) if steps is None else steps
-    scale = generation_settings.get("scale", default_scale) if scale is None else scale
-    sampler = generation_settings.get("sampler", default_sampler) if not sampler else sampler
-    model = generation_settings.get("model", default_model) if not model else model
+    try:
+        db_default_width = await chat_db_manager.get_global_setting("novelai_default_width")
+        db_default_height = await chat_db_manager.get_global_setting("novelai_default_height")
+        db_default_steps = await chat_db_manager.get_global_setting("novelai_default_steps")
+        db_default_scale = await chat_db_manager.get_global_setting("novelai_default_scale")
+        db_default_sampler = await chat_db_manager.get_global_setting("novelai_default_sampler")
+        db_model = await chat_db_manager.get_global_setting("novelai_model")
+        db_generation_cost = await chat_db_manager.get_global_setting("novelai_generation_cost")
+
+        if db_default_width is not None:
+            default_width = int(db_default_width)
+        if db_default_height is not None:
+            default_height = int(db_default_height)
+        if db_default_steps is not None:
+            default_steps = int(db_default_steps)
+        if db_default_scale is not None:
+            default_scale = float(db_default_scale)
+        if db_default_sampler is not None:
+            default_sampler = str(db_default_sampler)
+        if db_model is not None:
+            default_model = str(db_model)
+        if db_generation_cost is not None:
+            generation_cost = int(db_generation_cost)
+    except Exception as e:
+        log.warning(f"读取 NovelAI 实时全局配置失败，将回退到进程内配置: {e}")
+
+    width = default_width if width is None else width
+    height = default_height if height is None else height
+    steps = default_steps if steps is None else steps
+    scale = default_scale if scale is None else scale
+    sampler = default_sampler if not sampler else sampler
+    model = default_model if not model else model
 
     # 检查是否处于绘图封禁状态
     if parsed_user_id is not None:
@@ -445,7 +474,7 @@ async def generate_image_novelai(
                 "hint": f"该用户因图片收到过多负反馈，绘图功能已被临时禁用，剩余封禁时长：{remaining_text}。"
             }
 
-    cost = NOVELAI_CONFIG.get("IMAGE_GENERATION_COST", 5)
+    cost = generation_cost
 
     # 检查用户余额
     if parsed_user_id is not None and cost > 0:
@@ -984,6 +1013,184 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
                 pass
 
 
+def _strip_artist_prefix(prompt: str, artist_string: Optional[str]) -> str:
+    """从提示词开头移除指定画师串前缀。"""
+    if not prompt or not artist_string:
+        return prompt
+
+    artist = str(artist_string).strip()
+    if not artist:
+        return prompt
+
+    for prefix in (f"{artist}, ", f"{artist},"):
+        if prompt.startswith(prefix):
+            return prompt[len(prefix):].lstrip()
+    return prompt
+
+
+class ArtistPresetSwitchView(discord.ui.View):
+    """切换画师串并快捷重新生成。"""
+
+    def __init__(
+        self,
+        prompt: str,
+        negative_prompt: Optional[str],
+        width: int,
+        height: int,
+        steps: int,
+        scale: float,
+        sampler: str,
+        current_preset_name: Optional[str],
+        user_id: Optional[str],
+        cost: int,
+        user_presets: List[dict],
+        admin_presets: List[dict],
+    ):
+        super().__init__(timeout=120)
+        self._prompt = prompt
+        self._negative_prompt = negative_prompt
+        self._width = width
+        self._height = height
+        self._steps = steps
+        self._scale = scale
+        self._sampler = sampler
+        self._current_preset_name = current_preset_name
+        self._user_id = user_id
+        self._cost = cost
+
+        self._user_presets = user_presets
+        self._admin_presets = admin_presets
+        self._preset_lookup: Dict[str, dict] = {}
+
+        options = [
+            discord.SelectOption(
+                label="清除画师串并重生",
+                value="none",
+                description="不拼接任何画师串前缀",
+                emoji="🚫",
+            ),
+            discord.SelectOption(
+                label="使用默认画师串并重生",
+                value="default",
+                description="使用系统默认画师串前缀",
+                emoji="⚙️",
+            ),
+        ]
+
+        for preset in user_presets:
+            if len(options) >= 25:
+                break
+            preset_id = preset.get("id")
+            value = f"user:{preset_id}"
+            artist_preview = str(preset.get("artist_string", ""))
+            description = artist_preview[:80] + ("..." if len(artist_preview) > 80 else "")
+            options.append(
+                discord.SelectOption(
+                    label=f"用户/{preset.get('name', '未命名预设')}"[:100],
+                    value=value[:100],
+                    description=(description or "用户预设")[:100],
+                    emoji="👤",
+                )
+            )
+            self._preset_lookup[value] = {"scope": "user", **preset}
+
+        if len(options) < 25:
+            for preset in admin_presets:
+                if len(options) >= 25:
+                    break
+                preset_id = preset.get("id")
+                value = f"admin:{preset_id}"
+                artist_preview = str(preset.get("artist_string", ""))
+                description = artist_preview[:80] + ("..." if len(artist_preview) > 80 else "")
+                options.append(
+                    discord.SelectOption(
+                        label=f"管理员/{preset.get('name', '未命名预设')}"[:100],
+                        value=value[:100],
+                        description=(description or "管理员预设")[:100],
+                        emoji="🛡️",
+                    )
+                )
+                self._preset_lookup[value] = {"scope": "admin", **preset}
+
+        select = discord.ui.Select(
+            placeholder="选择画师串并重新生成",
+            options=options,
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+
+        selected_value = interaction.data["values"][0]
+        default_artist = str(NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "") or "").strip()
+
+        current_artist_string = ""
+        if self._current_preset_name:
+            if str(self._current_preset_name).startswith("管理员/"):
+                current_name = str(self._current_preset_name).split("/", 1)[1]
+                current_preset = next(
+                    (p for p in self._admin_presets if str(p.get("name")) == str(current_name)),
+                    None,
+                )
+                if current_preset and current_preset.get("artist_string"):
+                    current_artist_string = str(current_preset.get("artist_string"))
+            else:
+                current_preset = next(
+                    (p for p in self._user_presets if str(p.get("name")) == str(self._current_preset_name)),
+                    None,
+                )
+                if current_preset and current_preset.get("artist_string"):
+                    current_artist_string = str(current_preset.get("artist_string"))
+        else:
+            current_artist_string = default_artist
+
+        base_prompt = _strip_artist_prefix(self._prompt, current_artist_string)
+        target_prompt = base_prompt
+        target_preset_name: Optional[str] = None
+        target_negative_prompt = self._negative_prompt
+
+        if selected_value == "none":
+            target_preset_name = "无画师串"
+        elif selected_value == "default":
+            if default_artist and not _prompt_already_contains_artist(base_prompt, default_artist):
+                target_prompt = f"{default_artist}, {base_prompt}"
+            target_preset_name = "默认"
+        else:
+            preset = self._preset_lookup.get(selected_value)
+            if not preset:
+                await interaction.followup.send("预设不存在或已失效，请重试。", ephemeral=True)
+                return
+
+            artist_string = str(preset.get("artist_string") or "").strip()
+            if artist_string and not _prompt_already_contains_artist(base_prompt, artist_string):
+                target_prompt = f"{artist_string}, {base_prompt}"
+
+            preset_name = str(preset.get("name") or "未命名预设")
+            if preset.get("scope") == "admin":
+                target_preset_name = f"管理员/{preset_name}"
+            else:
+                target_preset_name = preset_name
+                preset_negative = str(preset.get("negative_prompt") or "").strip()
+                if (not target_negative_prompt) and preset_negative:
+                    target_negative_prompt = preset_negative
+
+        await _regenerate_novelai(
+            interaction=interaction,
+            prompt=target_prompt,
+            negative_prompt=target_negative_prompt,
+            width=self._width,
+            height=self._height,
+            steps=self._steps,
+            scale=self._scale,
+            sampler=self._sampler,
+            preset_name=target_preset_name,
+            user_id=self._user_id,
+            cost=self._cost,
+            title_suffix="（切换画师串）",
+        )
+
+
 class NovelAIResultView(discord.ui.View):
     """NovelAI 生成结果的交互按钮"""
 
@@ -1086,6 +1293,58 @@ class NovelAIResultView(discord.ui.View):
                 await interaction.followup.send(f"切换失败: {str(e)[:200]}", ephemeral=True)
             except Exception:
                 pass
+
+    @discord.ui.button(label="切换画师串重生", style=discord.ButtonStyle.secondary, emoji="🎨", row=1)
+    async def switch_artist_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """快捷切换用户/管理员画师串并重新生成。"""
+        if self._user_id and str(interaction.user.id) != str(self._user_id):
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        from src.chat.utils.database import chat_db_manager
+
+        parsed_user_id: Optional[int] = None
+        if self._user_id:
+            try:
+                parsed_user_id = int(self._user_id)
+            except (ValueError, TypeError):
+                parsed_user_id = None
+
+        user_presets: List[dict] = []
+        admin_presets: List[dict] = []
+
+        if parsed_user_id is not None:
+            try:
+                user_presets = await chat_db_manager.get_novelai_presets(parsed_user_id)
+            except Exception as e:
+                log.warning(f"读取用户画师串预设失败: {e}")
+
+        try:
+            admin_presets = await chat_db_manager.get_novelai_admin_presets()
+        except Exception as e:
+            log.warning(f"读取管理员画师串预设失败: {e}")
+
+        default_artist = str(NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "") or "").strip()
+        if not user_presets and not admin_presets and not default_artist:
+            await interaction.response.send_message("当前没有可切换的画师串（用户/管理员/默认均为空）。", ephemeral=True)
+            return
+
+        view = ArtistPresetSwitchView(
+            prompt=self._prompt,
+            negative_prompt=self._negative_prompt,
+            width=self._width,
+            height=self._height,
+            steps=self._steps,
+            scale=self._scale,
+            sampler=self._sampler,
+            current_preset_name=self._preset_name,
+            user_id=self._user_id,
+            cost=self._cost,
+            user_presets=user_presets,
+            admin_presets=admin_presets,
+        )
+        await interaction.response.send_message("请选择要切换的画师串：", view=view, ephemeral=True)
 
     @discord.ui.button(label="查看提示词", style=discord.ButtonStyle.secondary, emoji="📋", row=1)
     async def view_prompt_button(self, interaction: discord.Interaction, button: discord.ui.Button):

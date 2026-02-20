@@ -1636,6 +1636,35 @@ async def upsert_novelai_admin_preset(
     return {"success": True, "name": name}
 
 
+@app.put("/api/config/novelai/admin-presets/{preset_id}")
+async def update_novelai_admin_preset(
+    preset_id: int,
+    payload: NovelAIAdminPresetUpsert,
+    token: str = Depends(verify_token),
+):
+    """编辑管理员画师串预设。"""
+    from src.chat.utils.database import chat_db_manager
+
+    name = (payload.name or "").strip()
+    artist_string = (payload.artist_string or "").strip()
+    if not name:
+        raise HTTPException(400, "预设名称不能为空")
+    if not artist_string:
+        raise HTTPException(400, "画师串提示词不能为空")
+    if len(name) > 100:
+        raise HTTPException(400, "预设名称长度不能超过 100")
+
+    success = await chat_db_manager.update_novelai_admin_preset_by_id(
+        preset_id=preset_id,
+        name=name,
+        artist_string=artist_string,
+    )
+    if not success:
+        raise HTTPException(500, "编辑管理员画师串预设失败")
+
+    return {"success": True, "id": preset_id, "name": name}
+
+
 @app.delete("/api/config/novelai/admin-presets/{preset_id}")
 async def delete_novelai_admin_preset(preset_id: int, token: str = Depends(verify_token)):
     """删除管理员画师串预设。"""

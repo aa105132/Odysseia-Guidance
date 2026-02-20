@@ -2257,6 +2257,32 @@ class ChatDatabaseManager:
             log.error(f"保存管理员画师串预设失败: {e}")
             return False
 
+    async def update_novelai_admin_preset_by_id(
+        self,
+        preset_id: int,
+        name: str,
+        artist_string: str,
+    ) -> bool:
+        """通过 ID 更新管理员画师串预设。"""
+        query = """
+            UPDATE novelai_admin_presets
+            SET name = ?,
+                artist_string = ?,
+                created_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """
+        try:
+            await self._execute(
+                self._db_transaction,
+                query,
+                (name, artist_string, preset_id),
+                commit=True,
+            )
+            return True
+        except Exception as e:
+            log.error(f"更新管理员画师串预设失败 (ID: {preset_id}): {e}")
+            return False
+
     async def delete_novelai_admin_preset_by_id(self, preset_id: int) -> bool:
         """通过 ID 删除管理员画师串预设。"""
         query = "DELETE FROM novelai_admin_presets WHERE id = ?"
