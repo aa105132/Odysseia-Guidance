@@ -53,7 +53,8 @@ class VoiceGenerationService:
             base_url = str(
                 config.get("BASE_URL") or "https://openspeech.bytedance.com"
             ).strip().rstrip("/")
-            cluster = str(config.get("CLUSTER", "")).strip() or "volcano_tts"
+            # 注意：cluster 允许留空，运行时会按 voice_type 自动选择
+            cluster = str(config.get("CLUSTER", "")).strip()
 
             if not app_id or not access_token:
                 log.warning("豆包语音配置不完整：缺少 APP_ID 或 ACCESS_TOKEN")
@@ -154,6 +155,88 @@ class VoiceGenerationService:
             return mapping[mime]
         return VoiceGenerationService._ext_from_format(fallback)
 
+    @staticmethod
+    def _normalize_extra_body(extra_body: Any) -> Dict[str, Any]:
+        if not isinstance(extra_body, dict):
+            return {}
+        normalized: Dict[str, Any] = {}
+        for raw_key, raw_value in extra_body.items():
+            key = str(raw_key).strip()
+            if not key:
+                continue
+            normalized[key] = raw_value
+        return normalized
+
+    @staticmethod
+    def _normalize_references(references: Any) -> list[Dict[str, str]]:
+        if not isinstance(references, list):
+            return []
+        normalized: list[Dict[str, str]] = []
+        for item in references:
+            if not isinstance(item, dict):
+                continue
+            audio = str(item.get("audio", "")).strip()
+            text = str(item.get("text", "")).strip()
+            if not audio or not text:
+                continue
+            normalized.append({"audio": audio, "text": text})
+        return normalized
+
+    @staticmethod
+    def _is_doubao_official_voice(voice_type: str) -> bool:
+        """判断是否为豆包官方音色。"""
+        value = (voice_type or "").strip()
+        if not value:
+            return False
+
+        lowered = value.lower()
+        if lowered.endswith("_bigtts"):
+            return True
+
+        if lowered.startswith(("zh_", "en_", "multi_", "saturn_", "icl_")):
+            return True
+
+        # 端到端实时语音大模型-O版本中存在少量短名称
+        if lowered in {"vivi", "xiaohe", "yunzhou", "xiaotian", "tim", "dacey", "stokie"}:
+            return True
+
+        return False
+
+    @classmethod
+    def _is_doubao_clone_voice(cls, voice_type: str) -> bool:
+        """判断是否为声音复刻音色（例如 S_03FKArQO1）。"""
+        value = (voice_type or "").strip()
+        if not value:
+            return False
+
+        # 声音复刻音色 ID 常见格式
+        if value.startswith(("S_", "s_")):
+            return True
+
+        # 按用户约定：不在官方音色命名规则内的音色，视为复刻音色
+        return not cls._is_doubao_official_voice(value)
+
+    @classmethod
+    def _resolve_doubao_cluster(cls, configured_cluster: str, voice_type: str) -> str:
+        """根据音色类型自动选择豆包 cluster。"""
+        normalized_cluster = (configured_cluster or "").strip()
+        is_clone_voice = cls._is_doubao_clone_voice(voice_type)
+
+        if is_clone_voice:
+            # 复刻音色优先走 mega cluster，避免命中 tts.sync.level1
+            if not normalized_cluster or normalized_cluster.lower() == "volcano_tts":
+                return "volcano_mega_tts"
+            return normalized_cluster
+
+        # 官方音色默认走普通语音合成 cluster
+        if not normalized_cluster:
+            return "volcano_tts"
+
+        if normalized_cluster.lower() in {"volcano_mega_tts", "volcano_icl"}:
+            return "volcano_tts"
+
+        return normalized_cluster
+
     async def generate_voice(
         self,
         text: str,
@@ -213,10 +296,24 @@ class VoiceGenerationService:
         base_url = self._client["base_url"]
         app_id = self._client["app_id"]
         access_token = self._client["access_token"]
-        cluster = self._client["cluster"]
+        configured_cluster = str(self._client.get("cluster", "")).strip()
         selected_voice = (voice_type or config.get("VOICE_TYPE") or "").strip()
         if not selected_voice:
             selected_voice = "zh_female_wanwanxiaohe_moon_bigtts"
+
+        cluster = self._resolve_doubao_cluster(configured_cluster, selected_voice)
+        resource_id = (
+            "volc.megatts.voiceclone"
+            if self._is_doubao_clone_voice(selected_voice)
+            else "volc.megatts.default"
+        )
+        if cluster != configured_cluster:
+            log.info(
+                "豆包 cluster 已自动调整: %s -> %s（voice_type=%s）",
+                configured_cluster or "<empty>",
+                cluster,
+                selected_voice,
+            )
 
         requested_format = str(config.get("AUDIO_FORMAT", "mp3")).strip().lower()
         doubao_encoding_map = {
@@ -284,6 +381,7 @@ class VoiceGenerationService:
                 headers = {
                     "Authorization": auth_value,
                     "Content-Type": "application/json",
+                    "Resource-Id": resource_id,
                 }
                 try:
                     async with session.post(endpoint, headers=headers, json=payload) as response:
@@ -397,9 +495,16 @@ class VoiceGenerationService:
         if not model_name:
             model_name = "FunAudioLLM/CosyVoice2-0.5B"
 
+        siliconflow_references = self._normalize_references(
+            config.get("SILICONFLOW_REFERENCES", [])
+        )
+
         selected_voice = (voice_type or config.get("VOICE_TYPE") or "").strip()
         if not selected_voice:
-            selected_voice = "default"
+            if provider == "siliconflow" and siliconflow_references:
+                selected_voice = ""
+            else:
+                selected_voice = "default"
 
         requested_format = self._normalize_format(str(config.get("AUDIO_FORMAT", "mp3")))
         if requested_format not in {"mp3", "wav", "opus", "flac", "pcm", "aac"}:
@@ -411,6 +516,15 @@ class VoiceGenerationService:
             minimum=0.2,
             maximum=3.0,
         )
+
+        extra_body = self._normalize_extra_body(config.get("EXTRA_BODY", {}))
+        if provider == "siliconflow" and siliconflow_references:
+            existing_references = extra_body.get("references")
+            if existing_references is None:
+                extra_body["references"] = siliconflow_references
+            elif not isinstance(existing_references, list):
+                log.warning("VOICE_EXTRA_BODY.references 不是数组，已忽略该字段并使用 SILICONFLOW_REFERENCES")
+                extra_body["references"] = siliconflow_references
 
         endpoint = f"{base_url}/audio/speech"
         headers = {
@@ -424,6 +538,13 @@ class VoiceGenerationService:
             "response_format": requested_format,
             "speed": speed,
         }
+
+        core_fields = {"model", "input", "voice", "response_format", "speed"}
+        for extra_key, extra_value in extra_body.items():
+            if extra_key in core_fields:
+                log.warning(f"忽略 VOICE_EXTRA_BODY 对核心字段的覆盖: {extra_key}")
+                continue
+            payload[extra_key] = extra_value
 
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         try:

@@ -244,6 +244,15 @@ class PromptService:
             )
             if str(key).strip() and str(value).strip()
         }
+        voice_provider = str(chat_config.VOICE_CONFIG.get("PROVIDER", "") or "").strip().lower()
+        voice_model_name = str(chat_config.VOICE_CONFIG.get("MODEL_NAME", "") or "").strip()
+        siliconflow_references = [
+            item
+            for item in (chat_config.VOICE_CONFIG.get("SILICONFLOW_REFERENCES") or [])
+            if isinstance(item, dict)
+            and str(item.get("audio", "")).strip()
+            and str(item.get("text", "")).strip()
+        ]
 
         if (
             default_voice_type
@@ -261,7 +270,7 @@ class PromptService:
             "5) 一旦语音生成成功，语音就是最终回复，不要再额外发文字预告或成功补充；",
             "6) 调用语音工具时不要传 preview_message/success_message（保持为空）；",
             "7) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
-            f"8) 当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
+            f"8) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
         ]
         if available_voice_types:
             voice_lines.append(
@@ -287,8 +296,17 @@ class PromptService:
         else:
             voice_lines.append("11) 暂未配置音色说明；不确定时优先默认音色。")
 
+        if voice_provider == "siliconflow":
+            voice_lines.append("13) 你当前在使用硅基流动 TTS。可用 voice_type 只允许使用配置里给出的值，不要编造。")
+            voice_lines.append("14) 若 voice_type 形如 speech:...，表示用户自定义音色；仅在明确需要该音色时再传。")
+
+            if "indexteam/indextts-2" in voice_model_name.lower():
+                voice_lines.append("15) 当前模型是 IndexTeam/IndexTTS-2：若需要动态音色且系统已配置 references，可不传 voice_type，由后端自动携带 references。")
+            elif siliconflow_references:
+                voice_lines.append("15) 系统已配置硅基流动动态音色 references；当需要动态音色时可不传 voice_type。")
+
         voice_lines.append(
-            "13) 若 generate_voice 返回 generation_failed=true，说明语音没发出去；此时请立刻改为普通文字回复用户，承接原本想说的话。"
+            "16) 若 generate_voice 返回 generation_failed=true，说明语音没发出去；此时请立刻改为普通文字回复用户，承接原本想说的话。"
         )
 
         final_conversation.append({"role": "user", "parts": ["\n".join(voice_lines)]})

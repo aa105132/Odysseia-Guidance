@@ -104,6 +104,76 @@ def _parse_str_map_env(key: str, default: dict[str, str]) -> dict[str, str]:
     return normalized if normalized else default
 
 
+def _parse_json_object_env(
+    key: str, default: dict[str, object]
+) -> dict[str, object]:
+    """解析 JSON 对象环境变量，失败时回退默认值。"""
+    raw = os.getenv(key)
+    if not raw:
+        return default
+
+    raw = raw.strip()
+    if not raw:
+        return default
+
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return default
+
+    if not isinstance(parsed, dict):
+        return default
+
+    normalized: dict[str, object] = {}
+    for raw_key, raw_value in parsed.items():
+        key_text = str(raw_key).strip()
+        if not key_text:
+            continue
+        normalized[key_text] = raw_value
+
+    return normalized if normalized else default
+
+
+def _parse_voice_references_env(
+    key: str, default: list[dict[str, str]]
+) -> list[dict[str, str]]:
+    """
+    解析语音 references 环境变量，要求 JSON 数组格式：
+    [
+      {"audio": "...", "text": "..."}
+    ]
+    """
+    raw = os.getenv(key)
+    if not raw:
+        return default
+
+    raw = raw.strip()
+    if not raw:
+        return default
+
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return default
+
+    if not isinstance(parsed, list):
+        return default
+
+    normalized: list[dict[str, str]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+
+        audio = str(item.get("audio", "")).strip()
+        text = str(item.get("text", "")).strip()
+        if not audio or not text:
+            continue
+
+        normalized.append({"audio": audio, "text": text})
+
+    return normalized if normalized else default
+
+
 # --- Chat 功能总开关 ---
 CHAT_ENABLED = os.getenv("CHAT_ENABLED", "False").lower() == "true"
 
@@ -361,6 +431,12 @@ def _get_voice_config():
         "AVAILABLE_VOICE_TYPES": _parse_str_list_env("VOICE_AVAILABLE_TYPES", []),
         # 音色说明映射（voice_id -> 角色/语气/适用场景说明）
         "VOICE_TYPE_HINTS": _parse_str_map_env("VOICE_TYPE_HINTS", {}),
+        # 硅基流动 / OpenAI 兼容扩展参数透传（JSON 对象）
+        "EXTRA_BODY": _parse_json_object_env("VOICE_EXTRA_BODY", {}),
+        # 硅基流动动态音色参考（references）
+        "SILICONFLOW_REFERENCES": _parse_voice_references_env(
+            "VOICE_SILICONFLOW_REFERENCES", []
+        ),
         "AUDIO_FORMAT": os.getenv("VOICE_AUDIO_FORMAT", "mp3"),  # mp3/wav/ogg/opus/pcm/flac
         "SPEED_RATIO": float(os.getenv("VOICE_SPEED_RATIO", "1.0")),
         "VOLUME_RATIO": float(os.getenv("VOICE_VOLUME_RATIO", "1.0")),

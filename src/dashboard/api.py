@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, Depends, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from psycopg2.extras import DictCursor
 
@@ -129,6 +129,10 @@ class VoiceConfigUpdate(BaseModel):
     voice_type: Optional[str] = None
     available_voice_types: Optional[List[str]] = None
     voice_type_hints: Optional[Dict[str, str]] = None  # 音色说明映射（voice_id -> 场景说明）
+    # OpenAI 兼容扩展参数透传（JSON 对象）
+    extra_body: Optional[Dict[str, Any]] = None
+    # 硅基流动动态音色 references 列表
+    siliconflow_references: Optional[List[Dict[str, str]]] = None
     audio_format: Optional[str] = None
     speed_ratio: Optional[float] = None
     volume_ratio: Optional[float] = None
@@ -136,6 +140,12 @@ class VoiceConfigUpdate(BaseModel):
     generation_cost: Optional[int] = None
     max_text_length: Optional[int] = None
     request_timeout_seconds: Optional[int] = None
+
+
+class VoiceTestRequest(BaseModel):
+    """语音测试请求"""
+    text: str
+    voice_type: Optional[str] = None
 
 
 class NovelAIConfigUpdate(BaseModel):
@@ -318,6 +328,64 @@ def _parse_string_map_setting(raw_value: Optional[str]) -> Dict[str, str]:
     return _normalize_string_map(result)
 
 
+def _normalize_json_object(values: Optional[Dict[Any, Any]]) -> Dict[str, Any]:
+    normalized: Dict[str, Any] = {}
+    if not isinstance(values, dict):
+        return normalized
+
+    for raw_key, raw_value in values.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        normalized[key] = raw_value
+    return normalized
+
+
+def _parse_json_object_setting(raw_value: Optional[str]) -> Dict[str, Any]:
+    if raw_value is None:
+        return {}
+
+    raw_text = str(raw_value).strip()
+    if not raw_text:
+        return {}
+
+    try:
+        parsed = json.loads(raw_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+    return _normalize_json_object(parsed if isinstance(parsed, dict) else {})
+
+
+def _normalize_voice_references(values: Optional[List[Any]]) -> List[Dict[str, str]]:
+    normalized: List[Dict[str, str]] = []
+    for item in values or []:
+        if not isinstance(item, dict):
+            continue
+        audio = str(item.get("audio", "")).strip()
+        text = str(item.get("text", "")).strip()
+        if not audio or not text:
+            continue
+        normalized.append({"audio": audio, "text": text})
+    return normalized
+
+
+def _parse_voice_references_setting(raw_value: Optional[str]) -> List[Dict[str, str]]:
+    if raw_value is None:
+        return []
+
+    raw_text = str(raw_value).strip()
+    if not raw_text:
+        return []
+
+    try:
+        parsed = json.loads(raw_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+    return _normalize_voice_references(parsed if isinstance(parsed, list) else [])
+
+
 def _build_default_available_models() -> List[str]:
     defaults: List[Any] = [
         'codex-gpt-5.2',
@@ -476,6 +544,10 @@ async def get_all_config(token: str = Depends(verify_token)):
     voice_type_hints = _normalize_string_map(
         voice_config.get("VOICE_TYPE_HINTS", {})
     )
+    voice_extra_body = _normalize_json_object(voice_config.get("EXTRA_BODY", {}))
+    voice_siliconflow_references = _normalize_voice_references(
+        voice_config.get("SILICONFLOW_REFERENCES", [])
+    )
     
     # 隐藏敏感信息
     ai_masked_key = ai_api_key[:10] + "..." + ai_api_key[-4:] if len(ai_api_key) > 14 else ("***" if ai_api_key else "")
@@ -561,10 +633,12 @@ async def get_all_config(token: str = Depends(verify_token)):
             "app_id": voice_config.get("APP_ID", ""),
             "access_token_masked": voice_access_token_masked,
             "has_access_token": bool(voice_access_token),
-            "cluster": voice_config.get("CLUSTER", "volcano_tts"),
+            "cluster": voice_config.get("CLUSTER", ""),
             "voice_type": voice_config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"),
             "available_voice_types": voice_available_types,
             "voice_type_hints": voice_type_hints,
+            "extra_body": voice_extra_body,
+            "siliconflow_references": voice_siliconflow_references,
             "audio_format": voice_config.get("AUDIO_FORMAT", "mp3"),
             "speed_ratio": voice_config.get("SPEED_RATIO", 1.0),
             "volume_ratio": voice_config.get("VOLUME_RATIO", 1.0),
@@ -1565,6 +1639,10 @@ async def get_voice_config(token: str = Depends(verify_token)):
     db_timeout_seconds = await chat_db_manager.get_global_setting("voice_timeout_seconds")
     db_available_voice_types = await chat_db_manager.get_global_setting("voice_available_types")
     db_voice_type_hints = await chat_db_manager.get_global_setting("voice_type_hints")
+    db_voice_extra_body = await chat_db_manager.get_global_setting("voice_extra_body")
+    db_voice_siliconflow_references = await chat_db_manager.get_global_setting(
+        "voice_siliconflow_references"
+    )
 
     # 数据库优先
     enabled = db_enabled == "true" if db_enabled is not None else bool(config.get("ENABLED", False))
@@ -1578,7 +1656,7 @@ async def get_voice_config(token: str = Depends(verify_token)):
     app_id = str(db_app_id or config.get("APP_ID", "")).strip()
     access_token = str(db_access_token or config.get("ACCESS_TOKEN", "")).strip()
     cluster = str(
-        db_cluster if db_cluster is not None else config.get("CLUSTER", "volcano_tts")
+        db_cluster if db_cluster is not None else config.get("CLUSTER", "")
     ).strip()
     voice_type = str(
         db_voice_type or config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts")
@@ -1594,6 +1672,16 @@ async def get_voice_config(token: str = Depends(verify_token)):
         _parse_string_map_setting(db_voice_type_hints)
         if db_voice_type_hints is not None
         else _normalize_string_map(config.get("VOICE_TYPE_HINTS", {}))
+    )
+    extra_body = (
+        _parse_json_object_setting(db_voice_extra_body)
+        if db_voice_extra_body is not None
+        else _normalize_json_object(config.get("EXTRA_BODY", {}))
+    )
+    siliconflow_references = (
+        _parse_voice_references_setting(db_voice_siliconflow_references)
+        if db_voice_siliconflow_references is not None
+        else _normalize_voice_references(config.get("SILICONFLOW_REFERENCES", []))
     )
     audio_format = str(db_audio_format or config.get("AUDIO_FORMAT", "mp3")).strip().lower()
     speed_ratio = float(db_speed_ratio) if db_speed_ratio is not None else float(config.get("SPEED_RATIO", 1.0))
@@ -1618,8 +1706,6 @@ async def get_voice_config(token: str = Depends(verify_token)):
     if provider == "doubao":
         if not base_url:
             base_url = "https://openspeech.bytedance.com"
-        if not cluster:
-            cluster = "volcano_tts"
     if provider == "siliconflow" and not base_url:
         base_url = "https://api.siliconflow.cn/v1"
 
@@ -1656,6 +1742,8 @@ async def get_voice_config(token: str = Depends(verify_token)):
         "voice_type": voice_type,
         "available_voice_types": available_voice_types,
         "voice_type_hints": voice_type_hints,
+        "extra_body": extra_body,
+        "siliconflow_references": siliconflow_references,
         "audio_format": audio_format,
         "speed_ratio": speed_ratio,
         "volume_ratio": volume_ratio,
@@ -1743,11 +1831,6 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
 
     if config.cluster is not None:
         cluster = str(config.cluster).strip()
-        effective_provider = str(
-            chat_config.VOICE_CONFIG.get("PROVIDER", "doubao")
-        ).strip().lower()
-        if effective_provider == "doubao" and not cluster:
-            cluster = "volcano_tts"
 
         chat_config.VOICE_CONFIG["CLUSTER"] = cluster
         os.environ["VOICE_CLUSTER"] = cluster
@@ -1814,6 +1897,32 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
         updated["voice_type_hints_count"] = len(voice_type_hints)
         await chat_db_manager.set_global_setting(
             "voice_type_hints", serialized_voice_type_hints
+        )
+
+    if config.extra_body is not None:
+        extra_body = _normalize_json_object(config.extra_body)
+        serialized_extra_body = json.dumps(extra_body, ensure_ascii=False)
+        chat_config.VOICE_CONFIG["EXTRA_BODY"] = extra_body
+        os.environ["VOICE_EXTRA_BODY"] = serialized_extra_body
+        env_updates["VOICE_EXTRA_BODY"] = serialized_extra_body
+        updated["extra_body_keys_count"] = len(extra_body)
+        await chat_db_manager.set_global_setting("voice_extra_body", serialized_extra_body)
+
+    if config.siliconflow_references is not None:
+        siliconflow_references = _normalize_voice_references(
+            config.siliconflow_references
+        )
+        serialized_siliconflow_references = json.dumps(
+            siliconflow_references, ensure_ascii=False
+        )
+        chat_config.VOICE_CONFIG["SILICONFLOW_REFERENCES"] = siliconflow_references
+        os.environ["VOICE_SILICONFLOW_REFERENCES"] = (
+            serialized_siliconflow_references
+        )
+        env_updates["VOICE_SILICONFLOW_REFERENCES"] = serialized_siliconflow_references
+        updated["siliconflow_references_count"] = len(siliconflow_references)
+        await chat_db_manager.set_global_setting(
+            "voice_siliconflow_references", serialized_siliconflow_references
         )
 
     if config.audio_format is not None:
@@ -1886,18 +1995,6 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
             str(config.request_timeout_seconds),
         )
 
-    # 豆包 provider 下，cluster 为必填字段：即使用户留空也自动回退默认值，避免 app.cluster 缺失
-    effective_provider = str(chat_config.VOICE_CONFIG.get("PROVIDER", "doubao")).strip().lower()
-    if effective_provider == "doubao":
-        normalized_cluster = str(chat_config.VOICE_CONFIG.get("CLUSTER", "")).strip()
-        if not normalized_cluster:
-            normalized_cluster = "volcano_tts"
-            chat_config.VOICE_CONFIG["CLUSTER"] = normalized_cluster
-            os.environ["VOICE_CLUSTER"] = normalized_cluster
-            env_updates["VOICE_CLUSTER"] = normalized_cluster
-            updated["cluster"] = normalized_cluster
-            await chat_db_manager.set_global_setting("voice_cluster", normalized_cluster)
-
     if env_updates:
         try:
             update_env_file(env_updates)
@@ -1915,6 +2012,58 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
 
     log.info(f"语音配置已更新: {updated}")
     return {"success": True, "updated": updated}
+
+
+@app.post("/api/config/test-voice")
+async def test_voice_generation(
+    payload: VoiceTestRequest, token: str = Depends(verify_token)
+):
+    """测试语音生成，返回可直接播放的音频二进制。"""
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(400, "测试文本不能为空")
+    if len(text) > 5000:
+        raise HTTPException(400, "测试文本不能超过 5000 字符")
+
+    selected_voice_type = (payload.voice_type or "").strip() or None
+
+    try:
+        from src.chat.features.voice_generation.services.voice_service import (
+            voice_service as vs,
+        )
+
+        # 避免首次调用时状态滞后，先尝试重载一次运行时配置
+        if not vs.is_available():
+            vs.reinitialize()
+
+        if not vs.is_available():
+            raise HTTPException(400, "语音服务未启用或配置不完整，请先保存语音设置")
+
+        voice_result = await vs.generate_voice(
+            text=text,
+            voice_type=selected_voice_type,
+        )
+        if voice_result is None or not voice_result.audio_bytes:
+            raise HTTPException(500, "语音生成失败，请检查配置或稍后重试")
+
+        headers = {
+            "Cache-Control": "no-store",
+            "X-Voice-Provider": voice_result.provider,
+            "X-Voice-Model": voice_result.model_name,
+            "X-Voice-Type": voice_result.voice_type or "",
+            "X-Voice-Ext": voice_result.file_ext,
+        }
+
+        return Response(
+            content=voice_result.audio_bytes,
+            media_type=voice_result.mime_type or "application/octet-stream",
+            headers=headers,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"测试语音生成失败: {e}", exc_info=True)
+        raise HTTPException(500, f"测试语音生成失败: {e}")
 
 
 # --- NovelAI 配置 API ---
