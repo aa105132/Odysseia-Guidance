@@ -135,6 +135,9 @@ class NovelAIConfigUpdate(BaseModel):
     default_negative_prompt: Optional[str] = None
     max_retries: Optional[int] = None
     default_artist_string: Optional[str] = None
+    prompt_model: Optional[str] = None  # NovelAI 提示词生成专用 LLM（AI描述/AI重写）
+    prompt_api_url: Optional[str] = None  # NovelAI 提示词生成专用 API URL
+    prompt_api_key: Optional[str] = None  # NovelAI 提示词生成专用 API KEY
 
 
 class NovelAIAdminPresetUpsert(BaseModel):
@@ -1358,6 +1361,9 @@ async def get_novelai_config(token: str = Depends(verify_token)):
     db_default_negative = await chat_db_manager.get_global_setting("novelai_default_negative")
     db_max_retries = await chat_db_manager.get_global_setting("novelai_max_retries")
     db_default_artist_string = await chat_db_manager.get_global_setting("novelai_default_artist_string")
+    db_prompt_model = await chat_db_manager.get_global_setting("novelai_prompt_model")
+    db_prompt_api_url = await chat_db_manager.get_global_setting("novelai_prompt_api_url")
+    db_prompt_api_key = await chat_db_manager.get_global_setting("novelai_prompt_api_key")
 
     config = chat_config.NOVELAI_CONFIG
 
@@ -1380,9 +1386,31 @@ async def get_novelai_config(token: str = Depends(verify_token)):
     default_negative = db_default_negative or config.get("DEFAULT_NEGATIVE_PROMPT", "")
     max_retries = int(db_max_retries) if db_max_retries else config.get("MAX_RETRIES", 3)
     default_artist_string = db_default_artist_string or config.get("DEFAULT_ARTIST_STRING", "")
+    configured_prompt_model = (
+        db_prompt_model if db_prompt_model is not None else config.get("PROMPT_MODEL", "")
+    )
+    configured_prompt_model = str(configured_prompt_model or "").strip()
+    effective_prompt_model = (
+        configured_prompt_model
+        or chat_config.PROMPT_CONFIG.get("model")
+        or chat_config.GEMINI_MODEL
+    )
+    configured_prompt_api_url = (
+        db_prompt_api_url if db_prompt_api_url is not None else config.get("PROMPT_API_URL", "")
+    )
+    configured_prompt_api_url = str(configured_prompt_api_url or "").strip()
+    configured_prompt_api_key = (
+        db_prompt_api_key if db_prompt_api_key is not None else config.get("PROMPT_API_KEY", "")
+    )
+    configured_prompt_api_key = str(configured_prompt_api_key or "").strip()
 
     # 掩码 API Token
     masked_token = api_token[:10] + "..." + api_token[-4:] if len(api_token) > 14 else ("***" if api_token else "")
+    masked_prompt_api_key = (
+        configured_prompt_api_key[:8] + "..." + configured_prompt_api_key[-4:]
+        if len(configured_prompt_api_key) > 12
+        else ("***" if configured_prompt_api_key else "")
+    )
 
     # 检查服务状态
     service_available = False
@@ -1411,6 +1439,11 @@ async def get_novelai_config(token: str = Depends(verify_token)):
         "generation_cost": generation_cost,
         "default_negative_prompt": default_negative,
         "default_artist_string": default_artist_string,
+        "prompt_model": configured_prompt_model,
+        "effective_prompt_model": effective_prompt_model,
+        "prompt_api_url": configured_prompt_api_url,
+        "prompt_api_key_masked": masked_prompt_api_key,
+        "has_prompt_api_key": bool(configured_prompt_api_key),
         "max_retries": max_retries,
         "service_available": service_available,
         "available_models": [
@@ -1573,6 +1606,30 @@ async def update_novelai_config(config: NovelAIConfigUpdate, token: str = Depend
         env_updates["NOVELAI_DEFAULT_ARTIST_STRING"] = config.default_artist_string
         updated["default_artist_string"] = config.default_artist_string[:100] + ("..." if len(config.default_artist_string) > 100 else "")
         await chat_db_manager.set_global_setting("novelai_default_artist_string", config.default_artist_string)
+
+    if config.prompt_model is not None:
+        normalized_prompt_model = str(config.prompt_model).strip()
+        chat_config.NOVELAI_CONFIG["PROMPT_MODEL"] = normalized_prompt_model
+        os.environ["NOVELAI_PROMPT_MODEL"] = normalized_prompt_model
+        env_updates["NOVELAI_PROMPT_MODEL"] = normalized_prompt_model
+        updated["prompt_model"] = normalized_prompt_model
+        await chat_db_manager.set_global_setting("novelai_prompt_model", normalized_prompt_model)
+
+    if config.prompt_api_url is not None:
+        normalized_prompt_api_url = str(config.prompt_api_url).strip()
+        chat_config.NOVELAI_CONFIG["PROMPT_API_URL"] = normalized_prompt_api_url
+        os.environ["NOVELAI_PROMPT_API_URL"] = normalized_prompt_api_url
+        env_updates["NOVELAI_PROMPT_API_URL"] = normalized_prompt_api_url
+        updated["prompt_api_url"] = normalized_prompt_api_url
+        await chat_db_manager.set_global_setting("novelai_prompt_api_url", normalized_prompt_api_url)
+
+    if config.prompt_api_key is not None:
+        normalized_prompt_api_key = str(config.prompt_api_key).strip()
+        chat_config.NOVELAI_CONFIG["PROMPT_API_KEY"] = normalized_prompt_api_key
+        os.environ["NOVELAI_PROMPT_API_KEY"] = normalized_prompt_api_key
+        env_updates["NOVELAI_PROMPT_API_KEY"] = normalized_prompt_api_key
+        updated["prompt_api_key"] = "***" if normalized_prompt_api_key else ""
+        await chat_db_manager.set_global_setting("novelai_prompt_api_key", normalized_prompt_api_key)
 
     # 更新 .env 文件
     if env_updates:

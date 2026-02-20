@@ -12,6 +12,7 @@ import logging
 import io
 import base64
 import random
+import re
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 
@@ -24,6 +25,173 @@ from src.chat.features.odysseia_coin.service.coin_service import coin_service
 from src.chat.utils.database import chat_db_manager
 
 log = logging.getLogger(__name__)
+
+NOVELAI_PROMPT_MAX_OUTPUT_TOKENS = 4096
+
+
+def _get_novelai_prompt_llm_overrides() -> Dict[str, Optional[str]]:
+    """获取 NovelAI 提示词专用 LLM 覆盖配置（模型 / URL / KEY）。"""
+    prompt_model = str(NOVELAI_CONFIG.get("PROMPT_MODEL", "") or "").strip() or None
+    prompt_api_url = str(NOVELAI_CONFIG.get("PROMPT_API_URL", "") or "").strip() or None
+    prompt_api_key = str(NOVELAI_CONFIG.get("PROMPT_API_KEY", "") or "").strip() or None
+    return {
+        "model_name": prompt_model,
+        "api_url": prompt_api_url,
+        "api_key": prompt_api_key,
+    }
+
+
+def _is_probably_tag_prompt(prompt: str) -> bool:
+    """粗略判断是否为 Danbooru 标签串（用于切换到 Imagen 时转自然语言）。"""
+    if not prompt:
+        return False
+    tokens = [seg.strip() for seg in prompt.split(",") if seg.strip()]
+    if len(tokens) < 16:
+        return False
+    ascii_like = sum(
+        1
+        for seg in tokens
+        if re.fullmatch(r"[a-zA-Z0-9_:\-\.#()/'\s]+", seg) is not None
+    )
+    return (ascii_like / max(1, len(tokens))) >= 0.75
+
+
+async def _convert_tag_prompt_to_imagen_prompt(prompt: str) -> str:
+    """将 Danbooru Tag 串转换为适配 Imagen 的中文自然语言提示词。"""
+    if not _is_probably_tag_prompt(prompt):
+        return prompt
+
+    from src.chat.services.gemini_service import gemini_service
+
+    llm_overrides = _get_novelai_prompt_llm_overrides()
+    conversion_messages = [
+        {
+            "role": "user",
+            "content": (
+                "你是图像提示词转换助手。请把下面的 Danbooru 标签串转换为适配 Gemini Imagen 的简体中文自然语言提示词。"
+                "要求：\n"
+                "1) 只输出最终中文提示词，不要解释。\n"
+                "2) 保留关键主体、服饰、场景、光影、构图、氛围。\n"
+                "3) 不要输出英文标签列表，不要输出多段。\n\n"
+                f"标签串：{prompt}"
+            ),
+        }
+    ]
+
+    try:
+        converted = await gemini_service.generate_simple_response(
+            prompt="",
+            generation_config={
+                "temperature": 0.5,
+                "max_output_tokens": 1200,
+            },
+            messages=conversion_messages,
+            model_name=llm_overrides["model_name"],
+            api_url=llm_overrides["api_url"],
+            api_key=llm_overrides["api_key"],
+        )
+        normalized = (converted or "").strip().strip('"').strip("'")
+        if normalized:
+            log.info("已将 Danbooru 标签转换为 Imagen 中文自然语言提示词")
+            return normalized
+    except Exception as e:
+        log.warning(f"Tag->Imagen 自然语言转换失败，回退原提示词: {e}")
+
+    return prompt
+
+
+async def _convert_imagen_prompt_to_novelai_prompt(prompt: str) -> str:
+    """将 Imagen 中文自然语言提示词转换为 NovelAI Danbooru Tag。"""
+    if _is_probably_tag_prompt(prompt):
+        return prompt
+
+    from src.chat.services.gemini_service import gemini_service
+
+    llm_overrides = _get_novelai_prompt_llm_overrides()
+    tag_messages = get_tag_generation_messages(description=prompt)
+    try:
+        converted = await gemini_service.generate_simple_response(
+            prompt="",
+            generation_config={
+                "temperature": 0.7,
+                "max_output_tokens": NOVELAI_PROMPT_MAX_OUTPUT_TOKENS,
+            },
+            messages=tag_messages,
+            model_name=llm_overrides["model_name"],
+            api_url=llm_overrides["api_url"],
+            api_key=llm_overrides["api_key"],
+        )
+        normalized = (converted or "").strip().strip('"').strip("'")
+        if normalized:
+            log.info("已将 Imagen 自然语言提示词转换为 NovelAI 标签串")
+            return normalized
+    except Exception as e:
+        log.warning(f"Imagen->NovelAI 提示词转换失败，回退原提示词: {e}")
+
+    return prompt
+
+
+def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
+    """基于图片提示词和用户补充描述构建视频提示词。"""
+    base_prompt = (image_prompt or "").strip()
+    idea = (user_idea or "").strip()
+
+    if idea:
+        return (
+            "请基于这张图片生成一段短视频，保持主体与场景一致，动作自然流畅、镜头具有电影感。"
+            f"\n原图提示词：{base_prompt}"
+            f"\n补充要求：{idea}"
+        )
+
+    return (
+        "请基于这张图片生成一段短视频，保持主体与场景一致。"
+        "在此基础上请自由发挥镜头运动与动态细节，整体风格自然流畅、具有电影感。"
+        f"\n原图提示词：{base_prompt}"
+    )
+
+
+async def _generate_video_from_image_interaction(
+    interaction: discord.Interaction,
+    image_prompt: str,
+    user_idea: str,
+) -> None:
+    """根据当前图片消息生成视频并反馈执行结果。"""
+    if interaction.channel is None:
+        await interaction.followup.send("当前频道不可用，无法生成视频。", ephemeral=True)
+        return
+
+    from src.chat.features.tools.functions.generate_video import generate_video
+
+    video_prompt = _build_video_prompt_from_image(
+        image_prompt=image_prompt,
+        user_idea=user_idea,
+    )
+    result = await generate_video(
+        prompt=video_prompt,
+        duration=5,
+        use_reference_image=True,
+        preview_message="正在根据这张图片生成视频，请稍候...",
+        success_message="视频已生成并发送到频道。",
+        message=interaction.message if isinstance(interaction.message, discord.Message) else None,
+        channel=interaction.channel,
+        user_id=str(interaction.user.id),
+        bot=interaction.client,
+        request_user=interaction.user,
+    )
+
+    if isinstance(result, dict) and result.get("success"):
+        await interaction.followup.send("视频已生成，结果消息已发送到当前频道。", ephemeral=True)
+        return
+
+    hint = ""
+    if isinstance(result, dict):
+        hint = str(result.get("hint") or "").strip()
+
+    await interaction.followup.send(
+        f"生成视频失败：{hint or '服务暂时不可用或本次请求未成功，请稍后重试。'}",
+        ephemeral=True,
+    )
+
 
 # 尺寸预设映射
 SIZE_PRESETS = {
@@ -470,14 +638,18 @@ class NovelAIDrawPanel(discord.ui.View):
             try:
                 from src.chat.services.gemini_service import gemini_service
 
+                llm_overrides = _get_novelai_prompt_llm_overrides()
                 prefill_messages = get_tag_generation_messages(description=self.session.scene_prompt)
                 tags = await gemini_service.generate_simple_response(
                     prompt="",  # messages 模式下 prompt 被忽略
                     generation_config={
                         "temperature": 0.7,
-                        "max_output_tokens": 1000,
+                        "max_output_tokens": NOVELAI_PROMPT_MAX_OUTPUT_TOKENS,
                     },
                     messages=prefill_messages,
+                    model_name=llm_overrides["model_name"],
+                    api_url=llm_overrides["api_url"],
+                    api_key=llm_overrides["api_key"],
                 )
                 if tags:
                     tags = tags.strip().strip('"').strip("'")
@@ -1157,6 +1329,7 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
             # 调用 AI 重写 prompt
             from src.chat.services.gemini_service import gemini_service
 
+            llm_overrides = _get_novelai_prompt_llm_overrides()
             rewrite_messages = get_rewrite_messages(
                 prompt=self._current_prompt,
                 description=description,
@@ -1165,9 +1338,12 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
                 prompt="",  # messages 模式下 prompt 被忽略
                 generation_config={
                     "temperature": 0.8,
-                    "max_output_tokens": 2000,
+                    "max_output_tokens": NOVELAI_PROMPT_MAX_OUTPUT_TOKENS,
                 },
                 messages=rewrite_messages,
+                model_name=llm_overrides["model_name"],
+                api_url=llm_overrides["api_url"],
+                api_key=llm_overrides["api_key"],
             )
 
             if not new_tags or not new_tags.strip():
@@ -1195,6 +1371,38 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
             log.error(f"AI 重写 prompt 失败: {e}", exc_info=True)
             try:
                 await interaction.followup.send(f"AI 重写失败: {str(e)[:200]}", ephemeral=True)
+            except Exception:
+                pass
+
+
+class SlashGenerateVideoModal(discord.ui.Modal, title="生成视频"):
+    """从当前生图结果生成视频的描述输入框。"""
+
+    description_input = discord.ui.TextInput(
+        label="描述你的想法（可选）",
+        style=discord.TextStyle.paragraph,
+        placeholder="例如：镜头缓慢推进，角色转头微笑；留空则 AI 自由发挥",
+        required=False,
+        max_length=1000,
+    )
+
+    def __init__(self, image_prompt: str):
+        super().__init__()
+        self._image_prompt = image_prompt
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            user_idea = self.description_input.value.strip() if self.description_input.value else ""
+            await _generate_video_from_image_interaction(
+                interaction=interaction,
+                image_prompt=self._image_prompt,
+                user_idea=user_idea,
+            )
+        except Exception as e:
+            log.error(f"从生图结果生成视频失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send(f"生成视频失败: {str(e)[:200]}", ephemeral=True)
             except Exception:
                 pass
 
@@ -1337,6 +1545,17 @@ class SlashNovelAIResultView(discord.ui.View):
         )
         await interaction.response.send_modal(modal)
 
+    @discord.ui.button(label="生成视频", style=discord.ButtonStyle.secondary, row=1)
+    async def generate_video_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """基于当前结果图生成视频。"""
+        if interaction.user.id != self._user_id:
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        modal = SlashGenerateVideoModal(image_prompt=self._prompt)
+        await interaction.response.send_modal(modal)
+
     async def on_timeout(self):
         """超时后禁用所有按钮"""
         for item in self.children:
@@ -1374,9 +1593,12 @@ async def _slash_regenerate_novelai(
     except Exception as e:
         log.warning(f"斜杠重新生成读取实时成本配置失败，回退到当前值 {cost}: {e}")
 
+    # 按钮实际操作者付费（管理员代点时扣管理员）
+    billing_user_id = int(interaction.user.id)
+
     # 检查余额
     if cost > 0:
-        balance = await coin_service.get_balance(user_id)
+        balance = await coin_service.get_balance(billing_user_id)
         if balance < cost:
             await interaction.followup.send(
                 f"月光币不足（需要 {cost}，当前 {balance}）",
@@ -1404,7 +1626,7 @@ async def _slash_regenerate_novelai(
     if cost > 0:
         try:
             await coin_service.remove_coins(
-                user_id, cost, f"NovelAI重新生图: {prompt[:25]}..."
+                billing_user_id, cost, f"NovelAI重新生图: {prompt[:25]}..."
             )
         except Exception as e:
             log.error(f"扣除月光币失败: {e}")
@@ -1428,7 +1650,7 @@ async def _slash_regenerate_novelai(
         value=f"{result.width}x{result.height} | {steps}步 | CFG {scale}",
         inline=True,
     )
-    new_balance = await coin_service.get_balance(user_id)
+    new_balance = await coin_service.get_balance(billing_user_id)
     embed.set_footer(
         text=f"消耗 {cost} 月光币 | 余额: {new_balance} | {sampler} | {model_name}"
     )
@@ -1612,94 +1834,39 @@ class ImagenSwitchResultView(discord.ui.View):
 
         await interaction.response.defer(thinking=True)
         try:
-            # 使用 AI 将自然语言 prompt 转换为 NovelAI Tag（含预填充对话解除限制）
-            from src.chat.services.gemini_service import gemini_service
-            from src.chat.features.novelai_generation.tag_rules import get_tag_generation_messages
-
-            tag_messages = get_tag_generation_messages(description=self._prompt)
-            nai_prompt_result = await gemini_service.generate_simple_response(
-                prompt="",
-                generation_config={
-                    "temperature": 0.7,
-                    "max_output_tokens": 1000,
-                },
-                messages=tag_messages,
-            )
-            if nai_prompt_result and nai_prompt_result.strip():
-                nai_prompt = nai_prompt_result.strip().strip('"').strip("'")
-            else:
-                # AI 转换失败，直接用原始 prompt
-                nai_prompt = self._prompt
-
-            # 生成 NovelAI 图片
-            result = await novelai_service.generate_image(
+            nai_prompt = await _convert_imagen_prompt_to_novelai_prompt(self._prompt)
+            await _slash_regenerate_novelai(
+                interaction=interaction,
                 prompt=nai_prompt,
-                negative_prompt="lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
-                width=832,
-                height=1216,
-                steps=28,
-                scale=5.0,
-                sampler="k_euler_ancestral",
-                seed=None,
-            )
-
-            if result is None:
-                await interaction.followup.send("NovelAI 图片生成失败，请稍后重试。", ephemeral=True)
-                return
-
-            image_data, seed_used, cost_used = result
-
-            # 扣费
-            if cost_used > 0:
-                try:
-                    await coin_service.remove_coins(
-                        self._user_id, cost_used, f"NAI生图(切换): {nai_prompt[:25]}..."
-                    )
-                except Exception as e:
-                    log.error(f"扣除月光币失败: {e}")
-
-            # 构建 Embed
-            embed = discord.Embed(
-                title="NovelAI 图片生成（从 Imagen 切换）",
-                color=0xE91E63,
-            )
-            embed.set_author(
-                name=interaction.user.display_name,
-                icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
-            )
-            embed.add_field(name="种子", value=str(seed_used), inline=True)
-            embed.set_footer(text=f"消耗 {cost_used} 月光币 | 引擎: NovelAI")
-
-            image_file = discord.File(
-                io.BytesIO(image_data),
-                filename="nai_generated.png",
-                spoiler=True,
-            )
-
-            # 带交互按钮
-            view = SlashNovelAIResultView(
-                prompt=nai_prompt,
-                negative_prompt="lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
-                width=832,
-                height=1216,
-                steps=28,
-                scale=5.0,
-                sampler="k_euler_ancestral",
+                negative_prompt=str(NOVELAI_CONFIG.get("DEFAULT_NEGATIVE_PROMPT", "") or "").strip() or None,
+                width=int(NOVELAI_CONFIG.get("DEFAULT_WIDTH", 832)),
+                height=int(NOVELAI_CONFIG.get("DEFAULT_HEIGHT", 1216)),
+                steps=int(NOVELAI_CONFIG.get("DEFAULT_STEPS", 28)),
+                scale=float(NOVELAI_CONFIG.get("DEFAULT_SCALE", 5.0)),
+                sampler=str(NOVELAI_CONFIG.get("DEFAULT_SAMPLER", "k_euler_ancestral")),
                 preset_name=None,
                 user_id=self._user_id,
-                cost=cost_used,
+                cost=int(NOVELAI_CONFIG.get("IMAGE_GENERATION_COST", 5)),
+                title_suffix="（从 Imagen 切换）",
             )
-
-            msg = await interaction.followup.send(embed=embed, file=image_file, view=view)
-            view.message = msg
             log.info("已从 Imagen 切换回 NovelAI 生成图片")
-
         except Exception as e:
             log.error(f"切换到 NovelAI 失败: {e}", exc_info=True)
             try:
                 await interaction.followup.send(f"切换失败: {str(e)[:200]}", ephemeral=True)
             except Exception:
                 pass
+
+    @discord.ui.button(label="生成视频", style=discord.ButtonStyle.secondary, row=0)
+    async def generate_video_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """基于当前结果图生成视频。"""
+        if interaction.user.id != self._user_id:
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
+                return
+
+        modal = SlashGenerateVideoModal(image_prompt=self._prompt)
+        await interaction.response.send_modal(modal)
 
     async def _on_model_select(self, interaction: discord.Interaction):
         """处理模型选择下拉菜单的回调"""
@@ -1757,9 +1924,12 @@ async def _slash_regenerate_with_imagen(
         await interaction.followup.send("Gemini Imagen 服务当前不可用。", ephemeral=True)
         return
 
+    # 按钮实际操作者付费（管理员代点时扣管理员）
+    billing_user_id = int(interaction.user.id)
+
     # 检查余额
     if cost_per_image > 0:
-        balance = await coin_service.get_balance(user_id)
+        balance = await coin_service.get_balance(billing_user_id)
         if balance < cost_per_image:
             await interaction.followup.send(
                 f"月光币不足（需要 {cost_per_image}，当前 {balance}）",
@@ -1767,8 +1937,9 @@ async def _slash_regenerate_with_imagen(
             )
             return
 
+    imagen_prompt = await _convert_tag_prompt_to_imagen_prompt(prompt)
     result = await gemini_imagen_service.generate_single_image(
-        prompt=prompt,
+        prompt=imagen_prompt,
         negative_prompt=None,
         aspect_ratio="3:4",
         resolution=resolution,
@@ -1783,10 +1954,14 @@ async def _slash_regenerate_with_imagen(
     if cost_per_image > 0:
         try:
             await coin_service.remove_coins(
-                user_id, cost_per_image, f"Imagen生图(切换): {prompt[:25]}..."
+                billing_user_id, cost_per_image, f"Imagen生图(切换): {imagen_prompt[:25]}..."
             )
         except Exception as e:
             log.error(f"扣除月光币失败: {e}")
+
+    imagen_model_name = gemini_imagen_service._get_model_for_resolution(
+        resolution=resolution, is_edit=False, content_rating=content_rating
+    )
 
     # 构建 Embed
     embed = discord.Embed(
@@ -1799,7 +1974,12 @@ async def _slash_regenerate_with_imagen(
     )
     # 显示模型信息（提示词通过按钮查看）
     model_info = f"分辨率: {resolution.upper()}" if resolution != "default" else "标准分辨率"
-    embed.set_footer(text=f"消耗 {cost_per_image} 月光币 | {model_info} | {content_rating.upper()} | 引擎: Gemini Imagen")
+    embed.set_footer(
+        text=(
+            f"消耗 {cost_per_image} 月光币 | 模型: {imagen_model_name} | "
+            f"{model_info} | {content_rating.upper()} | 引擎: Gemini Imagen"
+        )
+    )
 
     image_file = discord.File(
         io.BytesIO(result),
@@ -1809,7 +1989,7 @@ async def _slash_regenerate_with_imagen(
 
     # 带交互按钮
     view = ImagenSwitchResultView(
-        prompt=prompt,
+        prompt=imagen_prompt,
         user_id=user_id,
         cost=cost_per_image,
         resolution=resolution,
@@ -1818,7 +1998,9 @@ async def _slash_regenerate_with_imagen(
 
     msg = await interaction.followup.send(embed=embed, file=image_file, view=view)
     view.message = msg
-    log.info(f"斜杠命令已切换到 Imagen 生成图片 (分辨率: {resolution}, 分级: {content_rating})")
+    log.info(
+        f"斜杠命令已切换到 Imagen 生成图片 (分辨率: {resolution}, 分级: {content_rating}, 模型: {imagen_model_name})"
+    )
 
 
 # ================================================================

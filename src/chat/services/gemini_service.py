@@ -2534,6 +2534,9 @@ class GeminiService:
         model_name: Optional[str] = None,
         client: Any = None,
         messages: Optional[List[Dict[str, str]]] = None,
+        api_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        api_format: Optional[str] = None,
     ) -> Optional[str]:
         """
         一个用于单次、非对话式文本生成的方法，允许传入完整的生成配置和可选的模型名称。
@@ -2550,54 +2553,72 @@ class GeminiService:
             messages: (可选) 多轮对话消息列表，格式为 [{"role": "user"|"model"|"assistant", "content": "..."}]。
                       当提供此参数时，将使用多轮对话模式，支持预填充上下文（如限制解除对话）。
                       Gemini SDK 使用 role="user"/"model"，OpenAI 兼容 API 自动映射 "model"->"assistant"。
+            api_url: (可选) 覆盖默认 API URL。常用于特定功能使用独立 LLM 端点。
+            api_key: (可选) 覆盖默认 API Key。留空则沿用主配置。
+            api_format: (可选) 覆盖 API 格式，仅支持 "gemini"/"openai"。留空则沿用主配置。
 
         Returns:
             生成的文本字符串，如果失败则返回 None。
         """
-        # 获取 API 格式配置
-        api_format = getattr(app_config, '_db_api_format', None) or "gemini"
-        api_url = getattr(app_config, '_db_api_url', None) or os.getenv("GEMINI_API_BASE_URL", "")
-        api_key = getattr(app_config, '_db_api_key', None) or os.getenv("GEMINI_API_KEYS", "")
-        
-        lowered_api_url = (api_url or '').lower()
+        # 获取 API 格式配置（支持调用方覆盖）
+        resolved_api_format = (api_format or getattr(app_config, '_db_api_format', None) or "gemini").strip().lower()
+        if resolved_api_format not in {"gemini", "openai"}:
+            log.warning(f"generate_simple_response 收到未知 api_format={resolved_api_format}，回退为 gemini")
+            resolved_api_format = "gemini"
+
+        resolved_api_url = api_url
+        if resolved_api_url is None:
+            resolved_api_url = getattr(app_config, '_db_api_url', None) or os.getenv("GEMINI_API_BASE_URL", "")
+
+        resolved_api_key = api_key
+        if resolved_api_key is None:
+            resolved_api_key = getattr(app_config, '_db_api_key', None) or os.getenv("GEMINI_API_KEYS", "")
+
+        lowered_api_url = (resolved_api_url or '').lower()
         looks_like_gemini_endpoint = (
             'generativelanguage.googleapis.com' in lowered_api_url
             or 'aiplatform.googleapis.com' in lowered_api_url
             or '/v1beta' in lowered_api_url
         )
-        if api_format == 'openai' and looks_like_gemini_endpoint:
+        if resolved_api_format == 'openai' and looks_like_gemini_endpoint:
             log.warning(
                 'generate_simple_response detected Gemini-like endpoint with openai format; forcing gemini format'
             )
-            api_format = 'gemini'
+            resolved_api_format = 'gemini'
 
         final_model_name = model_name or self.default_model_name
         
         # 调试日志
         has_messages = messages is not None and len(messages) > 0
-        log.debug(f"generate_simple_response 配置检查: api_format={api_format}, api_url={'已配置' if api_url else '未配置'}, api_key={'已配置' if api_key else '未配置'}, model={final_model_name}, has_messages={has_messages}")
+        log.debug(
+            "generate_simple_response 配置检查: "
+            f"api_format={resolved_api_format}, "
+            f"api_url={'已配置' if resolved_api_url else '未配置'}, "
+            f"api_key={'已配置' if resolved_api_key else '未配置'}, "
+            f"model={final_model_name}, has_messages={has_messages}"
+        )
         
         # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
-        if api_format == "openai" and api_url and api_key:
-            log.info(f"generate_simple_response 使用 OpenAI 兼容 API: {api_url[:30]}..., 模型: {final_model_name}")
+        if resolved_api_format == "openai" and resolved_api_url and resolved_api_key:
+            log.info(f"generate_simple_response 使用 OpenAI 兼容 API: {resolved_api_url[:30]}..., 模型: {final_model_name}")
             return await self._generate_simple_with_openai_compatible(
                 prompt=prompt,
                 generation_config=generation_config,
                 model_name=final_model_name,
-                api_url=api_url,
-                api_key=api_key,
+                api_url=resolved_api_url,
+                api_key=resolved_api_key,
                 messages=messages,
             )
         
         # 使用 Gemini SDK，优先使用 Dashboard 配置的 URL 和 Key
-        if api_url and api_key:
-            log.info(f"generate_simple_response 使用 Gemini SDK (自定义端点): {api_url[:30]}..., 模型: {final_model_name}")
+        if resolved_api_url and resolved_api_key:
+            log.info(f"generate_simple_response 使用 Gemini SDK (自定义端点): {resolved_api_url[:30]}..., 模型: {final_model_name}")
             return await self._generate_simple_with_gemini_custom(
                 prompt=prompt,
                 generation_config=generation_config,
                 model_name=final_model_name,
-                api_url=api_url,
-                api_key=api_key,
+                api_url=resolved_api_url,
+                api_key=resolved_api_key,
                 messages=messages,
             )
         

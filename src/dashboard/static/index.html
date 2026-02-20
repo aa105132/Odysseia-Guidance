@@ -1075,6 +1075,47 @@
                             <p class="text-xs text-slate-500 mt-1">如果需要使用预设列表中没有的模型，可在此填写</p>
                         </div>
 
+                        <!-- 提示词生成模型 -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">提示词生成模型（AI描述/AI重写专用）</label>
+                            <input type="text" x-model="novelaiForm.prompt_model"
+                                   placeholder="留空跟随主对话模型（AI设置中的 model）"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">
+                                仅用于 NovelAI 的 AI描述转Tag 和 AI重写，不影响主对话模型。
+                                当前生效：
+                                <span class="text-slate-300 font-medium" x-text="novelaiConfig.effective_prompt_model || aiForm.model || '未设置'"></span>
+                            </p>
+                        </div>
+
+                        <!-- 提示词生成专用 API URL -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">提示词生成专用 API URL（可选）</label>
+                            <input type="text" x-model="novelaiForm.prompt_api_url"
+                                   placeholder="留空跟随主 AI API URL"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">
+                                仅用于 NovelAI 的 AI描述/AI重写。可填独立网关地址，不影响主对话 URL。
+                            </p>
+                        </div>
+
+                        <!-- 提示词生成专用 API Key -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">提示词生成专用 API Key（可选）</label>
+                            <div class="relative">
+                                <input :type="showNovelaiPromptApiKey ? 'text' : 'password'" x-model="novelaiForm.prompt_api_key"
+                                       :placeholder="novelaiConfig.has_prompt_api_key ? '已配置（留空不修改）' : '留空跟随主 AI API Key'"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <button @click="showNovelaiPromptApiKey = !showNovelaiPromptApiKey"
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200">
+                                    <i :data-lucide="showNovelaiPromptApiKey ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-1">
+                                仅用于 NovelAI 的 AI描述/AI重写。留空则沿用主 AI API Key。
+                            </p>
+                        </div>
+
                         <!-- 采样器 -->
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">默认采样器</label>
@@ -2320,13 +2361,14 @@
                 imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto', sfw_model: '', sfw_edit_model: '', sfw_model_2k: '', sfw_edit_model_2k: '', sfw_model_4k: '', sfw_edit_model_4k: '', nsfw_model: '', nsfw_edit_model: '', nsfw_model_2k: '', nsfw_edit_model_2k: '', nsfw_model_4k: '', nsfw_edit_model_4k: '' },
                 videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8 },
                 videoConfig: {},
-                novelaiForm: { enabled: false, api_token: '', model: 'nai-diffusion-4-5-full', custom_model: '', default_sampler: 'k_euler', default_width: 832, default_height: 1216, default_steps: 28, default_scale: 5.0, quality_toggle: true, uc_preset: 0, cfg_rescale: 0, noise_schedule: 'native', smea: false, smea_dyn: false, generation_cost: 5, default_negative_prompt: '', default_artist_string: '', max_retries: 3 },
+                novelaiForm: { enabled: false, api_token: '', model: 'nai-diffusion-4-5-full', custom_model: '', prompt_model: '', prompt_api_url: '', prompt_api_key: '', default_sampler: 'k_euler', default_width: 832, default_height: 1216, default_steps: 28, default_scale: 5.0, quality_toggle: true, uc_preset: 0, cfg_rescale: 0, noise_schedule: 'native', smea: false, smea_dyn: false, generation_cost: 5, default_negative_prompt: '', default_artist_string: '', max_retries: 3 },
                 novelaiConfig: {},
                 novelaiPresets: [],
                 novelaiAdminPresets: [],
                 novelaiAdminPresetForm: { name: '', artist_string: '' },
                 novelaiAdminPresetEditingId: null,
                 showNovelaiApiToken: false,
+                showNovelaiPromptApiKey: false,
                 defaultImageEngine: 'imagen',
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
@@ -2519,6 +2561,9 @@
                                 this.novelaiForm.api_token = '';
                                 this.novelaiForm.model = data.model || 'nai-diffusion-4-5-full';
                                 this.novelaiForm.custom_model = '';
+                                this.novelaiForm.prompt_model = data.prompt_model || '';
+                                this.novelaiForm.prompt_api_url = data.prompt_api_url || '';
+                                this.novelaiForm.prompt_api_key = '';
                                 // 检查是否是预设模型
                                 const presetModels = data.available_models || [];
                                 if (!presetModels.includes(data.model)) {
@@ -3699,6 +3744,8 @@
                         const payload = {
                             enabled: this.novelaiForm.enabled,
                             model: this.novelaiForm.custom_model || this.novelaiForm.model,
+                            prompt_model: this.novelaiForm.prompt_model ? this.novelaiForm.prompt_model.trim() : '',
+                            prompt_api_url: this.novelaiForm.prompt_api_url ? this.novelaiForm.prompt_api_url.trim() : '',
                             default_sampler: this.novelaiForm.default_sampler,
                             default_width: parseInt(this.novelaiForm.default_width),
                             default_height: parseInt(this.novelaiForm.default_height),
@@ -3718,6 +3765,9 @@
 
                         if (this.novelaiForm.api_token) {
                             payload.api_token = this.novelaiForm.api_token;
+                        }
+                        if (this.novelaiForm.prompt_api_key) {
+                            payload.prompt_api_key = this.novelaiForm.prompt_api_key;
                         }
 
                         const response = await fetch('/api/config/novelai', {
@@ -3741,6 +3791,7 @@
                                 this.novelaiConfig = await configResp.json();
                             }
                             this.novelaiForm.api_token = '';
+                            this.novelaiForm.prompt_api_key = '';
                         } else {
                             const data = await response.json();
                             this.showToast(data.detail || '保存失败', 'error');

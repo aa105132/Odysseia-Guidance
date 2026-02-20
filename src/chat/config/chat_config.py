@@ -303,6 +303,11 @@ def _get_novelai_config():
         ),
         # 默认画师串（全局，会自动添加到所有 NovelAI 生图提示词前面）
         "DEFAULT_ARTIST_STRING": os.getenv("NOVELAI_DEFAULT_ARTIST_STRING", ""),
+        # NovelAI 提示词生成专用 LLM（用于 AI 描述转 Tag / AI 重写，留空则跟随主对话模型）
+        "PROMPT_MODEL": os.getenv("NOVELAI_PROMPT_MODEL", ""),
+        # NovelAI 提示词生成专用 API 覆盖（留空则跟随主 AI 配置）
+        "PROMPT_API_URL": os.getenv("NOVELAI_PROMPT_API_URL", ""),
+        "PROMPT_API_KEY": os.getenv("NOVELAI_PROMPT_API_KEY", ""),
     }
 
 NOVELAI_CONFIG = _get_novelai_config()
