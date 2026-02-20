@@ -348,10 +348,12 @@ async def generate_image_novelai(
 
         seed: 随机种子（可选），留空则随机。指定种子可复现相同图片。
 
-        preset_name: 画师串预设名称（可选）。
-                如果用户提到使用某个预设，填入预设名称。
-                若未填写，优先读取用户持久化画师串模式；
-                若用户未保存模式或模式失效，则回退到全局默认画师串（若已配置）。
+        preset_name: 画师串预设名称（可选，但命中点名时应强制传）。
+                当用户原话明确点名预设（如“用XX串”“切到XX预设”“按XX风格画”）时，必须传 preset_name。
+                preset_name 只能使用系统提供的可用预设名原文，不要编造。
+                命中管理员预设时，优先传 `管理员/预设名` 以避免同名冲突。
+                若用户未点名且你无法明确判断，才可不传；此时会优先读取用户持久化画师串模式，
+                若模式不可用再回退到全局默认画师串（若已配置）。
 
         skip_artist_prefix: 是否跳过画师串拼接，默认 False。
                 设为 True 时不会在 prompt 前拼接任何画师串预设或全局默认画师串。
@@ -492,7 +494,9 @@ async def generate_image_novelai(
     # skip_artist_prefix=True 时跳过所有画师串拼接
     # 1) 指定 preset_name 时，先匹配用户预设，再匹配管理员预设（均支持大小写不敏感）
     # 2) 未指定 preset_name 时，优先读取用户持久化画师串模式（default/preset/none）
-    # 3) 若仍无可用预设，则回退全局默认画师串
+    # 3) 若仍未指定：先按 prompt 自动匹配最合适预设（用户+管理员）
+    # 4) 若自动匹配分数不足（不稳定判断），回退用户预设（最新一条）
+    # 5) 若用户无预设，再回退全局默认画师串
     final_prompt = prompt
     applied_artist = False
     effective_preset_name: Optional[str] = None
@@ -629,9 +633,31 @@ async def generate_image_novelai(
                     f"未找到用户或管理员预设 '{normalized_preset_name}'，将继续使用全局默认画师串（或无前缀）"
                 )
         else:
-            # 未指定预设名：不自动套“最近预设/场景匹配预设”，仅使用用户持久化模式或全局默认
-            selected_preset = None
-            selected_scope = None
+            # 未指定预设名：先自动匹配；若不稳定则回退用户预设；再回退全局默认
+            AUTO_PRESET_CONFIDENCE_SCORE = 10
+            best_preset, best_scope, best_score = _select_scene_matched_preset(
+                prompt=prompt,
+                user_presets=user_presets,
+                admin_presets=admin_presets,
+            )
+
+            if best_preset and best_scope and best_score >= AUTO_PRESET_CONFIDENCE_SCORE:
+                selected_preset = best_preset
+                selected_scope = best_scope
+                matched_name = str(best_preset.get('name') or 'unknown')
+                log.info(f'Auto-selected artist preset by scene: {best_scope}/{matched_name} (score={best_score})')
+            else:
+                selected_preset = next(
+                    (p for p in user_presets if str(p.get('artist_string') or '').strip()),
+                    None,
+                )
+                if selected_preset:
+                    selected_scope = 'user'
+                    fallback_name = str(selected_preset.get('name') or 'unknown')
+                    log.info(f'Scene match not confident (score={best_score}), fallback to user preset: {fallback_name}')
+                else:
+                    selected_scope = None
+                    log.info('No confident scene preset and no user preset; fallback to global default artist string')
 
         if selected_preset and selected_preset.get("artist_string"):
             artist_str = selected_preset["artist_string"]

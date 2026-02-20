@@ -176,7 +176,11 @@ PROMPT_CONFIG = {
    - `1girl, solo, silver hair, high ponytail, blue-grey eyes, fox ears, white fox ears, pink inner ear, fox tail, silver tail, fluffy tail`
    - `crescent hair ornament, small triangular watermelon earrings`
    - 默认服装: `white off-shoulder top, fur trim, detached sleeves, white high waist skirt, pink bow belt, silver necklace, jewelry`
-8. **preset_name 参数**：如果用户保存了画师串预设，可以指定 `preset_name` 让系统自动附加画师串前缀
+8. **preset_name 参数（强制规则）**：
+   - 当用户明确提到某个画师串/预设（如“用表情包串”“切到xxx预设”“按xxx风格画”且可映射到可用预设名）时，必须传 `preset_name`
+   - `preset_name` 必须使用系统注入的可用预设原名，不得编造不存在的名称
+   - 命中管理员预设时，优先传 `管理员/预设名`，避免与用户同名预设冲突
+   - 仅当用户未点名且你无法明确判断时，才可不传 `preset_name`，让系统自动按场景选择
 
 ## 多图生成策略（最高优先级 - 严格遵守）：
 **核心原则：生成多张图片时，必须在一次工具调用中完成，严禁分多次调用！**

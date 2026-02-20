@@ -239,7 +239,9 @@ class PromptService:
                 preset_lines = [
                     "NovelAI 可用画师串预设名（实时）：",
                     "调用 generate_image_novelai 且需要 preset_name 时，只能从下列名称中选择；不要编造不存在的预设名。",
-                    "如果没有明显合适项，可以不传 preset_name，让系统自动按场景选择。",
+                    "【强制规则】当用户原话点名了某个预设（例如‘用XX串/XX预设/XX风格’且能对应到下列名称）时，必须显式传 preset_name。",
+                    "传入的 preset_name 必须与列表名称完全一致（仅大小写可容错）；命中管理员预设时，优先使用‘管理员/预设名’避免同名冲突。",
+                    "只有在用户没有点名且你无法明确判断时，才可以不传 preset_name，让系统自动按场景选择。",
                 ]
 
                 if user_preset_names:
@@ -256,7 +258,7 @@ class PromptService:
                 final_conversation.append(
                     {
                         "role": "model",
-                        "parts": ["收到，我会按场景优先从这些可用预设名里选择。"],
+                        "parts": ["收到，命中用户点名预设时我会强制传 preset_name，并从可用列表中精确选择。"],
                     }
                 )
 
