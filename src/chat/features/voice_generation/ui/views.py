@@ -143,6 +143,7 @@ class VoiceGenerationSession:
     emotion: Optional[str] = None
     enable_emotion: Optional[bool] = None
     emotion_scale: Optional[float] = None
+    max_text_length: int = 500
 
 
 class VoiceTextModal(discord.ui.Modal, title="编辑语音文本"):
@@ -150,18 +151,37 @@ class VoiceTextModal(discord.ui.Modal, title="编辑语音文本"):
         super().__init__(timeout=300)
         self.parent_view = parent_view
 
+        configured_max_text_length = max(20, int(parent_view.session.max_text_length or 500))
+        # Discord Modal TextInput 最大长度为 4000，超过时按 UI 能力上限收敛
+        modal_max_length = min(configured_max_text_length, 4000)
+        placeholder_suffix = (
+            f"（系统上限 {configured_max_text_length} 字）"
+            if configured_max_text_length <= 4000
+            else f"（系统上限 {configured_max_text_length} 字，单次编辑最多 4000 字）"
+        )
+
         self.text_input = discord.ui.TextInput(
             label="要朗读的文本",
-            placeholder="请输入要合成语音的文本",
+            placeholder=f"请输入要合成语音的文本{placeholder_suffix}",
             style=discord.TextStyle.paragraph,
             required=True,
-            max_length=3000,
-            default=(parent_view.session.text or "")[:3000],
+            max_length=modal_max_length,
+            default=(parent_view.session.text or "")[:modal_max_length],
         )
         self.add_item(self.text_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.parent_view.session.text = self.text_input.value.strip()
+        max_text_length = max(20, int(self.parent_view.session.max_text_length or 500))
+        text_value = (self.text_input.value or "").strip()
+
+        if len(text_value) > max_text_length:
+            await interaction.response.send_message(
+                f"文本过长：当前最多 {max_text_length} 字。",
+                ephemeral=True,
+            )
+            return
+
+        self.parent_view.session.text = text_value
         await interaction.response.send_message("文本已更新。", ephemeral=True)
         await self.parent_view.refresh_panel()
 
@@ -439,7 +459,8 @@ class VoiceGenerationPanelView(discord.ui.View):
             f"pitch_ratio: {_format_optional_float(self.session.pitch_ratio)}\n"
             f"emotion: {self.session.emotion or '自动'}\n"
             f"enable_emotion: {_format_optional_bool(self.session.enable_emotion)}\n"
-            f"emotion_scale: {_format_optional_float(self.session.emotion_scale)}"
+            f"emotion_scale: {_format_optional_float(self.session.emotion_scale)}\n"
+            f"max_text_length: {max(20, int(self.session.max_text_length or 500))}"
         )
 
         embed = discord.Embed(

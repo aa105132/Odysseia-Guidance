@@ -76,6 +76,7 @@ class VoiceGenerationCog(commands.Cog):
             emotion=(emotion or "").strip() or None,
             enable_emotion=None,
             emotion_scale=None,
+            max_text_length=max_text_length,
         )
 
         view = VoiceGenerationPanelView(
