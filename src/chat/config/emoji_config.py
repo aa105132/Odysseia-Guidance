@@ -6,7 +6,17 @@
 使用正则表达式进行匹配和替换
 """
 
+import json
+import logging
+import os
 import re
+
+log = logging.getLogger(__name__)
+
+_PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), .., .., ..)
+)
+EMOJI_MAPPINGS_PERSIST_FILE = os.path.join(_PROJECT_ROOT, data, emoji_mappings.json)
 
 # 定义表情符号映射
 # 格式: [(正则表达式, Discord表情符号), ...]
@@ -66,6 +76,10 @@ EMOJI_MAPPINGS = [
     (re.compile(r"\<问号\>"), ["<:wenhao:1466723711242469449>"]),
     (re.compile(r"\<应援\>"), ["<:yingyuan:1466723725276876850>"]),
     (re.compile(r"\<正坐\>"), ["<:zhengzuo:1466723728405565493>"]),
+]
+
+_DEFAULT_EMOJI_MAPPINGS_SNAPSHOT = [
+    (pattern.pattern, list(emojis)) for pattern, emojis in EMOJI_MAPPINGS
 ]
 
 # --- 活动专属表情 ---
@@ -393,6 +407,42 @@ FACTION_EMOJI_MAPPINGS = {
         ],
     },
 }
+
+
+def pattern_to_placeholder(pattern: re.Pattern) -> str:
+    return pattern.pattern.replace(\\<, <).replace(\\>, >)
+
+
+def compile_placeholder_pattern(placeholder: str) -> re.Pattern:
+    return re.compile(re.escape(placeholder))
+
+
+def _replace_default_emoji_mappings(mappings: list[tuple[re.Pattern, list[str]]]) -> None:
+    EMOJI_MAPPINGS.clear()
+    EMOJI_MAPPINGS.extend(mappings)
+
+
+def _serialize_default_emoji_mappings() -> list[dict]:
+    return [
+        {
+            placeholder: pattern_to_placeholder(pattern),
+            discord_emojis: list(emojis),
+        }
+        for pattern, emojis in EMOJI_MAPPINGS
+    ]
+
+
+def reset_default_emoji_mappings() -> None:
+    _replace_default_emoji_mappings(
+        [
+            (re.compile(pattern_text), list(emojis))
+            for pattern_text, emojis in _DEFAULT_EMOJI_MAPPINGS_SNAPSHOT
+        ]
+    )
+
+
+def load_emoji_mappings_from_file(file_path: str = None) -> bool:
+    return False
 
 
 def replace_emotion_tags(text: str, event_id: str = None, faction_id: str = None) -> str:

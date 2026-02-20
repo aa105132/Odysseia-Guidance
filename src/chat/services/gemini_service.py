@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import copy
 import logging
 from typing import Optional, Dict, List, Callable, Any
 import asyncio
@@ -568,6 +569,78 @@ class GeminiService:
                     )
                     total_penalty += penalty
         return total_penalty
+
+    @staticmethod
+    def _is_no_thinking_model(*model_names: Optional[str]) -> bool:
+        for model_name in model_names:
+            if isinstance(model_name, str) and 'nothinking' in model_name.lower():
+                return True
+        return False
+
+    @staticmethod
+    def _extract_unsupported_param_from_error(error_message: str) -> Optional[str]:
+        if not error_message:
+            return None
+
+        lowered = error_message.lower()
+        marker = 'generation_config.'
+        marker_index = lowered.find(marker)
+        if marker_index != -1:
+            tail = lowered[marker_index + len(marker):]
+            param_chars = []
+            for char in tail:
+                if char.isalnum() or char == '_':
+                    param_chars.append(char)
+                else:
+                    break
+            if param_chars:
+                return ''.join(param_chars).lstrip('_')
+
+        unsupported_marker = 'unsupported parameter'
+        marker_index = lowered.find(unsupported_marker)
+        if marker_index != -1:
+            tail = lowered[marker_index + len(unsupported_marker):]
+            while tail and not (tail[0].isalnum() or tail[0] == '_'):
+                tail = tail[1:]
+
+            param_chars = []
+            for char in tail:
+                if char.isalnum() or char in ('_', '.'):
+                    param_chars.append(char)
+                else:
+                    break
+            if param_chars:
+                return ''.join(param_chars).split('.')[-1].lstrip('_')
+
+        return None
+
+    def _drop_unsupported_generation_param(
+        self,
+        param_name: str,
+        gen_config_data: Dict[str, Any],
+        thinking_config_data: Optional[Dict[str, Any]],
+    ) -> tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
+        normalized_param = param_name.split('.')[-1].lstrip('_')
+
+        if normalized_param == 'thinking_config':
+            if thinking_config_data is not None:
+                return True, None, 'thinking_config'
+            return False, thinking_config_data, None
+
+        if normalized_param in gen_config_data:
+            gen_config_data.pop(normalized_param, None)
+            return True, thinking_config_data, normalized_param
+
+        if thinking_config_data and normalized_param in thinking_config_data:
+            thinking_config_data.pop(normalized_param, None)
+            if not thinking_config_data:
+                thinking_config_data = None
+            return True, thinking_config_data, f'thinking_config.{normalized_param}'
+
+        if normalized_param.startswith('thinking') and thinking_config_data is not None:
+            return True, None, 'thinking_config'
+
+        return False, thinking_config_data, None
 
     async def generate_response(
         self,

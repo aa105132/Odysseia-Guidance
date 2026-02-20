@@ -397,6 +397,29 @@ class PromptService:
             else []
         )
 
+        has_gif_attachment = any(
+            "gif" in (img.get("mime_type", "") or "").lower()
+            for img in attachment_images
+        )
+
+        if has_gif_attachment:
+            final_conversation.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        "工具调用提示：检测到用户消息中含 GIF 动图。"
+                        "如果用户要求描述动图过程、从头到尾变化、或质疑你是否看懂动图，"
+                        "你必须先调用 analyze_gif 工具，再基于关键帧结果作答。"
+                    ],
+                }
+            )
+            final_conversation.append(
+                {
+                    "role": "model",
+                    "parts": ["收到，涉及 GIF 过程描述时我会先调用 analyze_gif。"],
+                }
+            )
+
         # 处理文本和交错的表情图片
         if message:
             last_end = 0

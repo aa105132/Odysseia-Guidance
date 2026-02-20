@@ -223,16 +223,21 @@ class NovelAIService:
             }
 
             # 构建 V4 负面提示词结构
+            # 每个角色的 char_caption 也需要填入负面提示词，否则角色级负面约束完全无效
+            # 使用通用的角色级负面提示词来防止畸形
+            char_level_negative = "lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, extra arms, extra legs, malformed limbs, fused fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, ugly, blurry, amputation, bad proportions, gross proportions, long neck, cloned face, disfigured"
             char_negative_captions = [
-                {"char_caption": "", "centers": [{"x": 0.5, "y": 0.5}]}
-                for _ in char_captions
+                {"char_caption": char_level_negative, "centers": cap.get("centers", [{"x": 0.5, "y": 0.5}])}
+                for cap in char_captions
             ]
             v4_negative_prompt = {
                 "caption": {
                     "base_caption": final_negative,
                     "char_captions": char_negative_captions,
                 },
-                "legacy_uc": False,
+                # legacy_uc=True 确保平面 negative_prompt 字符串也会生效（兜底）
+                # 这样即使 V4 结构化路径有遗漏，传统负面提示词也能起作用
+                "legacy_uc": True,
             }
 
         # 构建请求参数
@@ -258,10 +263,20 @@ class NovelAIService:
             "legacy": False,
             "add_original_image": True,
             "uncond_scale": 1,
-            "skip_cfg_above_sigma": 58,  # Variety+ 开启
+            "skip_cfg_above_sigma": 58,  # Variety+ (variety_boost) 开启
             "deliberate_euler_ancestral_bug": False,
             "prefer_brownian": True,
+            # V4.5 推荐参数
+            "use_coords": False,
         }
+
+        # V4.5 模型专用参数
+        if is_v4_model and "4-5" in final_model:
+            # decrisp_mode: 减少 V4.5 偶尔出现的锐化伪影
+            parameters["decrisp_mode"] = True
+            # 确保 noise_schedule 使用 karras（V4.5 推荐）
+            if final_noise_schedule == "native":
+                parameters["noise_schedule"] = "karras"
 
         # 注入 V4 结构化 prompt
         if is_v4_model and v4_prompt and v4_negative_prompt:
@@ -399,14 +414,18 @@ class NovelAIService:
         """
         将提示词拆分为 base_caption 和 char_captions，用于 V4 结构化 prompt。
 
-        策略：
-        - 识别角色相关 Tag (如 1girl, 1boy 等) 作为角色分离依据
-        - 非角色相关的 Tag (场景、光影、质量等) 归入 base_caption
-        - 角色外貌/服饰/动作等 Tag 归入 char_caption
+        V4/V4.5 的结构化 prompt 核心逻辑：
+        - base_caption: 场景、质量、构图、光影、背景、氛围等 **非角色** 相关内容
+        - char_captions: 角色外貌、服饰、动作、表情等 **角色** 相关内容
+
+        策略改进：
+        - 采用"角色关键词白名单"识别角色 tag，而不是"场景黑名单兜底到角色"
+        - 未能明确归类的 tag 优先归入 base_caption（比错误塞进角色更安全）
+        - 保持画师串/artist tag 在 base_caption 中
         """
         tags = [t.strip() for t in prompt.split(",") if t.strip()]
 
-        # 角色指示 Tag
+        # ========= 角色指示 Tag（同时出现在 base 和 char 中）=========
         char_indicators = {
             "1girl", "2girls", "3girls", "4girls", "5girls", "6+girls",
             "1boy", "2boys", "3boys", "4boys", "5boys", "6+boys",
@@ -414,49 +433,150 @@ class NovelAIService:
             "multiple girls", "multiple boys",
         }
 
-        # 场景/质量/构图类 Tag（归入 base_caption）
-        base_keywords = {
+        # ========= 明确属于 base_caption 的 tag 关键词 =========
+        base_exact_keywords = {
+            # 质量 / 风格
             "masterpiece", "best quality", "amazing quality", "very aesthetic",
-            "absurdres", "highres", "ultra-detailed", "8k",
+            "absurdres", "highres", "ultra-detailed", "8k", "no text",
+            "top quality", "official art", "fine art",
+            # 内容分级
             "nsfw", "sfw", "rating:general", "rating:sensitive", "rating:questionable", "rating:explicit",
+            # 人数/关系（场景级）
             "solo", "hetero", "harem", "yuri", "yaoi",
+            # 构图
             "full body", "upper body", "lower body", "cowboy shot", "portrait",
             "close-up", "mid shot", "wide shot",
-            "front view", "side view", "back view", "from below", "from above", "from behind", "pov",
-            "face focus", "ass focus", "feet focus",
-            "depth of field", "bokeh", "cinematic angle", "dutch angle",
+            "front view", "side view", "back view", "from below", "from above", "from behind",
+            "pov", "male pov", "pov hands",
+            "face focus", "ass focus", "feet focus", "breast focus", "crotch focus",
+            "depth of field", "bokeh", "cinematic angle", "dutch angle", "dynamic angle",
+            "wide-angle", "foreshortening", "fisheye",
+            # 场景/环境
             "indoors", "outdoors", "indoor", "outdoor",
-            "day", "night", "sunset", "sunrise", "dawn", "dusk",
+            "day", "night", "sunset", "sunrise", "dawn", "dusk", "golden hour",
             "rain", "snow", "cloudy", "sunny",
-            "backlighting", "rim lighting", "sidelighting", "dramatic shadows",
-            "cinematic lighting", "soft lighting", "natural lighting",
+            # 背景
             "simple background", "white background", "black background", "gradient background",
             "no background", "detailed background",
+            # 光影
+            "backlighting", "rim lighting", "sidelighting", "dramatic shadows",
+            "cinematic lighting", "soft lighting", "natural lighting",
+            "moonlight", "sunlight", "neon light", "spotlight", "tyndall effect", "volumetric light",
+            "dimly lit", "dark theme",
+            # 氛围 / 特效（场景级）
+            "falling leaves", "fireworks", "steam", "floating sakura", "light particles",
+            "starry sky", "petals", "lens flare", "glowing",
+            # 年代标签
+            "year 2020", "year 2021", "year 2022", "year 2023", "year 2024", "year 2025",
         }
+
+        # base 模糊匹配关键词（tag 中包含这些子串就归入 base）
+        base_substring_keywords = [
+            "background", "lighting", "quality", "masterpiece", "aesthetic",
+            "absurdres", "highres", "resolution", "bokeh", "depth of field",
+            "cinematic", "artist:", "year 20",
+            # 场景地点
+            "bedroom", "bathroom", "kitchen", "classroom", "library", "office",
+            "hotel", "bar ", "elevator", "train interior", "car interior",
+            "dungeon", "church", "beach", "forest", "park", "alley",
+            "rooftop", "garden", "pool", "shrine", "street", "ruins",
+            "onsen", "hot spring",
+        ]
+
+        # ========= 明确属于角色描述的 tag 关键词 =========
+        char_exact_keywords = {
+            # 发型/发色
+            "long hair", "short hair", "ponytail", "high ponytail", "twintails",
+            "braid", "bob cut", "ahoge", "bangs", "sidelocks", "wavy hair",
+            "curly hair", "drill hair", "messy hair", "wet hair", "flowing hair",
+            "black hair", "blonde hair", "brown hair", "silver hair", "white hair",
+            "red hair", "blue hair", "pink hair", "purple hair", "green hair",
+            "gradient hair",
+            # 瞳色
+            "blue eyes", "red eyes", "green eyes", "brown eyes", "purple eyes",
+            "yellow eyes", "heterochromia", "heart-shaped pupils", "slit pupils",
+            "grey eyes", "blue grey eyes",
+            # 身材/身体
+            "flat chest", "small breasts", "medium breasts", "large breasts",
+            "huge breasts", "gigantic breasts", "petite", "curvy", "narrow waist",
+            "wide hips", "thick thighs", "slender", "tall female", "short female",
+            "dark skin", "pale skin", "tan", "tan lines",
+            # 身份/角色类型
+            "bishoujo", "maid", "loli", "milf", "office lady", "schoolgirl",
+            "witch", "nurse", "policewoman", "bunny girl", "catgirl",
+            "fox ears", "fox tail", "cat ears", "cat tail", "animal ears",
+            # 表情
+            "smile", "grin", "smug", "blush", "crying", "tears",
+            "surprised", "flustered", "embarrassed", "pout", "expressionless",
+            "ahegao", "heart eyes", "evil smile", "seductive smile",
+            "open mouth", "tongue out", "clenched teeth", "parted lips", ":3",
+            # 视线
+            "looking at viewer", "looking down", "looking up", "looking back",
+            "looking away", "sideways glance", "eye contact", "upturned eyes",
+            # 姿势/动作
+            "sitting", "standing", "lying", "kneeling", "all fours", "squatting",
+            "bent over", "crawling", "walking", "running", "jumping",
+            "arms up", "arms behind back", "arms behind head", "crossed arms",
+            "peace sign", "v", "heart hands", "waving", "beckoning",
+            "spread legs", "crossed legs", "leg up",
+            "head tilt", "leaning forward", "contrapposto",
+            # 服饰相关
+            "nude", "completely nude", "topless", "bottomless",
+            "open shirt", "no bra", "no panties", "see-through",
+            "wet clothes", "torn clothes", "clothes lift", "skirt lift", "shirt lift",
+            "school uniform", "sailor uniform", "maid outfit", "bikini", "swimsuit",
+            "kimono", "yukata", "dress", "gothic lolita", "leotard", "bodysuit",
+            "lingerie", "pajamas", "naked apron", "cheerleader",
+            "choker", "collar", "thighhighs", "pantyhose", "high heels", "boots",
+            "glasses", "earrings", "necklace",
+        }
+
+        # 角色 tag 模糊匹配关键词
+        char_substring_keywords = [
+            "hair", "eyes", "breasts", "nipple", "pussy", "penis", "ass",
+            "skin", "navel", "thigh", "ear ", "ears", "tail",
+            "panties", "bra", "skirt", "shirt", "dress", "uniform",
+            "stockings", "socks", "shoes", "gloves", "hat", "ribbon",
+            "ornament", "accessory", "jewelry", "tattoo", "piercing",
+            "blush", "sweat", "drool",
+            # 性行为相关（角色动作）
+            "sex", "fellatio", "masturbation", "fingering", "handjob",
+            "paizuri", "cum", "ejaculation", "orgasm",
+            "bondage", "rope", "handcuffs", "leash",
+            "grabbing", "holding", "hugging", "kissing",
+        ]
 
         base_tags = []
         char_tags = []
 
         for tag in tags:
             tag_lower = tag.lower().strip()
-            # 去除权重语法进行判断
+            # 去除权重语法进行判断 (格式: n::Tag:: 或 n::Tag)
             clean_tag = tag_lower
             if "::" in clean_tag:
                 parts = clean_tag.split("::")
                 if len(parts) >= 2:
                     clean_tag = parts[1].strip()
 
+            # 1) 角色数量指示 → 同时归入 base 和 char
             if clean_tag in char_indicators:
                 base_tags.append(tag)
                 char_tags.append(tag)
-            elif clean_tag in base_keywords or any(kw in clean_tag for kw in [
-                "background", "lighting", "quality", "masterpiece", "aesthetic",
-                "absurdres", "highres", "resolution", "detailed",
-                "bokeh", "depth of field", "cinematic",
-            ]):
+            # 2) 明确的 base 关键词
+            elif clean_tag in base_exact_keywords:
                 base_tags.append(tag)
-            else:
+            # 3) base 模糊匹配
+            elif any(kw in clean_tag for kw in base_substring_keywords):
+                base_tags.append(tag)
+            # 4) 明确的角色关键词
+            elif clean_tag in char_exact_keywords:
                 char_tags.append(tag)
+            # 5) 角色模糊匹配
+            elif any(kw in clean_tag for kw in char_substring_keywords):
+                char_tags.append(tag)
+            # 6) 无法归类 → 优先归入 base（比误塞角色更安全，不会导致畸形）
+            else:
+                base_tags.append(tag)
 
         base_caption = ", ".join(base_tags) if base_tags else prompt
         char_caption = ", ".join(char_tags) if char_tags else ""
@@ -468,10 +588,16 @@ class NovelAIService:
                 "centers": [{"x": 0.5, "y": 0.5}],
             })
         else:
+            # 即使没有明确的角色 tag，也要提供一个空的 char_caption 结构
             char_captions.append({
                 "char_caption": "",
                 "centers": [{"x": 0.5, "y": 0.5}],
             })
+
+        log.debug(
+            f"V4 prompt 拆分: base_caption={base_caption[:80]}... | "
+            f"char_caption={char_caption[:80]}..."
+        )
 
         return base_caption, char_captions
 

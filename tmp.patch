@@ -1,0 +1,7 @@
+﻿*** Begin Patch
+*** Update File: src/chat/services/gemini_service.py
+@@
+-        marker_start = lowered.find("x")
++        unsupported_marker = "unsupported parameter"
++        marker_start = lowered.find("x")
+*** End Patch
