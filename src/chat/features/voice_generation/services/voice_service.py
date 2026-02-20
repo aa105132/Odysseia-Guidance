@@ -12,7 +12,7 @@ import base64
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
 
@@ -37,6 +37,7 @@ class VoiceGenerationService:
 
     def __init__(self):
         self._client: Optional[Dict[str, Any]] = None
+        self._doubao_rr_index: int = -1
         self._initialize_client()
 
     def _initialize_client(self):
@@ -50,14 +51,29 @@ class VoiceGenerationService:
         if provider == "doubao":
             app_id = str(config.get("APP_ID", "")).strip()
             access_token = str(config.get("ACCESS_TOKEN", "")).strip()
+            app_pool = self._normalize_doubao_app_pool(config.get("APP_POOL", []))
+            clone_voice_app_bindings = self._normalize_clone_voice_app_bindings(
+                config.get("CLONE_VOICE_APP_BINDINGS", {})
+            )
             base_url = str(
                 config.get("BASE_URL") or "https://openspeech.bytedance.com"
             ).strip().rstrip("/")
             # 注意：cluster 允许留空，运行时会按 voice_type 自动选择
             cluster = str(config.get("CLUSTER", "")).strip()
 
-            if not app_id or not access_token:
-                log.warning("豆包语音配置不完整：缺少 APP_ID 或 ACCESS_TOKEN")
+            effective_pool = list(app_pool)
+            if not effective_pool and app_id and access_token:
+                effective_pool.append(
+                    {
+                        "app_id": app_id,
+                        "access_token": access_token,
+                    }
+                )
+
+            if not effective_pool:
+                log.warning(
+                    "豆包语音配置不完整：缺少可用账号（请配置 APP_ID/ACCESS_TOKEN 或 APP_POOL）"
+                )
                 return
 
             self._client = {
@@ -65,9 +81,15 @@ class VoiceGenerationService:
                 "base_url": base_url,
                 "app_id": app_id,
                 "access_token": access_token,
+                "app_pool": effective_pool,
+                "clone_voice_app_bindings": clone_voice_app_bindings,
                 "cluster": cluster,
             }
-            log.info("语音服务已初始化（provider=doubao）")
+            log.info(
+                "语音服务已初始化（provider=doubao, app_pool=%s, clone_bindings=%s）",
+                len(effective_pool),
+                len(clone_voice_app_bindings),
+            )
             return
 
         if provider in {"siliconflow", "custom"}:
@@ -96,6 +118,7 @@ class VoiceGenerationService:
 
     def reinitialize(self):
         self._client = None
+        self._doubao_rr_index = -1
         self._initialize_client()
 
     @staticmethod
@@ -194,6 +217,137 @@ class VoiceGenerationService:
                 continue
             normalized.append({"audio": audio, "text": text})
         return normalized
+
+    @staticmethod
+    def _normalize_doubao_app_pool(values: Any) -> list[Dict[str, str]]:
+        normalized: list[Dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+
+        if not isinstance(values, list):
+            return normalized
+
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+
+            app_id = str(item.get("app_id", "")).strip()
+            access_token = str(item.get("access_token", "")).strip()
+            if not app_id or not access_token:
+                continue
+
+            dedupe_key = (app_id, access_token)
+            if dedupe_key in seen:
+                continue
+
+            seen.add(dedupe_key)
+            normalized.append(
+                {
+                    "app_id": app_id,
+                    "access_token": access_token,
+                }
+            )
+
+        return normalized
+
+    @staticmethod
+    def _normalize_clone_voice_app_bindings(values: Any) -> Dict[str, str]:
+        if not isinstance(values, dict):
+            return {}
+
+        normalized: Dict[str, str] = {}
+        for raw_voice, raw_app_id in values.items():
+            voice = str(raw_voice).strip()
+            app_id = str(raw_app_id).strip()
+            if not voice or not app_id:
+                continue
+            normalized[voice] = app_id
+
+        return normalized
+
+    def _next_doubao_account(self, app_pool: list[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        if not app_pool:
+            return None
+
+        self._doubao_rr_index = (self._doubao_rr_index + 1) % len(app_pool)
+        return app_pool[self._doubao_rr_index]
+
+    def _resolve_bound_app_id_for_clone_voice(
+        self,
+        *,
+        voice_type: str,
+        clone_voice_app_bindings: Dict[str, str],
+    ) -> Optional[str]:
+        if not voice_type or not clone_voice_app_bindings:
+            return None
+
+        direct = clone_voice_app_bindings.get(voice_type)
+        if direct:
+            return str(direct).strip() or None
+
+        voice_lower = voice_type.lower()
+        for key, app_id in clone_voice_app_bindings.items():
+            if str(key).strip().lower() == voice_lower:
+                normalized = str(app_id).strip()
+                if normalized:
+                    return normalized
+
+        return None
+
+    def _select_doubao_credentials(
+        self,
+        *,
+        selected_voice: str,
+        is_clone_voice: bool,
+        app_pool: list[Dict[str, str]],
+        clone_voice_app_bindings: Dict[str, str],
+        fallback_app_id: str,
+        fallback_access_token: str,
+    ) -> Tuple[str, str, str]:
+        """
+        选择豆包账号：
+        1) 复刻音色：必须使用该复刻音色绑定的 APP_ID
+        2) 非复刻音色：从账号池轮询
+        3) 最后：回退单账号配置
+        """
+        if is_clone_voice:
+            bound_app_id = self._resolve_bound_app_id_for_clone_voice(
+                voice_type=selected_voice,
+                clone_voice_app_bindings=clone_voice_app_bindings,
+            )
+            if not bound_app_id:
+                log.error(
+                    "复刻音色未配置绑定 APP_ID，拒绝回退到轮询池：voice_type=%s",
+                    selected_voice,
+                )
+                return "", "", "clone_voice_binding_missing"
+
+            for item in app_pool:
+                candidate_app_id = str(item.get("app_id", "")).strip()
+                candidate_access_token = str(item.get("access_token", "")).strip()
+                if candidate_app_id == bound_app_id and candidate_access_token:
+                    return candidate_app_id, candidate_access_token, "clone_voice_binding"
+
+            if fallback_app_id == bound_app_id and fallback_access_token:
+                return fallback_app_id, fallback_access_token, "clone_voice_binding_fallback"
+
+            log.error(
+                "复刻音色绑定的 APP_ID 未命中可用凭据，拒绝回退到轮询池：voice_type=%s, bound_app_id=%s",
+                selected_voice,
+                bound_app_id,
+            )
+            return "", "", "clone_voice_binding_unavailable"
+
+        round_robin_account = self._next_doubao_account(app_pool)
+        if round_robin_account:
+            rr_app_id = str(round_robin_account.get("app_id", "")).strip()
+            rr_access_token = str(round_robin_account.get("access_token", "")).strip()
+            if rr_app_id and rr_access_token:
+                return rr_app_id, rr_access_token, "round_robin_pool"
+
+        if fallback_app_id and fallback_access_token:
+            return fallback_app_id, fallback_access_token, "single_fallback"
+
+        return "", "", "unavailable"
 
     @staticmethod
     def _is_doubao_official_voice(voice_type: str) -> bool:
@@ -329,8 +483,6 @@ class VoiceGenerationService:
     ) -> Optional[VoiceResult]:
         config = app_config.VOICE_CONFIG
         base_url = self._client["base_url"]
-        app_id = self._client["app_id"]
-        access_token = self._client["access_token"]
         configured_cluster = str(self._client.get("cluster", "")).strip()
         configured_clone_cluster = str(config.get("CLONE_CLUSTER", "")).strip()
         configured_clone_resource_id = str(config.get("CLONE_RESOURCE_ID", "")).strip()
@@ -347,6 +499,28 @@ class VoiceGenerationService:
             selected_voice = "zh_female_wanwanxiaohe_moon_bigtts"
 
         is_clone_voice = self._is_doubao_clone_voice(selected_voice)
+        app_pool = self._normalize_doubao_app_pool(self._client.get("app_pool", []))
+        clone_voice_app_bindings = self._normalize_clone_voice_app_bindings(
+            self._client.get("clone_voice_app_bindings", {})
+        )
+        fallback_app_id = str(self._client.get("app_id", "")).strip()
+        fallback_access_token = str(self._client.get("access_token", "")).strip()
+        app_id, access_token, account_route = self._select_doubao_credentials(
+            selected_voice=selected_voice,
+            is_clone_voice=is_clone_voice,
+            app_pool=app_pool,
+            clone_voice_app_bindings=clone_voice_app_bindings,
+            fallback_app_id=fallback_app_id,
+            fallback_access_token=fallback_access_token,
+        )
+        if not app_id or not access_token:
+            log.error(
+                "豆包语音账号不可用：未找到可用 APP_ID / ACCESS_TOKEN（route=%s, voice_type=%s, clone_voice=%s）",
+                account_route,
+                selected_voice,
+                is_clone_voice,
+            )
+            return None
 
         normalized_clone_resource_id = configured_clone_resource_id.lower()
         if is_clone_voice:
@@ -391,12 +565,14 @@ class VoiceGenerationService:
                 selected_voice,
             )
         log.info(
-            "豆包语音路由: voice_type=%s, cluster=%s, resource_id=%s, clone_voice=%s, clone_cluster_config=%s",
+            "豆包语音路由: voice_type=%s, cluster=%s, resource_id=%s, clone_voice=%s, clone_cluster_config=%s, app_route=%s, app_id=%s",
             selected_voice,
             cluster,
             resource_id,
             is_clone_voice,
             configured_clone_cluster or "<empty>",
+            account_route,
+            app_id,
         )
 
         requested_format = str(config.get("AUDIO_FORMAT", "mp3")).strip().lower()

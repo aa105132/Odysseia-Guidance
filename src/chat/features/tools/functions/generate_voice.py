@@ -8,11 +8,10 @@
 import base64
 import io
 import logging
+import re
 from typing import Optional
 
 import discord
-
-from src.chat.utils.prompt_utils import replace_emojis
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +64,19 @@ def _is_explicit_voice_request(message: Optional[discord.Message]) -> bool:
         "tts",
     ]
     return any(k in content for k in keywords)
+
+
+def _strip_emoji_placeholders(text: str) -> str:
+    """
+    移除文本中的“表情占位符”，避免 TTS 读出类似 <微笑> / <生气>。
+    仅处理单行尖括号占位，尽量避免误删长段文本。
+    """
+    if not text:
+        return ""
+
+    cleaned = re.sub(r"<[^<>\r\n]{1,24}>", "", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 def _estimate_ogg_opus_duration_seconds(audio_bytes: bytes) -> Optional[float]:
@@ -205,10 +217,11 @@ async def generate_voice(
     speed_ratio: Optional[float] = None,
     pitch_ratio: Optional[float] = None,
     *,
-    emotion: str,
-    enable_emotion: bool,
-    emotion_scale: float,
+    emotion: Optional[str] = None,
+    enable_emotion: Optional[bool] = None,
+    emotion_scale: Optional[float] = None,
     force_send: bool = False,
+    send_text_after_voice: bool = False,
     **kwargs,
 ) -> dict:
     """
@@ -225,7 +238,7 @@ async def generate_voice(
         voice_type: （可选）音色名称，留空使用后台默认音色。
         speed_ratio: （可选）语速倍率，建议 0.2~3.0。
         pitch_ratio: （可选）音调倍率，建议 0.1~3.0。
-        emotion: （必填）情感风格，必须显式传值。豆包可用情感建议如下：
+        emotion: （可选）情感风格。豆包可用情感建议如下：
             中文音色：happy(开心), sad(悲伤), angry(生气), surprised(惊讶), fear(恐惧), hate(厌恶),
             excited(激动), coldness(冷漠), neutral(中性), depressed(沮丧), lovey-dovey(撒娇),
             shy(害羞), comfort(安慰鼓励), tension(咆哮/焦急), tender(温柔),
@@ -233,25 +246,25 @@ async def generate_voice(
             vocal_fry / vocal-fry(气泡音), asmr(低语), news(新闻播报), entertainment(娱乐八卦), dialect(方言)。
             英文音色：neutral(中性), happy(愉悦), angry(愤怒), sad(悲伤), excited(兴奋),
             chat(对话/闲聊), asmr(低语), warm(温暖), affectionate(深情), authoritative(权威)。
-        enable_emotion: （必填）情感增强开关，必须传 True。
-        emotion_scale: （必填）情感强度，必须在 1.0~5.0（推荐 4.0）。
+        enable_emotion: （可选）情感增强开关。
+        emotion_scale: （可选）情感强度，建议 1.0~5.0（推荐 4.0）。
         force_send: 是否强制执行发送。默认 False。通常无需设置，除非你明确要无条件发语音。
+        send_text_after_voice: 语音发送成功后，是否补发一条同文文本消息。默认 False。
 
     Returns:
         成功时会把音频文件直接发送到频道，并返回 skip_ai_response=True。
-        语音即最终回复，工具不会再发送额外文本消息。
+        语音发送成功后，可按 send_text_after_voice 决定是否补发同文文本。
         计费策略：默认仅在“用户明确要求语音”时扣费；月月主动语音默认不扣费。
     """
     from src.chat.config.chat_config import VOICE_CONFIG
-    from src.chat.features.odysseia_coin.service.coin_service import coin_service
     from src.chat.features.voice_generation.services.voice_service import voice_service
 
-    text = (text or "").strip()
+    text = _strip_emoji_placeholders((text or "").strip())
     if not text:
         return {
             "generation_failed": True,
             "reason": "empty_text",
-            "hint": "用户没有提供可朗读的内容。请让用户给出要转换为语音的文本。",
+            "hint": "用户没有提供可朗读的内容（或文本仅包含表情占位符）。请让用户给出要转换为语音的文本。",
         }
 
     message: Optional[discord.Message] = kwargs.get("message")
@@ -282,8 +295,7 @@ async def generate_voice(
             "hint": "语音服务当前不可用。请用你自己的语气告诉用户先检查语音配置或稍后重试。",
         }
 
-    # 扣费配置
-    cost = int(VOICE_CONFIG.get("VOICE_GENERATION_COST", 3))
+    # 保留 user_id 透传（用于 provider 侧 uid 标识），但不再做余额拦截/扣费
     parsed_user_id: Optional[int] = None
     if user_id is not None:
         try:
@@ -291,49 +303,25 @@ async def generate_voice(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
-    should_charge = parsed_user_id is not None and cost > 0 and user_requested
-    if should_charge:
-        balance = await coin_service.get_balance(parsed_user_id)
-        if balance < cost:
-            return {
-                "generation_failed": True,
-                "reason": "insufficient_balance",
-                "cost": cost,
-                "balance": balance,
-                "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够。",
-            }
-
-    selected_emotion = str(emotion or "").strip()
-    if not selected_emotion:
-        return {
-            "generation_failed": True,
-            "reason": "invalid_emotion",
-            "hint": "emotion 不能为空。请根据语义传入明确情感值（例如 happy/angry/sad/comfort/tender）。",
-        }
-
-    if enable_emotion is not True:
-        log.info("generate_voice 收到 enable_emotion=%s，已强制修正为 True。", enable_emotion)
-
-    try:
-        selected_emotion_scale = float(emotion_scale)
-    except (TypeError, ValueError):
-        return {
-            "generation_failed": True,
-            "reason": "invalid_emotion_scale",
-            "hint": "emotion_scale 不是有效数字。请传 1.0 到 5.0 之间的小数（推荐 4.0）。",
-        }
-
-    if not 1.0 <= selected_emotion_scale <= 5.0:
-        return {
-            "generation_failed": True,
-            "reason": "emotion_scale_out_of_range",
-            "hint": "emotion_scale 必须在 1.0 到 5.0 之间（推荐 4.0）。",
-        }
+    selected_emotion = str(emotion or "").strip() or None
+    selected_enable_emotion = bool(enable_emotion) if enable_emotion is not None else None
+    selected_emotion_scale: Optional[float] = None
+    if emotion_scale is not None:
+        try:
+            selected_emotion_scale = float(emotion_scale)
+            if selected_emotion_scale < 1.0:
+                selected_emotion_scale = 1.0
+            elif selected_emotion_scale > 5.0:
+                selected_emotion_scale = 5.0
+        except (TypeError, ValueError):
+            log.warning("emotion_scale 非法，已忽略: %s", emotion_scale)
+            selected_emotion_scale = None
 
     # 添加“正在生成”反应
     await add_reaction(GENERATING_EMOJI)
 
-    # 语音即最终回复：发送完语音后不再追加文本。
+    should_send_text_after_voice = bool(send_text_after_voice)
+
     try:
         result = await voice_service.generate_voice(
             text=text,
@@ -341,7 +329,7 @@ async def generate_voice(
             speed_ratio=speed_ratio,
             pitch_ratio=pitch_ratio,
             emotion=selected_emotion,
-            enable_emotion=True,
+            enable_emotion=selected_enable_emotion,
             emotion_scale=selected_emotion_scale,
             user_id=str(parsed_user_id) if parsed_user_id is not None else None,
         )
@@ -367,14 +355,7 @@ async def generate_voice(
 
         await add_reaction(SUCCESS_EMOJI)
 
-        # 扣币（仅成功后，且仅用户明确要求语音时）
-        if should_charge:
-            try:
-                await coin_service.remove_coins(
-                    parsed_user_id, cost, f"AI语音生成: {text[:25]}..."
-                )
-            except Exception as e:
-                log.error(f"扣除月光币失败: {e}")
+        text_sent_after_voice = False
 
         # 发送语音文件（优先原生语音消息样式；失败自动回退普通附件）
         if channel:
@@ -418,7 +399,14 @@ async def generate_voice(
                         f"语音已按普通附件发送: provider={result.provider}, model={result.model_name}, ext={result.file_ext}"
                     )
 
-                # 语音即最终回复：发送完语音后不再追加任何文本消息。
+                # 可选：发送同文文本
+                if should_send_text_after_voice:
+                    try:
+                        await channel.send(text)
+                        text_sent_after_voice = True
+                        log.info("语音后已补发同文文本。")
+                    except Exception as text_send_error:
+                        log.warning(f"语音发送成功，但补发同文文本失败: {text_send_error}")
 
             except Exception as e:
                 log.error(f"发送语音到频道失败: {e}", exc_info=True)
@@ -426,14 +414,19 @@ async def generate_voice(
         return {
             "success": True,
             "skip_ai_response": True,
-            "cost": cost if should_charge else 0,
-            "charged": bool(should_charge),
+            "cost": 0,
+            "charged": False,
             "requested_by_user": bool(user_requested),
             "provider": result.provider,
             "model_name": result.model_name,
             "voice_type": result.voice_type,
             "audio_format": result.file_ext,
-            "message": "语音已成功生成并发送给用户，无需再回复。",
+            "requested_text_after_voice": bool(should_send_text_after_voice),
+            "text_sent_after_voice": bool(text_sent_after_voice),
+            "message": (
+                "语音已成功生成并发送给用户。"
+                + ("已补发同文文本。" if text_sent_after_voice else "未补发同文文本。")
+            ),
         }
 
     except Exception as e:

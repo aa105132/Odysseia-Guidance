@@ -125,6 +125,10 @@ class VoiceConfigUpdate(BaseModel):
     model_name: Optional[str] = None
     app_id: Optional[str] = None
     access_token: Optional[str] = None
+    # 豆包账号池（可选）：[{app_id, access_token}]
+    app_pool: Optional[List[Dict[str, str]]] = None
+    # 复刻音色绑定到指定 app_id（可选）：{voice_type: app_id}
+    clone_voice_app_bindings: Optional[Dict[str, str]] = None
     cluster: Optional[str] = None
     clone_cluster: Optional[str] = None
     clone_resource_id: Optional[str] = None
@@ -394,6 +398,77 @@ def _parse_voice_references_setting(raw_value: Optional[str]) -> List[Dict[str, 
     return _normalize_voice_references(parsed if isinstance(parsed, list) else [])
 
 
+def _normalize_doubao_app_pool(values: Optional[List[Any]]) -> List[Dict[str, str]]:
+    normalized: List[Dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for item in values or []:
+        if not isinstance(item, dict):
+            continue
+
+        app_id = str(item.get("app_id", "")).strip()
+        access_token = str(item.get("access_token", "")).strip()
+        if not app_id or not access_token:
+            continue
+
+        dedupe_key = (app_id, access_token)
+        if dedupe_key in seen:
+            continue
+
+        seen.add(dedupe_key)
+        normalized.append(
+            {
+                "app_id": app_id,
+                "access_token": access_token,
+            }
+        )
+
+    return normalized
+
+
+def _parse_doubao_app_pool_setting(raw_value: Optional[str]) -> List[Dict[str, str]]:
+    if raw_value is None:
+        return []
+
+    raw_text = str(raw_value).strip()
+    if not raw_text:
+        return []
+
+    try:
+        parsed = json.loads(raw_text)
+        if isinstance(parsed, list):
+            return _normalize_doubao_app_pool(parsed)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+
+    parsed_rows: List[Dict[str, str]] = []
+    for line in raw_text.replace("\r", "\n").split("\n"):
+        text = line.strip()
+        if not text:
+            continue
+
+        split_index = text.find("|")
+        if split_index < 0:
+            split_index = text.find("｜")
+        if split_index < 0:
+            split_index = text.find(",")
+        if split_index < 0:
+            split_index = text.find("，")
+        if split_index < 0:
+            split_index = text.find("=")
+        if split_index < 0:
+            continue
+
+        app_id = text[:split_index].strip()
+        access_token = text[split_index + 1 :].strip()
+        if not app_id or not access_token:
+            continue
+
+        parsed_rows.append({"app_id": app_id, "access_token": access_token})
+
+    return _normalize_doubao_app_pool(parsed_rows)
+
+
 def _build_default_available_models() -> List[str]:
     defaults: List[Any] = [
         'codex-gpt-5.2',
@@ -546,6 +621,10 @@ async def get_all_config(token: str = Depends(verify_token)):
     voice_provider = str(voice_config.get("PROVIDER", "doubao")).strip().lower()
     voice_api_key = str(voice_config.get("API_KEY", "")).strip()
     voice_access_token = str(voice_config.get("ACCESS_TOKEN", "")).strip()
+    voice_app_pool = _normalize_doubao_app_pool(voice_config.get("APP_POOL", []))
+    voice_clone_voice_app_bindings = _normalize_string_map(
+        voice_config.get("CLONE_VOICE_APP_BINDINGS", {})
+    )
     voice_available_types = _normalize_string_items(
         voice_config.get("AVAILABLE_VOICE_TYPES", [])
     )
@@ -641,6 +720,8 @@ async def get_all_config(token: str = Depends(verify_token)):
             "app_id": voice_config.get("APP_ID", ""),
             "access_token_masked": voice_access_token_masked,
             "has_access_token": bool(voice_access_token),
+            "app_pool_count": len(voice_app_pool),
+            "clone_voice_app_bindings": voice_clone_voice_app_bindings,
             "cluster": voice_config.get("CLUSTER", ""),
             "clone_cluster": voice_config.get("CLONE_CLUSTER", "volcano_icl"),
             "clone_resource_id": voice_config.get("CLONE_RESOURCE_ID", "seed-icl-2.0"),
@@ -1641,6 +1722,10 @@ async def get_voice_config(token: str = Depends(verify_token)):
     db_model_name = await chat_db_manager.get_global_setting("voice_model")
     db_app_id = await chat_db_manager.get_global_setting("voice_app_id")
     db_access_token = await chat_db_manager.get_global_setting("voice_access_token")
+    db_app_pool = await chat_db_manager.get_global_setting("voice_app_pool")
+    db_clone_voice_app_bindings = await chat_db_manager.get_global_setting(
+        "voice_clone_voice_app_bindings"
+    )
     db_cluster = await chat_db_manager.get_global_setting("voice_cluster")
     db_clone_cluster = await chat_db_manager.get_global_setting("voice_clone_cluster")
     db_clone_resource_id = await chat_db_manager.get_global_setting("voice_clone_resource_id")
@@ -1673,6 +1758,16 @@ async def get_voice_config(token: str = Depends(verify_token)):
     model_name = str(db_model_name or config.get("MODEL_NAME", "FunAudioLLM/CosyVoice2-0.5B")).strip()
     app_id = str(db_app_id or config.get("APP_ID", "")).strip()
     access_token = str(db_access_token or config.get("ACCESS_TOKEN", "")).strip()
+    app_pool = (
+        _parse_doubao_app_pool_setting(db_app_pool)
+        if db_app_pool is not None
+        else _normalize_doubao_app_pool(config.get("APP_POOL", []))
+    )
+    clone_voice_app_bindings = (
+        _parse_string_map_setting(db_clone_voice_app_bindings)
+        if db_clone_voice_app_bindings is not None
+        else _normalize_string_map(config.get("CLONE_VOICE_APP_BINDINGS", {}))
+    )
     cluster = str(
         db_cluster if db_cluster is not None else config.get("CLUSTER", "")
     ).strip()
@@ -1818,6 +1913,9 @@ async def get_voice_config(token: str = Depends(verify_token)):
         "app_id": app_id,
         "access_token_masked": access_token_masked,
         "has_access_token": bool(access_token),
+        "app_pool": app_pool,
+        "app_pool_count": len(app_pool),
+        "clone_voice_app_bindings": clone_voice_app_bindings,
         "cluster": cluster,
         "clone_cluster": clone_cluster,
         "clone_resource_id": clone_resource_id,
@@ -1913,6 +2011,31 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
         env_updates["VOICE_ACCESS_TOKEN"] = access_token
         updated["access_token"] = "已更新" if access_token else "已清空"
         await chat_db_manager.set_global_setting("voice_access_token", access_token)
+
+    if config.app_pool is not None:
+        app_pool = _normalize_doubao_app_pool(config.app_pool)
+        serialized_app_pool = json.dumps(app_pool, ensure_ascii=False)
+        chat_config.VOICE_CONFIG["APP_POOL"] = app_pool
+        os.environ["VOICE_APP_POOL"] = serialized_app_pool
+        env_updates["VOICE_APP_POOL"] = serialized_app_pool
+        updated["app_pool_count"] = len(app_pool)
+        await chat_db_manager.set_global_setting("voice_app_pool", serialized_app_pool)
+
+    if config.clone_voice_app_bindings is not None:
+        clone_voice_app_bindings = _normalize_string_map(config.clone_voice_app_bindings)
+        serialized_clone_voice_app_bindings = json.dumps(
+            clone_voice_app_bindings, ensure_ascii=False
+        )
+        chat_config.VOICE_CONFIG["CLONE_VOICE_APP_BINDINGS"] = clone_voice_app_bindings
+        os.environ["VOICE_CLONE_VOICE_APP_BINDINGS"] = serialized_clone_voice_app_bindings
+        env_updates["VOICE_CLONE_VOICE_APP_BINDINGS"] = (
+            serialized_clone_voice_app_bindings
+        )
+        updated["clone_voice_app_bindings_count"] = len(clone_voice_app_bindings)
+        await chat_db_manager.set_global_setting(
+            "voice_clone_voice_app_bindings",
+            serialized_clone_voice_app_bindings,
+        )
 
     if config.cluster is not None:
         cluster = str(config.cluster).strip()

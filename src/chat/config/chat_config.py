@@ -174,6 +174,81 @@ def _parse_voice_references_env(
     return normalized if normalized else default
 
 
+def _parse_doubao_app_pool_env(
+    key: str, default: list[dict[str, str]]
+) -> list[dict[str, str]]:
+    """
+    解析豆包账号池环境变量，支持两种格式：
+    1) JSON 数组：
+       [{"app_id":"xxx","access_token":"yyy"}]
+    2) 文本多行：
+       app_id | access_token
+    """
+    raw = os.getenv(key)
+    if not raw:
+        return default
+
+    raw = raw.strip()
+    if not raw:
+        return default
+
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _append_item(raw_app_id: object, raw_access_token: object) -> None:
+        app_id = str(raw_app_id or "").strip()
+        access_token = str(raw_access_token or "").strip()
+        if not app_id or not access_token:
+            return
+
+        dedupe_key = (app_id, access_token)
+        if dedupe_key in seen:
+            return
+
+        seen.add(dedupe_key)
+        normalized.append(
+            {
+                "app_id": app_id,
+                "access_token": access_token,
+            }
+        )
+
+    # 优先 JSON
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                _append_item(item.get("app_id"), item.get("access_token"))
+        if normalized:
+            return normalized
+    except Exception:
+        pass
+
+    # 回退：逐行解析
+    for line in raw.replace("\r", "\n").split("\n"):
+        text = line.strip()
+        if not text:
+            continue
+
+        split_index = text.find("|")
+        if split_index < 0:
+            split_index = text.find("｜")
+        if split_index < 0:
+            split_index = text.find(",")
+        if split_index < 0:
+            split_index = text.find("，")
+        if split_index < 0:
+            split_index = text.find("=")
+        if split_index < 0:
+            continue
+
+        _append_item(text[:split_index], text[split_index + 1 :])
+
+    return normalized if normalized else default
+
+
 # --- Chat 功能总开关 ---
 CHAT_ENABLED = os.getenv("CHAT_ENABLED", "False").lower() == "true"
 
@@ -424,6 +499,12 @@ def _get_voice_config():
         # 火山引擎豆包使用
         "APP_ID": os.getenv("VOICE_APP_ID", ""),
         "ACCESS_TOKEN": os.getenv("VOICE_ACCESS_TOKEN", ""),
+        # 豆包账号池（可选）。填写后优先从池子轮询挑选 app_id/access_token。
+        "APP_POOL": _parse_doubao_app_pool_env("VOICE_APP_POOL", []),
+        # 复刻音色 -> 指定 app_id 绑定（可选），仅对复刻音色生效。
+        "CLONE_VOICE_APP_BINDINGS": _parse_str_map_env(
+            "VOICE_CLONE_VOICE_APP_BINDINGS", {}
+        ),
         # 官方音色默认 cluster
         "CLUSTER": os.getenv("VOICE_CLUSTER", "volcano_tts"),
         # 复刻音色（S_）专用 cluster / resource-id（默认按 ICL2.0 字符版）

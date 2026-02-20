@@ -971,6 +971,30 @@
                             <p class="text-xs text-slate-500 mt-1">请填写语音服务 Access Token；火山云通用 AccessKey/SecretKey 不能直接代替此字段。</p>
                         </div>
 
+                        <div x-show="voiceForm.provider === 'doubao'" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">豆包账号轮询池（可选）</label>
+                                <textarea x-model="voiceForm.app_pool_text"
+                                          rows="5"
+                                          placeholder="每行一条，格式：app_id | access_token&#10;示例：&#10;7690056285 | token_xxx&#10;7690056286 | token_yyy&#10;&#10;也支持直接粘贴 JSON 数组：[{"app_id":"...","access_token":"..."}]"
+                                          class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                                <p class="text-xs text-slate-500 mt-1">
+                                    语音生成时会在池中按顺序轮询 APP ID + Access Token；未配置时回退到上方单账号。
+                                </p>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">复刻音色绑定 APP ID（可选）</label>
+                                <textarea x-model="voiceForm.clone_voice_app_bindings_text"
+                                          rows="4"
+                                          placeholder="每行一条，格式：voice_type = app_id&#10;示例：&#10;S_03FKArQO1 = 7690056285&#10;S_03FKArQO2 = 7690056286&#10;&#10;也支持直接粘贴 JSON 对象：{"S_03FKArQO1":"7690056285"}"
+                                          class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                                <p class="text-xs text-slate-500 mt-1">
+                                    仅对复刻音色生效。命中绑定时优先使用绑定 APP ID 对应账号；未命中再走轮询池。
+                                </p>
+                            </div>
+                        </div>
+
                         <div x-show="voiceForm.provider === 'doubao'" class="space-y-3">
                             <div>
                                 <label class="block text-sm font-medium text-slate-300 mb-2">官方音色 Cluster（豆包可选）</label>
@@ -2843,6 +2867,8 @@
                     model_name: 'FunAudioLLM/CosyVoice2-0.5B',
                     app_id: '',
                     access_token: '',
+                    app_pool_text: '',
+                    clone_voice_app_bindings_text: '',
                     cluster: '',
                     clone_cluster: 'volcano_icl',
                     clone_resource_id: 'seed-icl-2.0',
@@ -4398,6 +4424,25 @@
                             this.voiceForm.model_name = data.model_name || 'FunAudioLLM/CosyVoice2-0.5B';
                             this.voiceForm.app_id = data.app_id || '';
                             this.voiceForm.access_token = '';
+                            const appPool = Array.isArray(data.app_pool) ? data.app_pool : [];
+                            this.voiceForm.app_pool_text = appPool
+                                .map((item) => {
+                                    if (!item || typeof item !== 'object') return '';
+                                    const appId = String(item.app_id || '').trim();
+                                    const accessToken = String(item.access_token || '').trim();
+                                    if (!appId || !accessToken) return '';
+                                    return `${appId} | ${accessToken}`;
+                                })
+                                .filter(Boolean)
+                                .join('\n');
+                            const cloneVoiceAppBindings = (
+                                data.clone_voice_app_bindings
+                                && typeof data.clone_voice_app_bindings === 'object'
+                                && !Array.isArray(data.clone_voice_app_bindings)
+                            ) ? data.clone_voice_app_bindings : {};
+                            this.voiceForm.clone_voice_app_bindings_text = Object.entries(cloneVoiceAppBindings)
+                                .map(([voiceType, appId]) => `${voiceType} = ${appId}`)
+                                .join('\n');
                             this.voiceForm.cluster = data.cluster || '';
                             this.voiceForm.clone_cluster = data.clone_cluster || 'volcano_icl';
                             this.voiceForm.clone_resource_id = data.clone_resource_id || 'seed-icl-2.0';
@@ -4481,6 +4526,114 @@
 
                         const voiceTypeHints = Object.fromEntries(parsedVoiceTypeHintEntries);
 
+                        const appPoolText = (this.voiceForm.app_pool_text || '').trim();
+                        let parsedAppPool = [];
+                        if (appPoolText) {
+                            if (appPoolText.startsWith('[')) {
+                                try {
+                                    const parsedJsonPool = JSON.parse(appPoolText);
+                                    if (!Array.isArray(parsedJsonPool)) {
+                                        this.showToast('豆包账号池 JSON 必须是数组', 'error');
+                                        this.saving = false;
+                                        return;
+                                    }
+                                    parsedAppPool = parsedJsonPool
+                                        .map(item => {
+                                            if (!item || typeof item !== 'object') return null;
+                                            const app_id = String(item.app_id || '').trim();
+                                            const access_token = String(item.access_token || '').trim();
+                                            if (!app_id || !access_token) return null;
+                                            return { app_id, access_token };
+                                        })
+                                        .filter(Boolean);
+                                } catch (e) {
+                                    this.showToast('豆包账号池 JSON 解析失败', 'error');
+                                    this.saving = false;
+                                    return;
+                                }
+                            } else {
+                                parsedAppPool = appPoolText
+                                    .replace(/\r/g, '\n')
+                                    .split('\n')
+                                    .map(line => line.trim())
+                                    .filter(Boolean)
+                                    .map(line => {
+                                        let splitIndex = line.indexOf('|');
+                                        if (splitIndex < 0) splitIndex = line.indexOf('｜');
+                                        if (splitIndex < 0) splitIndex = line.indexOf(',');
+                                        if (splitIndex < 0) splitIndex = line.indexOf('，');
+                                        if (splitIndex < 0) splitIndex = line.indexOf('=');
+                                        if (splitIndex < 0) return null;
+
+                                        const app_id = line.slice(0, splitIndex).trim();
+                                        const access_token = line.slice(splitIndex + 1).trim();
+                                        if (!app_id || !access_token) return null;
+                                        return { app_id, access_token };
+                                    })
+                                    .filter(Boolean);
+                            }
+                        }
+
+                        const dedupedAppPoolMap = new Map();
+                        parsedAppPool.forEach((item) => {
+                            if (!item) return;
+                            const app_id = String(item.app_id || '').trim();
+                            const access_token = String(item.access_token || '').trim();
+                            if (!app_id || !access_token) return;
+                            dedupedAppPoolMap.set(`${app_id}||${access_token}`, { app_id, access_token });
+                        });
+                        const uniqueAppPool = Array.from(dedupedAppPoolMap.values());
+
+                        const cloneVoiceBindingsText = (this.voiceForm.clone_voice_app_bindings_text || '').trim();
+                        let cloneVoiceAppBindings = {};
+                        if (cloneVoiceBindingsText) {
+                            if (cloneVoiceBindingsText.startsWith('{')) {
+                                try {
+                                    const parsedJsonBindings = JSON.parse(cloneVoiceBindingsText);
+                                    if (!parsedJsonBindings || typeof parsedJsonBindings !== 'object' || Array.isArray(parsedJsonBindings)) {
+                                        this.showToast('复刻音色绑定 JSON 必须是对象', 'error');
+                                        this.saving = false;
+                                        return;
+                                    }
+                                    cloneVoiceAppBindings = Object.fromEntries(
+                                        Object.entries(parsedJsonBindings)
+                                            .map(([rawVoiceType, rawAppId]) => {
+                                                const voiceType = String(rawVoiceType || '').trim();
+                                                const appId = String(rawAppId || '').trim();
+                                                if (!voiceType || !appId) return null;
+                                                return [voiceType, appId];
+                                            })
+                                            .filter(Boolean)
+                                    );
+                                } catch (e) {
+                                    this.showToast('复刻音色绑定 JSON 解析失败', 'error');
+                                    this.saving = false;
+                                    return;
+                                }
+                            } else {
+                                const parsedCloneBindingEntries = cloneVoiceBindingsText
+                                    .replace(/\r/g, '\n')
+                                    .split('\n')
+                                    .map(line => line.trim())
+                                    .filter(Boolean)
+                                    .map(line => {
+                                        let splitIndex = line.indexOf('=');
+                                        if (splitIndex < 0) splitIndex = line.indexOf('：');
+                                        if (splitIndex < 0) splitIndex = line.indexOf(':');
+                                        if (splitIndex < 0) splitIndex = line.indexOf('|');
+                                        if (splitIndex < 0) return null;
+
+                                        const voiceType = line.slice(0, splitIndex).trim();
+                                        const appId = line.slice(splitIndex + 1).trim();
+                                        if (!voiceType || !appId) return null;
+                                        return [voiceType, appId];
+                                    })
+                                    .filter(Boolean);
+
+                                cloneVoiceAppBindings = Object.fromEntries(parsedCloneBindingEntries);
+                            }
+                        }
+
                         const parsedSiliconflowReferences = (this.voiceForm.siliconflow_references_text || '')
                             .replace(/\r/g, '\n')
                             .split('\n')
@@ -4522,6 +4675,8 @@
                             base_url: (this.voiceForm.base_url ?? '').trim(),
                             model_name: this.voiceForm.model_name ?? '',
                             app_id: this.voiceForm.app_id ?? '',
+                            app_pool: uniqueAppPool,
+                            clone_voice_app_bindings: cloneVoiceAppBindings,
                             cluster: (this.voiceForm.cluster ?? '').trim(),
                             clone_cluster: (this.voiceForm.clone_cluster ?? '').trim(),
                             clone_resource_id: (this.voiceForm.clone_resource_id ?? '').trim(),

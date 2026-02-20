@@ -267,23 +267,25 @@ class PromptService:
             "2) 正常聊天时，只要你觉得语音更有表现力（例如情绪激动、撒娇、安慰、强调语气、长句朗读），就可以主动调用 generate_voice，不必等用户先要求；",
             "3) 当用户明确要求语音时，也应优先调用 generate_voice；",
             "4) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
-            "5) 一旦语音生成成功，语音就是最终回复，不要再额外发文字；",
-            "6) 调用 generate_voice 时，emotion / enable_emotion / emotion_scale 三个参数必须显式传入；",
-            "7) enable_emotion 必须传 true，不要传 false；",
-            "8) emotion_scale 必须在 1.0~5.0，推荐传 4.0；",
-            "9) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
-            f"10) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
+            "5) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
+            "6) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
+            "7) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
+            "8) 不确定时可以不传上述参数，让后端按默认配置处理；",
+            "9) 若传 emotion_scale，建议使用 1.0~5.0；",
+            "10) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
+            "11) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
+            f"12) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
         ]
         if available_voice_types:
             voice_lines.append(
-                "11) 可用音色名单（仅可从中选择，禁止编造）："
+                "13) 可用音色名单（仅可从中选择，禁止编造）："
                 + "、".join(f"「{name}」" for name in available_voice_types)
             )
             voice_lines.append(
-                "12) 若用户点名音色且命中名单，才显式传 voice_type；否则继续用默认音色。"
+                "14) 若用户点名音色且命中名单，才显式传 voice_type；否则继续用默认音色。"
             )
         else:
-            voice_lines.append("11) 暂未配置可用音色名单；如无必要请继续使用默认音色。")
+            voice_lines.append("13) 暂未配置可用音色名单；如无必要请继续使用默认音色。")
 
         if voice_type_hints:
             hint_items = list(voice_type_hints.items())
@@ -293,30 +295,33 @@ class PromptService:
             )
             if len(hint_items) > 20:
                 hint_preview += f"；（其余{len(hint_items) - 20}项省略）"
-            voice_lines.append(f"13) 音色说明（voice_type -> 角色/场景）：{hint_preview}")
-            voice_lines.append("14) 选择音色时优先参考上述说明，按场景匹配，不要只看 ID 字符串猜测。")
+            voice_lines.append(f"15) 音色说明（voice_type -> 角色/场景）：{hint_preview}")
+            voice_lines.append("16) 选择音色时优先参考上述说明，按场景匹配，不要只看 ID 字符串猜测。")
         else:
-            voice_lines.append("13) 暂未配置音色说明；不确定时优先默认音色。")
+            voice_lines.append("15) 暂未配置音色说明；不确定时优先默认音色。")
 
         if voice_provider == "doubao":
-            voice_lines.append("15) 你当前在使用豆包语音。emotion 必须从支持枚举中选择，禁止编造。")
+            voice_lines.append("17) 你当前在使用豆包语音。emotion 必须从支持枚举中选择，禁止编造。")
             voice_lines.append(
-                "16) 中文音色情感枚举：happy,sad,angry,surprised,fear,hate,excited,coldness,neutral,depressed,lovey-dovey,shy,comfort,tension,tender,storytelling,radio,magnetic,advertising,vocal-fry,vocal_fry,asmr,news,entertainment,dialect。"
+                "18) 中文音色情感枚举：happy,sad,angry,surprised,fear,hate,excited,coldness,neutral,depressed,lovey-dovey,shy,comfort,tension,tender,storytelling,radio,magnetic,advertising,vocal-fry,vocal_fry,asmr,news,entertainment,dialect。"
             )
             voice_lines.append(
-                "17) 英文音色情感枚举：neutral,happy,angry,sad,excited,chat,asmr,warm,affectionate,authoritative。"
+                "19) 英文音色情感枚举：neutral,happy,angry,sad,excited,chat,asmr,warm,affectionate,authoritative。"
             )
             voice_lines.append(
-                "18) 情感选择要贴合语义：安慰优先 comfort/tender，生气优先 angry/tension，撒娇优先 lovey-dovey/shy，讲故事优先 storytelling。"
+                "20) 情感选择要贴合语义：安慰优先 comfort/tender，生气优先 angry/tension，撒娇优先 lovey-dovey/shy，讲故事优先 storytelling。"
+            )
+            voice_lines.append(
+                "21) 若使用复刻音色（如 S_ 开头或非官方音色），后端会强制走该音色绑定的 APP_ID；未绑定或绑定不可用会失败。"
             )
         elif voice_provider == "siliconflow":
-            voice_lines.append("15) 你当前在使用硅基流动 TTS。可用 voice_type 只允许使用配置里给出的值，不要编造。")
-            voice_lines.append("16) 若 voice_type 形如 speech:...，表示用户自定义音色；仅在明确需要该音色时再传。")
+            voice_lines.append("17) 你当前在使用硅基流动 TTS。可用 voice_type 只允许使用配置里给出的值，不要编造。")
+            voice_lines.append("18) 若 voice_type 形如 speech:...，表示用户自定义音色；仅在明确需要该音色时再传。")
 
             if "indexteam/indextts-2" in voice_model_name.lower():
-                voice_lines.append("17) 当前模型是 IndexTeam/IndexTTS-2：若需要动态音色且系统已配置 references，可不传 voice_type，由后端自动携带 references。")
+                voice_lines.append("19) 当前模型是 IndexTeam/IndexTTS-2：若需要动态音色且系统已配置 references，可不传 voice_type，由后端自动携带 references。")
             elif siliconflow_references:
-                voice_lines.append("17) 系统已配置硅基流动动态音色 references；当需要动态音色时可不传 voice_type。")
+                voice_lines.append("19) 系统已配置硅基流动动态音色 references；当需要动态音色时可不传 voice_type。")
 
         voice_lines.append(
             "最后：若 generate_voice 返回 generation_failed=true，说明语音没发出去；此时请立刻改为普通文字回复用户，承接原本想说的话。"
@@ -326,7 +331,7 @@ class PromptService:
         final_conversation.append(
             {
                 "role": "model",
-                "parts": ["收到，我会在合适场景主动发语音；成功就只发语音，失败就立刻改成文字继续回复。"],
+                "parts": ["收到，我会在合适场景主动发语音，并在调用时显式传 send_text_after_voice=true；若失败就立刻改成文字继续回复。"],
             }
         )
 
