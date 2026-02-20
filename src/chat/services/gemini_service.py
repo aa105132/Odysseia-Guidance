@@ -913,14 +913,35 @@ class GeminiService:
         # 判断是否应该使用自定义端点：
         # 1. 模型名在预定义的 CUSTOM_GEMINI_ENDPOINTS 中
         # 2. 或者 Dashboard 配置了全局 API URL（存储在 _db_api_url）
-        use_custom_endpoint = False
-        if model_name and model_name in app_config.CUSTOM_GEMINI_ENDPOINTS:
-            use_custom_endpoint = True
-        elif hasattr(app_config, '_db_api_url') and app_config._db_api_url:
-            # Dashboard 配置了自定义 API URL，所有模型都使用自定义端点
-            use_custom_endpoint = True
-            log.info(f"检测到 Dashboard 配置的自定义 API URL，将为模型 '{model_name}' 使用自定义端点。")
-        
+        custom_endpoint_from_model = bool(
+            model_name and model_name in app_config.CUSTOM_GEMINI_ENDPOINTS
+        )
+        custom_endpoint_from_global_url = bool(getattr(app_config, "_db_api_url", None))
+        use_custom_endpoint = custom_endpoint_from_model or custom_endpoint_from_global_url
+
+        if custom_endpoint_from_global_url:
+            log.info(
+                f"检测到 Dashboard 配置的自定义 API URL，将为模型 '{model_name}' 使用自定义端点。"
+            )
+
+        # 稳定性优化：
+        # 当仅依赖 Dashboard 全局 URL 且格式是 openai 时，若当前模型并无专属端点配置，
+        # 直接走“官方 API 回退路径”（与失败后回退一致），避免先经历两次长时间超时重试。
+        api_format = str(getattr(app_config, "_db_api_format", None) or "gemini").strip().lower()
+        if (
+            use_custom_endpoint
+            and (not custom_endpoint_from_model)
+            and custom_endpoint_from_global_url
+            and api_format == "openai"
+        ):
+            fallback_model_name = self.default_model_name
+            log.warning(
+                "检测到 Dashboard 全局 OpenAI 兼容端点且当前模型无专属端点配置，"
+                f"将直接使用回退路径并跳过自定义端点重试。回退模型: '{fallback_model_name}'。"
+            )
+            model_name = fallback_model_name
+            use_custom_endpoint = False
+
         if use_custom_endpoint:
             log.info(f"检测到自定义模型 '{model_name}'，将优先尝试使用自定义端点。")
             max_attempts = 2  # 1次主尝试 + 1次重试
