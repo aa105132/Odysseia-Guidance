@@ -5,6 +5,7 @@
 让 LLM 可以在对话中自动调用语音合成服务生成语音并发送到频道。
 """
 
+import base64
 import io
 import logging
 from typing import Optional
@@ -64,6 +65,137 @@ def _is_explicit_voice_request(message: Optional[discord.Message]) -> bool:
         "tts",
     ]
     return any(k in content for k in keywords)
+
+
+def _estimate_ogg_opus_duration_seconds(audio_bytes: bytes) -> Optional[float]:
+    """
+    粗略估算 OGG/Opus 时长（秒）。
+    - 通过读取 Ogg Page 的 granule position 计算，采样率按 Opus 48kHz。
+    - 失败时返回 None，由调用方使用兜底时长。
+    """
+    if not audio_bytes or len(audio_bytes) < 27:
+        return None
+
+    try:
+        offset = 0
+        max_granule = -1
+
+        while offset + 27 <= len(audio_bytes):
+            if audio_bytes[offset : offset + 4] != b"OggS":
+                break
+
+            page_segments = audio_bytes[offset + 26]
+            seg_table_start = offset + 27
+            seg_table_end = seg_table_start + page_segments
+            if seg_table_end > len(audio_bytes):
+                break
+
+            segment_table = audio_bytes[seg_table_start:seg_table_end]
+            body_size = sum(segment_table)
+            page_end = seg_table_end + body_size
+            if page_end > len(audio_bytes):
+                break
+
+            granule = int.from_bytes(
+                audio_bytes[offset + 6 : offset + 14], "little", signed=False
+            )
+            if granule > max_granule:
+                max_granule = granule
+
+            offset = page_end
+
+        if max_granule <= 0:
+            return None
+
+        duration = max_granule / 48000.0
+        return max(0.1, min(60 * 60, float(duration)))
+    except Exception:
+        return None
+
+
+def _build_voice_waveform_base64(audio_bytes: bytes, points: int = 64) -> str:
+    """
+    生成 Discord 语音消息需要的 waveform（base64 字符串）。
+    这里使用轻量近似算法：对音频字节分段取均值，构造 0~255 振幅序列。
+    """
+    points = max(16, min(256, int(points)))
+    if not audio_bytes:
+        return base64.b64encode(bytes([128] * points)).decode("ascii")
+
+    chunk_size = max(1, len(audio_bytes) // points)
+    amplitudes = []
+    for idx in range(points):
+        start = idx * chunk_size
+        end = len(audio_bytes) if idx == points - 1 else min(len(audio_bytes), (idx + 1) * chunk_size)
+        chunk = audio_bytes[start:end]
+        if not chunk:
+            amplitudes.append(0)
+            continue
+        amplitudes.append(int(sum(chunk) / len(chunk)) & 0xFF)
+
+    return base64.b64encode(bytes(amplitudes)).decode("ascii")
+
+
+class _VoiceMessageFile(discord.File):
+    """带 voice metadata 的文件对象，用于 Discord 原生语音消息样式。"""
+
+    def __init__(
+        self,
+        fp,
+        *,
+        filename: str,
+        duration_secs: float,
+        waveform: str,
+    ):
+        super().__init__(fp, filename=filename)
+        self._duration_secs = max(0.1, float(duration_secs))
+        self._waveform = waveform
+
+    def to_dict(self, index: int) -> dict:
+        payload = super().to_dict(index)
+        payload["duration_secs"] = round(self._duration_secs, 3)
+        payload["waveform"] = self._waveform
+        return payload
+
+
+async def _send_native_voice_message(
+    channel: discord.abc.Messageable,
+    *,
+    audio_bytes: bytes,
+    filename: str,
+    duration_secs: float,
+) -> None:
+    """
+    走底层 HTTP 参数发送“原生语音消息”：
+    - 设置 MessageFlags.is_voice_message
+    - 在附件里附带 duration_secs + waveform
+    """
+    from discord.http import handle_message_parameters
+    from discord.message import MessageFlags
+
+    state = getattr(channel, "_state", None)
+    channel_id = getattr(channel, "id", None)
+    if state is None or channel_id is None:
+        raise RuntimeError("channel 不支持原生语音消息发送（缺少 _state/id）")
+
+    waveform = _build_voice_waveform_base64(audio_bytes)
+    voice_file = _VoiceMessageFile(
+        io.BytesIO(audio_bytes),
+        filename=filename,
+        duration_secs=duration_secs,
+        waveform=waveform,
+    )
+
+    flags = MessageFlags._from_value(0)
+    flags.is_voice_message = True
+
+    with handle_message_parameters(
+        content=None,
+        attachments=[voice_file],
+        flags=flags,
+        allowed_mentions=state.allowed_mentions,
+    ) as params:
+        await state.http.send_message(channel_id, params=params)
 
 
 async def generate_voice(
@@ -212,38 +344,52 @@ async def generate_voice(
             except Exception as e:
                 log.error(f"扣除月光币失败: {e}")
 
-        # 发送语音文件
+        # 发送语音文件（优先原生语音消息样式；失败自动回退普通附件）
         if channel:
             try:
-                embed = discord.Embed(
-                    title="AI 语音合成",
-                    color=0x2B2D31,
-                )
-                _set_embed_author(embed, message, kwargs.get("request_user"))
-                embed.add_field(
-                    name="文本",
-                    value=f"```\n{text[:1016]}\n```",
-                    inline=False,
-                )
-                if success_message:
-                    embed.add_field(
-                        name="\u200b",
-                        value=replace_emojis(success_message)[:1024],
-                        inline=False,
-                    )
-                embed.set_footer(
-                    text=f"供应商: {result.provider} | 模型: {result.model_name} | 音色: {result.voice_type}"
-                )
+                sent_native_voice = False
+                file_ext = (result.file_ext or "").strip().lower()
 
-                filename = f"generated_voice.{result.file_ext or 'mp3'}"
-                audio_file = discord.File(
-                    io.BytesIO(result.audio_bytes),
-                    filename=filename,
-                )
-                await channel.send(embed=embed, files=[audio_file])
-                log.info(
-                    f"语音生成成功并已发送: provider={result.provider}, model={result.model_name}, ext={result.file_ext}"
-                )
+                # Discord 原生语音消息主要针对 ogg/opus
+                if file_ext in {"ogg", "opus"}:
+                    native_filename = "voice-message.ogg"
+                    estimated_duration = _estimate_ogg_opus_duration_seconds(result.audio_bytes)
+                    if estimated_duration is None:
+                        # 兜底：按文本长度给一个近似时长（仅用于展示）
+                        estimated_duration = max(1.0, min(300.0, len(text) / 6.0))
+
+                    try:
+                        await _send_native_voice_message(
+                            channel,
+                            audio_bytes=result.audio_bytes,
+                            filename=native_filename,
+                            duration_secs=estimated_duration,
+                        )
+                        sent_native_voice = True
+                        log.info(
+                            f"语音已按原生语音消息样式发送: provider={result.provider}, model={result.model_name}, voice={result.voice_type}"
+                        )
+                    except Exception as native_send_error:
+                        log.warning(
+                            f"原生语音消息发送失败，将回退普通附件: {native_send_error}"
+                        )
+
+                # 回退：普通附件消息（不再附带大卡片）
+                if not sent_native_voice:
+                    filename = f"generated_voice.{result.file_ext or 'mp3'}"
+                    audio_file = discord.File(
+                        io.BytesIO(result.audio_bytes),
+                        filename=filename,
+                    )
+                    await channel.send(file=audio_file)
+                    log.info(
+                        f"语音已按普通附件发送: provider={result.provider}, model={result.model_name}, ext={result.file_ext}"
+                    )
+
+                # 若模型提供了成功文案，则单独补一条文本
+                if success_message:
+                    await channel.send(replace_emojis(success_message)[:1900])
+
             except Exception as e:
                 log.error(f"发送语音到频道失败: {e}", exc_info=True)
 

@@ -1517,7 +1517,9 @@ async def get_voice_config(token: str = Depends(verify_token)):
     model_name = str(db_model_name or config.get("MODEL_NAME", "FunAudioLLM/CosyVoice2-0.5B")).strip()
     app_id = str(db_app_id or config.get("APP_ID", "")).strip()
     access_token = str(db_access_token or config.get("ACCESS_TOKEN", "")).strip()
-    cluster = str(db_cluster or config.get("CLUSTER", "volcano_tts")).strip()
+    cluster = str(
+        db_cluster if db_cluster is not None else config.get("CLUSTER", "volcano_tts")
+    ).strip()
     voice_type = str(
         db_voice_type or config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts")
     ).strip()
@@ -1548,8 +1550,11 @@ async def get_voice_config(token: str = Depends(verify_token)):
         else int(config.get("REQUEST_TIMEOUT_SECONDS", 120))
     )
 
-    if provider == "doubao" and not base_url:
-        base_url = "https://openspeech.bytedance.com"
+    if provider == "doubao":
+        if not base_url:
+            base_url = "https://openspeech.bytedance.com"
+        if not cluster:
+            cluster = "volcano_tts"
     if provider == "siliconflow" and not base_url:
         base_url = "https://api.siliconflow.cn/v1"
 
@@ -1672,6 +1677,12 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
 
     if config.cluster is not None:
         cluster = str(config.cluster).strip()
+        effective_provider = str(
+            chat_config.VOICE_CONFIG.get("PROVIDER", "doubao")
+        ).strip().lower()
+        if effective_provider == "doubao" and not cluster:
+            cluster = "volcano_tts"
+
         chat_config.VOICE_CONFIG["CLUSTER"] = cluster
         os.environ["VOICE_CLUSTER"] = cluster
         env_updates["VOICE_CLUSTER"] = cluster
@@ -1797,6 +1808,18 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
             "voice_timeout_seconds",
             str(config.request_timeout_seconds),
         )
+
+    # 豆包 provider 下，cluster 为必填字段：即使用户留空也自动回退默认值，避免 app.cluster 缺失
+    effective_provider = str(chat_config.VOICE_CONFIG.get("PROVIDER", "doubao")).strip().lower()
+    if effective_provider == "doubao":
+        normalized_cluster = str(chat_config.VOICE_CONFIG.get("CLUSTER", "")).strip()
+        if not normalized_cluster:
+            normalized_cluster = "volcano_tts"
+            chat_config.VOICE_CONFIG["CLUSTER"] = normalized_cluster
+            os.environ["VOICE_CLUSTER"] = normalized_cluster
+            env_updates["VOICE_CLUSTER"] = normalized_cluster
+            updated["cluster"] = normalized_cluster
+            await chat_db_manager.set_global_setting("voice_cluster", normalized_cluster)
 
     if env_updates:
         try:

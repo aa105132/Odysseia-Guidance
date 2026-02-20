@@ -897,7 +897,11 @@
                             <input type="url" x-model="voiceForm.base_url"
                                    :placeholder="voiceForm.provider === 'doubao' ? 'https://openspeech.bytedance.com（留空使用默认）' : (voiceForm.provider === 'siliconflow' ? 'https://api.siliconflow.cn/v1（留空使用默认）' : 'https://your-api.example.com/v1')"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
-                            <p class="text-xs text-slate-500 mt-1">豆包会调用 /api/v1/tts；兼容提供商会调用 /audio/speech</p>
+                            <p class="text-xs text-slate-500 mt-1">豆包会调用 /api/v1/tts（认证使用 APP ID + Access Token，非 AK/SK）；兼容提供商会调用 /audio/speech</p>
+                            <p class="text-xs text-slate-500 mt-1">
+                                参考文档：
+                                <a href="https://www.volcengine.com/docs/6561/1257584?lang=zh" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline">大模型语音合成 API</a>
+                            </p>
                         </div>
 
                         <div x-show="voiceForm.provider !== 'doubao'">
@@ -934,14 +938,14 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-slate-300 mb-2">
-                                    Access Token
+                                    Access Token（非 AK/SK）
                                     <span x-show="voiceConfig.has_access_token" class="text-green-400 text-xs ml-2">
                                         <i data-lucide="check-circle" class="w-3 h-3 inline"></i> 已配置
                                     </span>
                                 </label>
                                 <div class="relative">
                                     <input :type="showVoiceAccessToken ? 'text' : 'password'" x-model="voiceForm.access_token"
-                                           placeholder="留空保持不变"
+                                           placeholder="留空保持不变（填写语音服务 Access Token）"
                                            class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-purple-500">
                                     <button @click="showVoiceAccessToken = !showVoiceAccessToken" type="button"
                                             class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
@@ -949,13 +953,18 @@
                                     </button>
                                 </div>
                             </div>
+                            <p class="text-xs text-slate-500 mt-1">请填写语音服务 Access Token；火山云通用 AccessKey/SecretKey 不能直接代替此字段。</p>
                         </div>
 
                         <div x-show="voiceForm.provider === 'doubao'">
-                            <label class="block text-sm font-medium text-slate-300 mb-2">Cluster</label>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">Cluster（豆包必填）</label>
                             <input type="text" x-model="voiceForm.cluster"
-                                   placeholder="volcano_tts"
+                                   placeholder="volcano_tts（常见默认值）"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">
+                                若留空，保存时会自动回填为 <code class="text-slate-300">volcano_tts</code>，避免出现 <code class="text-slate-300">Missing required: app.cluster</code>。
+                                也可按你的火山项目配置改成其他 cluster。
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -972,7 +981,10 @@
                             <input type="text" x-model="voiceForm.voice_type"
                                    placeholder="zh_female_wanwanxiaohe_moon_bigtts"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
-                            <p class="text-xs text-slate-500 mt-1">月月主动调用语音工具时，默认使用这个音色。</p>
+                            <p class="text-xs text-slate-500 mt-1">
+                                月月主动调用语音工具时，默认使用这个音色。
+                                <a href="https://www.volcengine.com/docs/6561/1257544?lang=zh" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline">查看官方音色列表</a>
+                            </p>
                         </div>
 
                         <div>
@@ -981,7 +993,7 @@
                                       rows="4"
                                       placeholder="每行一个音色，或用逗号分隔；留空表示不限制&#10;示例：&#10;zh_female_wanwanxiaohe_moon_bigtts&#10;zh_male_qingxin_jieshuo_mars_bigtts"
                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
-                            <p class="text-xs text-slate-500 mt-1">用于约束模型可选择的音色范围，避免乱填不存在的音色。</p>
+                            <p class="text-xs text-slate-500 mt-1">用于约束模型可选择的音色范围，避免乱填不存在的音色（建议从官方音色列表复制）。</p>
                         </div>
 
                         <div>
@@ -4196,10 +4208,12 @@
                         const payload = {
                             enabled: !!this.voiceForm.enabled,
                             provider: this.voiceForm.provider || 'doubao',
-                            base_url: this.voiceForm.base_url ?? '',
+                            base_url: (this.voiceForm.base_url ?? '').trim(),
                             model_name: this.voiceForm.model_name ?? '',
                             app_id: this.voiceForm.app_id ?? '',
-                            cluster: this.voiceForm.cluster ?? '',
+                            cluster: this.voiceForm.provider === 'doubao'
+                                ? ((this.voiceForm.cluster ?? '').trim() || 'volcano_tts')
+                                : (this.voiceForm.cluster ?? '').trim(),
                             voice_type: this.voiceForm.voice_type ?? '',
                             available_voice_types: uniqueVoiceTypes,
                             audio_format: this.voiceForm.audio_format || 'mp3',

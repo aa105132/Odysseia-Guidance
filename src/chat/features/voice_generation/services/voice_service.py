@@ -53,7 +53,7 @@ class VoiceGenerationService:
             base_url = str(
                 config.get("BASE_URL") or "https://openspeech.bytedance.com"
             ).strip().rstrip("/")
-            cluster = str(config.get("CLUSTER", "volcano_tts")).strip()
+            cluster = str(config.get("CLUSTER", "")).strip() or "volcano_tts"
 
             if not app_id or not access_token:
                 log.warning("豆包语音配置不完整：缺少 APP_ID 或 ACCESS_TOKEN")
