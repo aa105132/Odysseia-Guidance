@@ -997,6 +997,18 @@
                         </div>
 
                         <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">音色说明（可选）</label>
+                            <textarea x-model="voiceForm.voice_type_hints_text"
+                                      rows="5"
+                                      placeholder="用于告诉模型“这个音色是谁/适合什么场景”&#10;格式：每行一个，voice_id = 说明&#10;示例：&#10;zh_female_vv_uranus_bigtts = 月月常用女声，日常闲聊/撒娇/安慰&#10;zh_male_qingxin_jieshuo_mars_bigtts = 稳重播报男声，适合公告/解释"
+                                      class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                            <p class="text-xs text-slate-500 mt-1">
+                                这会注入到月月的提示词中，帮助她按角色与场景主动选音色。
+                                支持分隔符：<code class="text-slate-300">=</code>、<code class="text-slate-300">:</code>、<code class="text-slate-300">：</code>、<code class="text-slate-300">|</code>。
+                            </p>
+                        </div>
+
+                        <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">音频格式</label>
                             <select x-model="voiceForm.audio_format"
                                     class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
@@ -2662,6 +2674,7 @@
                     cluster: 'volcano_tts',
                     voice_type: 'zh_female_wanwanxiaohe_moon_bigtts',
                     available_voice_types_text: '',
+                    voice_type_hints_text: '',
                     audio_format: 'mp3',
                     speed_ratio: 1.0,
                     volume_ratio: 1.0,
@@ -2870,6 +2883,12 @@
                         this.voiceForm.voice_type = this.config.voice.voice_type || 'zh_female_wanwanxiaohe_moon_bigtts';
                         const presetVoiceTypes = Array.isArray(this.config.voice.available_voice_types) ? this.config.voice.available_voice_types : [];
                         this.voiceForm.available_voice_types_text = presetVoiceTypes.join('\n');
+                        const presetVoiceHints = (this.config.voice.voice_type_hints && typeof this.config.voice.voice_type_hints === 'object')
+                            ? this.config.voice.voice_type_hints
+                            : {};
+                        this.voiceForm.voice_type_hints_text = Object.entries(presetVoiceHints)
+                            .map(([voiceId, hint]) => `${voiceId} = ${hint}`)
+                            .join('\n');
                         this.voiceForm.audio_format = this.config.voice.audio_format || 'mp3';
                         this.voiceForm.speed_ratio = this.config.voice.speed_ratio ?? 1.0;
                         this.voiceForm.volume_ratio = this.config.voice.volume_ratio ?? 1.0;
@@ -4182,6 +4201,12 @@
                             this.voiceForm.voice_type = data.voice_type || 'zh_female_wanwanxiaohe_moon_bigtts';
                             const availableVoiceTypes = Array.isArray(data.available_voice_types) ? data.available_voice_types : [];
                             this.voiceForm.available_voice_types_text = availableVoiceTypes.join('\n');
+                            const voiceTypeHints = (data.voice_type_hints && typeof data.voice_type_hints === 'object')
+                                ? data.voice_type_hints
+                                : {};
+                            this.voiceForm.voice_type_hints_text = Object.entries(voiceTypeHints)
+                                .map(([voiceId, hint]) => `${voiceId} = ${hint}`)
+                                .join('\n');
                             this.voiceForm.audio_format = data.audio_format || 'mp3';
                             this.voiceForm.speed_ratio = Number(data.speed_ratio ?? 1.0);
                             this.voiceForm.volume_ratio = Number(data.volume_ratio ?? 1.0);
@@ -4205,6 +4230,27 @@
                             .filter(Boolean);
                         const uniqueVoiceTypes = [...new Set(parsedVoiceTypes)];
 
+                        const parsedVoiceTypeHintEntries = (this.voiceForm.voice_type_hints_text || '')
+                            .replace(/\r/g, '\n')
+                            .split('\n')
+                            .map(line => line.trim())
+                            .filter(Boolean)
+                            .map(line => {
+                                let splitIndex = line.indexOf('=');
+                                if (splitIndex < 0) splitIndex = line.indexOf('：');
+                                if (splitIndex < 0) splitIndex = line.indexOf(':');
+                                if (splitIndex < 0) splitIndex = line.indexOf('|');
+                                if (splitIndex < 0) return null;
+
+                                const key = line.slice(0, splitIndex).trim();
+                                const value = line.slice(splitIndex + 1).trim();
+                                if (!key || !value) return null;
+                                return [key, value];
+                            })
+                            .filter(Boolean);
+
+                        const voiceTypeHints = Object.fromEntries(parsedVoiceTypeHintEntries);
+
                         const payload = {
                             enabled: !!this.voiceForm.enabled,
                             provider: this.voiceForm.provider || 'doubao',
@@ -4216,6 +4262,7 @@
                                 : (this.voiceForm.cluster ?? '').trim(),
                             voice_type: this.voiceForm.voice_type ?? '',
                             available_voice_types: uniqueVoiceTypes,
+                            voice_type_hints: voiceTypeHints,
                             audio_format: this.voiceForm.audio_format || 'mp3',
                             speed_ratio: parseFloat(this.voiceForm.speed_ratio),
                             volume_ratio: parseFloat(this.voiceForm.volume_ratio),

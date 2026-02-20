@@ -128,6 +128,7 @@ class VoiceConfigUpdate(BaseModel):
     cluster: Optional[str] = None
     voice_type: Optional[str] = None
     available_voice_types: Optional[List[str]] = None
+    voice_type_hints: Optional[Dict[str, str]] = None  # 音色说明映射（voice_id -> 场景说明）
     audio_format: Optional[str] = None
     speed_ratio: Optional[float] = None
     volume_ratio: Optional[float] = None
@@ -261,6 +262,60 @@ def _parse_string_list_setting(raw_value: Optional[str]) -> List[str]:
         .replace("\n", ",")
     )
     return _normalize_string_items(normalized_text.split(","))
+
+
+def _normalize_string_map(values: Optional[Dict[Any, Any]]) -> Dict[str, str]:
+    normalized: Dict[str, str] = {}
+    if not isinstance(values, dict):
+        return normalized
+
+    for raw_key, raw_value in values.items():
+        key = str(raw_key).strip()
+        value = str(raw_value).strip()
+        if not key or not value:
+            continue
+        normalized[key] = value
+    return normalized
+
+
+def _parse_string_map_setting(raw_value: Optional[str]) -> Dict[str, str]:
+    if raw_value is None:
+        return {}
+
+    raw_text = str(raw_value).strip()
+    if not raw_text:
+        return {}
+
+    try:
+        parsed = json.loads(raw_text)
+        if isinstance(parsed, dict):
+            return _normalize_string_map(parsed)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+
+    # 回退：逐行 key=value / key: value / key|value
+    result: Dict[str, str] = {}
+    for line in raw_text.replace("\r", "\n").split("\n"):
+        text = line.strip()
+        if not text:
+            continue
+
+        split_index = text.find("=")
+        if split_index < 0:
+            split_index = text.find("：")
+        if split_index < 0:
+            split_index = text.find(":")
+        if split_index < 0:
+            split_index = text.find("|")
+        if split_index < 0:
+            continue
+
+        key = text[:split_index].strip()
+        value = text[split_index + 1 :].strip()
+        if key and value:
+            result[key] = value
+
+    return _normalize_string_map(result)
 
 
 def _build_default_available_models() -> List[str]:
@@ -418,6 +473,9 @@ async def get_all_config(token: str = Depends(verify_token)):
     voice_available_types = _normalize_string_items(
         voice_config.get("AVAILABLE_VOICE_TYPES", [])
     )
+    voice_type_hints = _normalize_string_map(
+        voice_config.get("VOICE_TYPE_HINTS", {})
+    )
     
     # 隐藏敏感信息
     ai_masked_key = ai_api_key[:10] + "..." + ai_api_key[-4:] if len(ai_api_key) > 14 else ("***" if ai_api_key else "")
@@ -506,6 +564,7 @@ async def get_all_config(token: str = Depends(verify_token)):
             "cluster": voice_config.get("CLUSTER", "volcano_tts"),
             "voice_type": voice_config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"),
             "available_voice_types": voice_available_types,
+            "voice_type_hints": voice_type_hints,
             "audio_format": voice_config.get("AUDIO_FORMAT", "mp3"),
             "speed_ratio": voice_config.get("SPEED_RATIO", 1.0),
             "volume_ratio": voice_config.get("VOLUME_RATIO", 1.0),
@@ -1505,6 +1564,7 @@ async def get_voice_config(token: str = Depends(verify_token)):
     db_max_text_length = await chat_db_manager.get_global_setting("voice_max_text_length")
     db_timeout_seconds = await chat_db_manager.get_global_setting("voice_timeout_seconds")
     db_available_voice_types = await chat_db_manager.get_global_setting("voice_available_types")
+    db_voice_type_hints = await chat_db_manager.get_global_setting("voice_type_hints")
 
     # 数据库优先
     enabled = db_enabled == "true" if db_enabled is not None else bool(config.get("ENABLED", False))
@@ -1530,6 +1590,11 @@ async def get_voice_config(token: str = Depends(verify_token)):
     )
     if voice_type and available_voice_types and voice_type not in available_voice_types:
         available_voice_types = [voice_type, *available_voice_types]
+    voice_type_hints = (
+        _parse_string_map_setting(db_voice_type_hints)
+        if db_voice_type_hints is not None
+        else _normalize_string_map(config.get("VOICE_TYPE_HINTS", {}))
+    )
     audio_format = str(db_audio_format or config.get("AUDIO_FORMAT", "mp3")).strip().lower()
     speed_ratio = float(db_speed_ratio) if db_speed_ratio is not None else float(config.get("SPEED_RATIO", 1.0))
     volume_ratio = float(db_volume_ratio) if db_volume_ratio is not None else float(config.get("VOLUME_RATIO", 1.0))
@@ -1590,6 +1655,7 @@ async def get_voice_config(token: str = Depends(verify_token)):
         "cluster": cluster,
         "voice_type": voice_type,
         "available_voice_types": available_voice_types,
+        "voice_type_hints": voice_type_hints,
         "audio_format": audio_format,
         "speed_ratio": speed_ratio,
         "volume_ratio": volume_ratio,
@@ -1737,6 +1803,17 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
         updated["available_voice_types_count"] = len(available_voice_types)
         await chat_db_manager.set_global_setting(
             "voice_available_types", serialized_voice_types
+        )
+
+    if config.voice_type_hints is not None:
+        voice_type_hints = _normalize_string_map(config.voice_type_hints)
+        serialized_voice_type_hints = json.dumps(voice_type_hints, ensure_ascii=False)
+        chat_config.VOICE_CONFIG["VOICE_TYPE_HINTS"] = voice_type_hints
+        os.environ["VOICE_TYPE_HINTS"] = serialized_voice_type_hints
+        env_updates["VOICE_TYPE_HINTS"] = serialized_voice_type_hints
+        updated["voice_type_hints_count"] = len(voice_type_hints)
+        await chat_db_manager.set_global_setting(
+            "voice_type_hints", serialized_voice_type_hints
         )
 
     if config.audio_format is not None:

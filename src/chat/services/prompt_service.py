@@ -234,6 +234,17 @@ class PromptService:
             for name in (chat_config.VOICE_CONFIG.get("AVAILABLE_VOICE_TYPES") or [])
             if str(name).strip()
         ]
+        voice_type_hints_raw = chat_config.VOICE_CONFIG.get("VOICE_TYPE_HINTS") or {}
+        voice_type_hints = {
+            str(key).strip(): str(value).strip()
+            for key, value in (
+                voice_type_hints_raw.items()
+                if isinstance(voice_type_hints_raw, dict)
+                else []
+            )
+            if str(key).strip() and str(value).strip()
+        }
+
         if (
             default_voice_type
             and available_voice_types
@@ -244,11 +255,11 @@ class PromptService:
         voice_lines = [
             "语音工具规则：",
             "1) 语音是可选表达方式，不是每轮必用；",
-            "2) 当你想用语音表达，或用户明确要求语音时，可调用 generate_voice；",
-            "3) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
-            "4) 一旦决定发语音，语音本身就是最终回复，不要再额外发文字预告或成功补充；",
-            "5) 调用语音工具时不要传 preview_message/success_message（保持为空）；",
-            "6) 语音工具成功后会 skip_ai_response，因此不要再追加普通文本回复；",
+            "2) 正常聊天时，只要你觉得语音更有表现力（例如情绪激动、撒娇、安慰、强调语气、长句朗读），就可以主动调用 generate_voice，不必等用户先要求；",
+            "3) 当用户明确要求语音时，也应优先调用 generate_voice；",
+            "4) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
+            "5) 一旦语音生成成功，语音就是最终回复，不要再额外发文字预告或成功补充；",
+            "6) 调用语音工具时不要传 preview_message/success_message（保持为空）；",
             "7) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
             f"8) 当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
         ]
@@ -263,11 +274,28 @@ class PromptService:
         else:
             voice_lines.append("9) 暂未配置可用音色名单；如无必要请继续使用默认音色。")
 
+        if voice_type_hints:
+            hint_items = list(voice_type_hints.items())
+            hint_preview = "；".join(
+                f"「{voice_id}」=> {hint_text}"
+                for voice_id, hint_text in hint_items[:20]
+            )
+            if len(hint_items) > 20:
+                hint_preview += f"；（其余{len(hint_items) - 20}项省略）"
+            voice_lines.append(f"11) 音色说明（voice_type -> 角色/场景）：{hint_preview}")
+            voice_lines.append("12) 选择音色时优先参考上述说明，按场景匹配，不要只看 ID 字符串猜测。")
+        else:
+            voice_lines.append("11) 暂未配置音色说明；不确定时优先默认音色。")
+
+        voice_lines.append(
+            "13) 若 generate_voice 返回 generation_failed=true，说明语音没发出去；此时请立刻改为普通文字回复用户，承接原本想说的话。"
+        )
+
         final_conversation.append({"role": "user", "parts": ["\n".join(voice_lines)]})
         final_conversation.append(
             {
                 "role": "model",
-                "parts": ["收到，语音场景我会把语音当最终回复，不再额外发文字，并优先使用默认音色。"],
+                "parts": ["收到，我会在合适场景主动发语音；成功就只发语音，失败就立刻改成文字继续回复。"],
             }
         )
 

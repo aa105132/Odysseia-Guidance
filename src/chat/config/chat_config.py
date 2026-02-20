@@ -75,6 +75,35 @@ def _parse_str_list_env(key: str, default: list[str]) -> list[str]:
     return deduped if deduped else default
 
 
+def _parse_str_map_env(key: str, default: dict[str, str]) -> dict[str, str]:
+    """解析字符串映射环境变量，支持 JSON 对象。"""
+    raw = os.getenv(key)
+    if not raw:
+        return default
+
+    raw = raw.strip()
+    if not raw:
+        return default
+
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return default
+
+    if not isinstance(parsed, dict):
+        return default
+
+    normalized: dict[str, str] = {}
+    for raw_key, raw_value in parsed.items():
+        key_text = str(raw_key).strip()
+        value_text = str(raw_value).strip()
+        if not key_text or not value_text:
+            continue
+        normalized[key_text] = value_text
+
+    return normalized if normalized else default
+
+
 # --- Chat 功能总开关 ---
 CHAT_ENABLED = os.getenv("CHAT_ENABLED", "False").lower() == "true"
 
@@ -330,6 +359,8 @@ def _get_voice_config():
         "VOICE_TYPE": os.getenv("VOICE_VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"),
         # 可用音色列表（供提示词注入和工具选型；留空表示不限制）
         "AVAILABLE_VOICE_TYPES": _parse_str_list_env("VOICE_AVAILABLE_TYPES", []),
+        # 音色说明映射（voice_id -> 角色/语气/适用场景说明）
+        "VOICE_TYPE_HINTS": _parse_str_map_env("VOICE_TYPE_HINTS", {}),
         "AUDIO_FORMAT": os.getenv("VOICE_AUDIO_FORMAT", "mp3"),  # mp3/wav/ogg/opus/pcm/flac
         "SPEED_RATIO": float(os.getenv("VOICE_SPEED_RATIO", "1.0")),
         "VOLUME_RATIO": float(os.getenv("VOICE_VOLUME_RATIO", "1.0")),
