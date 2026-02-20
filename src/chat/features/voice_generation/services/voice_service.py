@@ -498,8 +498,8 @@ class VoiceGenerationService:
                     "Content-Type": "application/json",
                     "Resource-Id": resource_id,
                 }
-                if is_clone_voice:
-                    headers["X-Api-Resource-Id"] = resource_id
+                # 关键：HTTP /api/v1/tts 复刻链路不携带 X-Api-Resource-Id。
+                # 实测该头会导致 403(resource not granted)；最小必填请求仅需 Resource-Id。
                 try:
                     async with session.post(endpoint, headers=headers, json=payload) as response:
                         status_code = response.status
