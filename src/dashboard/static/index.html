@@ -82,6 +82,12 @@
                         <i data-lucide="video" class="w-5 h-5"></i>
                         <span>视频设置</span>
                     </button>
+                    <button @click="currentTab = 'voice'"
+                            :class="currentTab === 'voice' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
+                            class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
+                        <i data-lucide="mic" class="w-5 h-5"></i>
+                        <span>语音设置</span>
+                    </button>
                     <button @click="currentTab = 'novelai'"
                             :class="currentTab === 'novelai' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
                             class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
@@ -816,6 +822,220 @@
 
                         <div class="flex gap-4">
                             <button @click="saveVideoConfig()"
+                                    :disabled="saving"
+                                    class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                                <i data-lucide="save" class="w-5 h-5"></i>
+                                <span x-text="saving ? '保存中...' : '保存设置'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 语音设置 -->
+            <div x-show="currentTab === 'voice'" x-transition>
+                <h2 class="text-2xl font-bold mb-6">语音设置</h2>
+
+                <!-- 服务状态 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center"
+                                 :class="voiceForm.enabled ? 'bg-green-500/20' : 'bg-red-500/20'">
+                                <i data-lucide="mic" class="w-6 h-6"
+                                   :class="voiceForm.enabled ? 'text-green-400' : 'text-red-400'"></i>
+                            </div>
+                            <div>
+                                <p class="font-medium">语音合成服务</p>
+                                <p class="text-sm text-slate-400" x-text="voiceForm.enabled ? '已启用' : '已禁用'"></p>
+                                <p class="text-xs mt-1"
+                                   :class="voiceConfig.service_available ? 'text-green-400' : 'text-slate-500'"
+                                   x-text="voiceConfig.service_available ? '服务可用' : '服务未就绪（请检查密钥与端点）'"></p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="voiceForm.enabled" class="sr-only peer">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 提供商与鉴权 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6" :class="!voiceForm.enabled && 'opacity-50'">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="key" class="w-5 h-5 text-yellow-400"></i>
+                        提供商与鉴权
+                    </h3>
+
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">语音提供商</label>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <label class="flex items-center gap-2 cursor-pointer px-4 py-3 rounded-lg border transition-all"
+                                       :class="voiceForm.provider === 'doubao' ? 'border-purple-500 bg-purple-500/20 text-purple-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
+                                    <input type="radio" x-model="voiceForm.provider" value="doubao" class="sr-only">
+                                    <i data-lucide="bot" class="w-4 h-4"></i>
+                                    <span class="text-sm font-medium">火山引擎</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer px-4 py-3 rounded-lg border transition-all"
+                                       :class="voiceForm.provider === 'siliconflow' ? 'border-cyan-500 bg-cyan-500/20 text-cyan-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
+                                    <input type="radio" x-model="voiceForm.provider" value="siliconflow" class="sr-only">
+                                    <i data-lucide="radio" class="w-4 h-4"></i>
+                                    <span class="text-sm font-medium">硅基流动</span>
+                                </label>
+                                <label class="flex items-center gap-2 cursor-pointer px-4 py-3 rounded-lg border transition-all"
+                                       :class="voiceForm.provider === 'custom' ? 'border-emerald-500 bg-emerald-500/20 text-emerald-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
+                                    <input type="radio" x-model="voiceForm.provider" value="custom" class="sr-only">
+                                    <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>
+                                    <span class="text-sm font-medium">自定义兼容</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
+                            <input type="url" x-model="voiceForm.base_url"
+                                   :placeholder="voiceForm.provider === 'doubao' ? 'https://openspeech.bytedance.com（留空使用默认）' : (voiceForm.provider === 'siliconflow' ? 'https://api.siliconflow.cn/v1（留空使用默认）' : 'https://your-api.example.com/v1')"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">豆包会调用 /api/v1/tts；兼容提供商会调用 /audio/speech</p>
+                        </div>
+
+                        <div x-show="voiceForm.provider !== 'doubao'">
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                API Key
+                                <span x-show="voiceConfig.has_api_key" class="text-green-400 text-xs ml-2">
+                                    <i data-lucide="check-circle" class="w-3 h-3 inline"></i> 已配置
+                                </span>
+                            </label>
+                            <div class="relative">
+                                <input :type="showVoiceApiKey ? 'text' : 'password'" x-model="voiceForm.api_key"
+                                       placeholder="留空保持不变"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <button @click="showVoiceApiKey = !showVoiceApiKey" type="button"
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                                    <i :data-lucide="showVoiceApiKey ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div x-show="voiceForm.provider !== 'doubao'">
+                            <label class="block text-sm font-medium text-slate-300 mb-2">模型名称</label>
+                            <input type="text" x-model="voiceForm.model_name"
+                                   placeholder="FunAudioLLM/CosyVoice2-0.5B"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div x-show="voiceForm.provider === 'doubao'" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">APP ID</label>
+                                <input type="text" x-model="voiceForm.app_id"
+                                       placeholder="火山引擎应用 APP_ID"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">
+                                    Access Token
+                                    <span x-show="voiceConfig.has_access_token" class="text-green-400 text-xs ml-2">
+                                        <i data-lucide="check-circle" class="w-3 h-3 inline"></i> 已配置
+                                    </span>
+                                </label>
+                                <div class="relative">
+                                    <input :type="showVoiceAccessToken ? 'text' : 'password'" x-model="voiceForm.access_token"
+                                           placeholder="留空保持不变"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                    <button @click="showVoiceAccessToken = !showVoiceAccessToken" type="button"
+                                            class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                                        <i :data-lucide="showVoiceAccessToken ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div x-show="voiceForm.provider === 'doubao'">
+                            <label class="block text-sm font-medium text-slate-300 mb-2">Cluster</label>
+                            <input type="text" x-model="voiceForm.cluster"
+                                   placeholder="volcano_tts"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 合成参数 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6" :class="!voiceForm.enabled && 'opacity-50'">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="sliders-horizontal" class="w-5 h-5 text-blue-400"></i>
+                        合成参数
+                    </h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">默认音色 Voice Type</label>
+                            <input type="text" x-model="voiceForm.voice_type"
+                                   placeholder="zh_female_wanwanxiaohe_moon_bigtts"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <p class="text-xs text-slate-500 mt-1">月月主动调用语音工具时，默认使用这个音色。</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">可用音色列表（可选）</label>
+                            <textarea x-model="voiceForm.available_voice_types_text"
+                                      rows="4"
+                                      placeholder="每行一个音色，或用逗号分隔；留空表示不限制&#10;示例：&#10;zh_female_wanwanxiaohe_moon_bigtts&#10;zh_male_qingxin_jieshuo_mars_bigtts"
+                                      class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                            <p class="text-xs text-slate-500 mt-1">用于约束模型可选择的音色范围，避免乱填不存在的音色。</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">音频格式</label>
+                            <select x-model="voiceForm.audio_format"
+                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <option value="mp3">mp3</option>
+                                <option value="wav">wav</option>
+                                <option value="ogg">ogg</option>
+                                <option value="opus">opus</option>
+                                <option value="flac">flac</option>
+                                <option value="aac">aac</option>
+                                <option value="pcm">pcm</option>
+                            </select>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">语速（0.2-3.0）</label>
+                                <input type="number" step="0.1" min="0.2" max="3.0" x-model.number="voiceForm.speed_ratio"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">音量（0.2-3.0）</label>
+                                <input type="number" step="0.1" min="0.2" max="3.0" x-model.number="voiceForm.volume_ratio"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">音调（0.1-3.0）</label>
+                                <input type="number" step="0.1" min="0.1" max="3.0" x-model.number="voiceForm.pitch_ratio"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">生成成本（月光币/次）</label>
+                                <input type="number" min="0" x-model.number="voiceForm.generation_cost"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">最大文本长度</label>
+                                <input type="number" min="20" max="5000" x-model.number="voiceForm.max_text_length"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">请求超时（秒）</label>
+                                <input type="number" min="5" max="300" x-model.number="voiceForm.request_timeout_seconds"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+                        </div>
+
+                        <div class="flex gap-4">
+                            <button @click="saveVoiceConfig()"
                                     :disabled="saving"
                                     class="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2">
                                 <i data-lucide="save" class="w-5 h-5"></i>
@@ -2419,6 +2639,26 @@
                 imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto', sfw_model: '', sfw_edit_model: '', sfw_model_2k: '', sfw_edit_model_2k: '', sfw_model_4k: '', sfw_edit_model_4k: '', nsfw_model: '', nsfw_edit_model: '', nsfw_model_2k: '', nsfw_edit_model_2k: '', nsfw_model_4k: '', nsfw_edit_model_4k: '' },
                 videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8, empty_result_max_retries: 3 },
                 videoConfig: {},
+                voiceForm: {
+                    enabled: false,
+                    provider: 'doubao',
+                    base_url: '',
+                    api_key: '',
+                    model_name: 'FunAudioLLM/CosyVoice2-0.5B',
+                    app_id: '',
+                    access_token: '',
+                    cluster: 'volcano_tts',
+                    voice_type: 'zh_female_wanwanxiaohe_moon_bigtts',
+                    available_voice_types_text: '',
+                    audio_format: 'mp3',
+                    speed_ratio: 1.0,
+                    volume_ratio: 1.0,
+                    pitch_ratio: 1.0,
+                    generation_cost: 3,
+                    max_text_length: 500,
+                    request_timeout_seconds: 120
+                },
+                voiceConfig: {},
                 novelaiForm: { enabled: false, api_token: '', model: 'nai-diffusion-4-5-full', custom_model: '', prompt_model: '', prompt_api_url: '', prompt_api_key: '', default_sampler: 'k_euler', default_width: 832, default_height: 1216, default_steps: 28, default_scale: 5.0, quality_toggle: true, uc_preset: 0, cfg_rescale: 0, noise_schedule: 'native', smea: false, smea_dyn: false, generation_cost: 5, default_negative_prompt: '', default_artist_string: '', max_retries: 3, empty_result_max_retries: 3 },
                 novelaiConfig: {},
                 novelaiPresets: [],
@@ -2437,6 +2677,8 @@
                 showApiKey: false,
                 showImagenApiKey: false,
                 showEmbeddingApiKey: false,
+                showVoiceApiKey: false,
+                showVoiceAccessToken: false,
                 coinForm: { daily_reward: 50, chat_reward: 10, max_loan: 1000 },
                 moderationForm: { warning_threshold: 10, ban_duration_min: 15, ban_duration_max: 30, image_feedback_enabled: true, image_feedback_ban_trigger_count: 3, image_feedback_repeat_window_minutes: 60, image_feedback_ban_ladder_minutes: '10,30,60,180,720' },
                 
@@ -2606,6 +2848,24 @@
                         this.imagenForm.nsfw_model_4k = this.config.imagen.nsfw_model_4k || '';
                         this.imagenForm.nsfw_edit_model_4k = this.config.imagen.nsfw_edit_model_4k || '';
                     }
+                    if (this.config.voice) {
+                        this.voiceForm.enabled = this.config.voice.enabled || false;
+                        this.voiceForm.provider = this.config.voice.provider || 'doubao';
+                        this.voiceForm.base_url = this.config.voice.base_url || '';
+                        this.voiceForm.model_name = this.config.voice.model_name || 'FunAudioLLM/CosyVoice2-0.5B';
+                        this.voiceForm.app_id = this.config.voice.app_id || '';
+                        this.voiceForm.cluster = this.config.voice.cluster || 'volcano_tts';
+                        this.voiceForm.voice_type = this.config.voice.voice_type || 'zh_female_wanwanxiaohe_moon_bigtts';
+                        const presetVoiceTypes = Array.isArray(this.config.voice.available_voice_types) ? this.config.voice.available_voice_types : [];
+                        this.voiceForm.available_voice_types_text = presetVoiceTypes.join('\n');
+                        this.voiceForm.audio_format = this.config.voice.audio_format || 'mp3';
+                        this.voiceForm.speed_ratio = this.config.voice.speed_ratio ?? 1.0;
+                        this.voiceForm.volume_ratio = this.config.voice.volume_ratio ?? 1.0;
+                        this.voiceForm.pitch_ratio = this.config.voice.pitch_ratio ?? 1.0;
+                        this.voiceForm.generation_cost = this.config.voice.generation_cost ?? 3;
+                        this.voiceForm.max_text_length = this.config.voice.max_text_length ?? 500;
+                        this.voiceForm.request_timeout_seconds = this.config.voice.request_timeout_seconds ?? 120;
+                    }
                     // 加载 NovelAI 配置
                     fetch('/api/config/novelai', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
                         .then(resp => {
@@ -2730,6 +2990,8 @@
                     this.loadSpringFestivalConfig();
                     // 加载总结配置
                     this.loadSummaryConfig();
+                    // 加载语音配置
+                    this.loadVoiceConfig();
                     // 加载网络搜索配置
                     this.loadWebSearchConfig();
                     // 加载自动暖贴配置
@@ -3879,6 +4141,96 @@
                             }
                             this.novelaiForm.api_token = '';
                             this.novelaiForm.prompt_api_key = '';
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+
+                async loadVoiceConfig() {
+                    try {
+                        const response = await fetch('/api/config/voice', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.voiceConfig = data;
+                            this.voiceForm.enabled = data.enabled || false;
+                            this.voiceForm.provider = data.provider || 'doubao';
+                            this.voiceForm.base_url = data.base_url || '';
+                            this.voiceForm.api_key = '';
+                            this.voiceForm.model_name = data.model_name || 'FunAudioLLM/CosyVoice2-0.5B';
+                            this.voiceForm.app_id = data.app_id || '';
+                            this.voiceForm.access_token = '';
+                            this.voiceForm.cluster = data.cluster || 'volcano_tts';
+                            this.voiceForm.voice_type = data.voice_type || 'zh_female_wanwanxiaohe_moon_bigtts';
+                            const availableVoiceTypes = Array.isArray(data.available_voice_types) ? data.available_voice_types : [];
+                            this.voiceForm.available_voice_types_text = availableVoiceTypes.join('\n');
+                            this.voiceForm.audio_format = data.audio_format || 'mp3';
+                            this.voiceForm.speed_ratio = Number(data.speed_ratio ?? 1.0);
+                            this.voiceForm.volume_ratio = Number(data.volume_ratio ?? 1.0);
+                            this.voiceForm.pitch_ratio = Number(data.pitch_ratio ?? 1.0);
+                            this.voiceForm.generation_cost = Number(data.generation_cost ?? 3);
+                            this.voiceForm.max_text_length = Number(data.max_text_length ?? 500);
+                            this.voiceForm.request_timeout_seconds = Number(data.request_timeout_seconds ?? 120);
+                            this.$nextTick(() => lucide.createIcons());
+                        }
+                    } catch (e) {
+                        console.warn('加载语音配置失败:', e);
+                    }
+                },
+
+                async saveVoiceConfig() {
+                    this.saving = true;
+                    try {
+                        const parsedVoiceTypes = (this.voiceForm.available_voice_types_text || '')
+                            .split(/[\n,，]/g)
+                            .map(item => item.trim())
+                            .filter(Boolean);
+                        const uniqueVoiceTypes = [...new Set(parsedVoiceTypes)];
+
+                        const payload = {
+                            enabled: !!this.voiceForm.enabled,
+                            provider: this.voiceForm.provider || 'doubao',
+                            base_url: this.voiceForm.base_url ?? '',
+                            model_name: this.voiceForm.model_name ?? '',
+                            app_id: this.voiceForm.app_id ?? '',
+                            cluster: this.voiceForm.cluster ?? '',
+                            voice_type: this.voiceForm.voice_type ?? '',
+                            available_voice_types: uniqueVoiceTypes,
+                            audio_format: this.voiceForm.audio_format || 'mp3',
+                            speed_ratio: parseFloat(this.voiceForm.speed_ratio),
+                            volume_ratio: parseFloat(this.voiceForm.volume_ratio),
+                            pitch_ratio: parseFloat(this.voiceForm.pitch_ratio),
+                            generation_cost: parseInt(this.voiceForm.generation_cost),
+                            max_text_length: parseInt(this.voiceForm.max_text_length),
+                            request_timeout_seconds: parseInt(this.voiceForm.request_timeout_seconds),
+                        };
+
+                        if (this.voiceForm.api_key) {
+                            payload.api_key = this.voiceForm.api_key;
+                        }
+                        if (this.voiceForm.access_token) {
+                            payload.access_token = this.voiceForm.access_token;
+                        }
+
+                        const response = await fetch('/api/config/voice', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            this.showToast('语音设置已保存', 'success');
+                            await this.loadVoiceConfig();
+                            await this.refreshConfig();
                         } else {
                             const data = await response.json();
                             this.showToast(data.detail || '保存失败', 'error');

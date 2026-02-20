@@ -222,6 +222,51 @@ class PromptService:
             }
         )
 
+        # --- 语音工具路由与音色规则注入（动态）---
+        default_voice_type = str(
+            chat_config.VOICE_CONFIG.get(
+                "VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"
+            )
+            or ""
+        ).strip()
+        available_voice_types = [
+            str(name).strip()
+            for name in (chat_config.VOICE_CONFIG.get("AVAILABLE_VOICE_TYPES") or [])
+            if str(name).strip()
+        ]
+        if (
+            default_voice_type
+            and available_voice_types
+            and default_voice_type not in available_voice_types
+        ):
+            available_voice_types.insert(0, default_voice_type)
+
+        voice_lines = [
+            "语音工具规则：",
+            "1) 语音是可选表达方式，不是每轮必用；",
+            "2) 当你想用语音表达，或用户明确要求语音时，可调用 generate_voice；",
+            "3) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
+            f"4) 当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
+        ]
+        if available_voice_types:
+            voice_lines.append(
+                "5) 可用音色名单（仅可从中选择，禁止编造）："
+                + "、".join(f"「{name}」" for name in available_voice_types)
+            )
+            voice_lines.append(
+                "6) 若用户点名音色且命中名单，才显式传 voice_type；否则继续用默认音色。"
+            )
+        else:
+            voice_lines.append("5) 暂未配置可用音色名单；如无必要请继续使用默认音色。")
+
+        final_conversation.append({"role": "user", "parts": ["\n".join(voice_lines)]})
+        final_conversation.append(
+            {
+                "role": "model",
+                "parts": ["收到，语音场景我会优先使用默认音色，只在命中可用名单时切换。"],
+            }
+        )
+
         # --- NovelAI 可用预设名注入（动态）---
         if novelai_preset_context:
             user_preset_names = [

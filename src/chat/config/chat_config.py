@@ -5,6 +5,7 @@
 """
 
 import os
+import json
 from src.config import _parse_ids
 
 
@@ -35,6 +36,44 @@ def _parse_int_list_env(key: str, default: list[int]) -> list[int]:
             values.append(number)
 
     return values or default
+
+def _parse_str_list_env(key: str, default: list[str]) -> list[str]:
+    """解析字符串列表环境变量。支持 JSON 数组或逗号/换行分隔。"""
+    raw = os.getenv(key)
+    if not raw:
+        return default
+
+    raw = raw.strip()
+    values: list[str] = []
+
+    # 优先尝试 JSON 数组格式
+    if raw.startswith("[") and raw.endswith("]"):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                for item in parsed:
+                    text = str(item).strip()
+                    if text:
+                        values.append(text)
+        except Exception:
+            pass
+
+    # 回退：逗号/换行分隔
+    if not values:
+        normalized = raw.replace("\r", "\n").replace("，", ",").replace("\n", ",")
+        values = [item.strip() for item in normalized.split(",") if item.strip()]
+
+    # 去重（保序）
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+
+    return deduped if deduped else default
+
 
 # --- Chat 功能总开关 ---
 CHAT_ENABLED = os.getenv("CHAT_ENABLED", "False").lower() == "true"
@@ -269,6 +308,47 @@ def reload_video_config():
     global VIDEO_GEN_CONFIG
     VIDEO_GEN_CONFIG.update(_get_video_config())
     return VIDEO_GEN_CONFIG
+
+
+# --- 语音合成配置 ---
+def _get_voice_config():
+    """获取语音合成配置，从环境变量读取"""
+    return {
+        "ENABLED": _parse_bool_env("VOICE_ENABLED", "False"),
+        # 提供商: "doubao"（火山引擎）, "siliconflow"（硅基流动）, "custom"（自定义 OpenAI 兼容）
+        "PROVIDER": os.getenv("VOICE_PROVIDER", "doubao"),
+        # 通用端点（留空按 provider 使用默认）
+        "BASE_URL": os.getenv("VOICE_API_URL", ""),
+        # OpenAI 兼容接口使用（siliconflow/custom）
+        "API_KEY": os.getenv("VOICE_API_KEY", ""),
+        "MODEL_NAME": os.getenv("VOICE_MODEL", "FunAudioLLM/CosyVoice2-0.5B"),
+        # 火山引擎豆包使用
+        "APP_ID": os.getenv("VOICE_APP_ID", ""),
+        "ACCESS_TOKEN": os.getenv("VOICE_ACCESS_TOKEN", ""),
+        "CLUSTER": os.getenv("VOICE_CLUSTER", "volcano_tts"),
+        # 通用语音参数
+        "VOICE_TYPE": os.getenv("VOICE_VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"),
+        # 可用音色列表（供提示词注入和工具选型；留空表示不限制）
+        "AVAILABLE_VOICE_TYPES": _parse_str_list_env("VOICE_AVAILABLE_TYPES", []),
+        "AUDIO_FORMAT": os.getenv("VOICE_AUDIO_FORMAT", "mp3"),  # mp3/wav/ogg/opus/pcm/flac
+        "SPEED_RATIO": float(os.getenv("VOICE_SPEED_RATIO", "1.0")),
+        "VOLUME_RATIO": float(os.getenv("VOICE_VOLUME_RATIO", "1.0")),
+        "PITCH_RATIO": float(os.getenv("VOICE_PITCH_RATIO", "1.0")),
+        # 成本与限制
+        "VOICE_GENERATION_COST": int(os.getenv("VOICE_GEN_COST", "3")),
+        "MAX_TEXT_LENGTH": int(os.getenv("VOICE_MAX_TEXT_LENGTH", "500")),
+        "REQUEST_TIMEOUT_SECONDS": int(os.getenv("VOICE_TIMEOUT_SECONDS", "120")),
+    }
+
+
+VOICE_CONFIG = _get_voice_config()
+
+
+def reload_voice_config():
+    """重新加载语音合成配置（从环境变量）"""
+    global VOICE_CONFIG
+    VOICE_CONFIG.update(_get_voice_config())
+    return VOICE_CONFIG
 
 
 # --- NovelAI 图像生成配置 ---

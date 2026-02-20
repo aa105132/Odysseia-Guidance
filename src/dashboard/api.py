@@ -116,6 +116,27 @@ class VideoConfigUpdate(BaseModel):
     empty_result_max_retries: Optional[int] = None  # 空回自动重试次数（全局）
 
 
+class VoiceConfigUpdate(BaseModel):
+    """语音合成配置更新"""
+    enabled: Optional[bool] = None
+    provider: Optional[str] = None  # doubao/siliconflow/custom
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model_name: Optional[str] = None
+    app_id: Optional[str] = None
+    access_token: Optional[str] = None
+    cluster: Optional[str] = None
+    voice_type: Optional[str] = None
+    available_voice_types: Optional[List[str]] = None
+    audio_format: Optional[str] = None
+    speed_ratio: Optional[float] = None
+    volume_ratio: Optional[float] = None
+    pitch_ratio: Optional[float] = None
+    generation_cost: Optional[int] = None
+    max_text_length: Optional[int] = None
+    request_timeout_seconds: Optional[int] = None
+
+
 class NovelAIConfigUpdate(BaseModel):
     """NovelAI 配置更新"""
     enabled: Optional[bool] = None
@@ -201,6 +222,45 @@ def _parse_available_models_setting(raw_value: Optional[str]) -> List[str]:
         return _normalize_model_names(parsed)
 
     return []
+
+
+def _normalize_string_items(values: Optional[List[Any]]) -> List[str]:
+    normalized: List[str] = []
+    seen: set[str] = set()
+    for raw in values or []:
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def _parse_string_list_setting(raw_value: Optional[str]) -> List[str]:
+    if raw_value is None:
+        return []
+
+    raw_text = str(raw_value).strip()
+    if not raw_text:
+        return []
+
+    try:
+        parsed = json.loads(raw_text)
+        if isinstance(parsed, list):
+            return _normalize_string_items(parsed)
+        if isinstance(parsed, str):
+            raw_text = parsed.strip()
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+
+    normalized_text = (
+        raw_text.replace("\r", "\n")
+        .replace("，", ",")
+        .replace("\n", ",")
+    )
+    return _normalize_string_items(normalized_text.split(","))
 
 
 def _build_default_available_models() -> List[str]:
@@ -350,10 +410,28 @@ async def get_all_config(token: str = Depends(verify_token)):
     ai_api_url = os.getenv("GEMINI_API_BASE_URL", "")
     ai_api_key = os.getenv("GEMINI_API_KEYS", "")
     imagen_api_key = os.getenv("GEMINI_IMAGEN_API_KEY", "") or ai_api_key
+
+    voice_config = chat_config.VOICE_CONFIG
+    voice_provider = str(voice_config.get("PROVIDER", "doubao")).strip().lower()
+    voice_api_key = str(voice_config.get("API_KEY", "")).strip()
+    voice_access_token = str(voice_config.get("ACCESS_TOKEN", "")).strip()
+    voice_available_types = _normalize_string_items(
+        voice_config.get("AVAILABLE_VOICE_TYPES", [])
+    )
     
     # 隐藏敏感信息
     ai_masked_key = ai_api_key[:10] + "..." + ai_api_key[-4:] if len(ai_api_key) > 14 else ("***" if ai_api_key else "")
     imagen_masked_key = imagen_api_key[:10] + "..." + imagen_api_key[-4:] if len(imagen_api_key) > 14 else ("***" if imagen_api_key else "")
+    voice_api_key_masked = (
+        voice_api_key[:8] + "..." + voice_api_key[-4:]
+        if len(voice_api_key) > 12
+        else ("***" if voice_api_key else "")
+    )
+    voice_access_token_masked = (
+        voice_access_token[:8] + "..." + voice_access_token[-4:]
+        if len(voice_access_token) > 12
+        else ("***" if voice_access_token else "")
+    )
     
     db_available_models = await chat_db_manager.get_global_setting(
         AI_AVAILABLE_MODELS_SETTING_KEY
@@ -414,6 +492,27 @@ async def get_all_config(token: str = Depends(verify_token)):
             "nsfw_edit_model_2k": chat_config.GEMINI_IMAGEN_CONFIG.get("NSFW_EDIT_MODEL_NAME_2K", ""),
             "nsfw_model_4k": chat_config.GEMINI_IMAGEN_CONFIG.get("NSFW_MODEL_NAME_4K", ""),
             "nsfw_edit_model_4k": chat_config.GEMINI_IMAGEN_CONFIG.get("NSFW_EDIT_MODEL_NAME_4K", ""),
+        },
+        "voice": {
+            "enabled": voice_config.get("ENABLED", False),
+            "provider": voice_provider,
+            "base_url": voice_config.get("BASE_URL", ""),
+            "api_key_masked": voice_api_key_masked,
+            "has_api_key": bool(voice_api_key),
+            "model_name": voice_config.get("MODEL_NAME", "FunAudioLLM/CosyVoice2-0.5B"),
+            "app_id": voice_config.get("APP_ID", ""),
+            "access_token_masked": voice_access_token_masked,
+            "has_access_token": bool(voice_access_token),
+            "cluster": voice_config.get("CLUSTER", "volcano_tts"),
+            "voice_type": voice_config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"),
+            "available_voice_types": voice_available_types,
+            "audio_format": voice_config.get("AUDIO_FORMAT", "mp3"),
+            "speed_ratio": voice_config.get("SPEED_RATIO", 1.0),
+            "volume_ratio": voice_config.get("VOLUME_RATIO", 1.0),
+            "pitch_ratio": voice_config.get("PITCH_RATIO", 1.0),
+            "generation_cost": voice_config.get("VOICE_GENERATION_COST", 3),
+            "max_text_length": voice_config.get("MAX_TEXT_LENGTH", 500),
+            "request_timeout_seconds": voice_config.get("REQUEST_TIMEOUT_SECONDS", 120),
         },
         "coin": {
             "daily_reward": chat_config.COIN_CONFIG.get("DAILY_CHECKIN_REWARD", 50),
@@ -1376,6 +1475,345 @@ async def update_video_config(config: VideoConfigUpdate, token: str = Depends(ve
             updated["service_reload_error"] = str(e)
     
     log.info(f"视频生成配置已更新: {updated}")
+    return {"success": True, "updated": updated}
+
+
+# --- 语音生成配置 API ---
+
+@app.get("/api/config/voice")
+async def get_voice_config(token: str = Depends(verify_token)):
+    """获取语音合成配置"""
+    from src.chat.utils.database import chat_db_manager
+
+    config = chat_config.VOICE_CONFIG
+
+    # 从数据库读取持久化设置
+    db_enabled = await chat_db_manager.get_global_setting("voice_enabled")
+    db_provider = await chat_db_manager.get_global_setting("voice_provider")
+    db_base_url = await chat_db_manager.get_global_setting("voice_api_url")
+    db_api_key = await chat_db_manager.get_global_setting("voice_api_key")
+    db_model_name = await chat_db_manager.get_global_setting("voice_model")
+    db_app_id = await chat_db_manager.get_global_setting("voice_app_id")
+    db_access_token = await chat_db_manager.get_global_setting("voice_access_token")
+    db_cluster = await chat_db_manager.get_global_setting("voice_cluster")
+    db_voice_type = await chat_db_manager.get_global_setting("voice_voice_type")
+    db_audio_format = await chat_db_manager.get_global_setting("voice_audio_format")
+    db_speed_ratio = await chat_db_manager.get_global_setting("voice_speed_ratio")
+    db_volume_ratio = await chat_db_manager.get_global_setting("voice_volume_ratio")
+    db_pitch_ratio = await chat_db_manager.get_global_setting("voice_pitch_ratio")
+    db_generation_cost = await chat_db_manager.get_global_setting("voice_generation_cost")
+    db_max_text_length = await chat_db_manager.get_global_setting("voice_max_text_length")
+    db_timeout_seconds = await chat_db_manager.get_global_setting("voice_timeout_seconds")
+    db_available_voice_types = await chat_db_manager.get_global_setting("voice_available_types")
+
+    # 数据库优先
+    enabled = db_enabled == "true" if db_enabled is not None else bool(config.get("ENABLED", False))
+    provider = str(db_provider or config.get("PROVIDER", "doubao")).strip().lower()
+    if provider not in {"doubao", "siliconflow", "custom"}:
+        provider = "doubao"
+
+    base_url = str(db_base_url or config.get("BASE_URL", "")).strip()
+    api_key = str(db_api_key or config.get("API_KEY", "")).strip()
+    model_name = str(db_model_name or config.get("MODEL_NAME", "FunAudioLLM/CosyVoice2-0.5B")).strip()
+    app_id = str(db_app_id or config.get("APP_ID", "")).strip()
+    access_token = str(db_access_token or config.get("ACCESS_TOKEN", "")).strip()
+    cluster = str(db_cluster or config.get("CLUSTER", "volcano_tts")).strip()
+    voice_type = str(
+        db_voice_type or config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts")
+    ).strip()
+    available_voice_types = (
+        _parse_string_list_setting(db_available_voice_types)
+        if db_available_voice_types is not None
+        else _normalize_string_items(config.get("AVAILABLE_VOICE_TYPES", []))
+    )
+    if voice_type and available_voice_types and voice_type not in available_voice_types:
+        available_voice_types = [voice_type, *available_voice_types]
+    audio_format = str(db_audio_format or config.get("AUDIO_FORMAT", "mp3")).strip().lower()
+    speed_ratio = float(db_speed_ratio) if db_speed_ratio is not None else float(config.get("SPEED_RATIO", 1.0))
+    volume_ratio = float(db_volume_ratio) if db_volume_ratio is not None else float(config.get("VOLUME_RATIO", 1.0))
+    pitch_ratio = float(db_pitch_ratio) if db_pitch_ratio is not None else float(config.get("PITCH_RATIO", 1.0))
+    generation_cost = (
+        int(db_generation_cost)
+        if db_generation_cost is not None
+        else int(config.get("VOICE_GENERATION_COST", 3))
+    )
+    max_text_length = (
+        int(db_max_text_length)
+        if db_max_text_length is not None
+        else int(config.get("MAX_TEXT_LENGTH", 500))
+    )
+    request_timeout_seconds = (
+        int(db_timeout_seconds)
+        if db_timeout_seconds is not None
+        else int(config.get("REQUEST_TIMEOUT_SECONDS", 120))
+    )
+
+    if provider == "doubao" and not base_url:
+        base_url = "https://openspeech.bytedance.com"
+    if provider == "siliconflow" and not base_url:
+        base_url = "https://api.siliconflow.cn/v1"
+
+    # 脱敏
+    api_key_masked = (
+        api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else ("***" if api_key else "")
+    )
+    access_token_masked = (
+        access_token[:8] + "..." + access_token[-4:]
+        if len(access_token) > 12
+        else ("***" if access_token else "")
+    )
+
+    # 服务状态
+    service_available = False
+    if enabled:
+        try:
+            from src.chat.features.voice_generation.services.voice_service import voice_service as vs
+            service_available = vs.is_available()
+        except Exception:
+            pass
+
+    return {
+        "enabled": enabled,
+        "provider": provider,
+        "base_url": base_url,
+        "api_key_masked": api_key_masked,
+        "has_api_key": bool(api_key),
+        "model_name": model_name,
+        "app_id": app_id,
+        "access_token_masked": access_token_masked,
+        "has_access_token": bool(access_token),
+        "cluster": cluster,
+        "voice_type": voice_type,
+        "available_voice_types": available_voice_types,
+        "audio_format": audio_format,
+        "speed_ratio": speed_ratio,
+        "volume_ratio": volume_ratio,
+        "pitch_ratio": pitch_ratio,
+        "generation_cost": generation_cost,
+        "max_text_length": max_text_length,
+        "request_timeout_seconds": request_timeout_seconds,
+        "service_available": service_available,
+        "available_providers": [
+            {"id": "doubao", "name": "火山引擎（豆包）"},
+            {"id": "siliconflow", "name": "硅基流动（OpenAI 兼容）"},
+            {"id": "custom", "name": "自定义 OpenAI 兼容"},
+        ],
+    }
+
+
+@app.put("/api/config/voice")
+async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(verify_token)):
+    """更新语音合成配置"""
+    from src.chat.utils.database import chat_db_manager
+
+    updated = {}
+    env_updates = {}
+    allowed_providers = {"doubao", "siliconflow", "custom"}
+    allowed_formats = {"mp3", "wav", "ogg", "opus", "flac", "aac", "pcm"}
+
+    if config.enabled is not None:
+        chat_config.VOICE_CONFIG["ENABLED"] = config.enabled
+        os.environ["VOICE_ENABLED"] = str(config.enabled).lower()
+        env_updates["VOICE_ENABLED"] = str(config.enabled).lower()
+        updated["enabled"] = config.enabled
+        await chat_db_manager.set_global_setting("voice_enabled", str(config.enabled).lower())
+
+    if config.provider is not None:
+        provider = str(config.provider).strip().lower()
+        if provider not in allowed_providers:
+            raise HTTPException(400, "语音 provider 必须是 doubao/siliconflow/custom")
+        chat_config.VOICE_CONFIG["PROVIDER"] = provider
+        os.environ["VOICE_PROVIDER"] = provider
+        env_updates["VOICE_PROVIDER"] = provider
+        updated["provider"] = provider
+        await chat_db_manager.set_global_setting("voice_provider", provider)
+
+    if config.base_url is not None:
+        base_url = str(config.base_url).strip()
+        if base_url and not (base_url.startswith("http://") or base_url.startswith("https://")):
+            raise HTTPException(400, "语音 API URL 必须以 http:// 或 https:// 开头")
+        chat_config.VOICE_CONFIG["BASE_URL"] = base_url
+        os.environ["VOICE_API_URL"] = base_url
+        env_updates["VOICE_API_URL"] = base_url
+        updated["base_url"] = base_url[:30] + "..." if len(base_url) > 30 else base_url
+        await chat_db_manager.set_global_setting("voice_api_url", base_url)
+
+    if config.api_key is not None:
+        api_key = str(config.api_key).strip()
+        chat_config.VOICE_CONFIG["API_KEY"] = api_key
+        os.environ["VOICE_API_KEY"] = api_key
+        env_updates["VOICE_API_KEY"] = api_key
+        updated["api_key"] = "已更新" if api_key else "已清空"
+        await chat_db_manager.set_global_setting("voice_api_key", api_key)
+
+    if config.model_name is not None:
+        model_name = str(config.model_name).strip()
+        chat_config.VOICE_CONFIG["MODEL_NAME"] = model_name
+        os.environ["VOICE_MODEL"] = model_name
+        env_updates["VOICE_MODEL"] = model_name
+        updated["model_name"] = model_name
+        await chat_db_manager.set_global_setting("voice_model", model_name)
+
+    if config.app_id is not None:
+        app_id = str(config.app_id).strip()
+        chat_config.VOICE_CONFIG["APP_ID"] = app_id
+        os.environ["VOICE_APP_ID"] = app_id
+        env_updates["VOICE_APP_ID"] = app_id
+        updated["app_id"] = app_id
+        await chat_db_manager.set_global_setting("voice_app_id", app_id)
+
+    if config.access_token is not None:
+        access_token = str(config.access_token).strip()
+        chat_config.VOICE_CONFIG["ACCESS_TOKEN"] = access_token
+        os.environ["VOICE_ACCESS_TOKEN"] = access_token
+        env_updates["VOICE_ACCESS_TOKEN"] = access_token
+        updated["access_token"] = "已更新" if access_token else "已清空"
+        await chat_db_manager.set_global_setting("voice_access_token", access_token)
+
+    if config.cluster is not None:
+        cluster = str(config.cluster).strip()
+        chat_config.VOICE_CONFIG["CLUSTER"] = cluster
+        os.environ["VOICE_CLUSTER"] = cluster
+        env_updates["VOICE_CLUSTER"] = cluster
+        updated["cluster"] = cluster
+        await chat_db_manager.set_global_setting("voice_cluster", cluster)
+
+    if config.voice_type is not None:
+        voice_type = str(config.voice_type).strip()
+        chat_config.VOICE_CONFIG["VOICE_TYPE"] = voice_type
+        os.environ["VOICE_VOICE_TYPE"] = voice_type
+        env_updates["VOICE_VOICE_TYPE"] = voice_type
+        updated["voice_type"] = voice_type
+        await chat_db_manager.set_global_setting("voice_voice_type", voice_type)
+
+        # 若已经维护了可用音色列表，确保默认音色始终包含在列表中
+        current_available_voice_types = _normalize_string_items(
+            chat_config.VOICE_CONFIG.get("AVAILABLE_VOICE_TYPES", [])
+        )
+        if (
+            voice_type
+            and current_available_voice_types
+            and voice_type not in current_available_voice_types
+        ):
+            current_available_voice_types.insert(0, voice_type)
+            serialized_voice_types = json.dumps(
+                current_available_voice_types, ensure_ascii=False
+            )
+            chat_config.VOICE_CONFIG["AVAILABLE_VOICE_TYPES"] = (
+                current_available_voice_types
+            )
+            os.environ["VOICE_AVAILABLE_TYPES"] = serialized_voice_types
+            env_updates["VOICE_AVAILABLE_TYPES"] = serialized_voice_types
+            updated["available_voice_types_count"] = len(current_available_voice_types)
+            await chat_db_manager.set_global_setting(
+                "voice_available_types", serialized_voice_types
+            )
+
+    if config.available_voice_types is not None:
+        available_voice_types = _normalize_string_items(config.available_voice_types)
+        default_voice_type = str(chat_config.VOICE_CONFIG.get("VOICE_TYPE", "")).strip()
+        if (
+            default_voice_type
+            and available_voice_types
+            and default_voice_type not in available_voice_types
+        ):
+            available_voice_types.insert(0, default_voice_type)
+
+        serialized_voice_types = json.dumps(available_voice_types, ensure_ascii=False)
+        chat_config.VOICE_CONFIG["AVAILABLE_VOICE_TYPES"] = available_voice_types
+        os.environ["VOICE_AVAILABLE_TYPES"] = serialized_voice_types
+        env_updates["VOICE_AVAILABLE_TYPES"] = serialized_voice_types
+        updated["available_voice_types_count"] = len(available_voice_types)
+        await chat_db_manager.set_global_setting(
+            "voice_available_types", serialized_voice_types
+        )
+
+    if config.audio_format is not None:
+        audio_format = str(config.audio_format).strip().lower()
+        if audio_format not in allowed_formats:
+            raise HTTPException(400, "语音格式必须是 mp3/wav/ogg/opus/flac/aac/pcm")
+        chat_config.VOICE_CONFIG["AUDIO_FORMAT"] = audio_format
+        os.environ["VOICE_AUDIO_FORMAT"] = audio_format
+        env_updates["VOICE_AUDIO_FORMAT"] = audio_format
+        updated["audio_format"] = audio_format
+        await chat_db_manager.set_global_setting("voice_audio_format", audio_format)
+
+    if config.speed_ratio is not None:
+        speed_ratio = float(config.speed_ratio)
+        if not 0.2 <= speed_ratio <= 3.0:
+            raise HTTPException(400, "语速必须在 0.2 到 3.0 之间")
+        chat_config.VOICE_CONFIG["SPEED_RATIO"] = speed_ratio
+        os.environ["VOICE_SPEED_RATIO"] = str(speed_ratio)
+        env_updates["VOICE_SPEED_RATIO"] = str(speed_ratio)
+        updated["speed_ratio"] = speed_ratio
+        await chat_db_manager.set_global_setting("voice_speed_ratio", str(speed_ratio))
+
+    if config.volume_ratio is not None:
+        volume_ratio = float(config.volume_ratio)
+        if not 0.2 <= volume_ratio <= 3.0:
+            raise HTTPException(400, "音量必须在 0.2 到 3.0 之间")
+        chat_config.VOICE_CONFIG["VOLUME_RATIO"] = volume_ratio
+        os.environ["VOICE_VOLUME_RATIO"] = str(volume_ratio)
+        env_updates["VOICE_VOLUME_RATIO"] = str(volume_ratio)
+        updated["volume_ratio"] = volume_ratio
+        await chat_db_manager.set_global_setting("voice_volume_ratio", str(volume_ratio))
+
+    if config.pitch_ratio is not None:
+        pitch_ratio = float(config.pitch_ratio)
+        if not 0.1 <= pitch_ratio <= 3.0:
+            raise HTTPException(400, "音调必须在 0.1 到 3.0 之间")
+        chat_config.VOICE_CONFIG["PITCH_RATIO"] = pitch_ratio
+        os.environ["VOICE_PITCH_RATIO"] = str(pitch_ratio)
+        env_updates["VOICE_PITCH_RATIO"] = str(pitch_ratio)
+        updated["pitch_ratio"] = pitch_ratio
+        await chat_db_manager.set_global_setting("voice_pitch_ratio", str(pitch_ratio))
+
+    if config.generation_cost is not None:
+        if config.generation_cost < 0:
+            raise HTTPException(400, "语音生成成本不能为负数")
+        chat_config.VOICE_CONFIG["VOICE_GENERATION_COST"] = config.generation_cost
+        os.environ["VOICE_GEN_COST"] = str(config.generation_cost)
+        env_updates["VOICE_GEN_COST"] = str(config.generation_cost)
+        updated["generation_cost"] = config.generation_cost
+        await chat_db_manager.set_global_setting("voice_generation_cost", str(config.generation_cost))
+
+    if config.max_text_length is not None:
+        if not 20 <= config.max_text_length <= 5000:
+            raise HTTPException(400, "最大文本长度必须在 20 到 5000 之间")
+        chat_config.VOICE_CONFIG["MAX_TEXT_LENGTH"] = config.max_text_length
+        os.environ["VOICE_MAX_TEXT_LENGTH"] = str(config.max_text_length)
+        env_updates["VOICE_MAX_TEXT_LENGTH"] = str(config.max_text_length)
+        updated["max_text_length"] = config.max_text_length
+        await chat_db_manager.set_global_setting("voice_max_text_length", str(config.max_text_length))
+
+    if config.request_timeout_seconds is not None:
+        if not 5 <= config.request_timeout_seconds <= 300:
+            raise HTTPException(400, "请求超时时间必须在 5 到 300 秒之间")
+        chat_config.VOICE_CONFIG["REQUEST_TIMEOUT_SECONDS"] = config.request_timeout_seconds
+        os.environ["VOICE_TIMEOUT_SECONDS"] = str(config.request_timeout_seconds)
+        env_updates["VOICE_TIMEOUT_SECONDS"] = str(config.request_timeout_seconds)
+        updated["request_timeout_seconds"] = config.request_timeout_seconds
+        await chat_db_manager.set_global_setting(
+            "voice_timeout_seconds",
+            str(config.request_timeout_seconds),
+        )
+
+    if env_updates:
+        try:
+            update_env_file(env_updates)
+        except Exception as e:
+            log.warning(f"无法写入 .env 文件: {e}")
+
+    # 热重载语音服务
+    try:
+        from src.chat.features.voice_generation.services.voice_service import voice_service as vs
+        vs.reinitialize()
+        updated["service_available"] = vs.is_available()
+    except Exception as e:
+        log.warning(f"热重载语音服务失败: {e}")
+        updated["service_reload_error"] = str(e)
+
+    log.info(f"语音配置已更新: {updated}")
     return {"success": True, "updated": updated}
 
 
