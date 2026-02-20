@@ -1279,7 +1279,7 @@ class GeminiImagenService:
         content_rating: str = "sfw",
     ) -> Optional[bytes]:
         """
-        生成单张图像的便捷方法
+        生成单张图像的便捷方法（内置空回自动重试）
 
         Args:
             prompt: 正面提示词
@@ -1291,18 +1291,35 @@ class GeminiImagenService:
         Returns:
             成功时返回图像字节数据，失败时返回 None
         """
-        images = await self.generate_image(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            aspect_ratio=aspect_ratio,
-            number_of_images=1,
-            resolution=resolution,
-            content_rating=content_rating,
+        retry_max_attempts = max(
+            1, int(app_config.GEMINI_IMAGEN_CONFIG.get("EMPTY_RESULT_MAX_RETRIES", 3))
         )
-        
-        if images and len(images) > 0:
-            # 返回最后一张图片（通常是完整图，第一张可能是缩略图）
-            return images[-1]
+
+        for attempt in range(1, retry_max_attempts + 1):
+            images = await self.generate_image(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                aspect_ratio=aspect_ratio,
+                number_of_images=1,
+                resolution=resolution,
+                content_rating=content_rating,
+            )
+
+            if images and len(images) > 0:
+                if attempt > 1:
+                    log.info(
+                        f"图片空回重试成功（第 {attempt}/{retry_max_attempts} 次）"
+                    )
+                # 返回最后一张图片（通常是完整图，第一张可能是缩略图）
+                return images[-1]
+
+            if attempt < retry_max_attempts:
+                log.warning(
+                    f"图片生成返回空结果，准备重试（第 {attempt}/{retry_max_attempts} 次）"
+                )
+                await asyncio.sleep(min(1.0 * attempt, 3.0))
+
+        log.warning(f"图片生成空回，已达到最大重试次数（{retry_max_attempts}）")
         return None
 
     async def edit_image(
@@ -1354,22 +1371,43 @@ class GeminiImagenService:
         model_name = self._get_model_for_resolution(resolution=resolution, is_edit=True, content_rating=content_rating)
         log.info(f"图生图使用模型: {model_name} (分辨率: {resolution}, 内容分级: {content_rating})")
         
-        # 根据 API 格式选择不同的编辑方法
-        if self._api_format == "openai":
-            return await self._edit_image_openai_format(
-                reference_images=images_list,
-                edit_prompt=edit_prompt,
-                aspect_ratio=aspect_ratio,
-                model_name=model_name,
-            )
-        else:
-            # 使用 Gemini 多模态聊天接口（gemini 或 gemini_chat 格式都使用这个）
-            return await self._edit_image_gemini_chat_format(
-                reference_images=images_list,
-                edit_prompt=edit_prompt,
-                aspect_ratio=aspect_ratio,
-                model_name=model_name,
-            )
+        retry_max_attempts = max(
+            1, int(app_config.GEMINI_IMAGEN_CONFIG.get("EMPTY_RESULT_MAX_RETRIES", 3))
+        )
+
+        for attempt in range(1, retry_max_attempts + 1):
+            # 根据 API 格式选择不同的编辑方法
+            if self._api_format == "openai":
+                edited_image = await self._edit_image_openai_format(
+                    reference_images=images_list,
+                    edit_prompt=edit_prompt,
+                    aspect_ratio=aspect_ratio,
+                    model_name=model_name,
+                )
+            else:
+                # 使用 Gemini 多模态聊天接口（gemini 或 gemini_chat 格式都使用这个）
+                edited_image = await self._edit_image_gemini_chat_format(
+                    reference_images=images_list,
+                    edit_prompt=edit_prompt,
+                    aspect_ratio=aspect_ratio,
+                    model_name=model_name,
+                )
+
+            if edited_image:
+                if attempt > 1:
+                    log.info(
+                        f"图生图空回重试成功（第 {attempt}/{retry_max_attempts} 次）"
+                    )
+                return edited_image
+
+            if attempt < retry_max_attempts:
+                log.warning(
+                    f"图生图返回空结果，准备重试（第 {attempt}/{retry_max_attempts} 次）"
+                )
+                await asyncio.sleep(min(1.0 * attempt, 3.0))
+
+        log.warning(f"图生图空回，已达到最大重试次数（{retry_max_attempts}）")
+        return None
     
     async def _edit_image_gemini_chat_format(
         self,

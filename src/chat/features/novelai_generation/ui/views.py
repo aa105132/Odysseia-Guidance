@@ -135,17 +135,21 @@ def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
     """基于图片提示词和用户补充描述构建视频提示词。"""
     base_prompt = (image_prompt or "").strip()
     idea = (user_idea or "").strip()
+    common_requirements = (
+        "保持原图画风，保持主体与场景一致，画风一致，整体风格自然流畅，镜头具有电影感。"
+    )
 
     if idea:
         return (
-            "请基于这张图片生成一段短视频，保持主体与场景一致，动作自然流畅、镜头具有电影感。"
+            "请基于这张图片生成一段短视频。"
+            f"通用要求：{common_requirements}"
             f"\n原图提示词：{base_prompt}"
             f"\n补充要求：{idea}"
         )
 
     return (
-        "请基于这张图片生成一段短视频，保持主体与场景一致。"
-        "在此基础上请自由发挥镜头运动与动态细节，整体风格自然流畅、具有电影感。"
+        "请基于这张图片生成一段短视频。"
+        f"通用要求：{common_requirements}"
         f"\n原图提示词：{base_prompt}"
     )
 

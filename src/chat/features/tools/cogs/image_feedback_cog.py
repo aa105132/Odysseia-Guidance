@@ -30,6 +30,15 @@ class ImageFeedbackCog(commands.Cog):
         return getattr(chat_config, "IMAGE_FEEDBACK_CONFIG", {}) or {}
 
     @staticmethod
+    def _is_feedback_enabled(feedback_config: dict) -> bool:
+        enabled_raw = feedback_config.get("ENABLED", True)
+        if isinstance(enabled_raw, bool):
+            return enabled_raw
+        if isinstance(enabled_raw, str):
+            return enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(enabled_raw)
+
+    @staticmethod
     def _get_trigger_count(feedback_config: dict) -> int:
         try:
             trigger_count = int(feedback_config.get("BAN_TRIGGER_COUNT", 3))
@@ -66,8 +75,11 @@ class ImageFeedbackCog(commands.Cog):
         if payload.user_id == self.bot.user.id:
             return
 
-        # 2) 仅处理目标反馈 emoji
+        # 2) 检查功能开关并处理目标反馈 emoji
         feedback_config = self._get_feedback_config()
+        if not self._is_feedback_enabled(feedback_config):
+            return
+
         report_emoji = str(feedback_config.get("REPORT_EMOJI", "💩"))
         if str(payload.emoji) != report_emoji:
             return

@@ -209,38 +209,80 @@ class VideoGenerationService:
             }
 
             retry_502_max_attempts = max(
-                1, int(config.get('RETRY_502_MAX_ATTEMPTS', 3))
+                1, int(config.get("RETRY_502_MAX_ATTEMPTS", 3))
             )
             retry_502_delay_seconds = max(
-                0.0, float(config.get('RETRY_502_DELAY_SECONDS', 2))
+                0.0, float(config.get("RETRY_502_DELAY_SECONDS", 2))
+            )
+            empty_result_max_attempts = max(
+                1, int(config.get("EMPTY_RESULT_MAX_RETRIES", 3))
             )
 
-            log.info(f"[视频生成-{mode_str}] 正在使用 {model_name} 生成视频, 提示词: {prompt[:100]}...")
+            log.info(
+                f"[视频生成-{mode_str}] 正在使用 {model_name} 生成视频, 提示词: {prompt[:100]}..."
+            )
 
             async with aiohttp.ClientSession() as session:
-                for attempt in range(retry_502_max_attempts):
-                    async with session.post(
-                    f"{base_url}/chat/completions",
-                        headers=headers,
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=300)  # 视频生成可能需要更长时间
-                    ) as response:
-                        status_code = response.status
+                for empty_attempt in range(empty_result_max_attempts):
+                    should_retry_empty_result = False
 
-                        if status_code == 200:
-                            data = await response.json()
-                            return self._extract_video_from_response(data, video_format)
-                        error_text = await response.text()
-                        if status_code == 502 and attempt < retry_502_max_attempts - 1:
-                            current_attempt = attempt + 1
-                            log.warning(
-                                f'视频生成 API 第 {current_attempt}/{retry_502_max_attempts} 次请求返回 502，'
-                                f'{retry_502_delay_seconds:.1f} 秒后重试'
+                    for attempt in range(retry_502_max_attempts):
+                        async with session.post(
+                            f"{base_url}/chat/completions",
+                            headers=headers,
+                            json=payload,
+                            timeout=aiohttp.ClientTimeout(total=300),  # 视频生成可能需要更长时间
+                        ) as response:
+                            status_code = response.status
+
+                            if status_code == 200:
+                                data = await response.json()
+                                video_result = self._extract_video_from_response(
+                                    data, video_format
+                                )
+                                if video_result is not None:
+                                    if empty_attempt > 0:
+                                        log.info(
+                                            f"[视频生成-{mode_str}] 空回重试成功（第 {empty_attempt + 1}/{empty_result_max_attempts} 次）"
+                                        )
+                                    return video_result
+
+                                if empty_attempt < empty_result_max_attempts - 1:
+                                    current_empty_attempt = empty_attempt + 1
+                                    log.warning(
+                                        f"[视频生成-{mode_str}] 第 {current_empty_attempt}/{empty_result_max_attempts} 次返回空结果，"
+                                        "准备自动重试..."
+                                    )
+                                    should_retry_empty_result = True
+                                    break
+
+                                log.error(
+                                    f"[视频生成-{mode_str}] 连续空回，已达到最大重试次数（{empty_result_max_attempts}）"
+                                )
+                                return None
+
+                            error_text = await response.text()
+                            if (
+                                status_code == 502
+                                and attempt < retry_502_max_attempts - 1
+                            ):
+                                current_attempt = attempt + 1
+                                log.warning(
+                                    f"[视频生成-{mode_str}] API 第 {current_attempt}/{retry_502_max_attempts} 次请求返回 502，"
+                                    f"{retry_502_delay_seconds:.1f} 秒后重试"
+                                )
+                                await asyncio.sleep(retry_502_delay_seconds)
+                                continue
+                            log.error(
+                                f"视频生成 API 返回错误 {response.status}: {error_text[:500]}"
                             )
-                            await asyncio.sleep(retry_502_delay_seconds)
-                            continue
-                        log.error(f"视频生成 API 返回错误 {response.status}: {error_text[:500]}")
-                        return None
+                            return None
+
+                    if should_retry_empty_result:
+                        await asyncio.sleep(min(1.0 * (empty_attempt + 1), 3.0))
+                        continue
+
+                return None
 
         except asyncio.TimeoutError:
             log.error("视频生成 API 请求超时")
