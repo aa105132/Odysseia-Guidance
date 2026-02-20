@@ -225,13 +225,13 @@ async def generate_voice(
         speed_ratio: （可选）语速倍率，建议 0.2~3.0。
         volume_ratio: （可选）音量倍率，建议 0.2~3.0。
         pitch_ratio: （可选）音调倍率，建议 0.1~3.0。
-        preview_message: （建议填写）生成语音前先发送给用户的预告消息。
-        success_message: （建议填写）语音发送成功后附带给用户的文字消息。
+        preview_message: （已弃用）请保持为空。语音模式下不再发送预告文字。
+        success_message: （已弃用）请保持为空。语音模式下不再发送成功补充文字。
         force_send: 是否强制执行发送。默认 False。通常无需设置，除非你明确要无条件发语音。
 
     Returns:
-        成功时会把音频文件直接发送到频道，并返回 skip_ai_response=True，
-        表示无需再追加文本回复。
+        成功时会把音频文件直接发送到频道，并返回 skip_ai_response=True。
+        语音即最终回复，工具不会再发送额外文本消息。
         计费策略：默认仅在“用户明确要求语音”时扣费；月月主动语音默认不扣费。
     """
     from src.chat.config.chat_config import VOICE_CONFIG
@@ -298,13 +298,8 @@ async def generate_voice(
     # 添加“正在生成”反应
     await add_reaction(GENERATING_EMOJI)
 
-    # 发送预告消息
-    if channel and preview_message:
-        try:
-            await channel.send(replace_emojis(preview_message))
-        except Exception as e:
-            log.warning(f"发送语音预告消息失败: {e}")
-
+    # 语音即最终回复：不发送预告文本，不发送成功补充文本。
+    # preview_message/success_message 参数保留仅为兼容旧调用方，当前逻辑忽略。
     try:
         result = await voice_service.generate_voice(
             text=text,
@@ -387,9 +382,7 @@ async def generate_voice(
                         f"语音已按普通附件发送: provider={result.provider}, model={result.model_name}, ext={result.file_ext}"
                     )
 
-                # 若模型提供了成功文案，则单独补一条文本
-                if success_message:
-                    await channel.send(replace_emojis(success_message)[:1900])
+                # 语音即最终回复：发送完语音后不再追加任何文本消息。
 
             except Exception as e:
                 log.error(f"发送语音到频道失败: {e}", exc_info=True)

@@ -245,25 +245,29 @@ class PromptService:
             "语音工具规则：",
             "1) 语音是可选表达方式，不是每轮必用；",
             "2) 当你想用语音表达，或用户明确要求语音时，可调用 generate_voice；",
-            "3) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
-            f"4) 当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
+            "3) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
+            "4) 一旦决定发语音，语音本身就是最终回复，不要再额外发文字预告或成功补充；",
+            "5) 调用语音工具时不要传 preview_message/success_message（保持为空）；",
+            "6) 语音工具成功后会 skip_ai_response，因此不要再追加普通文本回复；",
+            "7) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
+            f"8) 当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
         ]
         if available_voice_types:
             voice_lines.append(
-                "5) 可用音色名单（仅可从中选择，禁止编造）："
+                "9) 可用音色名单（仅可从中选择，禁止编造）："
                 + "、".join(f"「{name}」" for name in available_voice_types)
             )
             voice_lines.append(
-                "6) 若用户点名音色且命中名单，才显式传 voice_type；否则继续用默认音色。"
+                "10) 若用户点名音色且命中名单，才显式传 voice_type；否则继续用默认音色。"
             )
         else:
-            voice_lines.append("5) 暂未配置可用音色名单；如无必要请继续使用默认音色。")
+            voice_lines.append("9) 暂未配置可用音色名单；如无必要请继续使用默认音色。")
 
         final_conversation.append({"role": "user", "parts": ["\n".join(voice_lines)]})
         final_conversation.append(
             {
                 "role": "model",
-                "parts": ["收到，语音场景我会优先使用默认音色，只在命中可用名单时切换。"],
+                "parts": ["收到，语音场景我会把语音当最终回复，不再额外发文字，并优先使用默认音色。"],
             }
         )
 
