@@ -442,7 +442,13 @@ def reset_default_emoji_mappings() -> None:
 
 
 def load_emoji_mappings_from_file(file_path: str = None) -> bool:
-    return False
+    target_file = file_path or EMOJI_MAPPINGS_PERSIST_FILE
+    if not os.path.exists(target_file):
+        return False
+
+    try:
+        with open(target_file, r, encoding=utf-8) as f:
+            payload = json.load(f)
 
 
 def replace_emotion_tags(text: str, event_id: str = None, faction_id: str = None) -> str:

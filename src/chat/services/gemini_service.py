@@ -655,6 +655,90 @@ class GeminiService:
             gen_config.thinking_config = types.ThinkingConfig(**thinking_config_data)
         return gen_config
 
+    def _build_openai_chat_payload(
+        self,
+        model_name: str,
+        messages: List[Dict[str, Any]],
+        max_tokens: int,
+        temperature: Optional[float] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        disabled_fields: Optional[set[str]] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            'model': model_name,
+            'messages': messages,
+            'max_tokens': max_tokens,
+        }
+        if temperature is not None:
+            payload['temperature'] = temperature
+        if tools:
+            payload['tools'] = tools
+            payload['tool_choice'] = 'auto'
+
+        for field in disabled_fields or set():
+            payload.pop(field, None)
+
+        return payload
+
+    async def _post_openai_chat_completion_with_fallback(
+        self,
+        api_url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        timeout_seconds: int,
+        disabled_payload_fields: set[str],
+        log_prefix: str,
+    ) -> Dict[str, Any]:
+        max_attempts = 3
+        protected_fields = {'model', 'messages', 'tools', 'tool_choice'}
+        last_error_text = ''
+
+        for _ in range(max_attempts):
+            effective_payload = payload.copy()
+            for field in disabled_payload_fields:
+                effective_payload.pop(field, None)
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    api_url,
+                    headers=headers,
+                    json=effective_payload,
+                    timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+
+                    error_text = await response.text()
+                    last_error_text = error_text
+                    log.error(f'{log_prefix} returned {response.status}: {error_text}')
+
+                    unsupported_param = self._extract_unsupported_param_from_error(
+                        error_text
+                    )
+                    if (
+                        unsupported_param
+                        and unsupported_param in effective_payload
+                        and unsupported_param not in protected_fields
+                        and unsupported_param not in disabled_payload_fields
+                    ):
+                        disabled_payload_fields.add(unsupported_param)
+                        log.warning(
+                            f'{log_prefix} dropped unsupported param: {unsupported_param}'
+                        )
+                        continue
+
+                    try:
+                        error_json = json.loads(error_text)
+                        error_msg = error_json.get('error', {}).get(
+                            'message', error_text
+                        )
+                    except Exception:
+                        error_msg = error_text
+
+                    raise Exception(f'API returned {response.status}: {error_msg}')
+
+        raise Exception(f'{log_prefix} retries exhausted: {last_error_text}')
+
     async def generate_response(
         self,
         user_id: int,
@@ -1072,9 +1156,9 @@ class GeminiService:
 
         # 3. 准备 API 调用参数 (重构)
         model_key = prompt_model_name or "default"
-        gen_config_data = app_config.MODEL_GENERATION_CONFIG.get(
+        gen_config_data = copy.deepcopy(app_config.MODEL_GENERATION_CONFIG.get(
             model_key, app_config.MODEL_GENERATION_CONFIG["default"]
-        ).copy()
+        ))
 
         log.info(f"正在为模型 '{model_key}' 加载生成配置。")
 
