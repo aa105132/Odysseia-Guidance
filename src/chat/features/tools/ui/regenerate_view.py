@@ -414,7 +414,7 @@ class RegenerateView(discord.ui.View):
                     success_message = self.original_params.get("original_success_message", "重新生成完成~")
                     if success_message:
                         processed_success = replace_emojis(success_message)
-                        embed.add_field(name="", value=processed_success[:1024], inline=False)
+                        embed.add_field(name="\u200b", value=processed_success[:1024], inline=False)
                     embed.set_footer(text=f"模型: {edit_model_name}")
 
                     # 创建新的重新生成视图
@@ -839,7 +839,7 @@ class SlashCommandRegenerateView(discord.ui.View):
                         value=f"```\n{prompt[:1016]}\n```",
                         inline=False,
                     )
-                    embed.add_field(name="", value="重新生成完成~", inline=False)
+                    embed.add_field(name="\u200b", value="重新生成完成~", inline=False)
                     embed.set_footer(text=f"模型: {edit_model_name}")
 
                     # 创建新的重新生成视图
@@ -1022,20 +1022,15 @@ async def _do_novelai_regenerate(
         name=interaction.user.display_name,
         icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
     )
-    embed.add_field(
-        name="提示词",
-        value=f"```\n{prompt[:1016]}\n```",
-        inline=False,
-    )
-
+    # 生成信息（紧凑排列，提示词通过按钮查看）
     model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
-    embed.set_footer(
-        text=(
-            f"消耗 {cost} 月光币 | "
-            f"尺寸: {result.width}x{result.height} | "
-            f"种子: {result.seed} | 模型: {model_name}"
-        )
+    embed.add_field(name="种子", value=str(result.seed), inline=True)
+    embed.add_field(
+        name="参数",
+        value=f"{result.width}x{result.height}",
+        inline=True,
     )
+    embed.set_footer(text=f"消耗 {cost} 月光币 | {model_name}")
 
     image_file = discord.File(
         io.BytesIO(result.image_data),

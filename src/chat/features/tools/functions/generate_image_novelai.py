@@ -30,6 +30,30 @@ from src.chat.features.novelai_generation.tag_rules import (
 log = logging.getLogger(__name__)
 
 
+def _prompt_already_contains_artist(prompt: str, artist_string: str) -> bool:
+    """
+    检查 prompt 中是否已经包含了画师串的内容，防止重复拼接。
+
+    策略：提取画师串中的 artist:xxx tag，检查 prompt 是否已包含其中的大部分。
+    如果画师串中超过一半的 artist tag 已存在于 prompt 中，认为已包含。
+    """
+    import re
+    # 提取画师串中的 artist: tag（忽略权重语法）
+    artist_tags = re.findall(r'artist[:\s]+[\w\-_/()]+', artist_string.lower())
+    if not artist_tags:
+        # 画师串中没有明确的 artist: tag，用前几个 tag 做简单比对
+        first_tags = [t.strip().lower() for t in artist_string.split(",")[:3] if t.strip()]
+        if not first_tags:
+            return False
+        prompt_lower = prompt.lower()
+        match_count = sum(1 for t in first_tags if t in prompt_lower)
+        return match_count >= max(1, len(first_tags) // 2)
+
+    prompt_lower = prompt.lower()
+    match_count = sum(1 for tag in artist_tags if tag in prompt_lower)
+    return match_count > len(artist_tags) // 2
+
+
 async def generate_image_novelai(
     prompt: str,
     negative_prompt: Optional[str] = None,
@@ -40,6 +64,7 @@ async def generate_image_novelai(
     sampler: str = "k_euler_ancestral",
     seed: Optional[int] = None,
     preset_name: Optional[str] = None,
+    skip_artist_prefix: bool = False,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     **kwargs
@@ -49,6 +74,13 @@ async def generate_image_novelai(
 
     **重要：你必须生成 Danbooru 格式的英文 Tag 作为 prompt！不要使用自然语言描述！**
 
+    ## 画师串自动拼接说明（重要）
+    系统会自动在你的 prompt 前面拼接用户保存的「画师串预设」（artist string）。
+    - **你生成的 prompt 中不要包含画师串/artist tag**，系统会自动处理。
+    - 你只需要专注于生成场景、角色、动作、表情等内容 Tag。
+    - 如果用户明确说"不要画师串"、"不用预设"、"裸 prompt"等，请传 `skip_artist_prefix=True`。
+    - 默认情况下不需要传这个参数，系统会自动拼接。
+
     ## Tag 生成核心规则（必须严格遵守）：
 
     ### 1. 基本要求
@@ -57,6 +89,7 @@ async def generate_image_novelai(
     - 禁止使用中文或自然语言句子
     - 定格画面：单图为同一时刻的静态瞬间，禁止连续动作过程
     - 单图最多 4 个角色，最多 2 个女性角色
+    - **不要在 prompt 中写画师串（artist:xxx），系统会自动拼接**
 
     ### 2. Tag 构成顺序（按优先级）
     按以下顺序构建 Tag：
@@ -224,6 +257,10 @@ async def generate_image_novelai(
                 若未填写，系统会自动尝试使用该用户最近保存的预设作为画师串前缀；
                 若用户没有任何预设，则回退到全局默认画师串。
 
+        skip_artist_prefix: 是否跳过画师串拼接，默认 False。
+                设为 True 时不会在 prompt 前拼接任何画师串预设或全局默认画师串。
+                仅当用户明确要求不使用画师串时才设为 True。
+
         preview_message: （必填）在图片生成前先发送给用户的预告消息。
                 告诉用户你正在画图，例如："稍等一下，我来画~" 或 "让我想想怎么画..."
 
@@ -303,6 +340,7 @@ async def generate_image_novelai(
             }
 
     # 画师串应用策略：
+    # skip_artist_prefix=True 时跳过所有画师串拼接
     # 1) 指定 preset_name 时，优先按名称匹配该用户预设（支持大小写不敏感）
     # 2) 未指定 preset_name 时，自动使用该用户最近保存的预设（如存在）
     # 3) 若用户没有预设，回退到全局默认画师串
@@ -310,67 +348,80 @@ async def generate_image_novelai(
     applied_artist = False
     effective_preset_name = preset_name
 
-    user_presets = []
-    if parsed_user_id is not None:
-        try:
-            user_presets = await chat_db_manager.get_novelai_presets(parsed_user_id)
-        except Exception as e:
-            log.warning(f"读取用户画师串预设失败: {e}")
+    if skip_artist_prefix:
+        log.info("skip_artist_prefix=True, 跳过画师串拼接")
+    else:
+        user_presets = []
+        if parsed_user_id is not None:
+            try:
+                user_presets = await chat_db_manager.get_novelai_presets(parsed_user_id)
+            except Exception as e:
+                log.warning(f"读取用户画师串预设失败: {e}")
 
-    if user_presets:
-        selected_preset = None
+        if user_presets:
+            selected_preset = None
 
-        # 优先使用用户显式指定的预设名
-        if preset_name:
-            requested_name = preset_name.strip()
-            selected_preset = next(
-                (p for p in user_presets if p.get("name") == requested_name),
-                None,
-            )
-            if not selected_preset:
-                requested_name_lower = requested_name.lower()
+            # 优先使用用户显式指定的预设名
+            if preset_name:
+                requested_name = preset_name.strip()
                 selected_preset = next(
-                    (
-                        p
-                        for p in user_presets
-                        if str(p.get("name", "")).lower() == requested_name_lower
-                    ),
+                    (p for p in user_presets if p.get("name") == requested_name),
                     None,
                 )
-                if selected_preset:
-                    effective_preset_name = selected_preset.get("name")
-                    log.info(
-                        f"预设名大小写不一致，已匹配预设: {requested_name} -> {effective_preset_name}"
+                if not selected_preset:
+                    requested_name_lower = requested_name.lower()
+                    selected_preset = next(
+                        (
+                            p
+                            for p in user_presets
+                            if str(p.get("name", "")).lower() == requested_name_lower
+                        ),
+                        None,
+                    )
+                    if selected_preset:
+                        effective_preset_name = selected_preset.get("name")
+                        log.info(
+                            f"预设名大小写不一致，已匹配预设: {requested_name} -> {effective_preset_name}"
+                        )
+
+                if not selected_preset:
+                    log.warning(
+                        f"未找到用户预设 '{preset_name}'，将继续使用全局默认画师串（或无前缀）"
                     )
 
-            if not selected_preset:
-                log.warning(
-                    f"未找到用户预设 '{preset_name}'，将继续使用全局默认画师串（或无前缀）"
-                )
+            # 未显式指定预设时，自动使用最近保存的预设
+            if not selected_preset and not preset_name:
+                selected_preset = user_presets[0]  # get_novelai_presets 已按 created_at DESC 排序
+                effective_preset_name = selected_preset.get("name")
+                if effective_preset_name:
+                    log.info(f"未指定预设，自动应用用户最近画师串预设: {effective_preset_name}")
 
-        # 未显式指定预设时，自动使用最近保存的预设
-        if not selected_preset and not preset_name:
-            selected_preset = user_presets[0]  # get_novelai_presets 已按 created_at DESC 排序
-            effective_preset_name = selected_preset.get("name")
-            if effective_preset_name:
-                log.info(f"未指定预设，自动应用用户最近画师串预设: {effective_preset_name}")
+            # 应用选中的预设
+            if selected_preset and selected_preset.get("artist_string"):
+                artist_str = selected_preset["artist_string"]
+                # 防重复：检查 prompt 中是否已包含画师串（AI 可能自己写了一遍）
+                if not _prompt_already_contains_artist(prompt, artist_str):
+                    final_prompt = f"{artist_str}, {prompt}"
+                    applied_artist = True
+                    log.info(f"应用画师串预设: {selected_preset.get('name', 'unknown')}")
+                else:
+                    applied_artist = True  # 标记为已应用，不再回退到全局默认
+                    log.info(f"prompt 已包含画师串内容，跳过重复拼接")
+                effective_preset_name = selected_preset.get("name") or effective_preset_name
+                # 如果预设有负面提示词且用户未指定
+                if not negative_prompt and selected_preset.get("negative_prompt"):
+                    negative_prompt = selected_preset["negative_prompt"]
 
-        # 应用选中的预设
-        if selected_preset and selected_preset.get("artist_string"):
-            final_prompt = f"{selected_preset['artist_string']}, {prompt}"
-            applied_artist = True
-            effective_preset_name = selected_preset.get("name") or effective_preset_name
-            log.info(f"应用画师串预设: {effective_preset_name or 'unknown'}")
-            # 如果预设有负面提示词且用户未指定
-            if not negative_prompt and selected_preset.get("negative_prompt"):
-                negative_prompt = selected_preset["negative_prompt"]
-
-    # 如果没有通过用户预设应用画师串，则使用全局默认画师串
-    if not applied_artist:
-        default_artist = NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "")
-        if default_artist:
-            final_prompt = f"{default_artist}, {prompt}"
-            log.info(f"应用全局默认画师串: {default_artist[:60]}...")
+        # 如果没有通过用户预设应用画师串，则使用全局默认画师串
+        if not applied_artist:
+            default_artist = NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "")
+            if default_artist:
+                # 防重复：检查 prompt 中是否已包含全局画师串
+                if not _prompt_already_contains_artist(prompt, default_artist):
+                    final_prompt = f"{default_artist}, {prompt}"
+                    log.info(f"应用全局默认画师串: {default_artist[:60]}...")
+                else:
+                    log.info(f"prompt 已包含全局画师串内容，跳过重复拼接")
 
     log.info(f"调用 NovelAI 图片生成工具，Tag: {final_prompt[:100]}..., 尺寸: {width}x{height}")
 
@@ -449,28 +500,22 @@ async def generate_image_novelai(
                         if author_name:
                             embed.set_author(name=author_name, icon_url=author_icon_url)
 
-                    embed.add_field(
-                        name="提示词",
-                        value=f"```\n{final_prompt[:1016]}\n```",
-                        inline=False,
-                    )
                     if success_message:
                         processed_success = replace_emojis(success_message)
-                        embed.add_field(
-                            name="",
-                            value=processed_success[:1024],
-                            inline=False,
-                        )
+                        embed.description = processed_success[:2048]
+
+                    # 生成信息（紧凑排列）
+                    model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
                     if effective_preset_name:
                         embed.add_field(name="预设", value=effective_preset_name, inline=True)
-
-                    model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
+                    embed.add_field(name="种子", value=str(result.seed), inline=True)
+                    embed.add_field(
+                        name="参数",
+                        value=f"{result.width}x{result.height} | {steps}步 | CFG {scale}",
+                        inline=True,
+                    )
                     embed.set_footer(
-                        text=(
-                            f"消耗 {cost} 月光币 | "
-                            f"尺寸: {result.width}x{result.height} | "
-                            f"种子: {result.seed} | 模型: {model_name}"
-                        )
+                        text=f"消耗 {cost} 月光币 | {sampler} | {model_name}"
                     )
 
                     image_file = discord.File(
@@ -803,6 +848,21 @@ class NovelAIResultView(discord.ui.View):
             except Exception:
                 pass
 
+    @discord.ui.button(label="查看提示词", style=discord.ButtonStyle.secondary, emoji="📋", row=1)
+    async def view_prompt_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """以 ephemeral 消息展示完整提示词"""
+        prompt_text = self._prompt or "（无）"
+        negative_text = self._negative_prompt or "（使用默认）"
+
+        # Discord ephemeral 消息最多 2000 字符，做截断
+        content_parts = [f"**正面提示词：**\n```\n{prompt_text[:900]}\n```"]
+        if len(prompt_text) > 900:
+            content_parts.append(f"```\n{prompt_text[900:1800]}\n```")
+        content_parts.append(f"**负面提示词：**\n```\n{negative_text[:500]}\n```")
+
+        content = "\n".join(content_parts)
+        await interaction.response.send_message(content[:2000], ephemeral=True)
+
     @discord.ui.button(label="AI 重写", style=discord.ButtonStyle.secondary, row=1)
     async def ai_rewrite_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """让 AI 根据用户描述重新生成 prompt"""
@@ -919,21 +979,18 @@ async def _regenerate_novelai(
         name=interaction.user.display_name,
         icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
     )
-    embed.add_field(
-        name="提示词",
-        value=f"```\n{prompt[:1016]}\n```",
-        inline=False,
-    )
+    # 生成信息（紧凑排列，提示词通过按钮查看）
+    model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
     if preset_name:
         embed.add_field(name="预设", value=preset_name, inline=True)
-
-    model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
+    embed.add_field(name="种子", value=str(result.seed), inline=True)
+    embed.add_field(
+        name="参数",
+        value=f"{result.width}x{result.height} | {steps}步 | CFG {scale}",
+        inline=True,
+    )
     embed.set_footer(
-        text=(
-            f"消耗 {cost} 月光币 | "
-            f"尺寸: {result.width}x{result.height} | "
-            f"种子: {result.seed} | 模型: {model_name}"
-        )
+        text=f"消耗 {cost} 月光币 | {sampler} | {model_name}"
     )
 
     image_file = discord.File(
@@ -1045,11 +1102,6 @@ async def _regenerate_with_imagen(
     embed.set_author(
         name=interaction.user.display_name,
         icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
-    )
-    embed.add_field(
-        name="提示词",
-        value=f"```\n{prompt[:1016]}\n```",
-        inline=False,
     )
     embed.set_footer(text=f"消耗 {cost_per_image} 月光币 | 引擎: Gemini Imagen")
 

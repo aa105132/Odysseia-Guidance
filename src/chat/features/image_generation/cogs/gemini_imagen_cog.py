@@ -209,7 +209,7 @@ class GeminiImagenCog(commands.Cog):
                 if ai_response:
                     ai_response = replace_emotion_tags(ai_response)
                     embed.add_field(
-                        name="",
+                        name="\u200b",
                         value=ai_response[:1024],
                         inline=False,
                     )
@@ -465,7 +465,7 @@ class GeminiImagenCog(commands.Cog):
                 if ai_response:
                     ai_response = replace_emotion_tags(ai_response)
                     embed.add_field(
-                        name="",
+                        name="\u200b",
                         value=ai_response[:1024],
                         inline=False,
                     )

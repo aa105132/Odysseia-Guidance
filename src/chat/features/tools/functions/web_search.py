@@ -15,8 +15,10 @@ import json
 import logging
 import os
 import re
+import ipaddress
 from datetime import datetime, timezone
 from typing import List, Optional
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -142,6 +144,39 @@ def _get_local_time_info() -> str:
     )
 
 
+def _is_private_or_local_url(url: str) -> bool:
+    """判断 URL 是否为本地/内网地址。"""
+    if not url:
+        return True
+
+    try:
+        parsed = urlparse(url.strip())
+        hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+        if not hostname:
+            return True
+
+        local_hosts = {"localhost", "localhost.localdomain"}
+        local_suffixes = (".local", ".lan", ".internal", ".home", ".corp")
+        if hostname in local_hosts or any(hostname.endswith(s) for s in local_suffixes):
+            return True
+
+        try:
+            ip = ipaddress.ip_address(hostname)
+            return (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip.is_unspecified
+            )
+        except ValueError:
+            return False
+    except Exception:
+        # 解析异常时保守处理，避免把疑似内网地址透出
+        return True
+
+
 # ============================================================
 # Grok 搜索引擎
 # ============================================================
@@ -246,19 +281,23 @@ def _split_answer_and_sources(content: str) -> tuple:
         # 提取 Markdown 链接 [title](url)
         link_pattern = r'\[([^\]]*)\]\((https?://[^\)]+)\)'
         for match in re.finditer(link_pattern, source_text):
-            sources.append({
-                "title": match.group(1),
-                "url": match.group(2),
-            })
+            cleaned_url = match.group(2).strip().rstrip(".,;:!?")
+            if cleaned_url and not _is_private_or_local_url(cleaned_url):
+                sources.append({
+                    "title": match.group(1),
+                    "url": cleaned_url,
+                })
 
         # 提取裸 URL
         if not sources:
             url_pattern = r'(https?://[^\s\)]+)'
             for match in re.finditer(url_pattern, source_text):
-                sources.append({
-                    "title": "",
-                    "url": match.group(1),
-                })
+                cleaned_url = match.group(1).strip().rstrip(".,;:!?")
+                if cleaned_url and not _is_private_or_local_url(cleaned_url):
+                    sources.append({
+                        "title": "",
+                        "url": cleaned_url,
+                    })
 
     return answer, sources
 
@@ -470,15 +509,26 @@ def _format_search_result(
         parts.append("## 搜索结果摘要")
         parts.append(content)
 
-    # 合并信源
-    all_sources = list(grok_result.get("sources", []))
+    # 合并信源（过滤内网/本地链接，并去重）
+    all_sources = []
+    seen_urls = set()
+
+    for source in grok_result.get("sources", []):
+        raw_url = source.get("url", "") if isinstance(source, dict) else ""
+        url = raw_url.strip().rstrip(".,;:!?")
+        if not url or _is_private_or_local_url(url) or url in seen_urls:
+            continue
+
+        seen_urls.add(url)
+        normalized = dict(source) if isinstance(source, dict) else {}
+        normalized["url"] = url
+        all_sources.append(normalized)
 
     # 添加 Tavily 补充信源（去重）
     if tavily_results:
-        seen_urls = {s.get("url", "") for s in all_sources}
         for r in tavily_results:
-            url = r.get("url", "")
-            if url and url not in seen_urls:
+            url = (r.get("url", "") or "").strip().rstrip(".,;:!?")
+            if url and (url not in seen_urls) and (not _is_private_or_local_url(url)):
                 seen_urls.add(url)
                 source_item = {"title": r.get("title", ""), "url": url}
                 # 如果 Tavily 有内容摘要，也包含进来

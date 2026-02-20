@@ -87,3 +87,39 @@ def test_create_image_context_turn_contains_gif_frames():
 
     assert any("关键帧" in text for text in text_parts)
     assert len(image_parts) > 1
+
+
+def test_build_chat_prompt_auto_injects_gif_storyboard_and_notice():
+    prompt_service = PromptService()
+    gif_bytes = _build_test_gif(frame_count=6)
+
+    conversation = prompt_service.build_chat_prompt(
+        user_name="测试用户",
+        message="请描述这张动图",
+        replied_message=None,
+        images=[
+            {
+                "data": gif_bytes,
+                "mime_type": "image/gif",
+                "source": "attachment",
+            }
+        ],
+        channel_context=[],
+        world_book_entries=[],
+        affection_status=None,
+        guild_name="测试服务器",
+        location_name="测试频道",
+        user_id=123456,
+    )
+
+    user_parts = []
+    for turn in conversation:
+        if turn.get("role") == "user":
+            user_parts.extend(turn.get("parts", []))
+
+    text_parts = [part for part in user_parts if isinstance(part, str)]
+    image_parts = [part for part in user_parts if isinstance(part, Image.Image)]
+
+    assert any("用户发送了一张GIF动图" in text for text in text_parts)
+    assert any("时间序列拼图" in text for text in text_parts)
+    assert len(image_parts) >= 2

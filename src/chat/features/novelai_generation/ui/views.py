@@ -348,19 +348,22 @@ class NovelAIDrawPanel(discord.ui.View):
                     ephemeral=True,
                 )
 
-            # 构建结果 Embed
+            # 构建结果 Embed（不显示提示词，通过按钮查看）
             embed = discord.Embed(title="🎨 NovelAI 图像生成", color=0x2B2D31)
             embed.set_author(
                 name=interaction.user.display_name,
                 icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
             )
-            embed.add_field(
-                name="提示词",
-                value=f"```\n{final_prompt[:1016]}\n```",
-                inline=False,
-            )
+            # 生成信息（紧凑排列）
+            model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
             if self.session.preset_name:
                 embed.add_field(name="预设", value=self.session.preset_name, inline=True)
+            embed.add_field(name="种子", value=str(result.seed), inline=True)
+            embed.add_field(
+                name="参数",
+                value=f"{result.width}x{result.height} | {self.session.steps}步 | CFG {self.session.scale}",
+                inline=True,
+            )
             if self.session.mode == "ai_describe" and self.session.scene_prompt:
                 embed.add_field(
                     name="原始描述",
@@ -373,13 +376,10 @@ class NovelAIDrawPanel(discord.ui.View):
                     value=f"强度: {self.session.reference_strength}",
                     inline=True,
                 )
-
-            model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
             embed.set_footer(
                 text=(
                     f"消耗 {cost} 月光币 | 余额: {new_balance} | "
-                    f"尺寸: {result.width}x{result.height} | "
-                    f"种子: {result.seed} | 模型: {model_name}"
+                    f"{self.session.sampler} | {model_name}"
                 )
             )
 
@@ -1179,6 +1179,20 @@ class SlashNovelAIResultView(discord.ui.View):
             except Exception:
                 pass
 
+    @discord.ui.button(label="查看提示词", style=discord.ButtonStyle.secondary, emoji="📋", row=1)
+    async def view_prompt_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """以 ephemeral 消息展示完整提示词"""
+        prompt_text = self._prompt or "（无）"
+        negative_text = self._negative_prompt or "（使用默认）"
+
+        content_parts = [f"**正面提示词：**\n```\n{prompt_text[:900]}\n```"]
+        if len(prompt_text) > 900:
+            content_parts.append(f"```\n{prompt_text[900:1800]}\n```")
+        content_parts.append(f"**负面提示词：**\n```\n{negative_text[:500]}\n```")
+
+        content = "\n".join(content_parts)
+        await interaction.response.send_message(content[:2000], ephemeral=True)
+
     @discord.ui.button(label="AI 重写", style=discord.ButtonStyle.secondary, row=1)
     async def ai_rewrite_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """让 AI 根据用户描述重新生成 prompt"""
@@ -1263,7 +1277,7 @@ async def _slash_regenerate_novelai(
         except Exception as e:
             log.error(f"扣除月光币失败: {e}")
 
-    # 构建 Embed
+    # 构建 Embed（不显示提示词，通过按钮查看）
     embed = discord.Embed(
         title=f"NovelAI 图像生成{title_suffix}",
         color=0x9B59B6,
@@ -1272,22 +1286,19 @@ async def _slash_regenerate_novelai(
         name=interaction.user.display_name,
         icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
     )
-    embed.add_field(
-        name="提示词",
-        value=f"```\n{prompt[:1016]}\n```",
-        inline=False,
-    )
+    # 生成信息（紧凑排列）
+    model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
     if preset_name:
         embed.add_field(name="预设", value=preset_name, inline=True)
-
-    model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
+    embed.add_field(name="种子", value=str(result.seed), inline=True)
+    embed.add_field(
+        name="参数",
+        value=f"{result.width}x{result.height} | {steps}步 | CFG {scale}",
+        inline=True,
+    )
     new_balance = await coin_service.get_balance(user_id)
     embed.set_footer(
-        text=(
-            f"消耗 {cost} 月光币 | 余额: {new_balance} | "
-            f"尺寸: {result.width}x{result.height} | "
-            f"种子: {result.seed} | 模型: {model_name}"
-        )
+        text=f"消耗 {cost} 月光币 | 余额: {new_balance} | {sampler} | {model_name}"
     )
 
     image_file = discord.File(
@@ -1520,12 +1531,8 @@ class ImagenSwitchResultView(discord.ui.View):
                 name=interaction.user.display_name,
                 icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
             )
-            embed.add_field(
-                name="提示词",
-                value=f"```\n{nai_prompt[:1016]}\n```",
-                inline=False,
-            )
-            embed.set_footer(text=f"Seed: {seed_used} | 消耗 {cost_used} 月光币 | 引擎: NovelAI")
+            embed.add_field(name="种子", value=str(seed_used), inline=True)
+            embed.set_footer(text=f"消耗 {cost_used} 月光币 | 引擎: NovelAI")
 
             image_file = discord.File(
                 io.BytesIO(image_data),
@@ -1654,12 +1661,7 @@ async def _slash_regenerate_with_imagen(
         name=interaction.user.display_name,
         icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
     )
-    embed.add_field(
-        name="提示词",
-        value=f"```\n{prompt[:1016]}\n```",
-        inline=False,
-    )
-    # 显示模型信息
+    # 显示模型信息（提示词通过按钮查看）
     model_info = f"分辨率: {resolution.upper()}" if resolution != "default" else "标准分辨率"
     embed.set_footer(text=f"消耗 {cost_per_image} 月光币 | {model_info} | {content_rating.upper()} | 引擎: Gemini Imagen")
 

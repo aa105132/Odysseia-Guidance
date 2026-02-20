@@ -475,7 +475,7 @@ async def edit_image(
                     if success_message:
                         processed_success = replace_emojis(success_message)
                         embed.add_field(
-                            name="",
+                            name="\u200b",
                             value=processed_success[:1024],
                             inline=False,
                         )

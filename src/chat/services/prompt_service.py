@@ -3,7 +3,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
-from PIL import Image
+from PIL import Image, ImageDraw
 import io
 import json
 import re
@@ -31,6 +31,39 @@ class PromptService:
         初始化 PromptService。
         """
         pass
+
+    def _build_gif_storyboard_image(
+        self, frames: List[Image.Image], max_frame_side: int = 240
+    ) -> Image.Image:
+        """将 GIF 关键帧拼接为从左到右的时间序列图。"""
+        if not frames:
+            raise ValueError("没有可用于拼接的关键帧。")
+
+        prepared_frames: List[Image.Image] = []
+        for frame in frames:
+            temp = frame.convert("RGBA")
+            temp.thumbnail((max_frame_side, max_frame_side), Image.Resampling.LANCZOS)
+            prepared_frames.append(temp)
+
+        gap = 8
+        top_bar_height = 28
+        max_height = max(img.height for img in prepared_frames)
+        total_width = sum(img.width for img in prepared_frames) + gap * (
+            len(prepared_frames) - 1
+        )
+        total_height = top_bar_height + max_height
+
+        canvas = Image.new("RGBA", (total_width, total_height), (16, 18, 24, 255))
+        draw = ImageDraw.Draw(canvas)
+
+        x_offset = 0
+        for idx, img in enumerate(prepared_frames):
+            y_offset = top_bar_height + (max_height - img.height) // 2
+            canvas.paste(img, (x_offset, y_offset), img)
+            draw.text((x_offset + 4, 6), f"F{idx + 1}", fill=(255, 255, 255, 255))
+            x_offset += img.width + gap
+
+        return canvas.convert("RGB")
 
     def _get_model_specific_prompt(
         self, model_name: Optional[str], prompt_name: str
@@ -448,16 +481,16 @@ class PromptService:
                 {
                     "role": "user",
                     "parts": [
-                        "工具调用提示：检测到用户消息中含 GIF 动图。"
-                        "如果用户要求描述动图过程、从头到尾变化、或质疑你是否看懂动图，"
-                        "你必须先调用 analyze_gif 工具，再基于关键帧结果作答。"
+                        "系统提示：检测到用户消息中含 GIF 动图。"
+                        "系统会自动把 GIF 切成关键帧并附在下方，"
+                        "你直接基于这些帧按时间顺序分析即可，不需要再调用 analyze_gif。"
                     ],
                 }
             )
             final_conversation.append(
                 {
                     "role": "model",
-                    "parts": ["收到，涉及 GIF 过程描述时我会先调用 analyze_gif。"],
+                    "parts": ["收到，我会直接基于自动拆帧结果分析 GIF。"],
                 }
             )
 
@@ -543,8 +576,19 @@ class PromptService:
 
                 if frame_meta.get("is_animated"):
                     current_user_parts.append(
-                        f"[检测到动态图，已抽取关键帧 {frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))} 供识别]"
+                        f"[用户发送了一张GIF动图，系统已自动拆帧：{frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))}]"
                     )
+
+                    try:
+                        storyboard_image = self._build_gif_storyboard_image(frames)
+                        current_user_parts.append(storyboard_image)
+                        current_user_parts.append(
+                            "[上图为GIF时间序列拼图，F1→Fn代表时间从头到尾；下方是逐帧关键帧原图]"
+                        )
+                    except Exception as storyboard_error:
+                        log.warning(
+                            f"GIF 时间序列拼图生成失败，将仅使用关键帧: {storyboard_error}"
+                        )
 
                 current_user_parts.extend(frames)
             except Exception as e:
@@ -743,8 +787,17 @@ class PromptService:
             parts: List[Any] = [text_part]
             if frame_meta.get("is_animated"):
                 parts.append(
-                    f"这是动态图输入，已抽取关键帧 {frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))}。"
+                    f"检测到GIF动图输入，系统已自动拆帧 {frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))}。"
                 )
+
+                try:
+                    parts.append(self._build_gif_storyboard_image(frames))
+                    parts.append("上图为GIF时间序列拼图（F1→Fn），下方为逐帧关键帧。")
+                except Exception as storyboard_error:
+                    log.warning(
+                        f"工具图像上下文的 GIF 拼图生成失败，将仅使用关键帧: {storyboard_error}"
+                    )
+
             parts.extend(frames)
 
             return {"role": "user", "parts": parts}

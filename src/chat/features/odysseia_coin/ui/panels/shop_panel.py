@@ -31,7 +31,7 @@ class ShopPanel(BasePanel["SimpleShopView"]):
                 categories_str = "\n".join([f"✨ **{cat}**" for cat in categories])
                 embed.add_field(name="商品类别", value=categories_str, inline=False)
             else:
-                embed.add_field(name="", value="商店暂时没有商品哦。", inline=False)
+                embed.add_field(name="\u200b", value="商店暂时没有商品哦。", inline=False)
 
         balance_str = (
             f"{self.shop_data.balance:,}"

@@ -481,7 +481,7 @@ async def generate_video(
                 if success_message:
                     processed_success = replace_emojis(success_message)
                     prompt_embed.add_field(
-                        name="",
+                        name="\u200b",
                         value=processed_success[:1024],
                         inline=False,
                     )

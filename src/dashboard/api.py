@@ -157,6 +157,61 @@ class AIConfigUpdate(BaseModel):
     api_format: Optional[str] = None  # 'gemini' 或 'openai'
     summary_model: Optional[str] = None  # 摘要模型
     query_model: Optional[str] = None  # 查询重写模型
+    available_models: Optional[List[str]] = None
+
+
+AI_AVAILABLE_MODELS_SETTING_KEY = 'ai_available_models'
+
+
+def _normalize_model_names(models: Optional[List[Any]]) -> List[str]:
+    normalized: List[str] = []
+    seen: set[str] = set()
+    for raw in models or []:
+        if raw is None:
+            continue
+        model_name = str(raw).strip()
+        if not model_name or model_name in seen:
+            continue
+        seen.add(model_name)
+        normalized.append(model_name)
+    return normalized
+
+
+def _parse_available_models_setting(raw_value: Optional[str]) -> List[str]:
+    if not raw_value:
+        return []
+
+    try:
+        parsed = json.loads(raw_value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = [item.strip() for item in str(raw_value).split(',')]
+
+    if isinstance(parsed, list):
+        return _normalize_model_names(parsed)
+
+    return []
+
+
+def _build_default_available_models() -> List[str]:
+    defaults: List[Any] = [
+        'codex-gpt-5.2',
+        'gcli-gemini-3-flash-preview-nothinking',
+        'gcli-gemini-3-flash-preview',
+        'gemini-3-flash-custom',
+        'gemini-3-pro-preview-custom',
+        'gemini-2.5-flash-custom',
+        'gemini-2.5-pro-custom',
+        'gemini-2.5-flash-lite',
+    ]
+    defaults.extend(list(chat_config.CUSTOM_GEMINI_ENDPOINTS.keys()))
+    defaults.extend(
+        [
+            chat_config.GEMINI_MODEL,
+            chat_config.SUMMARY_MODEL,
+            chat_config.QUERY_REWRITING_MODEL,
+        ]
+    )
+    return _normalize_model_names(defaults)
 
 
 class ModelListRequest(BaseModel):
@@ -272,7 +327,10 @@ async def health_check():
 
 @app.get("/api/config/all")
 async def get_all_config(token: str = Depends(verify_token)):
+
     """获取所有配置"""
+    from src.chat.utils.database import chat_db_manager
+
     # 获取当前 API URL 和 Key（部分隐藏）
     ai_api_url = os.getenv("GEMINI_API_BASE_URL", "")
     ai_api_key = os.getenv("GEMINI_API_KEYS", "")
@@ -282,7 +340,18 @@ async def get_all_config(token: str = Depends(verify_token)):
     ai_masked_key = ai_api_key[:10] + "..." + ai_api_key[-4:] if len(ai_api_key) > 14 else ("***" if ai_api_key else "")
     imagen_masked_key = imagen_api_key[:10] + "..." + imagen_api_key[-4:] if len(imagen_api_key) > 14 else ("***" if imagen_api_key else "")
     
-    return {
+    db_available_models = await chat_db_manager.get_global_setting(
+        AI_AVAILABLE_MODELS_SETTING_KEY
+    )
+    available_models = _parse_available_models_setting(db_available_models)
+    if not available_models:
+        available_models = _build_default_available_models()
+
+    current_model = chat_config.PROMPT_CONFIG.get('model') or chat_config.GEMINI_MODEL
+    if current_model and current_model not in available_models:
+        available_models.insert(0, current_model)
+
+    payload = {
         "ai": {
             "model": chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL,
             "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
@@ -401,6 +470,9 @@ async def get_all_config(token: str = Depends(verify_token)):
             ),
         },
     }
+    payload['ai']['model'] = current_model
+    payload['ai']['available_models'] = available_models
+    return payload
 
 
 @app.get("/api/config/ai")
@@ -425,6 +497,9 @@ async def get_ai_config(token: str = Depends(verify_token)):
     summary_model = db_summary_model or chat_config.SUMMARY_MODEL
     query_model = db_query_model or getattr(chat_config, 'QUERY_REWRITING_MODEL', 'gemini-2.5-flash-lite')
     
+    if db_query_model is None and query_model == 'gemini-2.5-flash-lite' and model:
+        query_model = model
+
     # API URL 和 Key：优先数据库，其次环境变量
     api_url = db_api_url or os.getenv("GEMINI_API_BASE_URL", "")
     api_key = db_api_key or os.getenv("GEMINI_API_KEYS", "")
@@ -444,7 +519,20 @@ async def get_ai_config(token: str = Depends(verify_token)):
     # 如果当前模型不在列表中，添加到开头
     if model and model not in available_models:
         available_models.insert(0, model)
-    
+
+    available_models = _build_default_available_models()
+    if model and model not in available_models:
+        available_models.insert(0, model)
+
+    db_available_models = await chat_db_manager.get_global_setting(
+        AI_AVAILABLE_MODELS_SETTING_KEY
+    )
+    configured_available_models = _parse_available_models_setting(db_available_models)
+    if configured_available_models:
+        available_models = configured_available_models
+        if model and model not in available_models:
+            available_models.insert(0, model)
+
     return {
         "model": model,
         "temperature": temperature,
@@ -542,6 +630,17 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         # 写入数据库
         await chat_db_manager.set_global_setting("query_model", config.query_model)
     
+    if config.available_models is not None:
+        normalized_available_models = _normalize_model_names(config.available_models)
+        if not normalized_available_models:
+            raise HTTPException(400, 'available_models 不能为空列表')
+
+        await chat_db_manager.set_global_setting(
+            AI_AVAILABLE_MODELS_SETTING_KEY,
+            json.dumps(normalized_available_models, ensure_ascii=False),
+        )
+        updated['available_models'] = normalized_available_models
+
     if config.api_format is not None:
         if config.api_format not in ["gemini", "openai"]:
             raise HTTPException(400, "API 格式必须是 'gemini' 或 'openai'")

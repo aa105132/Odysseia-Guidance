@@ -12,7 +12,9 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import re
 import base64
+import ipaddress
 import aiohttp
+from urllib.parse import urlparse
 
 from PIL import Image
 import io
@@ -507,6 +509,41 @@ class GeminiService:
 
         return links
 
+    @staticmethod
+    def _is_private_or_local_url(url: str) -> bool:
+        """判断 URL 是否为本地/内网地址。"""
+        if not url:
+            return True
+
+        try:
+            parsed = urlparse(url.strip())
+            hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+            if not hostname:
+                return True
+
+            # 常见本地/内网域名
+            local_hosts = {"localhost", "localhost.localdomain"}
+            local_suffixes = (".local", ".lan", ".internal", ".home", ".corp")
+            if hostname in local_hosts or any(hostname.endswith(s) for s in local_suffixes):
+                return True
+
+            try:
+                ip = ipaddress.ip_address(hostname)
+                return (
+                    ip.is_private
+                    or ip.is_loopback
+                    or ip.is_link_local
+                    or ip.is_multicast
+                    or ip.is_reserved
+                    or ip.is_unspecified
+                )
+            except ValueError:
+                # 非 IP 的公网域名
+                return False
+        except Exception:
+            # 解析异常时保守处理，避免泄露内网地址
+            return True
+
     def _append_message_sources_if_needed(
         self, response_text: str, source_links: List[tuple]
     ) -> str:
@@ -522,9 +559,15 @@ class GeminiService:
         unique_links: List[tuple] = []
         seen: set = set()
         for title, url in source_links:
-            if url and url not in seen:
-                seen.add(url)
-                unique_links.append((title, url))
+            cleaned_url = (url or "").strip().rstrip(".,;:!?")
+            if not cleaned_url:
+                continue
+            if self._is_private_or_local_url(cleaned_url):
+                log.debug(f"已过滤内网/本地来源链接: {cleaned_url}")
+                continue
+            if cleaned_url not in seen:
+                seen.add(cleaned_url)
+                unique_links.append((title, cleaned_url))
 
         if not unique_links:
             return response_text
@@ -2438,6 +2481,18 @@ class GeminiService:
         api_url = getattr(app_config, '_db_api_url', None) or os.getenv("GEMINI_API_BASE_URL", "")
         api_key = getattr(app_config, '_db_api_key', None) or os.getenv("GEMINI_API_KEYS", "")
         
+        lowered_api_url = (api_url or '').lower()
+        looks_like_gemini_endpoint = (
+            'generativelanguage.googleapis.com' in lowered_api_url
+            or 'aiplatform.googleapis.com' in lowered_api_url
+            or '/v1beta' in lowered_api_url
+        )
+        if api_format == 'openai' and looks_like_gemini_endpoint:
+            log.warning(
+                'generate_simple_response detected Gemini-like endpoint with openai format; forcing gemini format'
+            )
+            api_format = 'gemini'
+
         final_model_name = model_name or self.default_model_name
         
         # 调试日志

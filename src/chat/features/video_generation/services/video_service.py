@@ -208,22 +208,39 @@ class VideoGenerationService:
                 "max_tokens": 4096,
             }
 
+            retry_502_max_attempts = max(
+                1, int(config.get('RETRY_502_MAX_ATTEMPTS', 3))
+            )
+            retry_502_delay_seconds = max(
+                0.0, float(config.get('RETRY_502_DELAY_SECONDS', 2))
+            )
+
             log.info(f"[视频生成-{mode_str}] 正在使用 {model_name} 生成视频, 提示词: {prompt[:100]}...")
 
             async with aiohttp.ClientSession() as session:
-                async with session.post(
+                for attempt in range(retry_502_max_attempts):
+                    async with session.post(
                     f"{base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=300)  # 视频生成可能需要更长时间
-                ) as response:
-                    if response.status != 200:
+                        headers=headers,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=300)  # 视频生成可能需要更长时间
+                    ) as response:
+                        status_code = response.status
+
+                        if status_code == 200:
+                            data = await response.json()
+                            return self._extract_video_from_response(data, video_format)
                         error_text = await response.text()
+                        if status_code == 502 and attempt < retry_502_max_attempts - 1:
+                            current_attempt = attempt + 1
+                            log.warning(
+                                f'视频生成 API 第 {current_attempt}/{retry_502_max_attempts} 次请求返回 502，'
+                                f'{retry_502_delay_seconds:.1f} 秒后重试'
+                            )
+                            await asyncio.sleep(retry_502_delay_seconds)
+                            continue
                         log.error(f"视频生成 API 返回错误 {response.status}: {error_text[:500]}")
                         return None
-
-                    data = await response.json()
-                    return self._extract_video_from_response(data, video_format)
 
         except asyncio.TimeoutError:
             log.error("视频生成 API 请求超时")

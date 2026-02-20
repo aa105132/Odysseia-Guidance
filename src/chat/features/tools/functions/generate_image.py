@@ -314,7 +314,7 @@ async def generate_image(
                     if success_message:
                         processed_success = replace_emojis(success_message)
                         embed.add_field(
-                            name="",
+                            name="\u200b",
                             value=processed_success[:1024],
                             inline=False,
                         )
@@ -652,7 +652,7 @@ async def generate_images_batch(
                     if success_message:
                         processed_success = replace_emojis(success_message)
                         embed.add_field(
-                            name="",
+                            name="\u200b",
                             value=processed_success[:1024],
                             inline=False,
                         )
