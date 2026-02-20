@@ -1218,15 +1218,72 @@
                     </div>
                 </div>
 
-                <!-- 预设管理 -->
+                <!-- 管理员画师串管理 -->
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="palette" class="w-5 h-5 text-purple-400"></i>
+                        管理员画师串
+                    </h3>
+                    <div class="space-y-4">
+                        <p class="text-sm text-slate-400">用于 AI 对话生图与 /draw 面板可选的全局画师串预设（名称 + 提示词）</p>
+
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">预设名称</label>
+                            <input type="text" x-model="novelaiAdminPresetForm.name"
+                                   placeholder="例如：写实风、动漫线稿、插画柔光"
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">画师串提示词</label>
+                            <textarea x-model="novelaiAdminPresetForm.artist_string" rows="3"
+                                      placeholder="artist:xxx, artist:yyy, ..."
+                                      class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm resize-y"></textarea>
+                        </div>
+
+                        <div class="flex items-center gap-2">
+                            <button @click="saveNovelaiAdminPreset()"
+                                    class="bg-purple-600/80 hover:bg-purple-500/80 text-white px-3 py-2 rounded-lg transition-all text-sm flex items-center gap-1.5">
+                                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                                保存/更新
+                            </button>
+                            <button @click="loadNovelaiAdminPresets()"
+                                    class="bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 px-3 py-2 rounded-lg transition-all text-sm flex items-center gap-1.5">
+                                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                                刷新
+                            </button>
+                        </div>
+
+                        <template x-if="novelaiAdminPresets.length === 0">
+                            <p class="text-sm text-slate-500 text-center py-2">暂无管理员画师串</p>
+                        </template>
+
+                        <template x-for="preset in novelaiAdminPresets" :key="preset.id">
+                            <div class="bg-slate-700/30 rounded-lg p-4 space-y-2">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-medium text-sm" x-text="preset.name"></span>
+                                    <button @click="deleteNovelaiAdminPreset(preset.id, preset.name)"
+                                            class="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded hover:bg-red-500/20 transition-all">
+                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                    </button>
+                                </div>
+                                <div class="text-xs text-slate-400 bg-slate-800/50 p-2 rounded font-mono break-all"
+                                     x-text="preset.artist_string.length > 260 ? preset.artist_string.slice(0, 260) + '...' : preset.artist_string">
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- 用户预设管理 -->
                 <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
                     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
                         <i data-lucide="bookmark" class="w-5 h-5 text-pink-400"></i>
-                        画师串预设管理
+                        用户画师串预设管理
                     </h3>
                     <div class="space-y-4">
                         <div class="flex items-center justify-between">
-                            <p class="text-sm text-slate-400">用户在 Discord 中通过 /nai预设 命令保存的画师串预设</p>
+                            <p class="text-sm text-slate-400">用户在 Discord 中通过 /draw 面板保存的画师串预设</p>
                             <button @click="loadNovelaiPresets()"
                                     class="bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 px-3 py-1.5 rounded-lg transition-all text-sm flex items-center gap-1.5">
                                 <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
@@ -2254,6 +2311,8 @@
                 novelaiForm: { enabled: false, api_token: '', model: 'nai-diffusion-4-5-full', custom_model: '', default_sampler: 'k_euler', default_width: 832, default_height: 1216, default_steps: 28, default_scale: 5.0, quality_toggle: true, uc_preset: 0, cfg_rescale: 0, noise_schedule: 'native', smea: false, smea_dyn: false, generation_cost: 5, default_negative_prompt: '', default_artist_string: '', max_retries: 3 },
                 novelaiConfig: {},
                 novelaiPresets: [],
+                novelaiAdminPresets: [],
+                novelaiAdminPresetForm: { name: '', artist_string: '' },
                 showNovelaiApiToken: false,
                 defaultImageEngine: 'imagen',
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
@@ -2473,6 +2532,7 @@
                         .catch(e => console.warn('加载 NovelAI 配置失败:', e));
                     // 加载 NovelAI 预设
                     this.loadNovelaiPresets();
+                    this.loadNovelaiAdminPresets();
                     // 加载默认绘图引擎配置
                     fetch('/api/config/default-image-engine', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
                         .then(resp => resp.ok ? resp.json() : null)
@@ -3470,6 +3530,74 @@
                         }
                     } catch (e) {
                         this.showToast('保存失败', 'error');
+                    }
+                },
+
+                async loadNovelaiAdminPresets() {
+                    try {
+                        const response = await fetch('/api/config/novelai/admin-presets', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.novelaiAdminPresets = data.presets || [];
+                        }
+                    } catch (e) {
+                        console.error('加载管理员画师串失败:', e);
+                    }
+                },
+
+                async saveNovelaiAdminPreset() {
+                    const name = (this.novelaiAdminPresetForm.name || '').trim();
+                    const artistString = (this.novelaiAdminPresetForm.artist_string || '').trim();
+
+                    if (!name || !artistString) {
+                        this.showToast('请填写预设名称和画师串提示词', 'error');
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch('/api/config/novelai/admin-presets', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify({
+                                name,
+                                artist_string: artistString,
+                            })
+                        });
+
+                        if (response.ok) {
+                            this.showToast(`已保存管理员预设「${name}」`, 'success');
+                            this.novelaiAdminPresetForm.name = '';
+                            this.novelaiAdminPresetForm.artist_string = '';
+                            await this.loadNovelaiAdminPresets();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存管理员预设失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存管理员预设失败', 'error');
+                    }
+                },
+
+                async deleteNovelaiAdminPreset(presetId, presetName) {
+                    if (!confirm(`确定要删除管理员预设「${presetName}」吗？`)) return;
+                    try {
+                        const response = await fetch(`/api/config/novelai/admin-presets/${presetId}`, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            this.showToast(`已删除管理员预设「${presetName}」`, 'success');
+                            await this.loadNovelaiAdminPresets();
+                        } else {
+                            this.showToast('删除管理员预设失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('删除管理员预设失败', 'error');
                     }
                 },
 

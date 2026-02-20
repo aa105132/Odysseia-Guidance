@@ -13,7 +13,7 @@ import io
 import base64
 import random
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 import discord
 
@@ -41,18 +41,38 @@ class NovelAISession:
     mode: str = "tag"  # "tag" 或 "ai_describe"
     scene_prompt: str = ""  # 场景/描述文本（AI模式用中文，Tag模式用英文Tag）
     negative_prompt: str = ""
+    artist_prefix_mode: str = "default"  # default | preset | none
     preset_name: Optional[str] = None
     preset_artist_string: str = ""
-    width: int = 832
-    height: int = 1216
+    width: int = field(default_factory=lambda: int(NOVELAI_CONFIG.get("DEFAULT_WIDTH", 832)))
+    height: int = field(default_factory=lambda: int(NOVELAI_CONFIG.get("DEFAULT_HEIGHT", 1216)))
     size_label: str = "竖图"
-    sampler: str = "k_euler_ancestral"
-    steps: int = 28
-    scale: float = 5.0
+    sampler: str = field(default_factory=lambda: str(NOVELAI_CONFIG.get("DEFAULT_SAMPLER", "k_euler_ancestral")))
+    steps: int = field(default_factory=lambda: int(NOVELAI_CONFIG.get("DEFAULT_STEPS", 28)))
+    scale: float = field(default_factory=lambda: float(NOVELAI_CONFIG.get("DEFAULT_SCALE", 5.0)))
     seed: Optional[int] = None
     reference_image_b64: Optional[str] = None
     reference_strength: float = 0.6
     reference_info_extracted: float = 1.0
+
+
+def _infer_size_label(width: int, height: int) -> str:
+    for label, (w, h) in SIZE_PRESETS.items():
+        if width == w and height == h:
+            return label
+    return f"{width}x{height}"
+
+
+async def _persist_novelai_generation_settings(user_id: int, session: NovelAISession) -> None:
+    await chat_db_manager.set_novelai_generation_settings(
+        user_id=user_id,
+        width=session.width,
+        height=session.height,
+        steps=session.steps,
+        scale=session.scale,
+        sampler=session.sampler,
+        model=NOVELAI_CONFIG.get("MODEL", "nai-diffusion-4-5-full"),
+    )
 
 
 class NovelAIDrawPanel(discord.ui.View):
@@ -135,7 +155,12 @@ class NovelAIDrawPanel(discord.ui.View):
             value=f"⭐ {self.session.sampler}",
             inline=True,
         )
-        artist_display = self.session.preset_name if self.session.preset_name else "默认"
+        if self.session.artist_prefix_mode == "none":
+            artist_display = "无画师串"
+        elif self.session.artist_prefix_mode == "preset" and self.session.preset_name:
+            artist_display = self.session.preset_name
+        else:
+            artist_display = "默认"
         embed.add_field(
             name="🎨 画师串/前缀",
             value=artist_display,
@@ -220,14 +245,10 @@ class NovelAIDrawPanel(discord.ui.View):
 
     @discord.ui.button(label="画师串", style=discord.ButtonStyle.secondary, emoji="🎨", row=1)
     async def btn_preset(self, interaction: discord.Interaction, button: discord.ui.Button):
-        presets = await chat_db_manager.get_novelai_presets(self.user_id)
-        if not presets:
-            return await interaction.response.send_message(
-                "你还没有保存预设。点击下方「保存预设」按钮来创建一个！",
-                ephemeral=True,
-            )
-        view = PresetSelectView(self.session, self, presets)
-        await interaction.response.send_message("选择一个画师串预设:", view=view, ephemeral=True)
+        user_presets = await chat_db_manager.get_novelai_presets(self.user_id)
+        admin_presets = await chat_db_manager.get_novelai_admin_presets()
+        view = PresetSelectView(self.session, self, user_presets, admin_presets)
+        await interaction.response.send_message("选择画师串模式/预设:", view=view, ephemeral=True)
 
     # ================================================================
     # Row 2: 种子 + 保存预设 + 管理预设
@@ -267,18 +288,23 @@ class NovelAIDrawPanel(discord.ui.View):
         self.session.mode = "tag"
         self.session.scene_prompt = ""
         self.session.negative_prompt = ""
+        self.session.artist_prefix_mode = "default"
         self.session.preset_name = None
         self.session.preset_artist_string = ""
-        self.session.width = 832
-        self.session.height = 1216
-        self.session.size_label = "竖图"
-        self.session.sampler = "k_euler_ancestral"
-        self.session.steps = 28
-        self.session.scale = 5.0
+        self.session.width = int(NOVELAI_CONFIG.get("DEFAULT_WIDTH", 832))
+        self.session.height = int(NOVELAI_CONFIG.get("DEFAULT_HEIGHT", 1216))
+        self.session.size_label = _infer_size_label(self.session.width, self.session.height)
+        self.session.sampler = str(NOVELAI_CONFIG.get("DEFAULT_SAMPLER", "k_euler_ancestral"))
+        self.session.steps = int(NOVELAI_CONFIG.get("DEFAULT_STEPS", 28))
+        self.session.scale = float(NOVELAI_CONFIG.get("DEFAULT_SCALE", 5.0))
         self.session.seed = None
         self.session.reference_image_b64 = None
         self.session.reference_strength = 0.6
         self.session.reference_info_extracted = 1.0
+
+        await chat_db_manager.set_novelai_active_preset_state(self.user_id, "default")
+        await _persist_novelai_generation_settings(self.user_id, self.session)
+
         self._update_mode_button()
         embed = self.build_panel_embed()
         await interaction.response.edit_message(embed=embed, view=self)
@@ -426,8 +452,10 @@ class NovelAIDrawPanel(discord.ui.View):
         """根据模式构建最终的英文提示词"""
         parts = []
 
-        # 添加画师串前缀（优先使用用户选择的预设画师串，否则使用全局默认画师串）
-        if self.session.preset_artist_string:
+        # 添加画师串前缀（支持 default / preset / none 三种模式）
+        if self.session.artist_prefix_mode == "none":
+            log.info("/draw 面板当前为无画师串模式，不拼接前缀")
+        elif self.session.artist_prefix_mode == "preset" and self.session.preset_artist_string:
             parts.append(self.session.preset_artist_string)
         else:
             default_artist = NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "")
@@ -548,6 +576,8 @@ class StepsModal(discord.ui.Modal, title="设置步数"):
             self.session.steps = max(1, min(28, steps))
         except ValueError:
             return await interaction.response.send_message("步数必须是整数。", ephemeral=True)
+
+        await _persist_novelai_generation_settings(interaction.user.id, self.session)
         embed = NovelAIDrawPanel(self.session, interaction.user.id).build_panel_embed()
         try:
             await interaction.response.edit_message(embed=embed)
@@ -578,6 +608,8 @@ class CFGModal(discord.ui.Modal, title="设置引导强度 (CFG)"):
             self.session.scale = round(max(1.0, min(10.0, scale)), 1)
         except ValueError:
             return await interaction.response.send_message("CFG 必须是数字。", ephemeral=True)
+
+        await _persist_novelai_generation_settings(interaction.user.id, self.session)
         embed = NovelAIDrawPanel(self.session, interaction.user.id).build_panel_embed()
         try:
             await interaction.response.edit_message(embed=embed)
@@ -617,6 +649,7 @@ class SizeSelectView(discord.ui.View):
             self.session.height = h
             self.session.size_label = value
 
+        await _persist_novelai_generation_settings(interaction.user.id, self.session)
         await interaction.response.send_message(
             f"尺寸已设置为 {self.session.size_label} ({self.session.width}x{self.session.height})",
             ephemeral=True,
@@ -659,6 +692,7 @@ class SamplerSelectView(discord.ui.View):
     async def on_select(self, interaction: discord.Interaction):
         value = interaction.data["values"][0]
         self.session.sampler = value
+        await _persist_novelai_generation_settings(interaction.user.id, self.session)
         await interaction.response.send_message(
             f"采样器已设置为 {value}",
             ephemeral=True,
@@ -670,49 +704,133 @@ class SamplerSelectView(discord.ui.View):
 # ================================================================
 
 class PresetSelectView(discord.ui.View):
-    def __init__(self, session: NovelAISession, parent_panel: NovelAIDrawPanel, presets: list):
+    def __init__(
+        self,
+        session: NovelAISession,
+        parent_panel: NovelAIDrawPanel,
+        user_presets: list,
+        admin_presets: list,
+    ):
         super().__init__(timeout=60)
         self.session = session
         self.parent_panel = parent_panel
+        self.preset_map: Dict[str, dict] = {}
 
         options = [
-            discord.SelectOption(label="清除预设", value="__clear__", description="不使用任何预设", emoji="🗑️")
+            discord.SelectOption(
+                label="系统默认画师串",
+                value="__default__",
+                description="使用全局默认画师串",
+                emoji="🌐",
+                default=session.artist_prefix_mode == "default",
+            ),
+            discord.SelectOption(
+                label="无画师串",
+                value="__none__",
+                description="不拼接任何画师串",
+                emoji="🚫",
+                default=session.artist_prefix_mode == "none",
+            ),
         ]
-        for p in presets[:24]:
-            preview = p["artist_string"][:80]
-            if len(p["artist_string"]) > 80:
+
+        def _append_option(preset: dict, scope: str):
+            if len(options) >= 25:
+                return
+
+            artist_string = preset.get("artist_string", "")
+            preview = artist_string[:80]
+            if len(artist_string) > 80:
                 preview += "..."
+
+            preset_id = preset.get("id")
+            key = f"{scope}:{preset_id}" if preset_id is not None else f"{scope}:{preset.get('name', '')}"
+            base_name = preset.get("name", "未命名预设")
+            label_prefix = "👤" if scope == "user" else "🛡️"
+            label = f"{label_prefix} {base_name}"
+            display_name = base_name if scope == "user" else f"管理员/{base_name}"
+
+            payload = {
+                "scope": scope,
+                "name": base_name,
+                "display_name": display_name,
+                "artist_string": artist_string,
+                "negative_prompt": preset.get("negative_prompt", ""),
+            }
+            self.preset_map[key] = payload
+
             options.append(
                 discord.SelectOption(
-                    label=p["name"][:100],
-                    value=p["name"][:100],
+                    label=label[:100],
+                    value=key[:100],
                     description=preview[:100],
+                    default=(
+                        session.artist_prefix_mode == "preset"
+                        and session.preset_name == display_name
+                    ),
                 )
             )
 
-        select = discord.ui.Select(placeholder="选择画师串预设", options=options)
+        # 先放用户预设，再放管理员预设
+        for p in user_presets:
+            _append_option(p, "user")
+            if len(options) >= 25:
+                break
+
+        if len(options) < 25:
+            for p in admin_presets:
+                _append_option(p, "admin")
+                if len(options) >= 25:
+                    break
+
+        select = discord.ui.Select(placeholder="选择画师串模式/预设", options=options)
         select.callback = self.on_select
         self.add_item(select)
 
     async def on_select(self, interaction: discord.Interaction):
         value = interaction.data["values"][0]
 
-        if value == "__clear__":
+        if value == "__default__":
+            self.session.artist_prefix_mode = "default"
             self.session.preset_name = None
             self.session.preset_artist_string = ""
-            msg = "已清除预设"
+            await chat_db_manager.set_novelai_active_preset_state(interaction.user.id, "default")
+            msg = "已切换为系统默认画师串"
+        elif value == "__none__":
+            self.session.artist_prefix_mode = "none"
+            self.session.preset_name = None
+            self.session.preset_artist_string = ""
+            await chat_db_manager.set_novelai_active_preset_state(interaction.user.id, "none")
+            msg = "已切换为无画师串模式"
         else:
-            preset = await chat_db_manager.get_novelai_preset(interaction.user.id, value)
+            preset = self.preset_map.get(value)
             if preset:
-                self.session.preset_name = preset["name"]
-                self.session.preset_artist_string = preset["artist_string"]
-                if preset.get("negative_prompt") and not self.session.negative_prompt:
+                scope = preset.get("scope", "user")
+                display_name = preset.get("display_name") or (preset.get("name") or "未命名预设")
+
+                self.session.artist_prefix_mode = "preset"
+                self.session.preset_name = display_name
+                self.session.preset_artist_string = preset.get("artist_string", "")
+
+                if (
+                    scope == "user"
+                    and preset.get("negative_prompt")
+                    and not self.session.negative_prompt
+                ):
                     self.session.negative_prompt = preset["negative_prompt"]
-                msg = f"已选择预设: {preset['name']}"
+
+                await chat_db_manager.set_novelai_active_preset_state(
+                    interaction.user.id,
+                    "preset",
+                    display_name,
+                )
+
+                scope_text = "管理员" if scope == "admin" else "用户"
+                msg = f"已选择{scope_text}预设: {display_name}"
             else:
-                msg = "预设不存在"
+                msg = "预设不存在或已失效"
 
         await interaction.response.send_message(msg, ephemeral=True)
+
 
 
 # ================================================================
@@ -1708,10 +1826,17 @@ class PresetActionView(discord.ui.View):
     @discord.ui.button(label="应用到面板", style=discord.ButtonStyle.primary, emoji="✅")
     async def btn_apply(self, interaction: discord.Interaction, button: discord.ui.Button):
         """将预设应用到当前面板"""
+        self.session.artist_prefix_mode = "preset"
         self.session.preset_name = self.preset["name"]
         self.session.preset_artist_string = self.preset["artist_string"]
         if self.preset.get("negative_prompt") and not self.session.negative_prompt:
             self.session.negative_prompt = self.preset["negative_prompt"]
+
+        await chat_db_manager.set_novelai_active_preset_state(
+            self.user_id,
+            "preset",
+            self.preset["name"],
+        )
 
         await interaction.response.send_message(
             f"已将预设「{self.preset['name']}」应用到面板！", ephemeral=True
@@ -1724,6 +1849,11 @@ class PresetActionView(discord.ui.View):
             self.user_id, self.preset["name"]
         )
         if success:
+            if self.session.artist_prefix_mode == "preset" and self.session.preset_name == self.preset["name"]:
+                self.session.artist_prefix_mode = "default"
+                self.session.preset_name = None
+                self.session.preset_artist_string = ""
+
             await interaction.response.send_message(
                 f"已删除预设「{self.preset['name']}」。", ephemeral=True
             )

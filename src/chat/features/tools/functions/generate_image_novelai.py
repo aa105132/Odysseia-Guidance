@@ -18,7 +18,7 @@ import logging
 import io
 import random
 import discord
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 from src.chat.utils.prompt_utils import replace_emojis
 from src.chat.features.novelai_generation.tag_rules import (
@@ -54,14 +54,106 @@ def _prompt_already_contains_artist(prompt: str, artist_string: str) -> bool:
     return match_count > len(artist_tags) // 2
 
 
+def _extract_preset_name_tokens(name: str) -> List[str]:
+    """提取预设名称中的可匹配关键词。"""
+    import re
+
+    if not name:
+        return []
+
+    raw_tokens = re.findall(r"[a-zA-Z0-9_]{2,}|[\u4e00-\u9fff]{2,}", name.lower())
+    tokens: List[str] = []
+    seen = set()
+    for token in raw_tokens:
+        normalized = token.strip("_- ")
+        if len(normalized) < 2:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        tokens.append(normalized)
+    return tokens
+
+
+def _extract_artist_hints(artist_string: str, limit: int = 10) -> List[str]:
+    """从画师串中提取可用于场景匹配的提示片段。"""
+    import re
+
+    if not artist_string:
+        return []
+
+    hints: List[str] = []
+    for raw_tag in artist_string.split(","):
+        tag = raw_tag.strip().lower()
+        if not tag:
+            continue
+
+        # 去掉权重语法前后缀，例如 1.3::tag::
+        tag = re.sub(r"^\d+(?:\.\d+)?::", "", tag)
+        tag = re.sub(r"::$", "", tag)
+        tag = tag.replace("_", " ")
+        tag = re.sub(r"\s+", " ", tag).strip()
+        if not tag:
+            continue
+
+        hints.append(tag)
+        if len(hints) >= limit:
+            break
+
+    return hints
+
+
+def _score_preset_for_prompt(prompt: str, preset: dict) -> int:
+    """根据 prompt 与预设内容计算匹配分数。"""
+    prompt_lower = (prompt or "").lower()
+    if not prompt_lower:
+        return 0
+
+    score = 0
+
+    preset_name = str(preset.get("name") or "")
+    for token in _extract_preset_name_tokens(preset_name):
+        if token in prompt_lower:
+            score += 6
+
+    artist_string = str(preset.get("artist_string") or "")
+    for hint in _extract_artist_hints(artist_string):
+        if hint and hint in prompt_lower:
+            score += 3
+
+    return score
+
+
+def _select_scene_matched_preset(
+    prompt: str,
+    user_presets: List[dict],
+    admin_presets: List[dict],
+) -> Tuple[Optional[dict], Optional[str], int]:
+    """按场景 prompt 自动挑选最匹配的预设。"""
+    best_preset: Optional[dict] = None
+    best_scope: Optional[str] = None
+    best_score = 0
+
+    for scope, presets in (("user", user_presets), ("admin", admin_presets)):
+        for preset in presets:
+            score = _score_preset_for_prompt(prompt, preset)
+            if score > best_score:
+                best_score = score
+                best_preset = preset
+                best_scope = scope
+
+    return best_preset, best_scope, best_score
+
+
 async def generate_image_novelai(
     prompt: str,
     negative_prompt: Optional[str] = None,
-    width: int = 832,
-    height: int = 1216,
-    steps: int = 28,
-    scale: float = 5.0,
-    sampler: str = "k_euler_ancestral",
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    steps: Optional[int] = None,
+    scale: Optional[float] = None,
+    sampler: Optional[str] = None,
+    model: Optional[str] = None,
     seed: Optional[int] = None,
     preset_name: Optional[str] = None,
     skip_artist_prefix: bool = False,
@@ -75,11 +167,14 @@ async def generate_image_novelai(
     **重要：你必须生成 Danbooru 格式的英文 Tag 作为 prompt！不要使用自然语言描述！**
 
     ## 画师串自动拼接说明（重要）
-    系统会自动在你的 prompt 前面拼接用户保存的「画师串预设」（artist string）。
+    系统会自动在你的 prompt 前面拼接画师串前缀，优先级如下：
+    1) 传入 `preset_name`：先匹配用户同名预设，再匹配管理员同名预设。
+    2) 未传 `preset_name`：优先读取用户持久化画师串模式（默认/预设/无画师串）。
+    3) 若未命中持久化模式：回退全局默认画师串（`DEFAULT_ARTIST_STRING`，若已配置）。
+    4) 传 `skip_artist_prefix=True`：不拼接任何画师串。
     - **你生成的 prompt 中不要包含画师串/artist tag**，系统会自动处理。
     - 你只需要专注于生成场景、角色、动作、表情等内容 Tag。
     - 如果用户明确说"不要画师串"、"不用预设"、"裸 prompt"等，请传 `skip_artist_prefix=True`。
-    - 默认情况下不需要传这个参数，系统会自动拼接。
 
     ## Tag 生成核心规则（必须严格遵守）：
 
@@ -230,19 +325,19 @@ async def generate_image_novelai(
                 留空则使用系统默认负面提示词。
                 可用于排除不需要的元素，如: "background characters, fused bodies, bad anatomy"
 
-        width: 图片宽度，默认 832。常用尺寸:
+        width: 图片宽度。未填写时优先读取用户已保存配置，否则回退全局默认。常用尺寸:
                 - 竖图(人物): 832x1216
                 - 横图(风景): 1216x832
                 - 正方形: 1024x1024
 
-        height: 图片高度，默认 1216。
+        height: 图片高度。未填写时优先读取用户已保存配置，否则回退全局默认。
 
-        steps: 采样步数(1-28)，默认 28。步数越高细节越好但速度越慢。
+        steps: 采样步数(1-28)。未填写时优先读取用户已保存配置，否则回退全局默认。
 
-        scale: 引导强度 CFG Scale(1.0-10.0)，默认 5.0。
+        scale: 引导强度 CFG Scale(1.0-10.0)。未填写时优先读取用户已保存配置，否则回退全局默认。
                 越高越贴近提示词但可能过饱和。
 
-        sampler: 采样器，默认 "k_euler_ancestral"。可选:
+        sampler: 采样器。未填写时优先读取用户已保存配置，否则回退全局默认。可选:
                 - "k_euler_ancestral" (推荐，效果最好)
                 - "k_euler"
                 - "k_dpmpp_2s_ancestral"
@@ -254,8 +349,8 @@ async def generate_image_novelai(
 
         preset_name: 画师串预设名称（可选）。
                 如果用户提到使用某个预设，填入预设名称。
-                若未填写，系统会自动尝试使用该用户最近保存的预设作为画师串前缀；
-                若用户没有任何预设，则回退到全局默认画师串。
+                若未填写，优先读取用户持久化画师串模式；
+                若用户未保存模式或模式失效，则回退到全局默认画师串（若已配置）。
 
         skip_artist_prefix: 是否跳过画师串拼接，默认 False。
                 设为 True 时不会在 prompt 前拼接任何画师串预设或全局默认画师串。
@@ -265,10 +360,13 @@ async def generate_image_novelai(
                 告诉用户你正在画图，例如："稍等一下，我来画~" 或 "让我想想怎么画..."
 
         success_message: （必填）图片生成成功后随图片一起发送的回复消息。
-                这条消息会和图片+提示词一起显示，作为你对这次画图的完整回复。
+                用你自己的语气写一句简短的话，例如："画好了哦~" 或 "来看看这张怎么样！"
+                **绝对不要在这里写提示词/Tag内容！** 提示词用户可以通过按钮自己查看。
 
     Returns:
-        成功后图片、提示词和你的成功回复会一起发送给用户，不需要再额外回复。
+        成功后图片和你的回复会一起发送给用户。
+        **你不需要也不应该再发送任何额外消息（包括提示词）。**
+        用户想看提示词可以点「查看提示词」按钮。
         失败时你需要根据返回的提示信息告诉用户。
     """
     from src.chat.features.novelai_generation.services.novelai_service import novelai_service
@@ -314,6 +412,28 @@ async def generate_image_novelai(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
+    # 读取用户持久化的生成参数（用于补全未显式传入的参数）
+    generation_settings = {}
+    if parsed_user_id is not None:
+        try:
+            generation_settings = await chat_db_manager.get_novelai_generation_settings(parsed_user_id)
+        except Exception as e:
+            log.warning(f"读取用户生成参数偏好失败: {e}")
+
+    default_width = int(NOVELAI_CONFIG.get("DEFAULT_WIDTH", 832))
+    default_height = int(NOVELAI_CONFIG.get("DEFAULT_HEIGHT", 1216))
+    default_steps = int(NOVELAI_CONFIG.get("DEFAULT_STEPS", 28))
+    default_scale = float(NOVELAI_CONFIG.get("DEFAULT_SCALE", 5.0))
+    default_sampler = str(NOVELAI_CONFIG.get("DEFAULT_SAMPLER", "k_euler_ancestral"))
+    default_model = str(NOVELAI_CONFIG.get("MODEL", "nai-diffusion-4-5-full"))
+
+    width = generation_settings.get("width", default_width) if width is None else width
+    height = generation_settings.get("height", default_height) if height is None else height
+    steps = generation_settings.get("steps", default_steps) if steps is None else steps
+    scale = generation_settings.get("scale", default_scale) if scale is None else scale
+    sampler = generation_settings.get("sampler", default_sampler) if not sampler else sampler
+    model = generation_settings.get("model", default_model) if not model else model
+
     # 检查是否处于绘图封禁状态
     if parsed_user_id is not None:
         ban_status = await chat_db_manager.get_image_generation_ban_status(parsed_user_id)
@@ -341,78 +461,176 @@ async def generate_image_novelai(
 
     # 画师串应用策略：
     # skip_artist_prefix=True 时跳过所有画师串拼接
-    # 1) 指定 preset_name 时，优先按名称匹配该用户预设（支持大小写不敏感）
-    # 2) 未指定 preset_name 时，自动使用该用户最近保存的预设（如存在）
-    # 3) 若用户没有预设，回退到全局默认画师串
+    # 1) 指定 preset_name 时，先匹配用户预设，再匹配管理员预设（均支持大小写不敏感）
+    # 2) 未指定 preset_name 时，优先读取用户持久化画师串模式（default/preset/none）
+    # 3) 若仍无可用预设，则回退全局默认画师串
     final_prompt = prompt
     applied_artist = False
-    effective_preset_name = preset_name
+    effective_preset_name: Optional[str] = None
+
+    normalized_preset_name: Optional[str] = None
+    if isinstance(preset_name, str):
+        normalized_name = preset_name.strip()
+        if normalized_name:
+            normalized_preset_name = normalized_name
+    elif preset_name is not None:
+        normalized_name = str(preset_name).strip()
+        if normalized_name:
+            normalized_preset_name = normalized_name
+
+    # 未显式指定 preset_name 时，读取用户持久化画师串模式
+    if not normalized_preset_name and (not skip_artist_prefix) and parsed_user_id is not None:
+        try:
+            active_state = await chat_db_manager.get_novelai_active_preset_state(parsed_user_id)
+            active_mode = active_state.get("active_mode", "default")
+            active_preset_name = active_state.get("active_preset_name")
+
+            if active_mode == "none":
+                skip_artist_prefix = True
+                log.info(f"使用用户 {parsed_user_id} 的持久化画师串模式: none")
+            elif active_mode == "preset" and active_preset_name:
+                normalized_preset_name = str(active_preset_name).strip()
+                log.info(f"使用用户 {parsed_user_id} 的持久化画师串预设: {normalized_preset_name}")
+        except Exception as e:
+            log.warning(f"读取用户持久化画师串模式失败: {e}")
+
+    # 容错：支持通过 preset_name 传控制语义
+    # - none / 无画师串 => 等价于 skip_artist_prefix=True
+    # - default / 默认 => 回退全局默认画师串（不匹配任何预设）
+    if normalized_preset_name:
+        lower_name = normalized_preset_name.lower()
+        no_artist_aliases = {
+            "none", "null", "no_artist", "no-artist", "noartist",
+            "无", "无画师串", "不用画师串", "裸prompt", "裸 prompt", "裸",
+        }
+        default_aliases = {
+            "default", "global_default", "system_default",
+            "默认", "系统默认", "全局默认",
+        }
+
+        if lower_name in no_artist_aliases:
+            skip_artist_prefix = True
+            normalized_preset_name = None
+            log.info("收到 preset_name=无画师串 控制语义，已切换为 skip_artist_prefix=True")
+        elif lower_name in default_aliases:
+            normalized_preset_name = None
+            log.info("收到 preset_name=默认 控制语义，已回退为全局默认画师串模式")
 
     if skip_artist_prefix:
         log.info("skip_artist_prefix=True, 跳过画师串拼接")
     else:
         user_presets = []
+        admin_presets = []
+
         if parsed_user_id is not None:
             try:
                 user_presets = await chat_db_manager.get_novelai_presets(parsed_user_id)
             except Exception as e:
                 log.warning(f"读取用户画师串预设失败: {e}")
 
-        if user_presets:
-            selected_preset = None
+        try:
+            admin_presets = await chat_db_manager.get_novelai_admin_presets()
+        except Exception as e:
+            log.warning(f"读取管理员画师串预设失败: {e}")
 
-            # 优先使用用户显式指定的预设名
-            if preset_name:
-                requested_name = preset_name.strip()
+        selected_preset = None
+        selected_scope: Optional[str] = None
+
+        if normalized_preset_name:
+            search_name = normalized_preset_name
+            force_admin_only = False
+            if str(search_name).startswith("管理员/"):
+                stripped_name = str(search_name).split("/", 1)[1].strip()
+                if stripped_name:
+                    search_name = stripped_name
+                    force_admin_only = True
+
+            # 先匹配用户预设
+            if not force_admin_only:
                 selected_preset = next(
-                    (p for p in user_presets if p.get("name") == requested_name),
+                    (p for p in user_presets if p.get("name") == search_name),
                     None,
                 )
-                if not selected_preset:
-                    requested_name_lower = requested_name.lower()
-                    selected_preset = next(
-                        (
-                            p
-                            for p in user_presets
-                            if str(p.get("name", "")).lower() == requested_name_lower
-                        ),
-                        None,
-                    )
-                    if selected_preset:
-                        effective_preset_name = selected_preset.get("name")
-                        log.info(
-                            f"预设名大小写不一致，已匹配预设: {requested_name} -> {effective_preset_name}"
-                        )
+                if selected_preset:
+                    selected_scope = "user"
 
-                if not selected_preset:
-                    log.warning(
-                        f"未找到用户预设 '{preset_name}'，将继续使用全局默认画师串（或无前缀）"
+            if not selected_preset and (not force_admin_only):
+                requested_name_lower = str(search_name).lower()
+                selected_preset = next(
+                    (
+                        p
+                        for p in user_presets
+                        if str(p.get("name", "")).lower() == requested_name_lower
+                    ),
+                    None,
+                )
+                if selected_preset:
+                    selected_scope = "user"
+                    log.info(
+                        f"预设名大小写不一致，已匹配预设: {search_name} -> {selected_preset.get('name')}"
                     )
 
-            # 未显式指定预设时，自动使用最近保存的预设
-            if not selected_preset and not preset_name:
-                selected_preset = user_presets[0]  # get_novelai_presets 已按 created_at DESC 排序
-                effective_preset_name = selected_preset.get("name")
-                if effective_preset_name:
-                    log.info(f"未指定预设，自动应用用户最近画师串预设: {effective_preset_name}")
+            # 用户未命中时，继续匹配管理员预设
+            if not selected_preset:
+                selected_preset = next(
+                    (p for p in admin_presets if p.get("name") == search_name),
+                    None,
+                )
+                if selected_preset:
+                    selected_scope = "admin"
 
-            # 应用选中的预设
-            if selected_preset and selected_preset.get("artist_string"):
-                artist_str = selected_preset["artist_string"]
-                # 防重复：检查 prompt 中是否已包含画师串（AI 可能自己写了一遍）
-                if not _prompt_already_contains_artist(prompt, artist_str):
-                    final_prompt = f"{artist_str}, {prompt}"
-                    applied_artist = True
-                    log.info(f"应用画师串预设: {selected_preset.get('name', 'unknown')}")
+            if not selected_preset:
+                requested_name_lower = str(search_name).lower()
+                selected_preset = next(
+                    (
+                        p
+                        for p in admin_presets
+                        if str(p.get("name", "")).lower() == requested_name_lower
+                    ),
+                    None,
+                )
+                if selected_preset:
+                    selected_scope = "admin"
+                    log.info(
+                        f"管理员预设名大小写不一致，已匹配预设: {search_name} -> {selected_preset.get('name')}"
+                    )
+
+            if not selected_preset:
+                log.warning(
+                    f"未找到用户或管理员预设 '{normalized_preset_name}'，将继续使用全局默认画师串（或无前缀）"
+                )
+        else:
+            # 未指定预设名：不自动套“最近预设/场景匹配预设”，仅使用用户持久化模式或全局默认
+            selected_preset = None
+            selected_scope = None
+
+        if selected_preset and selected_preset.get("artist_string"):
+            artist_str = selected_preset["artist_string"]
+            # 防重复：检查 prompt 中是否已包含画师串（AI 可能自己写了一遍）
+            if not _prompt_already_contains_artist(prompt, artist_str):
+                final_prompt = f"{artist_str}, {prompt}"
+                preset_scope_text = "管理员" if selected_scope == "admin" else "用户"
+                log.info(f"应用{preset_scope_text}画师串预设: {selected_preset.get('name', 'unknown')}")
+            else:
+                log.info("prompt 已包含画师串内容，跳过重复拼接")
+            applied_artist = True
+
+            selected_name = selected_preset.get("name")
+            if selected_name:
+                if selected_scope == "admin":
+                    effective_preset_name = f"管理员/{selected_name}"
                 else:
-                    applied_artist = True  # 标记为已应用，不再回退到全局默认
-                    log.info(f"prompt 已包含画师串内容，跳过重复拼接")
-                effective_preset_name = selected_preset.get("name") or effective_preset_name
-                # 如果预设有负面提示词且用户未指定
-                if not negative_prompt and selected_preset.get("negative_prompt"):
-                    negative_prompt = selected_preset["negative_prompt"]
+                    effective_preset_name = selected_name
 
-        # 如果没有通过用户预设应用画师串，则使用全局默认画师串
+            # 仅用户预设支持负面提示词
+            if (
+                selected_scope == "user"
+                and not negative_prompt
+                and selected_preset.get("negative_prompt")
+            ):
+                negative_prompt = selected_preset["negative_prompt"]
+
+        # 如果没有通过用户/管理员预设应用画师串，则使用全局默认画师串
         if not applied_artist:
             default_artist = NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "")
             if default_artist:
@@ -440,6 +658,23 @@ async def generate_image_novelai(
 
     try:
         # 验证尺寸参数
+        try:
+            width = int(width)
+        except (TypeError, ValueError):
+            width = default_width
+        try:
+            height = int(height)
+        except (TypeError, ValueError):
+            height = default_height
+        try:
+            steps = int(steps)
+        except (TypeError, ValueError):
+            steps = default_steps
+        try:
+            scale = float(scale)
+        except (TypeError, ValueError):
+            scale = default_scale
+
         width = max(512, min(2048, width))
         height = max(512, min(2048, height))
         steps = max(1, min(50, steps))
@@ -448,8 +683,11 @@ async def generate_image_novelai(
         # 验证采样器
         valid_samplers = ["k_euler", "k_euler_ancestral", "k_dpmpp_2s_ancestral",
                           "k_dpmpp_2m", "k_dpmpp_sde", "ddim"]
+        sampler = str(sampler or "").strip()
         if sampler not in valid_samplers:
-            sampler = "k_euler_ancestral"
+            sampler = default_sampler
+
+        model = str(model or "").strip() or default_model
 
         # 调用 NovelAI 服务
         result = await novelai_service.generate_image(
@@ -460,6 +698,7 @@ async def generate_image_novelai(
             steps=steps,
             scale=scale,
             sampler=sampler,
+            model=model,
             seed=seed,
         )
 
@@ -559,7 +798,7 @@ async def generate_image_novelai(
                 "skip_ai_response": True,
                 "images_generated": 1,
                 "cost": cost,
-                "message": "NovelAI 图片已成功生成并发送给用户，无需再回复。"
+                "message": "NovelAI 图片已成功生成并发送给用户。不要再发送任何消息，不要发送提示词，不要回复。"
             }
         else:
             # 生成失败

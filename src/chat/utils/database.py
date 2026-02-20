@@ -595,6 +595,41 @@ class ChatDatabaseManager:
                 );
             """)
 
+            # --- NovelAI 用户当前画师串状态表 ---
+            # active_mode: default | preset | none
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS novelai_user_preset_state (
+                    user_id INTEGER PRIMARY KEY,
+                    active_mode TEXT NOT NULL DEFAULT 'default',
+                    active_preset_name TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            # --- NovelAI 用户生成参数偏好表 ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS novelai_user_generation_settings (
+                    user_id INTEGER PRIMARY KEY,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL,
+                    steps INTEGER NOT NULL,
+                    scale REAL NOT NULL,
+                    sampler TEXT NOT NULL,
+                    model TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            # --- NovelAI 管理员画师串预设表 ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS novelai_admin_presets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    artist_string TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
             # --- 图片消息记录表（用于反应举报归属） ---
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS generated_image_messages (
@@ -1958,12 +1993,201 @@ class ChatDatabaseManager:
             log.error(f"保存 NovelAI 预设失败: {e}")
             return False
 
+    async def get_novelai_active_preset_state(self, user_id: int) -> dict:
+        """获取用户当前画师串模式。"""
+        query = "SELECT active_mode, active_preset_name FROM novelai_user_preset_state WHERE user_id = ?"
+        row = await self._execute(
+            self._db_transaction,
+            query,
+            (user_id,),
+            fetch="one",
+        )
+
+        if not row:
+            return {"active_mode": "default", "active_preset_name": None}
+
+        active_mode = str(row["active_mode"] or "default").strip().lower()
+        if active_mode not in {"default", "preset", "none"}:
+            active_mode = "default"
+
+        active_preset_name = row["active_preset_name"]
+        if active_mode != "preset":
+            active_preset_name = None
+
+        return {
+            "active_mode": active_mode,
+            "active_preset_name": active_preset_name,
+        }
+
+    async def set_novelai_active_preset_state(
+        self,
+        user_id: int,
+        active_mode: str,
+        active_preset_name: Optional[str] = None,
+    ) -> bool:
+        """设置用户当前画师串模式。"""
+        normalized_mode = str(active_mode or "default").strip().lower()
+        if normalized_mode not in {"default", "preset", "none"}:
+            normalized_mode = "default"
+
+        normalized_preset_name = (active_preset_name or "").strip() or None
+        if normalized_mode != "preset":
+            normalized_preset_name = None
+
+        query = """
+            INSERT INTO novelai_user_preset_state (user_id, active_mode, active_preset_name, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                active_mode = excluded.active_mode,
+                active_preset_name = excluded.active_preset_name,
+                updated_at = CURRENT_TIMESTAMP;
+        """
+
+        try:
+            await self._execute(
+                self._db_transaction,
+                query,
+                (user_id, normalized_mode, normalized_preset_name),
+                commit=True,
+            )
+            return True
+        except Exception as e:
+            log.error(f"设置 NovelAI 当前画师串状态失败: {e}")
+            return False
+
+    async def get_novelai_generation_settings(self, user_id: int) -> dict:
+        """获取用户 NovelAI 生成参数偏好（不存在时返回全局默认）。"""
+        defaults = {
+            "width": int(chat_config.NOVELAI_CONFIG.get("DEFAULT_WIDTH", 832)),
+            "height": int(chat_config.NOVELAI_CONFIG.get("DEFAULT_HEIGHT", 1216)),
+            "steps": int(chat_config.NOVELAI_CONFIG.get("DEFAULT_STEPS", 28)),
+            "scale": float(chat_config.NOVELAI_CONFIG.get("DEFAULT_SCALE", 5.0)),
+            "sampler": str(chat_config.NOVELAI_CONFIG.get("DEFAULT_SAMPLER", "k_euler_ancestral")),
+            "model": str(chat_config.NOVELAI_CONFIG.get("MODEL", "nai-diffusion-4-5-full")),
+        }
+
+        query = """
+            SELECT width, height, steps, scale, sampler, model
+            FROM novelai_user_generation_settings
+            WHERE user_id = ?
+        """
+        row = await self._execute(
+            self._db_transaction,
+            query,
+            (user_id,),
+            fetch="one",
+        )
+
+        if not row:
+            return defaults
+
+        valid_samplers = {
+            "k_euler", "k_euler_ancestral", "k_dpmpp_2s_ancestral",
+            "k_dpmpp_2m", "k_dpmpp_sde", "ddim",
+        }
+
+        width = int(row["width"] or defaults["width"])
+        height = int(row["height"] or defaults["height"])
+        steps = int(row["steps"] or defaults["steps"])
+        scale = float(row["scale"] or defaults["scale"])
+        sampler = str(row["sampler"] or defaults["sampler"])
+        if sampler not in valid_samplers:
+            sampler = defaults["sampler"]
+
+        model = str(row["model"] or defaults["model"])
+
+        return {
+            "width": max(512, min(2048, width)),
+            "height": max(512, min(2048, height)),
+            "steps": max(1, min(50, steps)),
+            "scale": max(1.0, min(10.0, scale)),
+            "sampler": sampler,
+            "model": model,
+        }
+
+    async def set_novelai_generation_settings(
+        self,
+        user_id: int,
+        width: int,
+        height: int,
+        steps: int,
+        scale: float,
+        sampler: str,
+        model: Optional[str] = None,
+    ) -> bool:
+        """保存用户 NovelAI 生成参数偏好。"""
+        valid_samplers = {
+            "k_euler", "k_euler_ancestral", "k_dpmpp_2s_ancestral",
+            "k_dpmpp_2m", "k_dpmpp_sde", "ddim",
+        }
+
+        normalized_width = max(512, min(2048, int(width)))
+        normalized_height = max(512, min(2048, int(height)))
+        normalized_steps = max(1, min(50, int(steps)))
+        normalized_scale = max(1.0, min(10.0, float(scale)))
+        normalized_sampler = sampler if sampler in valid_samplers else str(
+            chat_config.NOVELAI_CONFIG.get("DEFAULT_SAMPLER", "k_euler_ancestral")
+        )
+        normalized_model = (model or "").strip() or str(
+            chat_config.NOVELAI_CONFIG.get("MODEL", "nai-diffusion-4-5-full")
+        )
+
+        query = """
+            INSERT INTO novelai_user_generation_settings
+                (user_id, width, height, steps, scale, sampler, model, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                width = excluded.width,
+                height = excluded.height,
+                steps = excluded.steps,
+                scale = excluded.scale,
+                sampler = excluded.sampler,
+                model = excluded.model,
+                updated_at = CURRENT_TIMESTAMP;
+        """
+
+        try:
+            await self._execute(
+                self._db_transaction,
+                query,
+                (
+                    user_id,
+                    normalized_width,
+                    normalized_height,
+                    normalized_steps,
+                    normalized_scale,
+                    normalized_sampler,
+                    normalized_model,
+                ),
+                commit=True,
+            )
+            return True
+        except Exception as e:
+            log.error(f"保存 NovelAI 生成参数偏好失败: {e}")
+            return False
+
     async def delete_novelai_preset(self, user_id: int, name: str) -> bool:
         """删除用户的一个 NovelAI 画师串预设。返回 True 表示成功删除。"""
         query = "DELETE FROM novelai_presets WHERE user_id = ? AND name = ?"
         try:
             await self._execute(
                 self._db_transaction, query, (user_id, name), commit=True
+            )
+
+            # 如果删除的是当前激活预设，则自动回退为默认模式
+            await self._execute(
+                self._db_transaction,
+                """
+                UPDATE novelai_user_preset_state
+                SET active_mode = 'default',
+                    active_preset_name = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                  AND active_mode = 'preset'
+                  AND active_preset_name = ?
+                """,
+                (user_id, name),
+                commit=True,
             )
             return True
         except Exception as e:
@@ -1997,6 +2221,56 @@ class ChatDatabaseManager:
             self._db_transaction, query, (user_id, f"%{keyword}%"), fetch="all"
         )
         return [dict(row) for row in rows] if rows else []
+
+    # --- NovelAI 管理员画师串预设 CRUD ---
+
+    async def get_novelai_admin_presets(self) -> list:
+        """获取所有管理员画师串预设。"""
+        query = "SELECT id, name, artist_string, created_at FROM novelai_admin_presets ORDER BY created_at DESC"
+        rows = await self._execute(self._db_transaction, query, fetch="all")
+        return [dict(row) for row in rows] if rows else []
+
+    async def get_novelai_admin_preset(self, name: str) -> Optional[dict]:
+        """按名称获取管理员画师串预设。"""
+        query = "SELECT id, name, artist_string, created_at FROM novelai_admin_presets WHERE name = ?"
+        row = await self._execute(self._db_transaction, query, (name,), fetch="one")
+        return dict(row) if row else None
+
+    async def save_novelai_admin_preset(self, name: str, artist_string: str) -> bool:
+        """保存或更新管理员画师串预设。"""
+        query = """
+            INSERT INTO novelai_admin_presets (name, artist_string)
+            VALUES (?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                artist_string = excluded.artist_string,
+                created_at = CURRENT_TIMESTAMP;
+        """
+        try:
+            await self._execute(
+                self._db_transaction,
+                query,
+                (name, artist_string),
+                commit=True,
+            )
+            return True
+        except Exception as e:
+            log.error(f"保存管理员画师串预设失败: {e}")
+            return False
+
+    async def delete_novelai_admin_preset_by_id(self, preset_id: int) -> bool:
+        """通过 ID 删除管理员画师串预设。"""
+        query = "DELETE FROM novelai_admin_presets WHERE id = ?"
+        try:
+            await self._execute(
+                self._db_transaction,
+                query,
+                (preset_id,),
+                commit=True,
+            )
+            return True
+        except Exception as e:
+            log.error(f"删除管理员画师串预设失败 (ID: {preset_id}): {e}")
+            return False
 
 
 def get_database_url(sync: bool = False) -> str:

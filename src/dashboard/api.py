@@ -137,6 +137,12 @@ class NovelAIConfigUpdate(BaseModel):
     default_artist_string: Optional[str] = None
 
 
+class NovelAIAdminPresetUpsert(BaseModel):
+    """管理员画师串预设新增/更新"""
+    name: str
+    artist_string: str
+
+
 class EmbeddingConfigUpdate(BaseModel):
     """向量嵌入配置更新"""
     enabled: Optional[bool] = None
@@ -1595,6 +1601,50 @@ async def test_novelai_connection(token: str = Depends(verify_token)):
     except Exception as e:
         log.error(f"测试 NovelAI 连接失败: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+@app.get("/api/config/novelai/admin-presets")
+async def get_novelai_admin_presets(token: str = Depends(verify_token)):
+    """获取管理员维护的 NovelAI 画师串预设。"""
+    from src.chat.utils.database import chat_db_manager
+
+    presets = await chat_db_manager.get_novelai_admin_presets()
+    return {"presets": presets, "total": len(presets)}
+
+
+@app.post("/api/config/novelai/admin-presets")
+async def upsert_novelai_admin_preset(
+    payload: NovelAIAdminPresetUpsert,
+    token: str = Depends(verify_token),
+):
+    """新增或更新管理员画师串预设。"""
+    from src.chat.utils.database import chat_db_manager
+
+    name = (payload.name or "").strip()
+    artist_string = (payload.artist_string or "").strip()
+    if not name:
+        raise HTTPException(400, "预设名称不能为空")
+    if not artist_string:
+        raise HTTPException(400, "画师串提示词不能为空")
+    if len(name) > 100:
+        raise HTTPException(400, "预设名称长度不能超过 100")
+
+    success = await chat_db_manager.save_novelai_admin_preset(name, artist_string)
+    if not success:
+        raise HTTPException(500, "保存管理员画师串预设失败")
+
+    return {"success": True, "name": name}
+
+
+@app.delete("/api/config/novelai/admin-presets/{preset_id}")
+async def delete_novelai_admin_preset(preset_id: int, token: str = Depends(verify_token)):
+    """删除管理员画师串预设。"""
+    from src.chat.utils.database import chat_db_manager
+
+    success = await chat_db_manager.delete_novelai_admin_preset_by_id(preset_id)
+    if success:
+        return {"success": True}
+    raise HTTPException(500, "删除管理员画师串预设失败")
 
 
 @app.get("/api/config/novelai/presets")
