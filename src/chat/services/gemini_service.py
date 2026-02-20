@@ -642,6 +642,19 @@ class GeminiService:
 
         return False, thinking_config_data, None
 
+    def _build_generate_content_config(
+        self,
+        gen_config_data: Dict[str, Any],
+        thinking_config_data: Optional[Dict[str, Any]],
+    ) -> types.GenerateContentConfig:
+        gen_config = types.GenerateContentConfig(
+            **gen_config_data,
+            safety_settings=self.safety_settings,
+        )
+        if thinking_config_data:
+            gen_config.thinking_config = types.ThinkingConfig(**thinking_config_data)
+        return gen_config
+
     async def generate_response(
         self,
         user_id: int,
