@@ -960,7 +960,7 @@
                                 </label>
                                 <div class="relative">
                                     <input :type="showVoiceAccessToken ? 'text' : 'password'" x-model="voiceForm.access_token"
-                                           placeholder="留空保持不变（填写语音服务 Access Token）"
+                                           placeholder="填写语音服务 Access Token（内网明文展示）"
                                            class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 pr-10 focus:outline-none focus:ring-2 focus:ring-purple-500">
                                     <button @click="showVoiceAccessToken = !showVoiceAccessToken" type="button"
                                             class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
@@ -3101,6 +3101,26 @@
                         this.voiceForm.base_url = this.config.voice.base_url || '';
                         this.voiceForm.model_name = this.config.voice.model_name || 'FunAudioLLM/CosyVoice2-0.5B';
                         this.voiceForm.app_id = this.config.voice.app_id || '';
+                        this.voiceForm.access_token = this.config.voice.access_token || '';
+                        const syncVoiceAppPool = Array.isArray(this.config.voice.app_pool) ? this.config.voice.app_pool : [];
+                        this.voiceForm.app_pool_text = syncVoiceAppPool
+                            .map((item) => {
+                                if (!item || typeof item !== 'object') return '';
+                                const appId = String(item.app_id || '').trim();
+                                const accessToken = String(item.access_token || '').trim();
+                                if (!appId || !accessToken) return '';
+                                return `${appId} | ${accessToken}`;
+                            })
+                            .filter(Boolean)
+                            .join('\n');
+                        const syncCloneVoiceBindings = (
+                            this.config.voice.clone_voice_app_bindings
+                            && typeof this.config.voice.clone_voice_app_bindings === 'object'
+                            && !Array.isArray(this.config.voice.clone_voice_app_bindings)
+                        ) ? this.config.voice.clone_voice_app_bindings : {};
+                        this.voiceForm.clone_voice_app_bindings_text = Object.entries(syncCloneVoiceBindings)
+                            .map(([voiceType, appId]) => `${voiceType} = ${appId}`)
+                            .join('\n');
                         this.voiceForm.cluster = this.config.voice.cluster || '';
                         this.voiceForm.clone_cluster = this.config.voice.clone_cluster || 'volcano_icl';
                         this.voiceForm.clone_resource_id = this.config.voice.clone_resource_id || 'seed-icl-2.0';
@@ -4423,7 +4443,7 @@
                             this.voiceForm.api_key = '';
                             this.voiceForm.model_name = data.model_name || 'FunAudioLLM/CosyVoice2-0.5B';
                             this.voiceForm.app_id = data.app_id || '';
-                            this.voiceForm.access_token = '';
+                            this.voiceForm.access_token = data.access_token || '';
                             const appPool = Array.isArray(data.app_pool) ? data.app_pool : [];
                             this.voiceForm.app_pool_text = appPool
                                 .map((item) => {
@@ -4700,8 +4720,8 @@
                         if (this.voiceForm.api_key) {
                             payload.api_key = this.voiceForm.api_key;
                         }
-                        if (this.voiceForm.access_token) {
-                            payload.access_token = this.voiceForm.access_token;
+                        if (this.voiceForm.provider === 'doubao') {
+                            payload.access_token = (this.voiceForm.access_token ?? '').trim();
                         }
 
                         const response = await fetch('/api/config/voice', {

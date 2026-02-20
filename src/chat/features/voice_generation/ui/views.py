@@ -8,13 +8,14 @@
 - 管理员可选保存音色（并可绑定复刻音色 APP_ID）
 """
 
+import base64
 import io
 import json
 import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import discord
 
@@ -132,6 +133,196 @@ def _format_optional_bool(value: Optional[bool]) -> str:
     if value is None:
         return "自动"
     return "true" if value else "false"
+
+
+def _truncate_text_for_select(text: str, max_length: int = 100) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 1] + "…"
+
+
+def _split_text_chunks(text: str, chunk_size: int = 900) -> List[str]:
+    content = (text or "").strip()
+    if not content:
+        return ["（空）"]
+
+    normalized_chunk_size = max(100, min(1000, int(chunk_size)))
+    chunks: List[str] = []
+    start = 0
+    while start < len(content):
+        chunks.append(content[start : start + normalized_chunk_size])
+        start += normalized_chunk_size
+    return chunks
+
+
+def _collect_saved_voice_entries() -> List[Tuple[str, str]]:
+    default_voice = str(chat_config.VOICE_CONFIG.get("VOICE_TYPE", "")).strip()
+    available_voice_types = [
+        str(item).strip()
+        for item in (chat_config.VOICE_CONFIG.get("AVAILABLE_VOICE_TYPES") or [])
+        if str(item).strip()
+    ]
+    raw_hints = chat_config.VOICE_CONFIG.get("VOICE_TYPE_HINTS") or {}
+    voice_type_hints = (
+        {
+            str(key).strip(): str(value).strip()
+            for key, value in raw_hints.items()
+            if str(key).strip()
+        }
+        if isinstance(raw_hints, dict)
+        else {}
+    )
+
+    merged_entries: List[Tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def _push(voice: str, hint: str) -> None:
+        normalized_voice = str(voice or "").strip()
+        if not normalized_voice or normalized_voice in seen:
+            return
+        seen.add(normalized_voice)
+        merged_entries.append((normalized_voice, str(hint or "").strip()))
+
+    if default_voice:
+        _push(default_voice, voice_type_hints.get(default_voice, ""))
+
+    for voice in available_voice_types:
+        _push(voice, voice_type_hints.get(voice, ""))
+
+    for voice, hint in voice_type_hints.items():
+        _push(voice, hint)
+
+    return merged_entries
+
+
+def _estimate_ogg_opus_duration_seconds(audio_bytes: bytes) -> Optional[float]:
+    """粗略估算 OGG/Opus 时长（秒）。"""
+    if not audio_bytes or len(audio_bytes) < 27:
+        return None
+
+    try:
+        offset = 0
+        max_granule = -1
+
+        while offset + 27 <= len(audio_bytes):
+            if audio_bytes[offset : offset + 4] != b"OggS":
+                break
+
+            page_segments = audio_bytes[offset + 26]
+            seg_table_start = offset + 27
+            seg_table_end = seg_table_start + page_segments
+            if seg_table_end > len(audio_bytes):
+                break
+
+            segment_table = audio_bytes[seg_table_start:seg_table_end]
+            body_size = sum(segment_table)
+            page_end = seg_table_end + body_size
+            if page_end > len(audio_bytes):
+                break
+
+            granule = int.from_bytes(
+                audio_bytes[offset + 6 : offset + 14], "little", signed=False
+            )
+            if granule > max_granule:
+                max_granule = granule
+
+            offset = page_end
+
+        if max_granule <= 0:
+            return None
+
+        duration = max_granule / 48000.0
+        return max(0.1, min(60 * 60, float(duration)))
+    except Exception:
+        return None
+
+
+def _build_voice_waveform_base64(audio_bytes: bytes, points: int = 64) -> str:
+    """生成 Discord 原生语音消息需要的 waveform（base64）。"""
+    points = max(16, min(256, int(points)))
+    if not audio_bytes:
+        return base64.b64encode(bytes([128] * points)).decode("ascii")
+
+    chunk_size = max(1, len(audio_bytes) // points)
+    amplitudes: List[int] = []
+    for idx in range(points):
+        start = idx * chunk_size
+        end = (
+            len(audio_bytes)
+            if idx == points - 1
+            else min(len(audio_bytes), (idx + 1) * chunk_size)
+        )
+        chunk = audio_bytes[start:end]
+        if not chunk:
+            amplitudes.append(0)
+            continue
+        amplitudes.append(int(sum(chunk) / len(chunk)) & 0xFF)
+
+    return base64.b64encode(bytes(amplitudes)).decode("ascii")
+
+
+class _NativeVoiceMessageFile(discord.File):
+    """带 voice metadata 的文件对象，用于 Discord 原生语音消息样式。"""
+
+    def __init__(
+        self,
+        fp,
+        *,
+        filename: str,
+        duration_secs: float,
+        waveform: str,
+    ):
+        super().__init__(fp, filename=filename)
+        self._duration_secs = max(0.1, float(duration_secs))
+        self._waveform = waveform
+
+    def to_dict(self, index: int) -> dict:
+        payload = super().to_dict(index)
+        payload["duration_secs"] = round(self._duration_secs, 3)
+        payload["waveform"] = self._waveform
+        return payload
+
+
+async def _send_native_voice_message(
+    channel: discord.abc.Messageable,
+    *,
+    audio_bytes: bytes,
+    filename: str,
+    duration_secs: float,
+) -> None:
+    """
+    走底层 HTTP 参数发送“原生语音消息”：
+    - 设置 MessageFlags.is_voice_message
+    - 在附件里附带 duration_secs + waveform
+    """
+    from discord.http import handle_message_parameters
+    from discord.message import MessageFlags
+
+    state = getattr(channel, "_state", None)
+    channel_id = getattr(channel, "id", None)
+    if state is None or channel_id is None:
+        raise RuntimeError("channel 不支持原生语音消息发送（缺少 _state/id）")
+
+    waveform = _build_voice_waveform_base64(audio_bytes)
+    voice_file = _NativeVoiceMessageFile(
+        io.BytesIO(audio_bytes),
+        filename=filename,
+        duration_secs=duration_secs,
+        waveform=waveform,
+    )
+
+    flags = MessageFlags._from_value(8192)
+
+    with handle_message_parameters(
+        content=None,
+        attachments=[voice_file],
+        flags=flags,
+        allowed_mentions=state.allowed_mentions,
+    ) as params:
+        await state.http.send_message(channel_id, params=params)
 
 
 @dataclass
@@ -415,6 +606,131 @@ class SaveVoicePresetModal(discord.ui.Modal, title="管理员保存音色"):
             )
 
 
+class VoiceTypeSelectView(discord.ui.View):
+    """音色下拉选择器（支持分页，展示已保存音色及说明）。"""
+
+    def __init__(
+        self,
+        *,
+        parent_panel: "VoiceGenerationPanelView",
+        author_id: int,
+        entries: Sequence[Tuple[str, str]],
+    ):
+        super().__init__(timeout=300)
+        self.parent_panel = parent_panel
+        self.author_id = author_id
+        self.entries = list(entries)
+        self.page_index = 0
+        self.page_size = 25
+        self._rebuild_items()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("这不是你的音色选择器。", ephemeral=True)
+            return False
+        return True
+
+    def _total_pages(self) -> int:
+        return max(1, (len(self.entries) + self.page_size - 1) // self.page_size)
+
+    def _current_page_entries(self) -> List[Tuple[str, str]]:
+        start = self.page_index * self.page_size
+        end = start + self.page_size
+        return self.entries[start:end]
+
+    def _rebuild_items(self) -> None:
+        self.clear_items()
+        total_pages = self._total_pages()
+        current_entries = self._current_page_entries()
+        current_voice = (self.parent_panel.session.voice_type or "").strip()
+
+        options: List[discord.SelectOption] = []
+        for voice_type, hint in current_entries:
+            options.append(
+                discord.SelectOption(
+                    label=_truncate_text_for_select(voice_type, 100),
+                    value=voice_type,
+                    description=_truncate_text_for_select(hint or "无说明", 100),
+                    default=bool(current_voice and current_voice == voice_type),
+                )
+            )
+
+        if not options:
+            options.append(
+                discord.SelectOption(
+                    label="暂无可选音色",
+                    value="__none__",
+                    description="请先使用“管理员保存音色”",
+                    default=True,
+                )
+            )
+
+        select = discord.ui.Select(
+            placeholder=f"选择音色（第 {self.page_index + 1}/{total_pages} 页）",
+            options=options,
+            min_values=1,
+            max_values=1,
+            disabled=not current_entries,
+            row=0,
+        )
+
+        async def _on_select(interaction: discord.Interaction) -> None:
+            selected = (select.values[0] if select.values else "").strip()
+            if not selected or selected == "__none__":
+                await interaction.response.send_message("当前没有可选音色。", ephemeral=True)
+                return
+
+            self.parent_panel.session.voice_type = selected
+            await interaction.response.send_message(
+                f"已选择音色：`{selected}`",
+                ephemeral=True,
+            )
+            await self.parent_panel.refresh_panel()
+
+        select.callback = _on_select
+        self.add_item(select)
+
+        if total_pages > 1:
+            prev_btn = discord.ui.Button(
+                label="上一页",
+                style=discord.ButtonStyle.secondary,
+                disabled=self.page_index <= 0,
+                row=1,
+            )
+            next_btn = discord.ui.Button(
+                label="下一页",
+                style=discord.ButtonStyle.secondary,
+                disabled=self.page_index >= total_pages - 1,
+                row=1,
+            )
+
+            async def _on_prev(interaction: discord.Interaction) -> None:
+                if self.page_index <= 0:
+                    await interaction.response.defer()
+                    return
+                self.page_index -= 1
+                self._rebuild_items()
+                await interaction.response.edit_message(view=self)
+
+            async def _on_next(interaction: discord.Interaction) -> None:
+                if self.page_index >= total_pages - 1:
+                    await interaction.response.defer()
+                    return
+                self.page_index += 1
+                self._rebuild_items()
+                await interaction.response.edit_message(view=self)
+
+            prev_btn.callback = _on_prev
+            next_btn.callback = _on_next
+            self.add_item(prev_btn)
+            self.add_item(next_btn)
+
+    async def on_timeout(self) -> None:
+        for child in self.children:
+            if isinstance(child, (discord.ui.Button, discord.ui.Select)):
+                child.disabled = True
+
+
 class VoiceGenerationPanelView(discord.ui.View):
     """语音生成交互面板。"""
 
@@ -478,6 +794,12 @@ class VoiceGenerationPanelView(discord.ui.View):
             ),
             inline=False,
         )
+        saved_voice_entries = _collect_saved_voice_entries()
+        embed.add_field(
+            name="音色列表",
+            value=f"已保存音色：{len(saved_voice_entries)} 个（可点“选择音色”下拉选择）",
+            inline=False,
+        )
         embed.set_footer(
             text="管理员可使用“管理员保存音色”将音色写入可用列表，并可选绑定复刻 APP_ID。"
         )
@@ -506,11 +828,103 @@ class VoiceGenerationPanelView(discord.ui.View):
             emotion_scale=self.session.emotion_scale,
         )
 
+    def _build_generation_report_embeds(
+        self,
+        *,
+        request_user: discord.abc.User,
+        generated_text: str,
+        result: VoiceResult,
+    ) -> List[discord.Embed]:
+        requested_voice = (self.session.voice_type or "").strip() or "默认"
+        actual_voice = (result.voice_type or "").strip() or requested_voice
+        provider = (result.provider or "").strip() or "unknown"
+        model_name = (result.model_name or "").strip() or "unknown"
+        audio_format = (result.file_ext or "").strip() or "unknown"
+        audio_kb = max(1, int(len(result.audio_bytes or b"") / 1024))
+
+        params_text = (
+            f"requested_voice_type: {requested_voice}\n"
+            f"actual_voice_type: {actual_voice}\n"
+            f"speed_ratio: {_format_optional_float(self.session.speed_ratio)}\n"
+            f"pitch_ratio: {_format_optional_float(self.session.pitch_ratio)}\n"
+            f"emotion: {self.session.emotion or '自动'}\n"
+            f"enable_emotion: {_format_optional_bool(self.session.enable_emotion)}\n"
+            f"emotion_scale: {_format_optional_float(self.session.emotion_scale)}\n"
+            f"provider: {provider}\n"
+            f"model_name: {model_name}\n"
+            f"audio_format: {audio_format}\n"
+            f"audio_size_kb: {audio_kb}"
+        )
+
+        chunks = _split_text_chunks(generated_text, chunk_size=900)
+        total_chunks = len(chunks)
+        embeds: List[discord.Embed] = []
+
+        header_embed = discord.Embed(
+            title="语音生成信息",
+            description="以下为本次发送详情。",
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow(),
+        )
+        header_embed.add_field(
+            name="发送者",
+            value=f"{request_user.mention}\nID: `{request_user.id}`",
+            inline=False,
+        )
+        header_embed.add_field(
+            name="生成参数",
+            value=f"```txt\n{params_text}\n```",
+            inline=False,
+        )
+        header_embed.add_field(
+            name=f"生成文本（1/{total_chunks}）",
+            value=chunks[0],
+            inline=False,
+        )
+        embeds.append(header_embed)
+
+        for index, chunk in enumerate(chunks[1:], start=2):
+            text_embed = discord.Embed(
+                title="语音生成信息（续）",
+                color=discord.Color.green(),
+            )
+            text_embed.add_field(
+                name=f"生成文本（{index}/{total_chunks}）",
+                value=chunk,
+                inline=False,
+            )
+            embeds.append(text_embed)
+
+        return embeds
+
     @discord.ui.button(label="编辑文本", style=discord.ButtonStyle.primary, row=0)
     async def edit_text(
         self, interaction: discord.Interaction, _: discord.ui.Button
     ) -> None:
         await interaction.response.send_modal(VoiceTextModal(self))
+
+    @discord.ui.button(label="选择音色", style=discord.ButtonStyle.secondary, row=0)
+    async def choose_voice(
+        self, interaction: discord.Interaction, _: discord.ui.Button
+    ) -> None:
+        entries = _collect_saved_voice_entries()
+        if not entries:
+            await interaction.response.send_message(
+                "暂无已保存音色。请先让管理员点击“管理员保存音色”。",
+                ephemeral=True,
+            )
+            return
+
+        select_view = VoiceTypeSelectView(
+            parent_panel=self,
+            author_id=self.author_id,
+            entries=entries,
+        )
+        await interaction.response.send_message(
+            "请选择音色（已展示保存的音色和说明，可翻页）：",
+            view=select_view,
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="编辑参数", style=discord.ButtonStyle.secondary, row=0)
     async def edit_params(
@@ -595,10 +1009,68 @@ class VoiceGenerationPanelView(discord.ui.View):
             )
             return
 
-        filename = f"generated_voice.{result.file_ext or 'mp3'}"
-        audio_file = discord.File(io.BytesIO(result.audio_bytes), filename=filename)
-        await channel.send(file=audio_file)
-        await interaction.followup.send("语音已发送到当前频道。", ephemeral=True)
+        sent_native_voice = False
+        file_ext = (result.file_ext or "").strip().lower()
+
+        try:
+            # 优先发送 Discord 原生语音消息（ogg/opus）
+            if file_ext in {"ogg", "opus"}:
+                native_filename = "voice-message.ogg"
+                estimated_duration = _estimate_ogg_opus_duration_seconds(result.audio_bytes)
+                if estimated_duration is None:
+                    estimated_duration = max(1.0, min(300.0, len(clean_text) / 6.0))
+
+                try:
+                    await _send_native_voice_message(
+                        channel,
+                        audio_bytes=result.audio_bytes,
+                        filename=native_filename,
+                        duration_secs=estimated_duration,
+                    )
+                    sent_native_voice = True
+                    log.info(
+                        "面板语音已按原生语音消息样式发送: provider=%s, model=%s, voice=%s",
+                        result.provider,
+                        result.model_name,
+                        result.voice_type,
+                    )
+                except Exception as native_send_error:
+                    log.warning(
+                        "面板原生语音消息发送失败，将回退普通附件: %s",
+                        native_send_error,
+                    )
+
+            if not sent_native_voice:
+                filename = f"generated_voice.{result.file_ext or 'mp3'}"
+                audio_file = discord.File(io.BytesIO(result.audio_bytes), filename=filename)
+                await channel.send(file=audio_file)
+                log.info(
+                    "面板语音已按普通附件发送: provider=%s, model=%s, ext=%s",
+                    result.provider,
+                    result.model_name,
+                    result.file_ext,
+                )
+
+            report_embeds = self._build_generation_report_embeds(
+                request_user=interaction.user,
+                generated_text=clean_text,
+                result=result,
+            )
+            for report_embed in report_embeds:
+                await channel.send(embed=report_embed)
+
+        except Exception as send_error:
+            log.error("发送语音或生成报告失败: %s", send_error, exc_info=True)
+            await interaction.followup.send(
+                f"发送失败：{send_error}",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            "语音已发送到当前频道（原生语音优先），并附带生成信息面板。",
+            ephemeral=True,
+        )
 
     @discord.ui.button(
         label="管理员保存音色",
