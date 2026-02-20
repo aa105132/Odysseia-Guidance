@@ -165,6 +165,7 @@ class PromptService:
         model_name: Optional[str] = None,
         channel: Optional[Any] = None,  # 新增 channel 参数
         user_id: Optional[int] = None,  # 新增 user_id 参数用于用户识别
+        novelai_preset_context: Optional[Dict[str, List[str]]] = None,
     ) -> List[Dict[str, Any]]:
         """
         构建用于AI聊天的分层对话历史。
@@ -220,6 +221,44 @@ class PromptService:
                 "parts": ["收到，绘图时我会按该路由优先使用 NovelAI。"],
             }
         )
+
+        # --- NovelAI 可用预设名注入（动态）---
+        if novelai_preset_context:
+            user_preset_names = [
+                str(name).strip()
+                for name in (novelai_preset_context.get("user_preset_names") or [])
+                if str(name).strip()
+            ]
+            admin_preset_names = [
+                str(name).strip()
+                for name in (novelai_preset_context.get("admin_preset_names") or [])
+                if str(name).strip()
+            ]
+
+            if user_preset_names or admin_preset_names:
+                preset_lines = [
+                    "NovelAI 可用画师串预设名（实时）：",
+                    "调用 generate_image_novelai 且需要 preset_name 时，只能从下列名称中选择；不要编造不存在的预设名。",
+                    "如果没有明显合适项，可以不传 preset_name，让系统自动按场景选择。",
+                ]
+
+                if user_preset_names:
+                    user_names_text = "、".join(f"「{name}」" for name in user_preset_names)
+                    preset_lines.append(f"用户预设名：{user_names_text}")
+
+                if admin_preset_names:
+                    admin_names_text = "、".join(f"「{name}」" for name in admin_preset_names)
+                    preset_lines.append(f"管理员预设名：{admin_names_text}")
+
+                final_conversation.append(
+                    {"role": "user", "parts": ["\n".join(preset_lines)]}
+                )
+                final_conversation.append(
+                    {
+                        "role": "model",
+                        "parts": ["收到，我会按场景优先从这些可用预设名里选择。"],
+                    }
+                )
 
         # --- 2. 动态知识注入 ---
         # 注入世界之书 (RAG) 内容
