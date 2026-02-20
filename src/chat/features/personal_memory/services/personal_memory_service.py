@@ -118,6 +118,8 @@ class PersonalMemoryService:
             prompt=final_prompt,
             generation_config=chat_config.GEMINI_SUMMARY_GEN_CONFIG,
             model_name=chat_config.SUMMARY_MODEL,
+            # 摘要属于系统内部流程，失败时应返回 None，避免把错误文案写入长期记忆
+            return_error_text=False,
         )
 
         # 4. 将新摘要保存到数据库

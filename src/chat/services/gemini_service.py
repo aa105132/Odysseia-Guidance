@@ -150,6 +150,8 @@ def _api_key_handler(func: Callable) -> Callable:
                         await self.key_rotation_service.release_key(key_obj.key, success=True)
                         if func.__name__ == "generate_embedding":
                             return None
+                        if not kwargs.get("return_error_text", True):
+                            return None
                         return "呜哇，有点晕嘞，等我休息一会儿 <伤心>"
 
                 if key_obj:
@@ -162,6 +164,8 @@ def _api_key_handler(func: Callable) -> Callable:
                 log.error(
                     "所有API密钥均不可用，且 acquire_key 未能成功等待。这是异常情况。"
                 )
+                if not kwargs.get("return_error_text", True):
+                    return None
                 return "啊啊啊服务器要爆炸啦！现在有点忙不过来，你过一会儿再来找我玩吧！<生气>"
 
     return wrapper
@@ -2525,6 +2529,7 @@ class GeminiService:
             prompt=prompt,
             generation_config=gen_config_params,
             model_name=final_model_name,
+            return_error_text=False,
         )
 
     async def generate_simple_response(
@@ -2537,6 +2542,7 @@ class GeminiService:
         api_url: Optional[str] = None,
         api_key: Optional[str] = None,
         api_format: Optional[str] = None,
+        return_error_text: bool = True,
     ) -> Optional[str]:
         """
         一个用于单次、非对话式文本生成的方法，允许传入完整的生成配置和可选的模型名称。
@@ -2556,38 +2562,72 @@ class GeminiService:
             api_url: (可选) 覆盖默认 API URL。常用于特定功能使用独立 LLM 端点。
             api_key: (可选) 覆盖默认 API Key。留空则沿用主配置。
             api_format: (可选) 覆盖 API 格式，仅支持 "gemini"/"openai"。留空则沿用主配置。
+            return_error_text: 发生异常时是否返回面向用户的错误文案。False 时返回 None。
 
         Returns:
             生成的文本字符串，如果失败则返回 None。
         """
         # 获取 API 格式配置（支持调用方覆盖）
-        resolved_api_format = (api_format or getattr(app_config, '_db_api_format', None) or "gemini").strip().lower()
+        resolved_api_format = (
+            api_format or getattr(app_config, "_db_api_format", None) or "gemini"
+        ).strip().lower()
         if resolved_api_format not in {"gemini", "openai"}:
-            log.warning(f"generate_simple_response 收到未知 api_format={resolved_api_format}，回退为 gemini")
+            log.warning(
+                f"generate_simple_response 收到未知 api_format={resolved_api_format}，回退为 gemini"
+            )
             resolved_api_format = "gemini"
 
+        # 先确定请求模型，再尝试做“别名 -> 实际模型名”解析
+        requested_model_name = model_name or self.default_model_name
+        final_model_name = requested_model_name
+
+        endpoint_config = {}
+        if isinstance(requested_model_name, str):
+            endpoint_config = app_config.CUSTOM_GEMINI_ENDPOINTS.get(
+                requested_model_name, {}
+            ).copy()
+
+        endpoint_api_url = str(endpoint_config.get("base_url", "") or "").strip()
+        endpoint_api_key = str(endpoint_config.get("api_key", "") or "").strip()
+        endpoint_model_name = str(endpoint_config.get("model_name", "") or "").strip()
+
+        if endpoint_model_name:
+            final_model_name = endpoint_model_name
+            if endpoint_model_name != requested_model_name:
+                log.info(
+                    f"generate_simple_response 检测到模型别名 '{requested_model_name}'，"
+                    f"实际调用模型将使用 '{endpoint_model_name}'"
+                )
+
+        # 优先级：显式入参 > 模型专属端点配置 > Dashboard 全局配置 > 环境变量
         resolved_api_url = api_url
         if resolved_api_url is None:
-            resolved_api_url = getattr(app_config, '_db_api_url', None) or os.getenv("GEMINI_API_BASE_URL", "")
+            resolved_api_url = (
+                endpoint_api_url
+                or getattr(app_config, "_db_api_url", None)
+                or os.getenv("GEMINI_API_BASE_URL", "")
+            )
 
         resolved_api_key = api_key
         if resolved_api_key is None:
-            resolved_api_key = getattr(app_config, '_db_api_key', None) or os.getenv("GEMINI_API_KEYS", "")
-
-        lowered_api_url = (resolved_api_url or '').lower()
-        looks_like_gemini_endpoint = (
-            'generativelanguage.googleapis.com' in lowered_api_url
-            or 'aiplatform.googleapis.com' in lowered_api_url
-            or '/v1beta' in lowered_api_url
-        )
-        if resolved_api_format == 'openai' and looks_like_gemini_endpoint:
-            log.warning(
-                'generate_simple_response detected Gemini-like endpoint with openai format; forcing gemini format'
+            resolved_api_key = (
+                endpoint_api_key
+                or getattr(app_config, "_db_api_key", None)
+                or os.getenv("GEMINI_API_KEYS", "")
             )
-            resolved_api_format = 'gemini'
 
-        final_model_name = model_name or self.default_model_name
-        
+        lowered_api_url = (resolved_api_url or "").lower()
+        looks_like_gemini_endpoint = (
+            "generativelanguage.googleapis.com" in lowered_api_url
+            or "aiplatform.googleapis.com" in lowered_api_url
+            or "/v1beta" in lowered_api_url
+        )
+        if resolved_api_format == "openai" and looks_like_gemini_endpoint:
+            log.warning(
+                "generate_simple_response detected Gemini-like endpoint with openai format; forcing gemini format"
+            )
+            resolved_api_format = "gemini"
+
         # 调试日志
         has_messages = messages is not None and len(messages) > 0
         log.debug(
@@ -2595,7 +2635,9 @@ class GeminiService:
             f"api_format={resolved_api_format}, "
             f"api_url={'已配置' if resolved_api_url else '未配置'}, "
             f"api_key={'已配置' if resolved_api_key else '未配置'}, "
-            f"model={final_model_name}, has_messages={has_messages}"
+            f"requested_model={requested_model_name}, "
+            f"api_model={final_model_name}, "
+            f"has_messages={has_messages}"
         )
         
         # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
@@ -2608,6 +2650,7 @@ class GeminiService:
                 api_url=resolved_api_url,
                 api_key=resolved_api_key,
                 messages=messages,
+                return_error_text=return_error_text,
             )
         
         # 使用 Gemini SDK，优先使用 Dashboard 配置的 URL 和 Key
@@ -2620,6 +2663,7 @@ class GeminiService:
                 api_url=resolved_api_url,
                 api_key=resolved_api_key,
                 messages=messages,
+                return_error_text=return_error_text,
             )
         
         # 回退：如果没有 Dashboard 配置，使用 key rotation
@@ -2629,6 +2673,7 @@ class GeminiService:
             generation_config=generation_config,
             model_name=final_model_name,
             messages=messages,
+            return_error_text=return_error_text,
         )
     
     async def _generate_simple_with_gemini_custom(
@@ -2639,6 +2684,7 @@ class GeminiService:
         api_url: str,
         api_key: str,
         messages: Optional[List[Dict[str, str]]] = None,
+        return_error_text: bool = True,
     ) -> Optional[str]:
         """
         使用 Gemini SDK 和自定义端点生成简单响应（内部方法）。
@@ -2669,7 +2715,9 @@ class GeminiService:
             return None
         except Exception as e:
             log.error(f"Gemini SDK (自定义端点) 调用失败: {e}", exc_info=True)
-            return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+            if return_error_text:
+                return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+            return None
     
     @_api_key_handler
     async def _generate_simple_with_gemini_key_rotation(
@@ -2679,6 +2727,7 @@ class GeminiService:
         model_name: str,
         client: Any = None,
         messages: Optional[List[Dict[str, str]]] = None,
+        return_error_text: bool = True,
     ) -> Optional[str]:
         """
         使用 Gemini SDK 和 Key Rotation 生成简单响应（内部方法）。
@@ -2714,6 +2763,7 @@ class GeminiService:
         api_url: str,
         api_key: str,
         messages: Optional[List[Dict[str, str]]] = None,
+        return_error_text: bool = True,
     ) -> Optional[str]:
         """
         使用 OpenAI 兼容 API 生成简单响应（内部方法）。
@@ -2770,7 +2820,9 @@ class GeminiService:
                     if response.status != 200:
                         error_text = await response.text()
                         log.error(f"OpenAI 兼容 API (简单响应) 返回错误 {response.status}: {error_text}")
-                        return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+                        if return_error_text:
+                            return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+                        return None
                     
                     result = await response.json()
                     
@@ -2785,10 +2837,14 @@ class GeminiService:
                         return None
         except asyncio.TimeoutError:
             log.error("OpenAI 兼容 API (简单响应) 请求超时")
-            return "抱歉，AI服务响应超时，请稍后再试。"
+            if return_error_text:
+                return "抱歉，AI服务响应超时，请稍后再试。"
+            return None
         except Exception as e:
             log.error(f"OpenAI 兼容 API (简单响应) 调用失败: {e}", exc_info=True)
-            return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+            if return_error_text:
+                return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+            return None
 
     @_api_key_handler
     async def generate_thread_praise(
