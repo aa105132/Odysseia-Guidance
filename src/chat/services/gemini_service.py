@@ -1166,6 +1166,9 @@ class GeminiService:
         thinking_config_data = gen_config_data.pop("thinking_config", None)
         gen_config_params = {**gen_config_data, "safety_settings": self.safety_settings}
 
+        if self._is_no_thinking_model(model_key, api_model_name):
+            thinking_config_data = None
+
         # --- [新增] 动态开启 Google 搜索和 URL 上下文工具 ---
         # 1. 初始化一个工具配置列表
         enabled_tools = []
@@ -1231,19 +1234,41 @@ class GeminiService:
                 log.info(f"--- [工具调用循环: 第 {i + 1}/{max_calls} 次] ---")
 
             response = None
-            for attempt in range(2):
-                response = await client.aio.models.generate_content(
-                    model=(api_model_name or self.default_model_name),
-                    contents=conversation_history,
-                    config=gen_config,
-                )
+            for attempt in range(4):
+                try:
+                    response = await client.aio.models.generate_content(
+                        model=(api_model_name or self.default_model_name),
+                        contents=conversation_history,
+                        config=gen_config,
+                    )
+                except genai_errors.ClientError as e:
+                    unsupported_param = self._extract_unsupported_param_from_error(str(e))
+                    if unsupported_param:
+                        removed, thinking_config_data, removed_key = (
+                            self._drop_unsupported_generation_param(
+                                unsupported_param,
+                                gen_config_params,
+                                thinking_config_data,
+                            )
+                        )
+                        if removed:
+                            gen_config = types.GenerateContentConfig(**gen_config_params)
+                            if thinking_config_data:
+                                gen_config.thinking_config = types.ThinkingConfig(
+                                    **thinking_config_data
+                                )
+                            log.warning(
+                                f'gemini auto-drop unsupported param: {removed_key or unsupported_param}'
+                            )
+                            continue
+                    raise
                 if response and (
                     (response.candidates and response.candidates[0].content)
                     or (hasattr(response, "function_calls") and response.function_calls)
                 ):
                     break
                 log.warning(f"模型返回空响应 (尝试 {attempt + 1}/2)。将在1秒后重试...")
-                if attempt < 1:
+                if attempt < 3:
                     await asyncio.sleep(1)
 
             if log_detailed:

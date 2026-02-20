@@ -447,8 +447,37 @@ def load_emoji_mappings_from_file(file_path: str = None) -> bool:
         return False
 
     try:
-        with open(target_file, r, encoding=utf-8) as f:
+        with open(target_file, 'r', encoding='utf-8') as f:
             payload = json.load(f)
+
+        if not isinstance(payload, list):
+            raise ValueError('emoji persistence file must be a list')
+
+        loaded_mappings: list[tuple[re.Pattern, list[str]]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                raise ValueError('emoji mapping item must be an object')
+
+            placeholder = item.get('placeholder')
+            discord_emojis = item.get('discord_emojis')
+
+            if not isinstance(placeholder, str) or not placeholder:
+                raise ValueError('placeholder must be a non-empty string')
+            if not isinstance(discord_emojis, list) or any(
+                not isinstance(emoji, str) for emoji in discord_emojis
+            ):
+                raise ValueError('discord_emojis must be a string list')
+
+            loaded_mappings.append(
+                (compile_placeholder_pattern(placeholder), discord_emojis)
+            )
+
+        _replace_default_emoji_mappings(loaded_mappings)
+        log.info(f'Loaded persisted emoji mappings from: {target_file}')
+        return True
+    except Exception as e:
+        log.warning(f'Failed to load persisted emoji mappings: {e}')
+        return False
 
 
 def replace_emotion_tags(text: str, event_id: str = None, faction_id: str = None) -> str:
