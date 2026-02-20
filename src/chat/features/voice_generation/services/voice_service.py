@@ -233,19 +233,32 @@ class VoiceGenerationService:
     def _resolve_doubao_cluster(cls, configured_cluster: str, voice_type: str) -> str:
         """根据音色类型自动选择豆包 cluster。"""
         normalized_cluster = (configured_cluster or "").strip()
+        lowered_cluster = normalized_cluster.lower()
         is_clone_voice = cls._is_doubao_clone_voice(voice_type)
 
         if is_clone_voice:
-            # 复刻音色优先走 mega cluster，避免命中 tts.sync.level1
-            if not normalized_cluster or normalized_cluster.lower() == "volcano_tts":
-                return "volcano_mega_tts"
+            # 声音复刻（ICL）优先走 volcano_icl；兼容旧写法自动映射
+            if not lowered_cluster or lowered_cluster == "volcano_tts":
+                return "volcano_icl"
+            if lowered_cluster in {"volcano_mega", "volcano_mega_tts"}:
+                return "volcano_icl"
+            if lowered_cluster in {"volcano_mega_concurr", "volcano_mega_tts_concurr"}:
+                return "volcano_icl_concurr"
             return normalized_cluster
 
         # 官方音色默认走普通语音合成 cluster
-        if not normalized_cluster:
+        if not lowered_cluster:
             return "volcano_tts"
 
-        if normalized_cluster.lower() in {"volcano_mega_tts", "volcano_icl"}:
+        # 兼容误填：官方音色回落到 volcano_tts
+        if lowered_cluster in {
+            "volcano_icl",
+            "volcano_icl_concurr",
+            "volcano_mega",
+            "volcano_mega_tts",
+            "volcano_mega_concurr",
+            "volcano_mega_tts_concurr",
+        }:
             return "volcano_tts"
 
         return normalized_cluster
@@ -319,29 +332,36 @@ class VoiceGenerationService:
         app_id = self._client["app_id"]
         access_token = self._client["access_token"]
         configured_cluster = str(self._client.get("cluster", "")).strip()
+        configured_clone_cluster = str(config.get("CLONE_CLUSTER", "")).strip()
+        configured_clone_resource_id = str(config.get("CLONE_RESOURCE_ID", "")).strip()
         selected_voice = (voice_type or config.get("VOICE_TYPE") or "").strip()
         if not selected_voice:
             selected_voice = "zh_female_wanwanxiaohe_moon_bigtts"
 
-        cluster = self._resolve_doubao_cluster(configured_cluster, selected_voice)
+        is_clone_voice = self._is_doubao_clone_voice(selected_voice)
+        cluster_input = (
+            configured_clone_cluster if is_clone_voice and configured_clone_cluster else configured_cluster
+        )
+        cluster = self._resolve_doubao_cluster(cluster_input, selected_voice)
         resource_id = (
-            "volc.megatts.voiceclone"
-            if self._is_doubao_clone_voice(selected_voice)
+            configured_clone_resource_id or "seed-icl-2.0"
+            if is_clone_voice
             else "volc.megatts.default"
         )
-        if cluster != configured_cluster:
+        if cluster != cluster_input:
             log.info(
                 "豆包 cluster 已自动调整: %s -> %s（voice_type=%s）",
-                configured_cluster or "<empty>",
+                cluster_input or "<empty>",
                 cluster,
                 selected_voice,
             )
         log.info(
-            "豆包语音路由: voice_type=%s, cluster=%s, resource_id=%s, clone_voice=%s",
+            "豆包语音路由: voice_type=%s, cluster=%s, resource_id=%s, clone_voice=%s, clone_cluster_config=%s",
             selected_voice,
             cluster,
             resource_id,
-            self._is_doubao_clone_voice(selected_voice),
+            is_clone_voice,
+            configured_clone_cluster or "<empty>",
         )
 
         requested_format = str(config.get("AUDIO_FORMAT", "mp3")).strip().lower()
@@ -435,6 +455,8 @@ class VoiceGenerationService:
                     "Content-Type": "application/json",
                     "Resource-Id": resource_id,
                 }
+                if is_clone_voice:
+                    headers["X-Api-Resource-Id"] = resource_id
                 try:
                     async with session.post(endpoint, headers=headers, json=payload) as response:
                         status_code = response.status

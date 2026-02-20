@@ -424,7 +424,11 @@ def _get_voice_config():
         # 火山引擎豆包使用
         "APP_ID": os.getenv("VOICE_APP_ID", ""),
         "ACCESS_TOKEN": os.getenv("VOICE_ACCESS_TOKEN", ""),
+        # 官方音色默认 cluster
         "CLUSTER": os.getenv("VOICE_CLUSTER", "volcano_tts"),
+        # 复刻音色（S_）专用 cluster / resource-id（默认按 ICL2.0 字符版）
+        "CLONE_CLUSTER": os.getenv("VOICE_CLONE_CLUSTER", "volcano_icl"),
+        "CLONE_RESOURCE_ID": os.getenv("VOICE_CLONE_RESOURCE_ID", "seed-icl-2.0"),
         # 通用语音参数
         "VOICE_TYPE": os.getenv("VOICE_VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"),
         # 可用音色列表（供提示词注入和工具选型；留空表示不限制）

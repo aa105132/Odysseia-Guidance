@@ -126,6 +126,8 @@ class VoiceConfigUpdate(BaseModel):
     app_id: Optional[str] = None
     access_token: Optional[str] = None
     cluster: Optional[str] = None
+    clone_cluster: Optional[str] = None
+    clone_resource_id: Optional[str] = None
     voice_type: Optional[str] = None
     available_voice_types: Optional[List[str]] = None
     voice_type_hints: Optional[Dict[str, str]] = None  # 音色说明映射（voice_id -> 场景说明）
@@ -640,6 +642,8 @@ async def get_all_config(token: str = Depends(verify_token)):
             "access_token_masked": voice_access_token_masked,
             "has_access_token": bool(voice_access_token),
             "cluster": voice_config.get("CLUSTER", ""),
+            "clone_cluster": voice_config.get("CLONE_CLUSTER", "volcano_icl"),
+            "clone_resource_id": voice_config.get("CLONE_RESOURCE_ID", "seed-icl-2.0"),
             "voice_type": voice_config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"),
             "available_voice_types": voice_available_types,
             "voice_type_hints": voice_type_hints,
@@ -1638,6 +1642,8 @@ async def get_voice_config(token: str = Depends(verify_token)):
     db_app_id = await chat_db_manager.get_global_setting("voice_app_id")
     db_access_token = await chat_db_manager.get_global_setting("voice_access_token")
     db_cluster = await chat_db_manager.get_global_setting("voice_cluster")
+    db_clone_cluster = await chat_db_manager.get_global_setting("voice_clone_cluster")
+    db_clone_resource_id = await chat_db_manager.get_global_setting("voice_clone_resource_id")
     db_voice_type = await chat_db_manager.get_global_setting("voice_voice_type")
     db_audio_format = await chat_db_manager.get_global_setting("voice_audio_format")
     db_speed_ratio = await chat_db_manager.get_global_setting("voice_speed_ratio")
@@ -1670,6 +1676,20 @@ async def get_voice_config(token: str = Depends(verify_token)):
     cluster = str(
         db_cluster if db_cluster is not None else config.get("CLUSTER", "")
     ).strip()
+    clone_cluster = str(
+        db_clone_cluster
+        if db_clone_cluster is not None
+        else config.get("CLONE_CLUSTER", "volcano_icl")
+    ).strip()
+    clone_resource_id = str(
+        db_clone_resource_id
+        if db_clone_resource_id is not None
+        else config.get("CLONE_RESOURCE_ID", "seed-icl-2.0")
+    ).strip()
+    if not clone_cluster:
+        clone_cluster = "volcano_icl"
+    if not clone_resource_id:
+        clone_resource_id = "seed-icl-2.0"
     voice_type = str(
         db_voice_type or config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts")
     ).strip()
@@ -1768,6 +1788,8 @@ async def get_voice_config(token: str = Depends(verify_token)):
         "access_token_masked": access_token_masked,
         "has_access_token": bool(access_token),
         "cluster": cluster,
+        "clone_cluster": clone_cluster,
+        "clone_resource_id": clone_resource_id,
         "voice_type": voice_type,
         "available_voice_types": available_voice_types,
         "voice_type_hints": voice_type_hints,
@@ -1869,6 +1891,22 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
         env_updates["VOICE_CLUSTER"] = cluster
         updated["cluster"] = cluster
         await chat_db_manager.set_global_setting("voice_cluster", cluster)
+
+    if config.clone_cluster is not None:
+        clone_cluster = str(config.clone_cluster).strip()
+        chat_config.VOICE_CONFIG["CLONE_CLUSTER"] = clone_cluster
+        os.environ["VOICE_CLONE_CLUSTER"] = clone_cluster
+        env_updates["VOICE_CLONE_CLUSTER"] = clone_cluster
+        updated["clone_cluster"] = clone_cluster
+        await chat_db_manager.set_global_setting("voice_clone_cluster", clone_cluster)
+
+    if config.clone_resource_id is not None:
+        clone_resource_id = str(config.clone_resource_id).strip()
+        chat_config.VOICE_CONFIG["CLONE_RESOURCE_ID"] = clone_resource_id
+        os.environ["VOICE_CLONE_RESOURCE_ID"] = clone_resource_id
+        env_updates["VOICE_CLONE_RESOURCE_ID"] = clone_resource_id
+        updated["clone_resource_id"] = clone_resource_id
+        await chat_db_manager.set_global_setting("voice_clone_resource_id", clone_resource_id)
 
     if config.voice_type is not None:
         voice_type = str(config.voice_type).strip()

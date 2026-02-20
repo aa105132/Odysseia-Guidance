@@ -971,14 +971,33 @@
                             <p class="text-xs text-slate-500 mt-1">请填写语音服务 Access Token；火山云通用 AccessKey/SecretKey 不能直接代替此字段。</p>
                         </div>
 
-                        <div x-show="voiceForm.provider === 'doubao'">
-                            <label class="block text-sm font-medium text-slate-300 mb-2">Cluster（豆包可选）</label>
-                            <input type="text" x-model="voiceForm.cluster"
-                                   placeholder="留空自动判断（官方音色→volcano_tts，复刻音色→volcano_mega_tts）"
-                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        <div x-show="voiceForm.provider === 'doubao'" class="space-y-3">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">官方音色 Cluster（豆包可选）</label>
+                                <input type="text" x-model="voiceForm.cluster"
+                                       placeholder="留空自动使用 volcano_tts"
+                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-300 mb-2">复刻音色 Cluster（ICL）</label>
+                                    <input type="text" x-model="voiceForm.clone_cluster"
+                                           placeholder="volcano_icl（字符版）或 volcano_icl_concurr（并发版）"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-300 mb-2">复刻音色 Resource-Id（ICL）</label>
+                                    <input type="text" x-model="voiceForm.clone_resource_id"
+                                           placeholder="seed-icl-2.0（ICL2.0 字符版）"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                            </div>
+
                             <p class="text-xs text-slate-500 mt-1">
-                                建议留空由系统按音色自动路由：官方音色走 <code class="text-slate-300">volcano_tts + volc.megatts.default</code>，
-                                复刻音色（如 <code class="text-slate-300">S_03FKArQO1</code>）走 <code class="text-slate-300">volcano_mega_tts + volc.megatts.voiceclone</code>。
+                                建议保持：官方音色走 <code class="text-slate-300">volcano_tts + volc.megatts.default</code>；
+                                复刻音色（如 <code class="text-slate-300">S_xxx</code>）走
+                                <code class="text-slate-300">volcano_icl + seed-icl-2.0</code>（ICL2.0 字符版）。
                             </p>
                         </div>
                     </div>
@@ -2825,6 +2844,8 @@
                     app_id: '',
                     access_token: '',
                     cluster: '',
+                    clone_cluster: 'volcano_icl',
+                    clone_resource_id: 'seed-icl-2.0',
                     voice_type: 'zh_female_wanwanxiaohe_moon_bigtts',
                     available_voice_types_text: '',
                     voice_type_hints_text: '',
@@ -3055,6 +3076,8 @@
                         this.voiceForm.model_name = this.config.voice.model_name || 'FunAudioLLM/CosyVoice2-0.5B';
                         this.voiceForm.app_id = this.config.voice.app_id || '';
                         this.voiceForm.cluster = this.config.voice.cluster || '';
+                        this.voiceForm.clone_cluster = this.config.voice.clone_cluster || 'volcano_icl';
+                        this.voiceForm.clone_resource_id = this.config.voice.clone_resource_id || 'seed-icl-2.0';
                         this.voiceForm.voice_type = this.config.voice.voice_type || 'zh_female_wanwanxiaohe_moon_bigtts';
                         const presetVoiceTypes = Array.isArray(this.config.voice.available_voice_types) ? this.config.voice.available_voice_types : [];
                         this.voiceForm.available_voice_types_text = presetVoiceTypes.join('\n');
@@ -4376,6 +4399,8 @@
                             this.voiceForm.app_id = data.app_id || '';
                             this.voiceForm.access_token = '';
                             this.voiceForm.cluster = data.cluster || '';
+                            this.voiceForm.clone_cluster = data.clone_cluster || 'volcano_icl';
+                            this.voiceForm.clone_resource_id = data.clone_resource_id || 'seed-icl-2.0';
                             this.voiceForm.voice_type = data.voice_type || 'zh_female_wanwanxiaohe_moon_bigtts';
                             const availableVoiceTypes = Array.isArray(data.available_voice_types) ? data.available_voice_types : [];
                             this.voiceForm.available_voice_types_text = availableVoiceTypes.join('\n');
@@ -4497,9 +4522,9 @@
                             base_url: (this.voiceForm.base_url ?? '').trim(),
                             model_name: this.voiceForm.model_name ?? '',
                             app_id: this.voiceForm.app_id ?? '',
-                            cluster: this.voiceForm.provider === 'doubao'
-                                ? (this.voiceForm.cluster ?? '').trim()
-                                : (this.voiceForm.cluster ?? '').trim(),
+                            cluster: (this.voiceForm.cluster ?? '').trim(),
+                            clone_cluster: (this.voiceForm.clone_cluster ?? '').trim(),
+                            clone_resource_id: (this.voiceForm.clone_resource_id ?? '').trim(),
                             voice_type: this.voiceForm.voice_type ?? '',
                             available_voice_types: uniqueVoiceTypes,
                             voice_type_hints: voiceTypeHints,
