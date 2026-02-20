@@ -612,6 +612,22 @@ class GeminiService:
             if param_chars:
                 return ''.join(param_chars).split('.')[-1].lstrip('_')
 
+        support_marker = 'parameter '
+        marker_index = lowered.find(support_marker)
+        if marker_index != -1 and 'is not supported' in lowered[marker_index:]:
+            tail = lowered[marker_index + len(support_marker):]
+            while tail and not (tail[0].isalnum() or tail[0] == '_'):
+                tail = tail[1:]
+
+            param_chars = []
+            for char in tail:
+                if char.isalnum() or char in ('_', '.'):
+                    param_chars.append(char)
+                else:
+                    break
+            if param_chars:
+                return ''.join(param_chars).split('.')[-1].lstrip('_')
+
         return None
 
     def _drop_unsupported_generation_param(
@@ -1803,6 +1819,7 @@ class GeminiService:
         max_tool_calls = 5
         called_tool_names = []
         web_search_source_links: List[tuple] = []
+        disabled_payload_fields: set[str] = set()
         
         for iteration in range(max_tool_calls):
             payload = {
@@ -1817,6 +1834,15 @@ class GeminiService:
                 payload["tools"] = openai_tools
                 payload["tool_choice"] = "auto"
             
+            payload = self._build_openai_chat_payload(
+                model_name=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                tools=openai_tools,
+                disabled_fields=disabled_payload_fields,
+            )
+
             # 调试日志
             if app_config.DEBUG_CONFIG.get("LOG_AI_FULL_CONTEXT", False):
                 log.info(f"OpenAI API 请求 URL: {base_api_url}")
@@ -1834,6 +1860,19 @@ class GeminiService:
                     ) as response:
                         if response.status != 200:
                             error_text = await response.text()
+                            unsupported_param = self._extract_unsupported_param_from_error(
+                                error_text
+                            )
+                            if (
+                                unsupported_param
+                                and unsupported_param in payload
+                                and unsupported_param not in disabled_payload_fields
+                            ):
+                                disabled_payload_fields.add(unsupported_param)
+                                log.warning(
+                                    f'openai auto-drop unsupported param: {unsupported_param}'
+                                )
+                                continue
                             log.error(f"OpenAI 兼容 API 返回错误 {response.status}: {error_text}")
                             try:
                                 error_json = json.loads(error_text)
@@ -2563,7 +2602,7 @@ class GeminiService:
             safety_settings=self.safety_settings,
         )
 
-        if thinking_budget is not None:
+        if thinking_budget is not None and not self._is_no_thinking_model(final_model_name):
             gen_config.thinking_config = types.ThinkingConfig(
                 include_thoughts=True, thinking_budget=thinking_budget
             )

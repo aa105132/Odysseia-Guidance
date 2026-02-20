@@ -1896,6 +1896,10 @@ async def update_moderation_config(config: ModerationConfigUpdate, token: str = 
 
 
 @app.get("/api/config/emoji")
+async def _get_emoji_config_route(token: str = Depends(verify_token)):
+    return await get_emoji_config(token)
+
+
 async def get_emoji_config(token: str = Depends(verify_token)):
     """获取表情配置"""
     # 解析当前的表情映射
@@ -1903,6 +1907,7 @@ async def get_emoji_config(token: str = Depends(verify_token)):
     for pattern, emojis in emoji_config.EMOJI_MAPPINGS:
         # 从正则表达式中提取占位符
         placeholder = pattern.pattern.replace("\\<", "<").replace("\\>", ">")
+        placeholder = emoji_config.pattern_to_placeholder(pattern)
         mappings.append({
             "placeholder": placeholder,
             "discord_emojis": emojis,
@@ -1917,6 +1922,7 @@ async def get_emoji_config(token: str = Depends(verify_token)):
             faction_list = []
             for pattern, emojis in faction_emojis:
                 placeholder = pattern.pattern.replace("\\<", "<").replace("\\>", ">")
+                placeholder = emoji_config.pattern_to_placeholder(pattern)
                 faction_list.append({
                     "placeholder": placeholder,
                     "discord_emojis": emojis,
@@ -1942,6 +1948,20 @@ async def get_emoji_config(token: str = Depends(verify_token)):
 
 
 @app.put("/api/config/emoji")
+async def _update_emoji_config_route(
+    config: EmojiMappingUpdate,
+    token: str = Depends(verify_token),
+):
+    return await update_emoji_config(config, token)
+
+
+def _persist_emoji_mappings_or_raise() -> None:
+    try:
+        emoji_config.save_emoji_mappings_to_file()
+    except OSError as e:
+        raise HTTPException(500, f'表情映射持久化失败: {e}') from e
+
+
 async def update_emoji_config(config: EmojiMappingUpdate, token: str = Depends(verify_token)):
     """更新表情映射（运行时）"""
     updated = []
@@ -1958,6 +1978,8 @@ async def update_emoji_config(config: EmojiMappingUpdate, token: str = Depends(v
         # 查找并更新现有映射
         found = False
         escaped_placeholder = placeholder.replace("<", "\\<").replace(">", "\\>")
+        compiled_placeholder = emoji_config.compile_placeholder_pattern(placeholder)
+        escaped_placeholder = compiled_placeholder.pattern
         for i, (pattern, _) in enumerate(emoji_config.EMOJI_MAPPINGS):
             if pattern.pattern == escaped_placeholder:
                 emoji_config.EMOJI_MAPPINGS[i] = (pattern, discord_emojis)
@@ -1968,6 +1990,7 @@ async def update_emoji_config(config: EmojiMappingUpdate, token: str = Depends(v
         # 如果不存在，添加新映射
         if not found:
             new_pattern = re.compile(escaped_placeholder)
+            new_pattern = compiled_placeholder
             emoji_config.EMOJI_MAPPINGS.append((new_pattern, discord_emojis))
             updated.append(placeholder)
     

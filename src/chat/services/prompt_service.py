@@ -272,9 +272,10 @@ class PromptService:
             if has_replied_image:
                 reply_injection_prompt += (
                     "\n\n⚠️ 重要：用户回复的消息中包含图片附件（已附在下方用户消息中）。"
-                    "如果用户请求与该图片相关的任何操作（修改、重画、调整、编辑、美化等），"
-                    "你必须使用 edit_image 工具而不是 generate_image，"
-                    "因为 edit_image 会自动从回复的消息中提取该图片作为参考。"
+                    "你必须先判断用户意图是‘改这张图’还是‘参考这张图风格新画一张’。"
+                    "只有用户明确要求修改原图/图生图时才调用 edit_image；"
+                    "如果用户是照这个画风画新内容、参考风格二创、或继续之前 NovelAI 风格，"
+                    "应优先调用 generate_image_novelai。"
                 )
             
             final_conversation.append(
@@ -396,6 +397,25 @@ class PromptService:
             if images
             else []
         )
+
+        if attachment_images:
+            final_conversation.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        "绘图路由提示：检测到用户当前消息或回复上下文中存在图片。"
+                        "涉及画图请求时，请先观察图片内容（角色、画风、构图、色调），"
+                        "再判断工具：明确改原图才用 edit_image；"
+                        "参考画风/元素新画一张优先 generate_image_novelai。"
+                    ],
+                }
+            )
+            final_conversation.append(
+                {
+                    "role": "model",
+                    "parts": ["收到，我会先看图再决定调用 edit_image 还是 generate_image_novelai。"],
+                }
+            )
 
         has_gif_attachment = any(
             "gif" in (img.get("mime_type", "") or "").lower()

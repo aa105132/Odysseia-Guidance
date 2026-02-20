@@ -14,9 +14,9 @@ import re
 log = logging.getLogger(__name__)
 
 _PROJECT_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), .., .., ..)
+    os.path.join(os.path.dirname(__file__), '..', '..', '..')
 )
-EMOJI_MAPPINGS_PERSIST_FILE = os.path.join(_PROJECT_ROOT, data, emoji_mappings.json)
+EMOJI_MAPPINGS_PERSIST_FILE = os.path.join(_PROJECT_ROOT, 'data', 'emoji_mappings.json')
 
 # 定义表情符号映射
 # 格式: [(正则表达式, Discord表情符号), ...]
@@ -410,7 +410,7 @@ FACTION_EMOJI_MAPPINGS = {
 
 
 def pattern_to_placeholder(pattern: re.Pattern) -> str:
-    return pattern.pattern.replace(\\<, <).replace(\\>, >)
+    return pattern.pattern.replace('\\<', '<').replace('\\>', '>')
 
 
 def compile_placeholder_pattern(placeholder: str) -> re.Pattern:
@@ -425,8 +425,8 @@ def _replace_default_emoji_mappings(mappings: list[tuple[re.Pattern, list[str]]]
 def _serialize_default_emoji_mappings() -> list[dict]:
     return [
         {
-            placeholder: pattern_to_placeholder(pattern),
-            discord_emojis: list(emojis),
+            'placeholder': pattern_to_placeholder(pattern),
+            'discord_emojis': list(emojis),
         }
         for pattern, emojis in EMOJI_MAPPINGS
     ]
@@ -478,6 +478,18 @@ def load_emoji_mappings_from_file(file_path: str = None) -> bool:
     except Exception as e:
         log.warning(f'Failed to load persisted emoji mappings: {e}')
         return False
+
+
+def save_emoji_mappings_to_file(file_path: str = None) -> None:
+    target_file = file_path or EMOJI_MAPPINGS_PERSIST_FILE
+    os.makedirs(os.path.dirname(target_file), exist_ok=True)
+    payload = _serialize_default_emoji_mappings()
+
+    with open(target_file, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+load_emoji_mappings_from_file()
 
 
 def replace_emotion_tags(text: str, event_id: str = None, faction_id: str = None) -> str:
