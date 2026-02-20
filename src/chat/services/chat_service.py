@@ -190,15 +190,28 @@ class ChatService:
             current_model = await chat_settings_service.get_current_ai_model()
             log.info(f"当前使用的AI模型: {current_model}")
 
-            # --- [新增] 根据上下文确定用于工具设置的用户ID ---
+            # --- 根据上下文确定用于工具设置的用户ID ---
+            # 规则：
+            # 1) 帖子内优先使用帖主设置（维持“帖主控制帖子工具”的语义）
+            # 2) 非帖子场景使用当前发言者设置，避免回落到“默认工具集”
             user_id_for_settings: Optional[str] = None
-            if isinstance(message.channel, discord.Thread) and message.channel.owner_id:
-                user_id_for_settings = str(message.channel.owner_id)
-                log.info(
-                    f"消息在帖子中，将使用帖主 {user_id_for_settings} 的工具设置。"
-                )
+            if isinstance(message.channel, discord.Thread):
+                if message.channel.owner_id:
+                    user_id_for_settings = str(message.channel.owner_id)
+                    log.info(
+                        f"消息在帖子中，将使用帖主 {user_id_for_settings} 的工具设置。"
+                    )
+                else:
+                    user_id_for_settings = str(author.id)
+                    log.warning(
+                        "消息在帖子中但未获取到帖主ID，"
+                        f"回退为使用发言者 {user_id_for_settings} 的工具设置。"
+                    )
             else:
-                log.info("消息不在帖子中，将使用默认工具集。")
+                user_id_for_settings = str(author.id)
+                log.info(
+                    f"消息不在帖子中，将使用发言者 {user_id_for_settings} 的工具设置。"
+                )
             # --- [结束] ---
 
             ai_response = await gemini_service.generate_response(
