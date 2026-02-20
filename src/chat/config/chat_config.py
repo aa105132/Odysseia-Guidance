@@ -222,6 +222,9 @@ def _get_imagen_config():
         # - "base64": 仅接受 base64 内联数据
         # - "url": 优先从 URL 下载图片（适用于上游 base64 有问题的情况）
         "IMAGE_RESPONSE_FORMAT": os.getenv("GEMINI_IMAGEN_RESPONSE_FORMAT", "auto"),
+        # 空回自动重试次数（图片/视频全局共用）
+        # 仅在上游成功响应但未返回图片/视频时触发重试
+        "EMPTY_RESULT_MAX_RETRIES": int(os.getenv("GENERATION_EMPTY_RESULT_MAX_RETRIES", "3")),
     }
 
 GEMINI_IMAGEN_CONFIG = _get_imagen_config()
@@ -254,6 +257,8 @@ def _get_video_config():
         "VIDEO_GENERATION_COST": int(os.getenv("VIDEO_GEN_COST", "10")),
         # 视频时长限制（秒）
         "MAX_DURATION": int(os.getenv("VIDEO_GEN_MAX_DURATION", "8")),
+        # 空回自动重试次数（图片/视频全局共用）
+        "EMPTY_RESULT_MAX_RETRIES": int(os.getenv("GENERATION_EMPTY_RESULT_MAX_RETRIES", "3")),
     }
 
 VIDEO_GEN_CONFIG = _get_video_config()
@@ -296,6 +301,8 @@ def _get_novelai_config():
         "IMAGE_GENERATION_COST": int(os.getenv("NOVELAI_GENERATION_COST", "5")),
         # 429 重试次数（请求队列中的最大重试次数）
         "MAX_RETRIES": int(os.getenv("NOVELAI_MAX_RETRIES", "3")),
+        # 空回自动重试次数（图片/视频全局共用）
+        "EMPTY_RESULT_MAX_RETRIES": int(os.getenv("GENERATION_EMPTY_RESULT_MAX_RETRIES", "3")),
         # 默认负面提示词
         "DEFAULT_NEGATIVE_PROMPT": os.getenv(
             "NOVELAI_DEFAULT_NEGATIVE",
@@ -820,6 +827,7 @@ CHANNEL_MUTE_CONFIG = {
 
 # --- 图片负反馈与绘图封禁配置 ---
 IMAGE_FEEDBACK_CONFIG = {
+    "ENABLED": _parse_bool_env("IMAGE_FEEDBACK_ENABLED", "True"),
     "REPORT_EMOJI": os.getenv("IMAGE_FEEDBACK_REPORT_EMOJI", "💩"),
     "BAN_TRIGGER_COUNT": _parse_int_env("IMAGE_FEEDBACK_BAN_TRIGGER_COUNT", 3),
     # 仅在该窗口内再次触发才会升级封禁档位；超出窗口重置为初始档位

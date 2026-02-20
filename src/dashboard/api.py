@@ -113,6 +113,7 @@ class VideoConfigUpdate(BaseModel):
     video_format: Optional[str] = None  # 'url' 或 'html'
     generation_cost: Optional[int] = None
     max_duration: Optional[int] = None
+    empty_result_max_retries: Optional[int] = None  # 空回自动重试次数（全局）
 
 
 class NovelAIConfigUpdate(BaseModel):
@@ -134,6 +135,7 @@ class NovelAIConfigUpdate(BaseModel):
     generation_cost: Optional[int] = None
     default_negative_prompt: Optional[str] = None
     max_retries: Optional[int] = None
+    empty_result_max_retries: Optional[int] = None  # 空回自动重试次数（全局）
     default_artist_string: Optional[str] = None
     prompt_model: Optional[str] = None  # NovelAI 提示词生成专用 LLM（AI描述/AI重写）
     prompt_api_url: Optional[str] = None  # NovelAI 提示词生成专用 API URL
@@ -248,10 +250,14 @@ class CoinConfigUpdate(BaseModel):
 
 
 class ModerationConfigUpdate(BaseModel):
-    """管理配置更新（警告与拉黑设置）"""
+    """管理配置更新（警告、拉黑与图片负反馈封禁设置）"""
     warning_threshold: Optional[int] = None  # 警告次数阈值
     ban_duration_min: Optional[int] = None  # 拉黑时长最小值（分钟）
     ban_duration_max: Optional[int] = None  # 拉黑时长最大值（分钟）
+    image_feedback_enabled: Optional[bool] = None  # 是否启用图片负反馈封禁
+    image_feedback_ban_trigger_count: Optional[int] = None  # 触发封禁所需反馈数
+    image_feedback_repeat_window_minutes: Optional[int] = None  # 升档时间窗口（分钟）
+    image_feedback_ban_ladder_minutes: Optional[List[int]] = None  # 封禁阶梯（分钟）
 
 
 class SummaryConfigUpdate(BaseModel):
@@ -419,6 +425,20 @@ async def get_all_config(token: str = Depends(verify_token)):
             "warning_threshold": chat_config.BLACKLIST_WARNING_THRESHOLD,
             "ban_duration_min": chat_config.BLACKLIST_BAN_DURATION_MINUTES[0],
             "ban_duration_max": chat_config.BLACKLIST_BAN_DURATION_MINUTES[1],
+            "image_feedback_enabled": bool(
+                chat_config.IMAGE_FEEDBACK_CONFIG.get("ENABLED", True)
+            ),
+            "image_feedback_ban_trigger_count": int(
+                chat_config.IMAGE_FEEDBACK_CONFIG.get("BAN_TRIGGER_COUNT", 3)
+            ),
+            "image_feedback_repeat_window_minutes": int(
+                chat_config.IMAGE_FEEDBACK_CONFIG.get("REPEAT_WINDOW_MINUTES", 60)
+            ),
+            "image_feedback_ban_ladder_minutes": list(
+                chat_config.IMAGE_FEEDBACK_CONFIG.get(
+                    "BAN_DURATION_LADDER_MINUTES", [10, 30, 60, 180, 720]
+                )
+            ),
         },
         "spring_festival": {
             "enabled": chat_config.SPRING_FESTIVAL_CONFIG.get("enabled", True),
@@ -1204,6 +1224,7 @@ async def get_video_config(token: str = Depends(verify_token)):
     db_video_format = await chat_db_manager.get_global_setting("video_format")
     db_generation_cost = await chat_db_manager.get_global_setting("video_generation_cost")
     db_max_duration = await chat_db_manager.get_global_setting("video_max_duration")
+    db_empty_result_max_retries = await chat_db_manager.get_global_setting("generation_empty_result_max_retries")
     
     # 优先使用数据库值
     enabled = db_enabled == "true" if db_enabled else config.get("ENABLED", False)
@@ -1214,6 +1235,14 @@ async def get_video_config(token: str = Depends(verify_token)):
     video_format = db_video_format or config.get("VIDEO_FORMAT", "url")
     generation_cost = int(db_generation_cost) if db_generation_cost else config.get("VIDEO_GENERATION_COST", 10)
     max_duration = int(db_max_duration) if db_max_duration else config.get("MAX_DURATION", 8)
+    empty_result_max_retries = (
+        int(db_empty_result_max_retries)
+        if db_empty_result_max_retries is not None
+        else config.get(
+            "EMPTY_RESULT_MAX_RETRIES",
+            chat_config.NOVELAI_CONFIG.get("EMPTY_RESULT_MAX_RETRIES", 3),
+        )
+    )
     
     # 隐藏 API Key
     masked_key = ""
@@ -1242,6 +1271,7 @@ async def get_video_config(token: str = Depends(verify_token)):
         "video_format": video_format,
         "generation_cost": generation_cost,
         "max_duration": max_duration,
+        "empty_result_max_retries": empty_result_max_retries,
         "service_available": service_available,
     }
 
@@ -1313,6 +1343,20 @@ async def update_video_config(config: VideoConfigUpdate, token: str = Depends(ve
         chat_config.VIDEO_GEN_CONFIG["MAX_DURATION"] = config.max_duration
         updated["max_duration"] = config.max_duration
         await chat_db_manager.set_global_setting("video_max_duration", str(config.max_duration))
+
+    if config.empty_result_max_retries is not None:
+        if not 0 <= config.empty_result_max_retries <= 10:
+            raise HTTPException(400, "空回重试次数必须在 0-10 之间")
+        chat_config.VIDEO_GEN_CONFIG["EMPTY_RESULT_MAX_RETRIES"] = config.empty_result_max_retries
+        chat_config.GEMINI_IMAGEN_CONFIG["EMPTY_RESULT_MAX_RETRIES"] = config.empty_result_max_retries
+        chat_config.NOVELAI_CONFIG["EMPTY_RESULT_MAX_RETRIES"] = config.empty_result_max_retries
+        os.environ["GENERATION_EMPTY_RESULT_MAX_RETRIES"] = str(config.empty_result_max_retries)
+        env_updates["GENERATION_EMPTY_RESULT_MAX_RETRIES"] = str(config.empty_result_max_retries)
+        updated["empty_result_max_retries"] = config.empty_result_max_retries
+        await chat_db_manager.set_global_setting(
+            "generation_empty_result_max_retries",
+            str(config.empty_result_max_retries),
+        )
     
     # 写入 .env 文件
     if env_updates:
@@ -1360,6 +1404,7 @@ async def get_novelai_config(token: str = Depends(verify_token)):
     db_generation_cost = await chat_db_manager.get_global_setting("novelai_generation_cost")
     db_default_negative = await chat_db_manager.get_global_setting("novelai_default_negative")
     db_max_retries = await chat_db_manager.get_global_setting("novelai_max_retries")
+    db_empty_result_max_retries = await chat_db_manager.get_global_setting("generation_empty_result_max_retries")
     db_default_artist_string = await chat_db_manager.get_global_setting("novelai_default_artist_string")
     db_prompt_model = await chat_db_manager.get_global_setting("novelai_prompt_model")
     db_prompt_api_url = await chat_db_manager.get_global_setting("novelai_prompt_api_url")
@@ -1385,6 +1430,14 @@ async def get_novelai_config(token: str = Depends(verify_token)):
     generation_cost = int(db_generation_cost) if db_generation_cost else config.get("IMAGE_GENERATION_COST", 5)
     default_negative = db_default_negative or config.get("DEFAULT_NEGATIVE_PROMPT", "")
     max_retries = int(db_max_retries) if db_max_retries else config.get("MAX_RETRIES", 3)
+    empty_result_max_retries = (
+        int(db_empty_result_max_retries)
+        if db_empty_result_max_retries is not None
+        else config.get(
+            "EMPTY_RESULT_MAX_RETRIES",
+            chat_config.VIDEO_GEN_CONFIG.get("EMPTY_RESULT_MAX_RETRIES", 3),
+        )
+    )
     default_artist_string = db_default_artist_string or config.get("DEFAULT_ARTIST_STRING", "")
     configured_prompt_model = (
         db_prompt_model if db_prompt_model is not None else config.get("PROMPT_MODEL", "")
@@ -1445,6 +1498,7 @@ async def get_novelai_config(token: str = Depends(verify_token)):
         "prompt_api_key_masked": masked_prompt_api_key,
         "has_prompt_api_key": bool(configured_prompt_api_key),
         "max_retries": max_retries,
+        "empty_result_max_retries": empty_result_max_retries,
         "service_available": service_available,
         "available_models": [
             "nai-diffusion-4-5-full",
@@ -1599,6 +1653,20 @@ async def update_novelai_config(config: NovelAIConfigUpdate, token: str = Depend
         env_updates["NOVELAI_MAX_RETRIES"] = str(config.max_retries)
         updated["max_retries"] = config.max_retries
         await chat_db_manager.set_global_setting("novelai_max_retries", str(config.max_retries))
+
+    if config.empty_result_max_retries is not None:
+        if not 0 <= config.empty_result_max_retries <= 10:
+            raise HTTPException(400, "空回重试次数必须在 0-10 之间")
+        chat_config.NOVELAI_CONFIG["EMPTY_RESULT_MAX_RETRIES"] = config.empty_result_max_retries
+        chat_config.GEMINI_IMAGEN_CONFIG["EMPTY_RESULT_MAX_RETRIES"] = config.empty_result_max_retries
+        chat_config.VIDEO_GEN_CONFIG["EMPTY_RESULT_MAX_RETRIES"] = config.empty_result_max_retries
+        os.environ["GENERATION_EMPTY_RESULT_MAX_RETRIES"] = str(config.empty_result_max_retries)
+        env_updates["GENERATION_EMPTY_RESULT_MAX_RETRIES"] = str(config.empty_result_max_retries)
+        updated["empty_result_max_retries"] = config.empty_result_max_retries
+        await chat_db_manager.set_global_setting(
+            "generation_empty_result_max_retries",
+            str(config.empty_result_max_retries),
+        )
 
     if config.default_artist_string is not None:
         chat_config.NOVELAI_CONFIG["DEFAULT_ARTIST_STRING"] = config.default_artist_string
@@ -2072,16 +2140,58 @@ async def get_moderation_config(token: str = Depends(verify_token)):
     db_warning_threshold = await chat_db_manager.get_global_setting("warning_threshold")
     db_ban_duration_min = await chat_db_manager.get_global_setting("ban_duration_min")
     db_ban_duration_max = await chat_db_manager.get_global_setting("ban_duration_max")
-    
+    db_image_feedback_enabled = await chat_db_manager.get_global_setting("image_feedback_enabled")
+    db_image_feedback_ban_trigger_count = await chat_db_manager.get_global_setting("image_feedback_ban_trigger_count")
+    db_image_feedback_repeat_window_minutes = await chat_db_manager.get_global_setting("image_feedback_repeat_window_minutes")
+    db_image_feedback_ban_ladder_minutes = await chat_db_manager.get_global_setting("image_feedback_ban_ladder_minutes")
+
+    feedback_config = chat_config.IMAGE_FEEDBACK_CONFIG
+
     # 优先使用数据库值，否则回退到内存配置
     warning_threshold = int(db_warning_threshold) if db_warning_threshold else chat_config.BLACKLIST_WARNING_THRESHOLD
     ban_duration_min = int(db_ban_duration_min) if db_ban_duration_min else chat_config.BLACKLIST_BAN_DURATION_MINUTES[0]
     ban_duration_max = int(db_ban_duration_max) if db_ban_duration_max else chat_config.BLACKLIST_BAN_DURATION_MINUTES[1]
-    
+
+    image_feedback_enabled = (
+        db_image_feedback_enabled == "true"
+        if db_image_feedback_enabled is not None
+        else bool(feedback_config.get("ENABLED", True))
+    )
+    image_feedback_ban_trigger_count = (
+        int(db_image_feedback_ban_trigger_count)
+        if db_image_feedback_ban_trigger_count is not None
+        else int(feedback_config.get("BAN_TRIGGER_COUNT", 3))
+    )
+    image_feedback_repeat_window_minutes = (
+        int(db_image_feedback_repeat_window_minutes)
+        if db_image_feedback_repeat_window_minutes is not None
+        else int(feedback_config.get("REPEAT_WINDOW_MINUTES", 60))
+    )
+
+    default_ladder = feedback_config.get("BAN_DURATION_LADDER_MINUTES", [10, 30, 60, 180, 720])
+    image_feedback_ban_ladder_minutes = list(default_ladder)
+
+    if db_image_feedback_ban_ladder_minutes:
+        try:
+            parsed_ladder = [
+                int(v.strip())
+                for v in db_image_feedback_ban_ladder_minutes.split(",")
+                if str(v).strip()
+            ]
+            parsed_ladder = [v for v in parsed_ladder if v > 0]
+            if parsed_ladder:
+                image_feedback_ban_ladder_minutes = parsed_ladder
+        except Exception:
+            pass
+
     return {
         "warning_threshold": warning_threshold,
         "ban_duration_min": ban_duration_min,
         "ban_duration_max": ban_duration_max,
+        "image_feedback_enabled": image_feedback_enabled,
+        "image_feedback_ban_trigger_count": image_feedback_ban_trigger_count,
+        "image_feedback_repeat_window_minutes": image_feedback_repeat_window_minutes,
+        "image_feedback_ban_ladder_minutes": image_feedback_ban_ladder_minutes,
     }
 
 
@@ -2125,6 +2235,51 @@ async def update_moderation_config(config: ModerationConfigUpdate, token: str = 
             updated["ban_duration_max"] = new_max
         
         log.info(f"✅ 拉黑时长已更新为: ({new_min}, {new_max}) 分钟")
+
+    if config.image_feedback_enabled is not None:
+        chat_config.IMAGE_FEEDBACK_CONFIG["ENABLED"] = bool(config.image_feedback_enabled)
+        await chat_db_manager.set_global_setting(
+            "image_feedback_enabled",
+            str(bool(config.image_feedback_enabled)).lower(),
+        )
+        updated["image_feedback_enabled"] = bool(config.image_feedback_enabled)
+
+    if config.image_feedback_ban_trigger_count is not None:
+        if not 1 <= config.image_feedback_ban_trigger_count <= 20:
+            raise HTTPException(400, "图片负反馈触发数量必须在 1 到 20 之间")
+        chat_config.IMAGE_FEEDBACK_CONFIG["BAN_TRIGGER_COUNT"] = int(config.image_feedback_ban_trigger_count)
+        await chat_db_manager.set_global_setting(
+            "image_feedback_ban_trigger_count",
+            str(int(config.image_feedback_ban_trigger_count)),
+        )
+        updated["image_feedback_ban_trigger_count"] = int(config.image_feedback_ban_trigger_count)
+
+    if config.image_feedback_repeat_window_minutes is not None:
+        if not 1 <= config.image_feedback_repeat_window_minutes <= 10080:
+            raise HTTPException(400, "图片负反馈升档窗口必须在 1 到 10080 分钟之间")
+        chat_config.IMAGE_FEEDBACK_CONFIG["REPEAT_WINDOW_MINUTES"] = int(
+            config.image_feedback_repeat_window_minutes
+        )
+        await chat_db_manager.set_global_setting(
+            "image_feedback_repeat_window_minutes",
+            str(int(config.image_feedback_repeat_window_minutes)),
+        )
+        updated["image_feedback_repeat_window_minutes"] = int(
+            config.image_feedback_repeat_window_minutes
+        )
+
+    if config.image_feedback_ban_ladder_minutes is not None:
+        ladder = [int(v) for v in config.image_feedback_ban_ladder_minutes if int(v) > 0]
+        if not ladder:
+            raise HTTPException(400, "图片负反馈封禁阶梯不能为空，且必须全部为正整数")
+        if any(v > 43200 for v in ladder):
+            raise HTTPException(400, "图片负反馈封禁阶梯中的分钟值不能超过 43200")
+        chat_config.IMAGE_FEEDBACK_CONFIG["BAN_DURATION_LADDER_MINUTES"] = ladder
+        await chat_db_manager.set_global_setting(
+            "image_feedback_ban_ladder_minutes",
+            ",".join(str(v) for v in ladder),
+        )
+        updated["image_feedback_ban_ladder_minutes"] = ladder
     
     log.info(f"管理配置已更新: {updated}")
     return {"success": True, "updated": updated}

@@ -33,7 +33,7 @@ from src.chat.features.novelai_generation.tag_rules import (
 
 log = logging.getLogger(__name__)
 
-NOVELAI_PROMPT_MAX_OUTPUT_TOKENS = 4096
+NOVELAI_PROMPT_MAX_OUTPUT_TOKENS = 8196
 
 
 def _get_novelai_prompt_llm_overrides() -> Dict[str, Optional[str]]:
