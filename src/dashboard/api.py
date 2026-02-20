@@ -1686,9 +1686,40 @@ async def get_voice_config(token: str = Depends(verify_token)):
         if db_clone_resource_id is not None
         else config.get("CLONE_RESOURCE_ID", "seed-icl-2.0")
     ).strip()
+
     if not clone_cluster:
         clone_cluster = "volcano_icl"
+
+    normalized_clone_cluster = clone_cluster.lower()
+    if normalized_clone_cluster.startswith("seed-icl-"):
+        log.warning(
+            "检测到 clone_cluster 误填为 resource-id：%s，已自动纠正为 volcano_icl",
+            clone_cluster,
+        )
+        clone_cluster = "volcano_icl"
+
     if not clone_resource_id:
+        clone_resource_id = "seed-icl-2.0"
+
+    normalized_clone_resource_id = clone_resource_id.lower()
+    if normalized_clone_resource_id in {
+        "volcano_icl",
+        "volcano_icl_concurr",
+        "volcano_mega",
+        "volcano_mega_tts",
+        "volcano_mega_concurr",
+        "volcano_mega_tts_concurr",
+    }:
+        log.warning(
+            "检测到 clone_resource_id 误填 cluster 值：%s，已自动纠正为 seed-icl-2.0",
+            clone_resource_id,
+        )
+        clone_resource_id = "seed-icl-2.0"
+    elif clone_resource_id and not normalized_clone_resource_id.startswith("seed-icl-"):
+        log.warning(
+            "检测到 clone_resource_id 非法值：%s，已自动纠正为 seed-icl-2.0",
+            clone_resource_id,
+        )
         clone_resource_id = "seed-icl-2.0"
     voice_type = str(
         db_voice_type or config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts")
@@ -1894,6 +1925,13 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
 
     if config.clone_cluster is not None:
         clone_cluster = str(config.clone_cluster).strip()
+        if clone_cluster.lower().startswith("seed-icl-"):
+            log.warning(
+                "检测到 clone_cluster 误填为 resource-id：%s，已自动纠正为 volcano_icl",
+                clone_cluster,
+            )
+            clone_cluster = "volcano_icl"
+
         chat_config.VOICE_CONFIG["CLONE_CLUSTER"] = clone_cluster
         os.environ["VOICE_CLONE_CLUSTER"] = clone_cluster
         env_updates["VOICE_CLONE_CLUSTER"] = clone_cluster
@@ -1901,7 +1939,30 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
         await chat_db_manager.set_global_setting("voice_clone_cluster", clone_cluster)
 
     if config.clone_resource_id is not None:
-        clone_resource_id = str(config.clone_resource_id).strip()
+        raw_clone_resource_id = str(config.clone_resource_id).strip()
+        normalized_clone_resource_id = raw_clone_resource_id.lower()
+
+        if normalized_clone_resource_id in {
+            "volcano_icl",
+            "volcano_icl_concurr",
+            "volcano_mega",
+            "volcano_mega_tts",
+            "volcano_mega_concurr",
+            "volcano_mega_tts_concurr",
+        }:
+            log.warning(
+                "检测到 clone_resource_id 误填 cluster 值: %s，已自动纠正为 seed-icl-2.0",
+                raw_clone_resource_id,
+            )
+            clone_resource_id = "seed-icl-2.0"
+        elif raw_clone_resource_id and not normalized_clone_resource_id.startswith("seed-icl-"):
+            raise HTTPException(
+                400,
+                "复刻 Resource-Id 必须以 seed-icl- 开头（例如 seed-icl-2.0），不要填写 volcano_icl 等 cluster 值",
+            )
+        else:
+            clone_resource_id = raw_clone_resource_id or "seed-icl-2.0"
+
         chat_config.VOICE_CONFIG["CLONE_RESOURCE_ID"] = clone_resource_id
         os.environ["VOICE_CLONE_RESOURCE_ID"] = clone_resource_id
         env_updates["VOICE_CLONE_RESOURCE_ID"] = clone_resource_id

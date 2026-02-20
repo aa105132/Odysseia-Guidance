@@ -334,11 +334,46 @@ class VoiceGenerationService:
         configured_cluster = str(self._client.get("cluster", "")).strip()
         configured_clone_cluster = str(config.get("CLONE_CLUSTER", "")).strip()
         configured_clone_resource_id = str(config.get("CLONE_RESOURCE_ID", "")).strip()
+
+        if configured_clone_cluster.lower().startswith("seed-icl-"):
+            log.warning(
+                "检测到 CLONE_CLUSTER 误填为 resource-id：%s，已自动纠正为 volcano_icl",
+                configured_clone_cluster,
+            )
+            configured_clone_cluster = "volcano_icl"
+
         selected_voice = (voice_type or config.get("VOICE_TYPE") or "").strip()
         if not selected_voice:
             selected_voice = "zh_female_wanwanxiaohe_moon_bigtts"
 
         is_clone_voice = self._is_doubao_clone_voice(selected_voice)
+
+        normalized_clone_resource_id = configured_clone_resource_id.lower()
+        if is_clone_voice:
+            if normalized_clone_resource_id in {
+                "volcano_icl",
+                "volcano_icl_concurr",
+                "volcano_mega",
+                "volcano_mega_tts",
+                "volcano_mega_concurr",
+                "volcano_mega_tts_concurr",
+            }:
+                log.warning(
+                    "检测到 CLONE_RESOURCE_ID 误填为 cluster 值：%s，已自动纠正为 seed-icl-2.0",
+                    configured_clone_resource_id,
+                )
+                configured_clone_resource_id = "seed-icl-2.0"
+                normalized_clone_resource_id = configured_clone_resource_id
+            elif (
+                configured_clone_resource_id
+                and not normalized_clone_resource_id.startswith("seed-icl-")
+            ):
+                log.warning(
+                    "检测到 CLONE_RESOURCE_ID 非法值：%s，已自动回退为 seed-icl-2.0",
+                    configured_clone_resource_id,
+                )
+                configured_clone_resource_id = "seed-icl-2.0"
+
         cluster_input = (
             configured_clone_cluster if is_clone_voice and configured_clone_cluster else configured_cluster
         )
@@ -384,8 +419,8 @@ class VoiceGenerationService:
         volume = self._safe_float(
             volume_ratio if volume_ratio is not None else config.get("VOLUME_RATIO", 1.0),
             default=1.0,
-            minimum=0.2,
-            maximum=3.0,
+            minimum=0.5 if is_clone_voice else 0.2,
+            maximum=2.0 if is_clone_voice else 3.0,
         )
         pitch = self._safe_float(
             pitch_ratio if pitch_ratio is not None else config.get("PITCH_RATIO", 1.0),
@@ -410,18 +445,26 @@ class VoiceGenerationService:
             maximum=5.0,
         )
 
+        # 声音复刻链路按 ICL 文档白名单收敛参数：
+        # /api/v1/tts 的 audio 仅传 voice_type / encoding / speed_ratio / loudness_ratio。
+        # model_type=4 属于训练接口参数，合成阶段不透传，避免触发参数校验失败。
         audio_payload = {
             "voice_type": selected_voice,
             "encoding": encoding,
             "speed_ratio": speed,
-            "volume_ratio": volume,
-            "pitch_ratio": pitch,
+            "loudness_ratio": volume,
         }
-        if selected_emotion:
-            audio_payload["emotion"] = selected_emotion
-        if selected_emotion or selected_enable_emotion or enable_emotion is not None:
-            audio_payload["enable_emotion"] = bool(selected_enable_emotion)
-            audio_payload["emotion_scale"] = selected_emotion_scale
+
+        if is_clone_voice:
+            if selected_emotion or selected_enable_emotion or enable_emotion is not None:
+                log.info("复刻音色请求已忽略情感参数，按 ICL 白名单发送")
+        else:
+            audio_payload["pitch_ratio"] = pitch
+            if selected_emotion:
+                audio_payload["emotion"] = selected_emotion
+            if selected_emotion or selected_enable_emotion or enable_emotion is not None:
+                audio_payload["enable_emotion"] = bool(selected_enable_emotion)
+                audio_payload["emotion_scale"] = selected_emotion_scale
 
         payload = {
             "app": {
