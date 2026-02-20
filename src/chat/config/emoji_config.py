@@ -16,7 +16,10 @@ log = logging.getLogger(__name__)
 _PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', '..', '..')
 )
-EMOJI_MAPPINGS_PERSIST_FILE = os.path.join(_PROJECT_ROOT, 'data', 'emoji_mappings.json')
+EMOJI_MAPPINGS_PERSIST_FILE = os.getenv(
+    'EMOJI_MAPPINGS_FILE',
+    os.path.join(_PROJECT_ROOT, 'data', 'emoji_mappings.json'),
+)
 
 # 定义表情符号映射
 # 格式: [(正则表达式, Discord表情符号), ...]

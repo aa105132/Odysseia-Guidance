@@ -52,6 +52,12 @@ def load_tools_from_directory(
                     module, inspect.iscoroutinefunction
                 ):
                     if not name.startswith("_"):  # 忽略私有函数
+                        if func.__module__ != module.__name__:
+                            log.debug(
+                                f"  -> 跳过外部协程函数: '{func.__name__}' (来源: {func.__module__})"
+                            )
+                            continue
+
                         log.info(f"  -> 发现工具函数: '{func.__name__}'")
                         available_tools.append(func)
                         tool_map[func.__name__] = func
