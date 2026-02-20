@@ -837,54 +837,98 @@ class GeminiService:
         log_prefix: str,
     ) -> Dict[str, Any]:
         max_attempts = 3
-        protected_fields = {'model', 'messages', 'tools', 'tool_choice'}
-        last_error_text = ''
+        protected_fields = {"model", "messages", "tools", "tool_choice"}
+        last_error_text = ""
 
-        for _ in range(max_attempts):
+        for attempt in range(max_attempts):
             effective_payload = payload.copy()
             for field in disabled_payload_fields:
                 effective_payload.pop(field, None)
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    api_url,
-                    headers=headers,
-                    json=effective_payload,
-                    timeout=aiohttp.ClientTimeout(total=timeout_seconds),
-                ) as response:
-                    if response.status == 200:
-                        return await response.json()
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        api_url,
+                        headers=headers,
+                        json=effective_payload,
+                        timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+                    ) as response:
+                        try:
+                            response_text = await response.text()
+                        except (aiohttp.ClientError, asyncio.TimeoutError) as read_error:
+                            last_error_text = str(read_error)
+                            log.warning(
+                                f"{log_prefix} failed to read response body "
+                                f"(attempt {attempt + 1}/{max_attempts}): {read_error}"
+                            )
+                            if attempt < max_attempts - 1:
+                                await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+                                continue
+                            raise Exception(
+                                f"{log_prefix} failed to read response body: {read_error}"
+                            )
 
-                    error_text = await response.text()
-                    last_error_text = error_text
-                    log.error(f'{log_prefix} returned {response.status}: {error_text}')
+                        if response.status == 200:
+                            try:
+                                return json.loads(response_text)
+                            except json.JSONDecodeError as decode_error:
+                                body_preview = response_text[:500].replace("\n", "\\n")
+                                last_error_text = (
+                                    f"invalid json: {decode_error}; body={body_preview}"
+                                )
+                                log.warning(
+                                    f"{log_prefix} returned invalid json "
+                                    f"(attempt {attempt + 1}/{max_attempts}): {decode_error}; "
+                                    f"body_preview={body_preview}"
+                                )
+                                if attempt < max_attempts - 1:
+                                    await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+                                    continue
+                                raise Exception(
+                                    f"{log_prefix} returned invalid json: {decode_error}"
+                                )
 
-                    unsupported_param = self._extract_unsupported_param_from_error(
-                        error_text
-                    )
-                    if (
-                        unsupported_param
-                        and unsupported_param in effective_payload
-                        and unsupported_param not in protected_fields
-                        and unsupported_param not in disabled_payload_fields
-                    ):
-                        disabled_payload_fields.add(unsupported_param)
-                        log.warning(
-                            f'{log_prefix} dropped unsupported param: {unsupported_param}'
+                        error_text = response_text
+                        last_error_text = error_text
+                        log.error(f"{log_prefix} returned {response.status}: {error_text}")
+
+                        unsupported_param = self._extract_unsupported_param_from_error(
+                            error_text
                         )
-                        continue
+                        if (
+                            unsupported_param
+                            and unsupported_param in effective_payload
+                            and unsupported_param not in protected_fields
+                            and unsupported_param not in disabled_payload_fields
+                        ):
+                            disabled_payload_fields.add(unsupported_param)
+                            log.warning(
+                                f"{log_prefix} dropped unsupported param: {unsupported_param}"
+                            )
+                            continue
 
-                    try:
-                        error_json = json.loads(error_text)
-                        error_msg = error_json.get('error', {}).get(
-                            'message', error_text
-                        )
-                    except Exception:
-                        error_msg = error_text
+                        try:
+                            error_json = json.loads(error_text)
+                            error_msg = error_json.get("error", {}).get(
+                                "message", error_text
+                            )
+                        except Exception:
+                            error_msg = error_text
 
-                    raise Exception(f'API returned {response.status}: {error_msg}')
+                        raise Exception(f"API returned {response.status}: {error_msg}")
 
-        raise Exception(f'{log_prefix} retries exhausted: {last_error_text}')
+            except (aiohttp.ClientError, asyncio.TimeoutError) as request_error:
+                last_error_text = str(request_error)
+                log.warning(
+                    f"{log_prefix} request failed "
+                    f"(attempt {attempt + 1}/{max_attempts}): {request_error}"
+                )
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+                    continue
+                raise Exception(f"{log_prefix} request failed: {request_error}")
+
+        raise Exception(f"{log_prefix} retries exhausted: {last_error_text}")
 
     async def generate_response(
         self,
@@ -2046,154 +2090,149 @@ class GeminiService:
                     log.info(f"OpenAI API 工具数量: {len(openai_tools)}")
             
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        base_api_url,
-                        headers=headers,
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=180)
-                    ) as response:
-                        if response.status != 200:
-                            error_text = await response.text()
-                            unsupported_param = self._extract_unsupported_param_from_error(
-                                error_text
-                            )
-                            if (
-                                unsupported_param
-                                and unsupported_param in payload
-                                and unsupported_param not in disabled_payload_fields
-                            ):
-                                disabled_payload_fields.add(unsupported_param)
-                                log.warning(
-                                    f'openai auto-drop unsupported param: {unsupported_param}'
-                                )
-                                continue
-                            log.error(f"OpenAI 兼容 API 返回错误 {response.status}: {error_text}")
+                result = await self._post_openai_chat_completion_with_fallback(
+                    api_url=base_api_url,
+                    headers=headers,
+                    payload=payload,
+                    timeout_seconds=180,
+                    disabled_payload_fields=disabled_payload_fields,
+                    log_prefix=(
+                        f"OpenAI 兼容 API chat.completions "
+                        f"(iteration {iteration + 1}/{max_tool_calls})"
+                    ),
+                )
+
+                if "choices" not in result or len(result["choices"]) == 0:
+                    log.warning(f"OpenAI 兼容 API 返回空响应: {result}")
+                    return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？"
+
+                choice = result["choices"][0]
+                message_response = choice.get("message", {})
+
+                # 记录 Token 使用
+                if "usage" in result:
+                    usage = result["usage"]
+                    log.info(
+                        f"OpenAI API Token 使用: 输入={usage.get('prompt_tokens', 0)}, "
+                        f"输出={usage.get('completion_tokens', 0)}"
+                    )
+
+                # 检查是否有工具调用
+                tool_calls = message_response.get("tool_calls", [])
+
+                if tool_calls:
+                    log.info(f"OpenAI API 返回 {len(tool_calls)} 个工具调用")
+
+                    # 将助手消息添加到对话历史
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": message_response.get("content") or "",
+                            "tool_calls": tool_calls,
+                        }
+                    )
+
+                    # 执行每个工具调用
+                    for tool_call in tool_calls:
+                        tool_name = tool_call.get("function", {}).get("name", "")
+                        tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
+                        tool_call_id = tool_call.get("id", "")
+
+                        called_tool_names.append(tool_name)
+
+                        # 如果调用了 web_search，给用户消息加 🔍 reaction 表示正在搜索
+                        if tool_name == "web_search" and discord_message:
                             try:
-                                error_json = json.loads(error_text)
-                                error_msg = error_json.get("error", {}).get("message", error_text)
-                            except:
-                                error_msg = error_text
-                            raise Exception(f"API 返回 {response.status}: {error_msg}")
-                        
-                        result = await response.json()
-                        
-                        if "choices" not in result or len(result["choices"]) == 0:
-                            log.warning(f"OpenAI 兼容 API 返回空响应: {result}")
-                            return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？"
-                        
-                        choice = result["choices"][0]
-                        message_response = choice.get("message", {})
-                        
-                        # 记录 Token 使用
-                        if "usage" in result:
-                            usage = result["usage"]
-                            log.info(f"OpenAI API Token 使用: 输入={usage.get('prompt_tokens', 0)}, 输出={usage.get('completion_tokens', 0)}")
-                        
-                        # 检查是否有工具调用
-                        tool_calls = message_response.get("tool_calls", [])
-                        
-                        if tool_calls:
-                            log.info(f"OpenAI API 返回 {len(tool_calls)} 个工具调用")
-                            
-                            # 将助手消息添加到对话历史
-                            messages.append({
-                                "role": "assistant",
-                                "content": message_response.get("content") or "",
-                                "tool_calls": tool_calls
-                            })
-                            
-                            # 执行每个工具调用
-                            for tool_call in tool_calls:
-                                tool_name = tool_call.get("function", {}).get("name", "")
-                                tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
-                                tool_call_id = tool_call.get("id", "")
-                                
-                                called_tool_names.append(tool_name)
-                                
-                                # 如果调用了 web_search，给用户消息加 🔍 reaction 表示正在搜索
-                                if tool_name == "web_search" and discord_message:
-                                    try:
-                                        await discord_message.add_reaction("🔍")
-                                    except Exception:
-                                        pass
-                                
-                                log.info(f"执行工具: {tool_name}, 参数: {tool_args_str}")
-                                
-                                try:
-                                    tool_args = json.loads(tool_args_str)
-                                except json.JSONDecodeError:
-                                    tool_args = {}
-                                
-                                # 执行工具
-                                tool_result = await self._execute_openai_tool_call(
-                                    tool_name=tool_name,
-                                    tool_args=tool_args,
-                                    channel=channel,
-                                    user_id=user_id,
-                                    discord_message=discord_message,
-                                )
+                                await discord_message.add_reaction("🔍")
+                            except Exception:
+                                pass
 
-                                # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
-                                if tool_name == "web_search" and discord_message:
-                                    try:
-                                        await discord_message.remove_reaction("🔍", discord_message.guild.me)
-                                    except Exception:
-                                        pass
-                                    try:
-                                        await discord_message.add_reaction("☑️")
-                                    except Exception:
-                                        pass
+                        log.info(f"执行工具: {tool_name}, 参数: {tool_args_str}")
 
-                                # 记录 web_search 工具返回的来源链接（标题+URL），用于最终回复兜底展示
-                                if tool_name == "web_search":
-                                    search_result_text = (
-                                        json.dumps(tool_result, ensure_ascii=False)
-                                        if isinstance(tool_result, (dict, list))
-                                        else str(tool_result)
-                                    )
-                                    extracted_links = self._extract_markdown_links_from_text(search_result_text)
-                                    seen_urls = {u for _, u in web_search_source_links}
-                                    for title, url in extracted_links:
-                                        if url not in seen_urls:
-                                            seen_urls.add(url)
-                                            web_search_source_links.append((title, url))
-                                
-                                # 将工具结果添加到对话历史
-                                messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call_id,
-                                    "content": json.dumps(tool_result, ensure_ascii=False) if isinstance(tool_result, (dict, list)) else str(tool_result)
-                                })
-                                
-                                # 检查是否有工具标记了 skip_ai_response（生图/生视频成功时跳过后续AI回复）
-                                if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
-                                    log.info(f"OpenAI 工具 '{tool_name}' 标记了 skip_ai_response，跳过后续AI回复。")
-                                    self.last_called_tools = called_tool_names
-                                    return None
-                            
-                            # 继续循环以获取最终响应
-                            continue
-                        
-                        # 没有工具调用，返回最终响应
-                        raw_response = message_response.get("content", "")
-                        
-                        # 记录调用的工具
-                        if called_tool_names:
-                            self.last_called_tools = called_tool_names
-                            log.info(f"OpenAI 工具调用循环完成，共调用了 {len(called_tool_names)} 个工具: {called_tool_names}")
-                        
-                        # 后处理
-                        final_response = await self._post_process_response(raw_response, user_id, guild_id)
-                        if "web_search" in called_tool_names:
-                            final_response = self._append_message_sources_if_needed(
-                                final_response, web_search_source_links
+                        try:
+                            tool_args = json.loads(tool_args_str)
+                        except json.JSONDecodeError:
+                            tool_args = {}
+
+                        # 执行工具
+                        tool_result = await self._execute_openai_tool_call(
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            channel=channel,
+                            user_id=user_id,
+                            discord_message=discord_message,
+                        )
+
+                        # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
+                        if tool_name == "web_search" and discord_message:
+                            try:
+                                await discord_message.remove_reaction("🔍", discord_message.guild.me)
+                            except Exception:
+                                pass
+                            try:
+                                await discord_message.add_reaction("☑️")
+                            except Exception:
+                                pass
+
+                        # 记录 web_search 工具返回的来源链接（标题+URL），用于最终回复兜底展示
+                        if tool_name == "web_search":
+                            search_result_text = (
+                                json.dumps(tool_result, ensure_ascii=False)
+                                if isinstance(tool_result, (dict, list))
+                                else str(tool_result)
                             )
-                        return final_response
-                        
-            except asyncio.TimeoutError:
-                log.error("OpenAI 兼容 API 请求超时")
-                return "呜哇，思考得太久了，脑子要转不动了…再试一次吧！"
+                            extracted_links = self._extract_markdown_links_from_text(search_result_text)
+                            seen_urls = {u for _, u in web_search_source_links}
+                            for title, url in extracted_links:
+                                if url not in seen_urls:
+                                    seen_urls.add(url)
+                                    web_search_source_links.append((title, url))
+
+                        # 将工具结果添加到对话历史
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": (
+                                    json.dumps(tool_result, ensure_ascii=False)
+                                    if isinstance(tool_result, (dict, list))
+                                    else str(tool_result)
+                                ),
+                            }
+                        )
+
+                        # 检查是否有工具标记了 skip_ai_response（生图/生视频成功时跳过后续AI回复）
+                        if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
+                            log.info(
+                                f"OpenAI 工具 '{tool_name}' 标记了 skip_ai_response，跳过后续AI回复。"
+                            )
+                            self.last_called_tools = called_tool_names
+                            return None
+
+                    # 继续循环以获取最终响应
+                    continue
+
+                # 没有工具调用，返回最终响应
+                raw_response = message_response.get("content", "")
+
+                # 记录调用的工具
+                if called_tool_names:
+                    self.last_called_tools = called_tool_names
+                    log.info(
+                        f"OpenAI 工具调用循环完成，共调用了 {len(called_tool_names)} "
+                        f"个工具: {called_tool_names}"
+                    )
+
+                # 后处理
+                final_response = await self._post_process_response(
+                    raw_response, user_id, guild_id
+                )
+                if "web_search" in called_tool_names:
+                    final_response = self._append_message_sources_if_needed(
+                        final_response, web_search_source_links
+                    )
+                return final_response
+
             except Exception as e:
                 log.error(f"OpenAI 兼容 API 调用失败: {e}", exc_info=True)
                 raise
@@ -2830,38 +2869,39 @@ class GeminiService:
             "max_tokens": max_tokens,
         }
         
+        disabled_payload_fields: set[str] = set()
+
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120)
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        log.error(f"OpenAI 兼容 API (简单响应) 返回错误 {response.status}: {error_text}")
-                        if return_error_text:
-                            return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
-                        return None
-                    
-                    result = await response.json()
-                    
-                    if "choices" in result and len(result["choices"]) > 0:
-                        content = result["choices"][0].get("message", {}).get("content", "")
-                        if "usage" in result:
-                            usage = result["usage"]
-                            log.info(f"OpenAI API (简单响应) Token 使用: 输入={usage.get('prompt_tokens', 0)}, 输出={usage.get('completion_tokens', 0)}")
-                        return content.strip() if content else None
-                    else:
-                        log.warning(f"OpenAI 兼容 API (简单响应) 返回空响应: {result}")
-                        return None
-        except asyncio.TimeoutError:
-            log.error("OpenAI 兼容 API (简单响应) 请求超时")
-            if return_error_text:
-                return "抱歉，AI服务响应超时，请稍后再试。"
+            result = await self._post_openai_chat_completion_with_fallback(
+                api_url=api_url,
+                headers=headers,
+                payload=payload,
+                timeout_seconds=120,
+                disabled_payload_fields=disabled_payload_fields,
+                log_prefix="OpenAI 兼容 API (简单响应)",
+            )
+
+            if "choices" in result and len(result["choices"]) > 0:
+                content = result["choices"][0].get("message", {}).get("content", "")
+                if "usage" in result:
+                    usage = result["usage"]
+                    log.info(
+                        f"OpenAI API (简单响应) Token 使用: "
+                        f"输入={usage.get('prompt_tokens', 0)}, "
+                        f"输出={usage.get('completion_tokens', 0)}"
+                    )
+                return content.strip() if content else None
+
+            log.warning(f"OpenAI 兼容 API (简单响应) 返回空响应: {result}")
             return None
         except Exception as e:
+            error_text = str(e).lower()
+            if "timeout" in error_text or "timed out" in error_text or "超时" in error_text:
+                log.error(f"OpenAI 兼容 API (简单响应) 请求超时: {e}")
+                if return_error_text:
+                    return "抱歉，AI服务响应超时，请稍后再试。"
+                return None
+
             log.error(f"OpenAI 兼容 API (简单响应) 调用失败: {e}", exc_info=True)
             if return_error_text:
                 return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
