@@ -739,12 +739,35 @@ class GeminiService:
 
         return payload
 
+    @staticmethod
+    def _build_gemini_contents_from_messages(
+        messages: List[Dict[str, str]],
+    ) -> List[types.Content]:
+        """将 messages 列表转换为 Gemini SDK 的 Contents 列表。
+        messages 格式: [{"role": "user"|"model", "content": "..."}]
+        """
+        contents = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            # 将 "assistant" 映射为 Gemini 的 "model"
+            if role == "assistant":
+                role = "model"
+            content_text = msg.get("content", "")
+            contents.append(
+                types.Content(
+                    role=role,
+                    parts=[types.Part(text=content_text)],
+                )
+            )
+        return contents
+
     async def _generate_sync_content_with_param_fallback(
         self,
         client: Any,
         model_name: str,
         prompt: str,
         generation_config: Dict[str, Any],
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Any:
         loop = asyncio.get_event_loop()
         gen_config_data = copy.deepcopy(generation_config)
@@ -758,13 +781,21 @@ class GeminiService:
         if thinking_config_data:
             gen_config.thinking_config = types.ThinkingConfig(**thinking_config_data)
 
+        # 构建 contents：优先使用 messages（多轮预填充），否则回退到单个 prompt
+        if messages:
+            contents = self._build_gemini_contents_from_messages(messages)
+            log.debug(f"_generate_sync_content_with_param_fallback 使用多轮 messages ({len(messages)} 条)")
+        else:
+            contents = [prompt]
+
         for _ in range(4):
             try:
+                final_contents = contents  # 闭包捕获
                 return await loop.run_in_executor(
                     self.executor,
                     lambda: client.models.generate_content(
                         model=model_name,
-                        contents=[prompt],
+                        contents=final_contents,
                         config=gen_config,
                     ),
                 )
@@ -2502,6 +2533,7 @@ class GeminiService:
         generation_config: Dict,
         model_name: Optional[str] = None,
         client: Any = None,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Optional[str]:
         """
         一个用于单次、非对话式文本生成的方法，允许传入完整的生成配置和可选的模型名称。
@@ -2512,9 +2544,12 @@ class GeminiService:
         - 如果是 "gemini" 格式，使用 Gemini SDK
 
         Args:
-            prompt: 提供给模型的完整输入提示。
+            prompt: 提供给模型的完整输入提示。当 messages 不为 None 时，此参数被忽略。
             generation_config: 一个包含生成参数的字典 (e.g., temperature, max_output_tokens).
             model_name: (可选) 指定要使用的模型。如果为 None，则使用默认的聊天模型。
+            messages: (可选) 多轮对话消息列表，格式为 [{"role": "user"|"model"|"assistant", "content": "..."}]。
+                      当提供此参数时，将使用多轮对话模式，支持预填充上下文（如限制解除对话）。
+                      Gemini SDK 使用 role="user"/"model"，OpenAI 兼容 API 自动映射 "model"->"assistant"。
 
         Returns:
             生成的文本字符串，如果失败则返回 None。
@@ -2539,7 +2574,8 @@ class GeminiService:
         final_model_name = model_name or self.default_model_name
         
         # 调试日志
-        log.debug(f"generate_simple_response 配置检查: api_format={api_format}, api_url={'已配置' if api_url else '未配置'}, api_key={'已配置' if api_key else '未配置'}, model={final_model_name}")
+        has_messages = messages is not None and len(messages) > 0
+        log.debug(f"generate_simple_response 配置检查: api_format={api_format}, api_url={'已配置' if api_url else '未配置'}, api_key={'已配置' if api_key else '未配置'}, model={final_model_name}, has_messages={has_messages}")
         
         # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
         if api_format == "openai" and api_url and api_key:
@@ -2550,6 +2586,7 @@ class GeminiService:
                 model_name=final_model_name,
                 api_url=api_url,
                 api_key=api_key,
+                messages=messages,
             )
         
         # 使用 Gemini SDK，优先使用 Dashboard 配置的 URL 和 Key
@@ -2561,6 +2598,7 @@ class GeminiService:
                 model_name=final_model_name,
                 api_url=api_url,
                 api_key=api_key,
+                messages=messages,
             )
         
         # 回退：如果没有 Dashboard 配置，使用 key rotation
@@ -2569,6 +2607,7 @@ class GeminiService:
             prompt=prompt,
             generation_config=generation_config,
             model_name=final_model_name,
+            messages=messages,
         )
     
     async def _generate_simple_with_gemini_custom(
@@ -2578,6 +2617,7 @@ class GeminiService:
         model_name: str,
         api_url: str,
         api_key: str,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Optional[str]:
         """
         使用 Gemini SDK 和自定义端点生成简单响应（内部方法）。
@@ -2593,6 +2633,7 @@ class GeminiService:
                 model_name=model_name,
                 prompt=prompt,
                 generation_config=generation_config,
+                messages=messages,
             )
 
             if response.parts:
@@ -2616,6 +2657,7 @@ class GeminiService:
         generation_config: Dict,
         model_name: str,
         client: Any = None,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Optional[str]:
         """
         使用 Gemini SDK 和 Key Rotation 生成简单响应（内部方法）。
@@ -2629,6 +2671,7 @@ class GeminiService:
             model_name=model_name,
             prompt=prompt,
             generation_config=generation_config,
+            messages=messages,
         )
 
         if response.parts:
@@ -2649,18 +2692,29 @@ class GeminiService:
         model_name: str,
         api_url: str,
         api_key: str,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Optional[str]:
         """
         使用 OpenAI 兼容 API 生成简单响应（内部方法）。
-        用于摘要、查询重写等简单任务。
+        用于摘要、查询重写等简单任务。支持多轮预填充对话。
         """
         temperature = generation_config.get("temperature", 0.5)
         max_tokens = generation_config.get("max_output_tokens", 2000)
         
-        # 构建简单的消息格式
-        messages = [
-            {"role": "user", "content": prompt}
-        ]
+        # 构建消息格式：优先使用 messages（多轮预填充），否则回退到单个 prompt
+        if messages:
+            # 将 Gemini 格式的 "model" role 映射为 OpenAI 的 "assistant"
+            openai_messages = []
+            for msg in messages:
+                role = msg.get("role", "user")
+                if role == "model":
+                    role = "assistant"
+                openai_messages.append({"role": role, "content": msg.get("content", "")})
+            log.debug(f"OpenAI 兼容 API 使用多轮 messages ({len(openai_messages)} 条)")
+        else:
+            openai_messages = [
+                {"role": "user", "content": prompt}
+            ]
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -2679,7 +2733,7 @@ class GeminiService:
         
         payload = {
             "model": model_name,
-            "messages": messages,
+            "messages": openai_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }

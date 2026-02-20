@@ -19,7 +19,7 @@ import discord
 
 from src.chat.config.chat_config import NOVELAI_CONFIG
 from src.chat.features.novelai_generation.services.novelai_service import novelai_service
-from src.chat.features.novelai_generation.tag_rules import get_tag_generation_prompt, get_rewrite_prompt
+from src.chat.features.novelai_generation.tag_rules import get_tag_generation_prompt, get_rewrite_prompt, get_tag_generation_messages, get_rewrite_messages
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
 from src.chat.utils.database import chat_db_manager
 
@@ -466,17 +466,18 @@ class NovelAIDrawPanel(discord.ui.View):
                 log.info(f"/draw 面板应用全局默认画师串: {default_artist[:60]}...")
 
         if self.session.mode == "ai_describe" and self.session.scene_prompt:
-            # AI 描述模式：调用 AI 将中文描述转换为英文 Tag
+            # AI 描述模式：调用 AI 将中文描述转换为英文 Tag（含预填充对话解除限制）
             try:
                 from src.chat.services.gemini_service import gemini_service
 
-                prompt = get_tag_generation_prompt(description=self.session.scene_prompt)
+                prefill_messages = get_tag_generation_messages(description=self.session.scene_prompt)
                 tags = await gemini_service.generate_simple_response(
-                    prompt=prompt,
+                    prompt="",  # messages 模式下 prompt 被忽略
                     generation_config={
                         "temperature": 0.7,
                         "max_output_tokens": 1000,
                     },
+                    messages=prefill_messages,
                 )
                 if tags:
                     tags = tags.strip().strip('"').strip("'")
@@ -1156,16 +1157,17 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
             # 调用 AI 重写 prompt
             from src.chat.services.gemini_service import gemini_service
 
-            rewrite_prompt = get_rewrite_prompt(
+            rewrite_messages = get_rewrite_messages(
                 prompt=self._current_prompt,
                 description=description,
             )
             new_tags = await gemini_service.generate_simple_response(
-                prompt=rewrite_prompt,
+                prompt="",  # messages 模式下 prompt 被忽略
                 generation_config={
                     "temperature": 0.8,
                     "max_output_tokens": 2000,
                 },
+                messages=rewrite_messages,
             )
 
             if not new_tags or not new_tags.strip():
@@ -1610,19 +1612,23 @@ class ImagenSwitchResultView(discord.ui.View):
 
         await interaction.response.defer(thinking=True)
         try:
-            # 使用 AI 将自然语言 prompt 转换为 NovelAI Tag
-            from src.chat.features.novelai_generation.tag_rules import get_rewrite_prompt
-            import google.generativeai as genai
-            from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
+            # 使用 AI 将自然语言 prompt 转换为 NovelAI Tag（含预填充对话解除限制）
+            from src.chat.services.gemini_service import gemini_service
+            from src.chat.features.novelai_generation.tag_rules import get_tag_generation_messages
 
-            api_key = GEMINI_IMAGEN_CONFIG.get("GEMINI_API_KEY", "")
-            if api_key:
-                model = genai.GenerativeModel("gemini-2.0-flash")
-                rewrite_prompt_text = get_rewrite_prompt(self._prompt)
-                response = await model.generate_content_async(rewrite_prompt_text)
-                nai_prompt = response.text.strip()
+            tag_messages = get_tag_generation_messages(description=self._prompt)
+            nai_prompt_result = await gemini_service.generate_simple_response(
+                prompt="",
+                generation_config={
+                    "temperature": 0.7,
+                    "max_output_tokens": 1000,
+                },
+                messages=tag_messages,
+            )
+            if nai_prompt_result and nai_prompt_result.strip():
+                nai_prompt = nai_prompt_result.strip().strip('"').strip("'")
             else:
-                # 如果没有 API Key，直接用原始 prompt
+                # AI 转换失败，直接用原始 prompt
                 nai_prompt = self._prompt
 
             # 生成 NovelAI 图片

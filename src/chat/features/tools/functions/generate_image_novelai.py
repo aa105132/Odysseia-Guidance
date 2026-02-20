@@ -26,6 +26,7 @@ from src.chat.features.novelai_generation.tag_rules import (
     NOVELAI_TAG_RULES,
     TAG_LIBRARY_COMPACT,
     get_rewrite_prompt,
+    get_rewrite_messages,
 )
 
 log = logging.getLogger(__name__)
@@ -958,16 +959,17 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
             # 调用 AI 重写 prompt
             from src.chat.services.gemini_service import gemini_service
 
-            rewrite_prompt = get_rewrite_prompt(
+            rewrite_messages = get_rewrite_messages(
                 prompt=self._current_prompt,
                 description=description,
             )
             new_tags = await gemini_service.generate_simple_response(
-                prompt=rewrite_prompt,
+                prompt="",  # messages 模式下 prompt 被忽略
                 generation_config={
                     "temperature": 0.8,
                     "max_output_tokens": 2000,
                 },
+                messages=rewrite_messages,
             )
 
             if not new_tags or not new_tags.strip():
