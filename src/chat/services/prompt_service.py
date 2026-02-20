@@ -167,6 +167,27 @@ class PromptService:
         final_conversation.append({"role": "user", "parts": [core_prompt]})
         final_conversation.append({"role": "model", "parts": ["我在线啦，随时开聊！"]})
 
+        # --- 绘图工具路由注入（跨模型统一规则）---
+        final_conversation.append(
+            {
+                "role": "user",
+                "parts": [
+                    "绘图工具路由规则："
+                    "1) 画新图默认优先 generate_image_novelai；"
+                    "2) 只有用户明确要求修改原图/图生图时才调用 edit_image；"
+                    "3) 若用户说‘照这个画风画xxx’或回复 NovelAI 图片继续创作，"
+                    "优先 generate_image_novelai；"
+                    "4) 仅当用户明确指定 Imagen 时，才调用 generate_image / generate_images_batch。"
+                ],
+            }
+        )
+        final_conversation.append(
+            {
+                "role": "model",
+                "parts": ["收到，绘图时我会按该路由优先使用 NovelAI。"],
+            }
+        )
+
         # --- 2. 动态知识注入 ---
         # 注入世界之书 (RAG) 内容
         world_book_formatted_content = self._format_world_book_entries(

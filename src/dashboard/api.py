@@ -1994,6 +1994,8 @@ async def update_emoji_config(config: EmojiMappingUpdate, token: str = Depends(v
             emoji_config.EMOJI_MAPPINGS.append((new_pattern, discord_emojis))
             updated.append(placeholder)
     
+    _persist_emoji_mappings_or_raise()
+
     log.info(f"表情映射已更新: {updated}")
     return {"success": True, "updated": updated}
 
@@ -2015,13 +2017,17 @@ async def add_emoji_mapping(mapping: EmojiMapping, token: str = Depends(verify_t
     
     # 检查是否已存在
     escaped_placeholder = placeholder.replace("<", "\\<").replace(">", "\\>")
+    compiled_placeholder = emoji_config.compile_placeholder_pattern(placeholder)
+    escaped_placeholder = compiled_placeholder.pattern
     for pattern, _ in emoji_config.EMOJI_MAPPINGS:
         if pattern.pattern == escaped_placeholder:
             raise HTTPException(400, f"占位符 {placeholder} 已存在")
     
     # 添加新映射
     new_pattern = re.compile(escaped_placeholder)
+    new_pattern = compiled_placeholder
     emoji_config.EMOJI_MAPPINGS.append((new_pattern, discord_emojis))
+    _persist_emoji_mappings_or_raise()
     
     log.info(f"新增表情映射: {placeholder} -> {discord_emojis}")
     return {"success": True, "message": f"已添加 {placeholder}"}
@@ -2032,9 +2038,12 @@ async def delete_emoji_mapping(placeholder: str, token: str = Depends(verify_tok
     """删除表情映射"""
     escaped_placeholder = placeholder.replace("<", "\\<").replace(">", "\\>")
     
+    compiled_placeholder = emoji_config.compile_placeholder_pattern(placeholder)
+    escaped_placeholder = compiled_placeholder.pattern
     for i, (pattern, _) in enumerate(emoji_config.EMOJI_MAPPINGS):
         if pattern.pattern == escaped_placeholder:
             del emoji_config.EMOJI_MAPPINGS[i]
+            _persist_emoji_mappings_or_raise()
             log.info(f"删除表情映射: {placeholder}")
             return {"success": True, "message": f"已删除 {placeholder}"}
     

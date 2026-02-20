@@ -696,6 +696,59 @@ class GeminiService:
 
         return payload
 
+    async def _generate_sync_content_with_param_fallback(
+        self,
+        client: Any,
+        model_name: str,
+        prompt: str,
+        generation_config: Dict[str, Any],
+    ) -> Any:
+        loop = asyncio.get_event_loop()
+        gen_config_data = copy.deepcopy(generation_config)
+        thinking_config_data = gen_config_data.pop('thinking_config', None)
+        gen_config_params = {**gen_config_data, 'safety_settings': self.safety_settings}
+
+        if self._is_no_thinking_model(model_name):
+            thinking_config_data = None
+
+        gen_config = types.GenerateContentConfig(**gen_config_params)
+        if thinking_config_data:
+            gen_config.thinking_config = types.ThinkingConfig(**thinking_config_data)
+
+        for _ in range(4):
+            try:
+                return await loop.run_in_executor(
+                    self.executor,
+                    lambda: client.models.generate_content(
+                        model=model_name,
+                        contents=[prompt],
+                        config=gen_config,
+                    ),
+                )
+            except genai_errors.ClientError as e:
+                unsupported_param = self._extract_unsupported_param_from_error(str(e))
+                if unsupported_param:
+                    removed, thinking_config_data, removed_key = (
+                        self._drop_unsupported_generation_param(
+                            unsupported_param,
+                            gen_config_params,
+                            thinking_config_data,
+                        )
+                    )
+                    if removed:
+                        gen_config = types.GenerateContentConfig(**gen_config_params)
+                        if thinking_config_data:
+                            gen_config.thinking_config = types.ThinkingConfig(
+                                **thinking_config_data
+                            )
+                        log.warning(
+                            f'gemini simple auto-drop unsupported param: {removed_key or unsupported_param}'
+                        )
+                        continue
+                raise
+
+        raise RuntimeError('generate_content retries exhausted')
+
     async def _post_openai_chat_completion_with_fallback(
         self,
         api_url: str,
@@ -2437,16 +2490,11 @@ class GeminiService:
             http_options = types.HttpOptions(base_url=api_url)
             client = genai.Client(api_key=api_key, http_options=http_options)
             
-            loop = asyncio.get_event_loop()
-            gen_config = types.GenerateContentConfig(
-                **generation_config, safety_settings=self.safety_settings
-            )
-
-            response = await loop.run_in_executor(
-                self.executor,
-                lambda: client.models.generate_content(
-                    model=model_name, contents=[prompt], config=gen_config
-                ),
+            response = await self._generate_sync_content_with_param_fallback(
+                client=client,
+                model_name=model_name,
+                prompt=prompt,
+                generation_config=generation_config,
             )
 
             if response.parts:
