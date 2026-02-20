@@ -186,8 +186,9 @@ async def _send_native_voice_message(
         waveform=waveform,
     )
 
-    flags = MessageFlags._from_value(0)
-    flags.is_voice_message = True
+    # 兼容不同 discord.py 发行版：直接使用 is_voice_message 对应 bit(8192)，
+    # 避免某些版本缺少 flags.is_voice_message 属性 setter。
+    flags = MessageFlags._from_value(8192)
 
     with handle_message_parameters(
         content=None,
