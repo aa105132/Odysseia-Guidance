@@ -10,6 +10,7 @@ AI 需要生成符合 Danbooru 格式的英文 Tag 来作为 prompt。
 - 单图 Tag 数量 ≥ 90 个
 - 使用权重语法: n::Tag:: (n>1 增强, n<1 减弱)
 - 支持角色 DNA 系统确保角色一致性
+- 同人角色强制使用 `character_name (work_name)` 英文身份标签（如 `raiden shogun (genshin impact)`）
 - 支持 Character Prompt + Character UC 分离
 - 支持场景模板库关键词匹配
 """
@@ -162,6 +163,28 @@ def _prompt_already_contains_artist(prompt: str, artist_string: str) -> bool:
     return match_count > len(artist_tags) // 2
 
 
+def _normalize_tag_for_match(tag: str) -> str:
+    """标准化标签文本，用于去权重后的等价匹配。"""
+    normalized = str(tag or "").strip().lower()
+    normalized = normalized.replace("（", "(").replace("）", ")")
+    normalized = re.sub(r"^\s*\d+(?:\.\d+)?::\s*", "", normalized)
+    normalized = re.sub(r"\s*::\s*$", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _prompt_contains_tag(prompt: str, tag: str) -> bool:
+    """判断 prompt（逗号分隔）中是否已包含目标标签（忽略权重语法）。"""
+    target = _normalize_tag_for_match(tag)
+    if not target:
+        return False
+
+    for token in str(prompt or "").split(","):
+        if _normalize_tag_for_match(token) == target:
+            return True
+    return False
+
+
 def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
     """基于图片提示词和用户补充描述构建视频提示词。"""
     base_prompt = (image_prompt or "").strip()
@@ -242,6 +265,8 @@ async def generate_image_novelai(
     skip_artist_prefix: bool = False,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
+    character_name: Optional[str] = None,
+    work_name: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
@@ -275,7 +300,7 @@ async def generate_image_novelai(
     2. **场景构成 (5~10%)**: nsfw/sfw, 角色数量(1girl, solo), 角色关系(hetero, harem, yuri)
     3. **背景 (10~20%)**: 年代(modern, medieval, fantasy), 环境(bedroom, park, outdoor, onsen, train interior), 时间(night, sunset, golden hour), 氛围(mystical atmosphere), 光影(backlighting, rim lighting, sidelighting, dramatic shadows, moonlight, neon light, spotlight, tyndall effect)
     4. **构图 (10~20%)**: 区域(full body, upper body, cowboy shot), 远近(close-up, mid shot, wide shot), 透视(wide-angle, foreshortening, fisheye), 视角(front view, from behind, from above, from below, from side, pov, male pov), 焦点(face focus, ass focus, breast focus, foot focus, crotch focus), 角度(cinematic angle, dynamic angle, dutch angle), 效果(depth of field, bokeh, motion blur)
-    5. **角色 DNA - 身份**: 性别(girl, boy), 姓名(同人角色用英文全名(来源), 原创用original), 身份(bishoujo, maid, loli, milf, office lady)
+    5. **角色 DNA - 身份**: 性别(girl, boy), 姓名标签(同人角色必须使用 `character_name (work_name)` 英文格式，如 `raiden shogun (genshin impact)`；原创角色必须使用 `original`), 身份(bishoujo, maid, loli, milf, office lady)
     6. **角色 DNA - 外貌**: 发长/发型/发色/瞳色/罩杯(flat chest=A, small breasts=B, medium breasts=C, large breasts=D, huge breasts=E, gigantic breasts=F+)/肤色/修饰(makeup, scar, tan lines, bangs, petite, curvy, narrow waist, wide hips)
     7. **角色 DNA - 服饰**: 核心服饰(上装/下装/内衣/袜子/鞋类/配饰, 含风格/品类/颜色), 材质(plaid, latex, satin, velvet, sheer fabric, lace), 状态(wet clothes, torn clothes, see-through), 穿着状态(nude, open shirt, strap slip, no panties, clothes lift, skirt lift), 裸露部位(pussy, ass, nipples, navel)
     8. **当前动作**: 基础姿势(sitting, standing, lying, kneeling, all fours, squatting), 肢体动作(heart hands, head down, leg lift, v, arms up, peace sign), 核心交互(walking, masturbation, hug, kiss, sex, fellatio), 物理反馈(bouncing breasts, ass ripple, skin indentation, motion lines), 交互接触点(明确动作主体+做什么+放在哪, 如: grabbing own breasts, grabbing another's ass, holding phone)
@@ -295,7 +320,7 @@ async def generate_image_novelai(
     - 增强核心元素: `1.2::Tag::` 或 `1.3::Tag::`
     - 减弱次要元素: `0.8::Tag::` 或 `0.7::Tag::`
     - 增强 3~8 次，减弱 2~4 次
-    - 增强优先级: 同人角色姓名 > 核心动作 > 服饰 > 特效 > 表情
+    - 增强优先级: 同人角色姓名(含作品名) > 核心动作 > 服饰 > 特效 > 表情
 
     ### 5. 画面范围（只保留视觉可见 Tag）
     - 构图导致不可见: 下身特写->排除上身元素
@@ -447,6 +472,16 @@ async def generate_image_novelai(
         success_message: （必填）图片生成成功后随图片一起发送的回复消息。
                 用你自己的语气写一句简短的话，例如："画好了哦~" 或 "来看看这张怎么样！"
                 **绝对不要在这里写提示词/Tag内容！** 提示词用户可以通过按钮自己查看。
+
+        character_name: 同人角色英文名（可选，但同人角色场景建议必传）。
+                例如: "raiden shogun"。
+                若传入该参数，建议同时传 `work_name`，系统会自动补充/强化
+                `character_name (work_name)` 身份标签，提升角色还原度。
+
+        work_name: 角色所属作品英文名（可选，但同人角色场景建议与 `character_name` 同时传）。
+                例如: "genshin impact"。
+                与 `character_name` 同时存在时，系统会自动确保提示词中包含
+                `1.3::character_name (work_name)::` 身份标签（若原 prompt 缺失）。
 
     Returns:
         成功后图片和你的回复会一起发送给用户。
@@ -826,6 +861,28 @@ async def generate_image_novelai(
                     log.info(f"应用全局默认画师串: {default_artist[:60]}...")
                 else:
                     log.info(f"prompt 已包含全局画师串内容，跳过重复拼接")
+
+    # 角色身份标签自动补全（同人角色）
+    normalized_character_name = str(character_name or "").strip()
+    normalized_work_name = str(work_name or "").strip()
+
+    # 兼容把 "character (work)" 误填到 character_name 的情况
+    parsed_identity = re.fullmatch(
+        r"\s*([^()]+?)\s*[（(]\s*([^()]+?)\s*[)）]\s*",
+        normalized_character_name,
+    )
+    if parsed_identity and not normalized_work_name:
+        normalized_character_name = parsed_identity.group(1).strip()
+        normalized_work_name = parsed_identity.group(2).strip()
+
+    if normalized_character_name and normalized_work_name:
+        identity_tag = f"{normalized_character_name} ({normalized_work_name})"
+        weighted_identity_tag = f"1.3::{identity_tag}::"
+        if not _prompt_contains_tag(final_prompt, identity_tag):
+            final_prompt = f"{weighted_identity_tag}, {final_prompt}"
+            log.info(f"自动补充角色身份标签: {identity_tag}")
+    elif normalized_character_name and not normalized_work_name:
+        log.warning("收到 character_name 但缺少 work_name，已跳过身份标签自动补充")
 
     log.info(f"调用 NovelAI 图片生成工具，Tag: {final_prompt[:100]}..., 尺寸: {width}x{height}")
 
