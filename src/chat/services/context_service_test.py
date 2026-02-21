@@ -26,6 +26,31 @@ class ContextServiceTest:
         else:
             log.warning("ContextServiceTest 初始化时未收到有效的 bot 实例。")
 
+    def _extract_message_embed_text(self, msg: discord.Message) -> str:
+        """提取消息 Embed 的可读文本，供上下文记忆与回复理解使用。"""
+        if not getattr(msg, "embeds", None):
+            return ""
+
+        embed_parts: List[str] = []
+        for embed in msg.embeds:
+            if embed.author and embed.author.name:
+                embed_parts.append(f"作者: {embed.author.name}")
+            if embed.title:
+                embed_parts.append(f"标题: {embed.title}")
+            if embed.description:
+                embed_parts.append(f"描述: {embed.description}")
+            for field in embed.fields:
+                field_name = str(field.name or "").strip()
+                field_value = str(field.value or "").strip()
+                if field_name and field_value:
+                    embed_parts.append(f"{field_name}: {field_value}")
+                elif field_value:
+                    embed_parts.append(field_value)
+            if embed.footer and embed.footer.text:
+                embed_parts.append(f"页脚: {embed.footer.text}")
+
+        return "\n".join(embed_parts).strip()
+
     async def get_formatted_channel_history_new(
         self,
         channel_id: int,
@@ -177,7 +202,8 @@ class ContextServiceTest:
                     continue
 
                 clean_content = self.clean_message_content(msg.content, msg.guild)
-                if not clean_content and not msg.attachments:
+                msg_embed_content = self._extract_message_embed_text(msg)
+                if not clean_content and not msg.attachments and not msg_embed_content:
                     continue
 
                 reply_info = ""
@@ -185,7 +211,27 @@ class ContextServiceTest:
                     # 直接从缓存中获取，.get() 方法可以安全地处理获取失败的情况
                     ref_msg = self.message_cache.get(msg.reference.message_id)
                     if ref_msg and ref_msg.author:
-                        reply_info = f"[回复 {ref_msg.author.display_name}]"
+                        ref_clean_content = self.clean_message_content(
+                            ref_msg.content, ref_msg.guild
+                        )
+                        ref_embed_content = self._extract_message_embed_text(ref_msg)
+
+                        ref_preview_parts = [
+                            part
+                            for part in [ref_clean_content, ref_embed_content]
+                            if part
+                        ]
+                        if ref_preview_parts:
+                            ref_preview_text = " / ".join(ref_preview_parts).replace(
+                                "\n", " / "
+                            )
+                            if len(ref_preview_text) > 180:
+                                ref_preview_text = ref_preview_text[:177] + "..."
+                            reply_info = (
+                                f"[回复 {ref_msg.author.display_name}: {ref_preview_text}]"
+                            )
+                        else:
+                            reply_info = f"[回复 {ref_msg.author.display_name}]"
 
                 # 处理图片附件信息
                 attachment_info = ""
@@ -198,9 +244,14 @@ class ContextServiceTest:
                         # 标记用户发送了图片，让 AI 知道可以使用 edit_image 工具
                         attachment_info = f"[发送了{len(image_attachments)}张图片]"
 
+                message_parts = [part for part in [clean_content, msg_embed_content] if part]
+                combined_content = "\n".join(message_parts).strip()
+                if not combined_content and msg.attachments:
+                    combined_content = "（仅发送了图片）"
+
                 # 强制在元信息（用户名和回复）后添加冒号，清晰地分割内容
                 user_meta = f"[{msg.author.display_name}]{attachment_info}{reply_info}"
-                final_part = f"{user_meta}: {clean_content}"
+                final_part = f"{user_meta}: {combined_content}"
                 history_parts.append(final_part)
 
             # 构建最终的上下文列表
