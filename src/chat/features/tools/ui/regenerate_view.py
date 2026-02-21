@@ -955,12 +955,15 @@ async def _do_novelai_regenerate(
 ):
     """
     使用 NovelAI 引擎重新生成图片（从 Imagen 切换过来）。
-    Imagen 使用自然语言 prompt，NovelAI 也会尝试直接使用。
+    切换时强制触发 AI 重写：将当前提示词统一转换为 NovelAI 需要的 Danbooru 标签格式。
     """
     from src.chat.features.novelai_generation.services.novelai_service import novelai_service
     from src.chat.config.chat_config import NOVELAI_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
     from src.chat.utils.database import chat_db_manager
+    from src.chat.features.tools.functions.generate_image_novelai import (
+        _convert_imagen_prompt_to_novelai_prompt,
+    )
 
     # 检查 NovelAI 服务可用性
     if not novelai_service.is_available():
@@ -992,9 +995,15 @@ async def _do_novelai_regenerate(
         except Exception:
             pass
 
+    # 切换时强制做一次 AI 重写：自然语言/混合词 -> Danbooru Tag
+    novelai_prompt = await _convert_imagen_prompt_to_novelai_prompt(
+        prompt,
+        force_rewrite=True,
+    )
+
     # 调用 NovelAI 生成
     result = await novelai_service.generate_image(
-        prompt=prompt,
+        prompt=novelai_prompt,
         width=832,
         height=1216,
         seed=None,
@@ -1008,7 +1017,7 @@ async def _do_novelai_regenerate(
     if cost > 0:
         try:
             await coin_service.remove_coins(
-                user_id, cost, f"NovelAI生图(切换): {prompt[:25]}..."
+                user_id, cost, f"NovelAI生图(切换): {novelai_prompt[:25]}..."
             )
         except Exception as e:
             log.error(f"扣除月光币失败: {e}")
@@ -1042,7 +1051,7 @@ async def _do_novelai_regenerate(
     # 创建 NovelAI 结果的交互按钮
     from src.chat.features.tools.functions.generate_image_novelai import NovelAIResultView
     novelai_view = NovelAIResultView(
-        prompt=prompt,
+        prompt=novelai_prompt,
         negative_prompt=None,
         width=832,
         height=1216,

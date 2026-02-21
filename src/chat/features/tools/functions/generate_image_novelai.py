@@ -83,9 +83,9 @@ def _is_probably_tag_prompt(prompt: str) -> bool:
     return (ascii_like / max(1, len(tokens))) >= 0.75
 
 
-async def _convert_tag_prompt_to_imagen_prompt(prompt: str) -> str:
+async def _convert_tag_prompt_to_imagen_prompt(prompt: str, force_rewrite: bool = False) -> str:
     """将 Danbooru Tag 串转换为适配 Imagen 的中文自然语言提示词。"""
-    if not _is_probably_tag_prompt(prompt):
+    if not force_rewrite and not _is_probably_tag_prompt(prompt):
         return prompt
 
     from src.chat.services.gemini_service import gemini_service
@@ -128,9 +128,9 @@ async def _convert_tag_prompt_to_imagen_prompt(prompt: str) -> str:
     return prompt
 
 
-async def _convert_imagen_prompt_to_novelai_prompt(prompt: str) -> str:
+async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: bool = False) -> str:
     """将 Imagen 自然语言提示词转换为 NovelAI Danbooru Tag。"""
-    if _is_probably_tag_prompt(prompt):
+    if not force_rewrite and _is_probably_tag_prompt(prompt):
         return prompt
 
     from src.chat.services.gemini_service import gemini_service
@@ -204,6 +204,104 @@ def _prompt_contains_tag(prompt: str, tag: str) -> bool:
         if _normalize_tag_for_match(token) == target:
             return True
     return False
+
+
+def _split_prompt_tokens(prompt: str) -> List[str]:
+    """按逗号切分并清洗 Tag。"""
+    return [seg.strip() for seg in str(prompt or "").split(",") if seg and seg.strip()]
+
+
+def _strip_artist_tokens(prompt: str, artist_strings: List[Optional[str]]) -> str:
+    """
+    从 prompt 中剥离画师串里的标签（不限于前缀，进行全量剥离）。
+    用于“切换画师串重生”时，避免旧画师串残留。
+    """
+    tokens = _split_prompt_tokens(prompt)
+    if not tokens:
+        return str(prompt or "").strip()
+
+    artist_token_set = set()
+    for artist in artist_strings:
+        for artist_token in _split_prompt_tokens(str(artist or "")):
+            normalized_artist_token = _normalize_tag_for_match(artist_token)
+            if normalized_artist_token:
+                artist_token_set.add(normalized_artist_token)
+
+    if not artist_token_set:
+        return ", ".join(tokens)
+
+    filtered_tokens: List[str] = []
+    for token in tokens:
+        normalized_token = _normalize_tag_for_match(token)
+        if normalized_token and normalized_token in artist_token_set:
+            continue
+        filtered_tokens.append(token)
+
+    return ", ".join(filtered_tokens)
+
+
+def _compose_prompt_with_artist(prompt: str, artist_string: Optional[str]) -> str:
+    """将画师串与正面提示词进行组合，并避免重复拼接。"""
+    base_prompt = str(prompt or "").strip()
+    normalized_artist = str(artist_string or "").strip()
+
+    if not normalized_artist:
+        return base_prompt
+    if not base_prompt:
+        return normalized_artist
+
+    if _prompt_already_contains_artist(base_prompt, normalized_artist):
+        return base_prompt
+    return f"{normalized_artist}, {base_prompt}"
+
+
+def _build_prompt_preview_pages(
+    artist_string: Optional[str],
+    positive_prompt: Optional[str],
+    negative_prompt: Optional[str],
+) -> List[str]:
+    """构建“画师串/正面/负面”三段代码块展示内容，超长时自动拆分多条消息。"""
+    default_negative_prompt = str(NOVELAI_CONFIG.get("DEFAULT_NEGATIVE_PROMPT", "") or "").strip()
+    artist_text = str(artist_string or "").strip() or "（无画师串）"
+    positive_text = str(positive_prompt or "").strip() or "（无）"
+    negative_text = str(negative_prompt or "").strip() or default_negative_prompt or "（无默认负面提示词）"
+
+    def _build_section_blocks(title: str, value: str) -> List[str]:
+        chunk_size = 1400
+        chunks = [value[i:i + chunk_size] for i in range(0, len(value), chunk_size)] or [value]
+        blocks: List[str] = []
+        for idx, chunk in enumerate(chunks):
+            suffix = "（续）" if idx > 0 else ""
+            blocks.append(f"**{title}{suffix}：**\n```\n{chunk}\n```")
+        return blocks
+
+    all_blocks: List[str] = []
+    all_blocks.extend(_build_section_blocks("画师串", artist_text))
+    all_blocks.extend(_build_section_blocks("正面提示词", positive_text))
+    all_blocks.extend(_build_section_blocks("负面提示词", negative_text))
+
+    pages: List[str] = []
+    current_page = ""
+    for block in all_blocks:
+        candidate = f"{current_page}\n\n{block}" if current_page else block
+        if len(candidate) <= 2000:
+            current_page = candidate
+            continue
+
+        if current_page:
+            pages.append(current_page)
+            current_page = block
+            continue
+
+        # 极端兜底：单个区块仍超长时硬切
+        hard_chunks = [block[i:i + 1900] for i in range(0, len(block), 1900)] or [block]
+        pages.extend(hard_chunks[:-1])
+        current_page = hard_chunks[-1]
+
+    if current_page:
+        pages.append(current_page)
+
+    return pages or ["（无可展示内容）"]
 
 
 def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
@@ -283,6 +381,7 @@ async def generate_image_novelai(
     model: Optional[str] = None,
     seed: Optional[int] = None,
     preset_name: Optional[str] = None,
+    artist_string: Optional[str] = None,
     skip_artist_prefix: bool = False,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
@@ -297,11 +396,12 @@ async def generate_image_novelai(
 
     ## 画师串自动拼接说明（重要）
     系统会自动在你的 prompt 前面拼接画师串前缀，优先级如下：
-    1) 传入 `preset_name`：先匹配用户同名预设，再匹配管理员同名预设。
-    2) 未传 `preset_name`：优先读取用户持久化画师串模式（默认/预设/无画师串）。
-    3) 若未命中持久化模式：回退全局默认画师串（`DEFAULT_ARTIST_STRING`，若已配置）。
-    4) 传 `skip_artist_prefix=True`：不拼接任何画师串。
-    - **你生成的 prompt 中不要包含画师串/artist tag**，系统会自动处理。
+    1) 显式传入 `artist_string`：优先使用该画师串（用于你自行编写画师串时）。
+    2) 未传 `artist_string` 且传入 `preset_name`：先匹配用户同名预设，再匹配管理员同名预设。
+    3) 未传 `artist_string` 且未传 `preset_name`：优先读取用户持久化画师串模式（默认/预设/无画师串）。
+    4) 若未命中持久化模式：回退全局默认画师串（`DEFAULT_ARTIST_STRING`，若已配置）。
+    5) 传 `skip_artist_prefix=True`：不拼接任何画师串。
+    - 你应尽量将画师串放在 `artist_string` 参数中单独传递，不要混在 `prompt` 里。
     - 你只需要专注于生成场景、角色、动作、表情等内容 Tag。
     - 如果用户明确说"不要画师串"、"不用预设"、"裸 prompt"等，请传 `skip_artist_prefix=True`。
 
@@ -482,6 +582,11 @@ async def generate_image_novelai(
                 命中管理员预设时，优先传 `管理员/预设名` 以避免同名冲突。
                 若用户未点名且你无法明确判断，才可不传；此时会优先读取用户持久化画师串模式，
                 若模式不可用再回退到全局默认画师串（若已配置）。
+
+        artist_string: 显式画师串（可选，优先级高于 preset_name）。
+                当你想自行编写画师串时，应通过该参数单独传递；
+                不要再把画师串混写到 prompt 中。
+                传入后会直接作为画师串前缀参与拼接。
 
         skip_artist_prefix: 是否跳过画师串拼接，默认 False。
                 设为 True 时不会在 prompt 前拼接任何画师串预设或全局默认画师串。
@@ -703,12 +808,25 @@ async def generate_image_novelai(
 
     # 画师串应用策略：
     # skip_artist_prefix=True 时跳过所有画师串拼接
-    # 1) 指定 preset_name 时，先匹配用户预设，再匹配管理员预设（均支持大小写不敏感）
-    # 2) 未指定 preset_name 时，优先读取用户持久化画师串模式（default/preset/none）
-    # 3) 若仍无可用预设，则回退全局默认画师串
-    final_prompt = prompt
+    # 1) 显式 artist_string 优先（AI 自行编写画师串时应使用该参数）
+    # 2) 指定 preset_name 时，先匹配用户预设，再匹配管理员预设（均支持大小写不敏感）
+    # 3) 未指定 preset_name 时，优先读取用户持久化画师串模式（default/preset/none）
+    # 4) 若仍无可用预设，则回退全局默认画师串
+    base_prompt = str(prompt or "").strip()
+    final_prompt = base_prompt
     applied_artist = False
     effective_preset_name: Optional[str] = None
+    effective_artist_string: Optional[str] = None
+
+    normalized_artist_string: Optional[str] = None
+    if isinstance(artist_string, str):
+        normalized_artist = artist_string.strip()
+        if normalized_artist:
+            normalized_artist_string = normalized_artist
+    elif artist_string is not None:
+        normalized_artist = str(artist_string).strip()
+        if normalized_artist:
+            normalized_artist_string = normalized_artist
 
     normalized_preset_name: Optional[str] = None
     if isinstance(preset_name, str):
@@ -721,7 +839,7 @@ async def generate_image_novelai(
             normalized_preset_name = normalized_name
 
     # 未显式指定 preset_name 时，读取用户持久化画师串模式
-    if not normalized_preset_name and (not skip_artist_prefix) and parsed_user_id is not None:
+    if (not normalized_artist_string) and (not normalized_preset_name) and (not skip_artist_prefix) and parsed_user_id is not None:
         try:
             active_state = await chat_db_manager.get_novelai_active_preset_state(parsed_user_id)
             active_mode = active_state.get("active_mode", "default")
@@ -760,6 +878,14 @@ async def generate_image_novelai(
 
     if skip_artist_prefix:
         log.info("skip_artist_prefix=True, 跳过画师串拼接")
+    elif normalized_artist_string:
+        if normalized_preset_name:
+            log.info("同时收到 artist_string 与 preset_name，优先使用 artist_string")
+        final_prompt = _compose_prompt_with_artist(base_prompt, normalized_artist_string)
+        effective_artist_string = normalized_artist_string
+        applied_artist = True
+        effective_preset_name = "自定义画师串"
+        log.info("应用显式 artist_string 参数作为画师串")
     else:
         user_presets = []
         admin_presets = []
@@ -847,15 +973,13 @@ async def generate_image_novelai(
             selected_scope = None
 
         if selected_preset and selected_preset.get("artist_string"):
-            artist_str = selected_preset["artist_string"]
-            # 防重复：检查 prompt 中是否已包含画师串（AI 可能自己写了一遍）
-            if not _prompt_already_contains_artist(prompt, artist_str):
-                final_prompt = f"{artist_str}, {prompt}"
-                preset_scope_text = "管理员" if selected_scope == "admin" else "用户"
-                log.info(f"应用{preset_scope_text}画师串预设: {selected_preset.get('name', 'unknown')}")
-            else:
-                log.info("prompt 已包含画师串内容，跳过重复拼接")
-            applied_artist = True
+            artist_str = str(selected_preset.get("artist_string") or "").strip()
+            final_prompt = _compose_prompt_with_artist(base_prompt, artist_str)
+            effective_artist_string = artist_str or None
+            applied_artist = bool(effective_artist_string)
+
+            preset_scope_text = "管理员" if selected_scope == "admin" else "用户"
+            log.info(f"应用{preset_scope_text}画师串预设: {selected_preset.get('name', 'unknown')}")
 
             selected_name = selected_preset.get("name")
             if selected_name:
@@ -874,14 +998,12 @@ async def generate_image_novelai(
 
         # 如果没有通过用户/管理员预设应用画师串，则使用全局默认画师串
         if not applied_artist:
-            default_artist = NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "")
+            default_artist = str(NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "") or "").strip()
             if default_artist:
-                # 防重复：检查 prompt 中是否已包含全局画师串
-                if not _prompt_already_contains_artist(prompt, default_artist):
-                    final_prompt = f"{default_artist}, {prompt}"
-                    log.info(f"应用全局默认画师串: {default_artist[:60]}...")
-                else:
-                    log.info(f"prompt 已包含全局画师串内容，跳过重复拼接")
+                final_prompt = _compose_prompt_with_artist(base_prompt, default_artist)
+                effective_artist_string = default_artist
+                applied_artist = True
+                log.info(f"应用全局默认画师串: {default_artist[:60]}...")
 
     # 角色身份标签自动补全（同人角色）
     normalized_character_name = str(character_name or "").strip()
@@ -1029,8 +1151,13 @@ async def generate_image_novelai(
                     # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
                     # 创建交互按钮 View
+                    prompt_without_artist = _strip_artist_tokens(final_prompt, [effective_artist_string])
+                    if not prompt_without_artist:
+                        prompt_without_artist = base_prompt or final_prompt
+
                     interaction_view = NovelAIResultView(
-                        prompt=final_prompt,
+                        prompt=prompt_without_artist,
+                        artist_string=effective_artist_string,
                         negative_prompt=negative_prompt,
                         width=width,
                         height=height,
@@ -1118,6 +1245,7 @@ class EditPromptModal(discord.ui.Modal, title="修改提示词"):
         preset_name: Optional[str],
         user_id: Optional[str],
         cost: int,
+        current_artist_string: Optional[str] = None,
     ):
         super().__init__()
         self.prompt_input.default = current_prompt[:4000]
@@ -1131,6 +1259,8 @@ class EditPromptModal(discord.ui.Modal, title="修改提示词"):
         self._preset_name = preset_name
         self._user_id = user_id
         self._cost = cost
+        normalized_artist = str(current_artist_string or "").strip()
+        self._artist_string = normalized_artist or None
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
@@ -1154,6 +1284,7 @@ class EditPromptModal(discord.ui.Modal, title="修改提示词"):
                 preset_name=self._preset_name,
                 user_id=self._user_id,
                 cost=self._cost,
+                artist_string=self._artist_string,
             )
         except Exception as e:
             log.error(f"修改提示词重新生成失败: {e}", exc_info=True)
@@ -1186,6 +1317,7 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
         preset_name: Optional[str],
         user_id: Optional[str],
         cost: int,
+        artist_string: Optional[str] = None,
     ):
         super().__init__()
         self._current_prompt = current_prompt
@@ -1198,6 +1330,8 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
         self._preset_name = preset_name
         self._user_id = user_id
         self._cost = cost
+        normalized_artist = str(artist_string or "").strip()
+        self._artist_string = normalized_artist or None
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
@@ -1244,6 +1378,7 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
                 preset_name=self._preset_name,
                 user_id=self._user_id,
                 cost=self._cost,
+                artist_string=self._artist_string,
                 title_suffix="（AI 重写）",
             )
         except Exception as e:
@@ -1618,7 +1753,10 @@ class ToolImagenResultView(discord.ui.View):
             return
         await interaction.response.defer(thinking=True)
         try:
-            novelai_prompt = await _convert_imagen_prompt_to_novelai_prompt(self._prompt)
+            novelai_prompt = await _convert_imagen_prompt_to_novelai_prompt(
+                self._prompt,
+                force_rewrite=True,
+            )
             await _regenerate_novelai(
                 interaction=interaction,
                 prompt=novelai_prompt,
@@ -1692,21 +1830,6 @@ class ToolImagenResultView(discord.ui.View):
             pass
 
 
-def _strip_artist_prefix(prompt: str, artist_string: Optional[str]) -> str:
-    """从提示词开头移除指定画师串前缀。"""
-    if not prompt or not artist_string:
-        return prompt
-
-    artist = str(artist_string).strip()
-    if not artist:
-        return prompt
-
-    for prefix in (f"{artist}, ", f"{artist},"):
-        if prompt.startswith(prefix):
-            return prompt[len(prefix):].lstrip()
-    return prompt
-
-
 class ArtistPresetSwitchView(discord.ui.View):
     """切换画师串并快捷重新生成。"""
 
@@ -1724,9 +1847,10 @@ class ArtistPresetSwitchView(discord.ui.View):
         cost: int,
         user_presets: List[dict],
         admin_presets: List[dict],
+        current_artist_string: Optional[str] = None,
     ):
         super().__init__(timeout=120)
-        self._prompt = prompt
+        self._prompt = str(prompt or "").strip()
         self._negative_prompt = negative_prompt
         self._width = width
         self._height = height
@@ -1736,6 +1860,8 @@ class ArtistPresetSwitchView(discord.ui.View):
         self._current_preset_name = current_preset_name
         self._user_id = user_id
         self._cost = cost
+        normalized_current_artist = str(current_artist_string or "").strip()
+        self._current_artist_string = normalized_current_artist or None
 
         self._user_presets = user_presets
         self._admin_presets = admin_presets
@@ -1804,47 +1930,32 @@ class ArtistPresetSwitchView(discord.ui.View):
         selected_value = interaction.data["values"][0]
         default_artist = str(NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "") or "").strip()
 
-        current_artist_string = ""
-        if self._current_preset_name:
-            if str(self._current_preset_name).startswith("管理员/"):
-                current_name = str(self._current_preset_name).split("/", 1)[1]
-                current_preset = next(
-                    (p for p in self._admin_presets if str(p.get("name")) == str(current_name)),
-                    None,
-                )
-                if current_preset and current_preset.get("artist_string"):
-                    current_artist_string = str(current_preset.get("artist_string"))
-            else:
-                current_preset = next(
-                    (p for p in self._user_presets if str(p.get("name")) == str(self._current_preset_name)),
-                    None,
-                )
-                if current_preset and current_preset.get("artist_string"):
-                    current_artist_string = str(current_preset.get("artist_string"))
-        else:
-            current_artist_string = default_artist
+        known_artist_strings: List[Optional[str]] = [self._current_artist_string, default_artist]
+        for preset in self._user_presets:
+            known_artist_strings.append(str(preset.get("artist_string") or "").strip() or None)
+        for preset in self._admin_presets:
+            known_artist_strings.append(str(preset.get("artist_string") or "").strip() or None)
 
-        base_prompt = _strip_artist_prefix(self._prompt, current_artist_string)
-        target_prompt = base_prompt
+        base_prompt = _strip_artist_tokens(self._prompt, known_artist_strings)
+        if not base_prompt:
+            base_prompt = self._prompt
+
         target_preset_name: Optional[str] = None
         target_negative_prompt = self._negative_prompt
+        target_artist_string: Optional[str] = None
 
         if selected_value == "none":
             target_preset_name = "无画师串"
         elif selected_value == "default":
-            if default_artist and not _prompt_already_contains_artist(base_prompt, default_artist):
-                target_prompt = f"{default_artist}, {base_prompt}"
             target_preset_name = "默认"
+            target_artist_string = default_artist or None
         else:
             preset = self._preset_lookup.get(selected_value)
             if not preset:
                 await interaction.followup.send("预设不存在或已失效，请重试。", ephemeral=True)
                 return
 
-            artist_string = str(preset.get("artist_string") or "").strip()
-            if artist_string and not _prompt_already_contains_artist(base_prompt, artist_string):
-                target_prompt = f"{artist_string}, {base_prompt}"
-
+            target_artist_string = str(preset.get("artist_string") or "").strip() or None
             preset_name = str(preset.get("name") or "未命名预设")
             if preset.get("scope") == "admin":
                 target_preset_name = f"管理员/{preset_name}"
@@ -1856,7 +1967,7 @@ class ArtistPresetSwitchView(discord.ui.View):
 
         await _regenerate_novelai(
             interaction=interaction,
-            prompt=target_prompt,
+            prompt=base_prompt,
             negative_prompt=target_negative_prompt,
             width=self._width,
             height=self._height,
@@ -1866,6 +1977,7 @@ class ArtistPresetSwitchView(discord.ui.View):
             preset_name=target_preset_name,
             user_id=self._user_id,
             cost=self._cost,
+            artist_string=target_artist_string,
             title_suffix="（切换画师串）",
         )
 
@@ -1885,9 +1997,19 @@ class NovelAIResultView(discord.ui.View):
         preset_name: Optional[str],
         user_id: Optional[str],
         cost: int,
+        artist_string: Optional[str] = None,
     ):
         super().__init__(timeout=600)  # 10 分钟超时
-        self._prompt = prompt
+        normalized_artist = str(artist_string or "").strip()
+        self._artist_string = normalized_artist or None
+
+        normalized_prompt = str(prompt or "").strip()
+        if self._artist_string:
+            stripped_prompt = _strip_artist_tokens(normalized_prompt, [self._artist_string])
+            self._prompt = stripped_prompt or normalized_prompt
+        else:
+            self._prompt = normalized_prompt
+
         self._negative_prompt = negative_prompt
         self._width = width
         self._height = height
@@ -1921,6 +2043,7 @@ class NovelAIResultView(discord.ui.View):
                 preset_name=self._preset_name,
                 user_id=self._user_id,
                 cost=self._cost,
+                artist_string=self._artist_string,
             )
         except Exception as e:
             log.error(f"重新生成失败: {e}", exc_info=True)
@@ -1948,6 +2071,7 @@ class NovelAIResultView(discord.ui.View):
             preset_name=self._preset_name,
             user_id=self._user_id,
             cost=self._cost,
+            current_artist_string=self._artist_string,
         )
         await interaction.response.send_modal(modal)
 
@@ -1961,9 +2085,10 @@ class NovelAIResultView(discord.ui.View):
 
         await interaction.response.defer(thinking=True)
         try:
+            prompt_for_imagen = _compose_prompt_with_artist(self._prompt, self._artist_string)
             await _regenerate_with_imagen(
                 interaction=interaction,
-                prompt=self._prompt,
+                prompt=prompt_for_imagen,
                 user_id=self._user_id,
                 negative_prompt=self._negative_prompt,
                 width=self._width,
@@ -1973,6 +2098,7 @@ class NovelAIResultView(discord.ui.View):
                 sampler=self._sampler,
                 preset_name=self._preset_name,
                 novelai_cost=self._cost,
+                force_prompt_rewrite=True,
             )
         except Exception as e:
             log.error(f"切换到 Imagen 失败: {e}", exc_info=True)
@@ -2030,23 +2156,21 @@ class NovelAIResultView(discord.ui.View):
             cost=self._cost,
             user_presets=user_presets,
             admin_presets=admin_presets,
+            current_artist_string=self._artist_string,
         )
         await interaction.response.send_message("请选择要切换的画师串：", view=view, ephemeral=True)
 
     @discord.ui.button(label="查看提示词", style=discord.ButtonStyle.secondary, emoji="📋", row=1)
     async def view_prompt_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """以 ephemeral 消息展示完整提示词"""
-        prompt_text = self._prompt or "（无）"
-        negative_text = self._negative_prompt or "（使用默认）"
-
-        # Discord ephemeral 消息最多 2000 字符，做截断
-        content_parts = [f"**正面提示词：**\n```\n{prompt_text[:900]}\n```"]
-        if len(prompt_text) > 900:
-            content_parts.append(f"```\n{prompt_text[900:1800]}\n```")
-        content_parts.append(f"**负面提示词：**\n```\n{negative_text[:500]}\n```")
-
-        content = "\n".join(content_parts)
-        await interaction.response.send_message(content[:2000], ephemeral=True)
+        pages = _build_prompt_preview_pages(
+            artist_string=self._artist_string,
+            positive_prompt=self._prompt,
+            negative_prompt=self._negative_prompt,
+        )
+        await interaction.response.send_message(pages[0], ephemeral=True)
+        for page in pages[1:]:
+            await interaction.followup.send(page, ephemeral=True)
 
     @discord.ui.button(label="AI 重写", style=discord.ButtonStyle.secondary, row=1)
     async def ai_rewrite_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2067,6 +2191,7 @@ class NovelAIResultView(discord.ui.View):
             preset_name=self._preset_name,
             user_id=self._user_id,
             cost=self._cost,
+            artist_string=self._artist_string,
         )
         await interaction.response.send_modal(modal)
 
@@ -2077,7 +2202,8 @@ class NovelAIResultView(discord.ui.View):
             if not interaction.user.guild_permissions.administrator:
                 await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
                 return
-        modal = GenerateVideoModal(image_prompt=self._prompt)
+        prompt_for_video = _compose_prompt_with_artist(self._prompt, self._artist_string)
+        modal = GenerateVideoModal(image_prompt=prompt_for_video)
         await interaction.response.send_modal(modal)
 
     async def on_timeout(self):
@@ -2105,6 +2231,7 @@ async def _regenerate_novelai(
     preset_name: Optional[str],
     user_id: Optional[str],
     cost: int,
+    artist_string: Optional[str] = None,
     title_suffix: str = "（重新生成）",
 ):
     """内部函数：使用 NovelAI 重新生成图片"""
@@ -2112,6 +2239,15 @@ async def _regenerate_novelai(
     from src.chat.config.chat_config import NOVELAI_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
     from src.chat.utils.database import chat_db_manager
+
+    base_prompt = str(prompt or "").strip()
+    normalized_artist = str(artist_string or "").strip()
+    effective_artist_string = normalized_artist or None
+    final_prompt = _compose_prompt_with_artist(base_prompt, effective_artist_string)
+
+    if not final_prompt:
+        await interaction.followup.send("提示词不能为空！", ephemeral=True)
+        return
 
     # 按钮实际操作者付费（管理员代点时扣管理员）
     billing_user_id = int(interaction.user.id)
@@ -2137,7 +2273,7 @@ async def _regenerate_novelai(
 
     # 生成图片（新种子）
     result = await novelai_service.generate_image(
-        prompt=prompt,
+        prompt=final_prompt,
         negative_prompt=negative_prompt,
         width=width,
         height=height,
@@ -2155,7 +2291,7 @@ async def _regenerate_novelai(
     if cost > 0:
         try:
             await coin_service.remove_coins(
-                billing_user_id, cost, f"NovelAI重新生图: {prompt[:25]}..."
+                billing_user_id, cost, f"NovelAI重新生图: {final_prompt[:25]}..."
             )
         except Exception as e:
             log.error(f"扣除月光币失败: {e}")
@@ -2190,9 +2326,13 @@ async def _regenerate_novelai(
     )
     # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
+    prompt_without_artist = _strip_artist_tokens(final_prompt, [effective_artist_string])
+    if not prompt_without_artist:
+        prompt_without_artist = base_prompt or final_prompt
+
     # 创建新的交互按钮
     new_view = NovelAIResultView(
-        prompt=prompt,
+        prompt=prompt_without_artist,
         negative_prompt=negative_prompt,
         width=width,
         height=height,
@@ -2202,6 +2342,7 @@ async def _regenerate_novelai(
         preset_name=preset_name,
         user_id=user_id,
         cost=cost,
+        artist_string=effective_artist_string,
     )
 
     sent_message = await interaction.followup.send(
@@ -2232,6 +2373,7 @@ async def _regenerate_with_imagen(
     resolution: str = "default",
     content_rating: str = "nsfw",
     title_suffix: str = "（从 NovelAI 切换）",
+    force_prompt_rewrite: bool = False,
 ):
     """内部函数：使用 Gemini Imagen 重新生成图片。"""
     from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
@@ -2269,7 +2411,10 @@ async def _regenerate_with_imagen(
             )
             return
 
-    imagen_prompt = await _convert_tag_prompt_to_imagen_prompt(prompt)
+    imagen_prompt = await _convert_tag_prompt_to_imagen_prompt(
+        prompt,
+        force_rewrite=force_prompt_rewrite,
+    )
 
     result = await gemini_imagen_service.generate_single_image(
         prompt=imagen_prompt,

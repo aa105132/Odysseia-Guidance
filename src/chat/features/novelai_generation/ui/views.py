@@ -75,9 +75,9 @@ def _is_probably_tag_prompt(prompt: str) -> bool:
     return (ascii_like / max(1, len(tokens))) >= 0.75
 
 
-async def _convert_tag_prompt_to_imagen_prompt(prompt: str) -> str:
+async def _convert_tag_prompt_to_imagen_prompt(prompt: str, force_rewrite: bool = False) -> str:
     """将 Danbooru Tag 串转换为适配 Imagen 的中文自然语言提示词。"""
-    if not _is_probably_tag_prompt(prompt):
+    if not force_rewrite and not _is_probably_tag_prompt(prompt):
         return prompt
 
     from src.chat.services.gemini_service import gemini_service
@@ -120,9 +120,9 @@ async def _convert_tag_prompt_to_imagen_prompt(prompt: str) -> str:
     return prompt
 
 
-async def _convert_imagen_prompt_to_novelai_prompt(prompt: str) -> str:
+async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: bool = False) -> str:
     """将 Imagen 中文自然语言提示词转换为 NovelAI Danbooru Tag。"""
-    if _is_probably_tag_prompt(prompt):
+    if not force_rewrite and _is_probably_tag_prompt(prompt):
         return prompt
 
     from src.chat.services.gemini_service import gemini_service
@@ -150,6 +150,130 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str) -> str:
         log.warning(f"Imagen->NovelAI 提示词转换失败，回退原提示词: {e}")
 
     return prompt
+
+
+def _prompt_already_contains_artist(prompt: str, artist_string: str) -> bool:
+    """检查 prompt 中是否已经包含了画师串的核心内容，避免重复拼接。"""
+    artist_tags = re.findall(r'artist[:\s]+[\w\-_/()]+', artist_string.lower())
+    if not artist_tags:
+        first_tags = [t.strip().lower() for t in artist_string.split(",")[:3] if t.strip()]
+        if not first_tags:
+            return False
+        prompt_lower = prompt.lower()
+        match_count = sum(1 for t in first_tags if t in prompt_lower)
+        return match_count >= max(1, len(first_tags) // 2)
+
+    prompt_lower = prompt.lower()
+    match_count = sum(1 for tag in artist_tags if tag in prompt_lower)
+    return match_count > len(artist_tags) // 2
+
+
+def _normalize_tag_for_match(tag: str) -> str:
+    """标准化标签文本，用于去权重后的等价匹配。"""
+    normalized = str(tag or "").strip().lower()
+    normalized = normalized.replace("（", "(").replace("）", ")")
+    normalized = re.sub(r"^\s*\d+(?:\.\d+)?::\s*", "", normalized)
+    normalized = re.sub(r"\s*::\s*$", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _split_prompt_tokens(prompt: str) -> List[str]:
+    """按逗号切分并清洗 Tag。"""
+    return [seg.strip() for seg in str(prompt or "").split(",") if seg and seg.strip()]
+
+
+def _strip_artist_tokens(prompt: str, artist_strings: List[Optional[str]]) -> str:
+    """
+    从 prompt 中剥离画师串里的标签（不限于前缀，进行全量剥离）。
+    用于“切换画师串/重复重生”时，避免旧画师串残留。
+    """
+    tokens = _split_prompt_tokens(prompt)
+    if not tokens:
+        return str(prompt or "").strip()
+
+    artist_token_set = set()
+    for artist in artist_strings:
+        for artist_token in _split_prompt_tokens(str(artist or "")):
+            normalized_artist_token = _normalize_tag_for_match(artist_token)
+            if normalized_artist_token:
+                artist_token_set.add(normalized_artist_token)
+
+    if not artist_token_set:
+        return ", ".join(tokens)
+
+    filtered_tokens: List[str] = []
+    for token in tokens:
+        normalized_token = _normalize_tag_for_match(token)
+        if normalized_token and normalized_token in artist_token_set:
+            continue
+        filtered_tokens.append(token)
+
+    return ", ".join(filtered_tokens)
+
+
+def _compose_prompt_with_artist(prompt: str, artist_string: Optional[str]) -> str:
+    """将画师串与正面提示词进行组合，并避免重复拼接。"""
+    base_prompt = str(prompt or "").strip()
+    normalized_artist = str(artist_string or "").strip()
+
+    if not normalized_artist:
+        return base_prompt
+    if not base_prompt:
+        return normalized_artist
+
+    if _prompt_already_contains_artist(base_prompt, normalized_artist):
+        return base_prompt
+    return f"{normalized_artist}, {base_prompt}"
+
+
+def _build_prompt_preview_pages(
+    artist_string: Optional[str],
+    positive_prompt: Optional[str],
+    negative_prompt: Optional[str],
+) -> List[str]:
+    """构建“画师串/正面/负面”三段代码块展示内容，超长时自动拆分多条消息。"""
+    default_negative_prompt = str(NOVELAI_CONFIG.get("DEFAULT_NEGATIVE_PROMPT", "") or "").strip()
+    artist_text = str(artist_string or "").strip() or "（无画师串）"
+    positive_text = str(positive_prompt or "").strip() or "（无）"
+    negative_text = str(negative_prompt or "").strip() or default_negative_prompt or "（无默认负面提示词）"
+
+    def _build_section_blocks(title: str, value: str) -> List[str]:
+        chunk_size = 1400
+        chunks = [value[i:i + chunk_size] for i in range(0, len(value), chunk_size)] or [value]
+        blocks: List[str] = []
+        for idx, chunk in enumerate(chunks):
+            suffix = "（续）" if idx > 0 else ""
+            blocks.append(f"**{title}{suffix}：**\n```\n{chunk}\n```")
+        return blocks
+
+    all_blocks: List[str] = []
+    all_blocks.extend(_build_section_blocks("画师串", artist_text))
+    all_blocks.extend(_build_section_blocks("正面提示词", positive_text))
+    all_blocks.extend(_build_section_blocks("负面提示词", negative_text))
+
+    pages: List[str] = []
+    current_page = ""
+    for block in all_blocks:
+        candidate = f"{current_page}\n\n{block}" if current_page else block
+        if len(candidate) <= 2000:
+            current_page = candidate
+            continue
+
+        if current_page:
+            pages.append(current_page)
+            current_page = block
+            continue
+
+        # 极端兜底：单个区块仍超长时硬切
+        hard_chunks = [block[i:i + 1900] for i in range(0, len(block), 1900)] or [block]
+        pages.extend(hard_chunks[:-1])
+        current_page = hard_chunks[-1]
+
+    if current_page:
+        pages.append(current_page)
+
+    return pages or ["（无可展示内容）"]
 
 
 def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
@@ -613,8 +737,19 @@ class NovelAIDrawPanel(discord.ui.View):
             # 图片作为独立附件发送，这样 spoiler 标记才能正常生效
 
             # 创建交互按钮视图（重新生成/修改提示词/切换到Imagen/AI重写prompt）
+            current_artist_string: Optional[str] = None
+            if self.session.artist_prefix_mode == "preset":
+                current_artist_string = str(self.session.preset_artist_string or "").strip() or None
+            elif self.session.artist_prefix_mode != "none":
+                current_artist_string = str(NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "") or "").strip() or None
+
+            prompt_without_artist = _strip_artist_tokens(final_prompt, [current_artist_string])
+            if not prompt_without_artist:
+                prompt_without_artist = final_prompt
+
             result_view = SlashNovelAIResultView(
-                prompt=final_prompt,
+                prompt=prompt_without_artist,
+                artist_string=current_artist_string,
                 negative_prompt=self.session.negative_prompt or None,
                 width=self.session.width,
                 height=self.session.height,
@@ -1266,6 +1401,7 @@ class SlashEditPromptModal(discord.ui.Modal, title="修改提示词"):
         preset_name: Optional[str],
         user_id: int,
         cost: int,
+        current_artist_string: Optional[str] = None,
     ):
         super().__init__()
         self.prompt_input.default = current_prompt[:4000]
@@ -1279,6 +1415,8 @@ class SlashEditPromptModal(discord.ui.Modal, title="修改提示词"):
         self._preset_name = preset_name
         self._user_id = user_id
         self._cost = cost
+        normalized_artist = str(current_artist_string or "").strip()
+        self._artist_string = normalized_artist or None
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
@@ -1302,6 +1440,7 @@ class SlashEditPromptModal(discord.ui.Modal, title="修改提示词"):
                 preset_name=self._preset_name,
                 user_id=self._user_id,
                 cost=self._cost,
+                artist_string=self._artist_string,
             )
         except Exception as e:
             log.error(f"斜杠命令修改提示词重新生成失败: {e}", exc_info=True)
@@ -1334,6 +1473,7 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
         preset_name: Optional[str],
         user_id: int,
         cost: int,
+        artist_string: Optional[str] = None,
     ):
         super().__init__()
         self._current_prompt = current_prompt
@@ -1346,6 +1486,8 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
         self._preset_name = preset_name
         self._user_id = user_id
         self._cost = cost
+        normalized_artist = str(artist_string or "").strip()
+        self._artist_string = normalized_artist or None
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
@@ -1392,6 +1534,7 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
                 preset_name=self._preset_name,
                 user_id=self._user_id,
                 cost=self._cost,
+                artist_string=self._artist_string,
                 title_suffix="（AI 重写）",
             )
         except Exception as e:
@@ -1449,9 +1592,19 @@ class SlashNovelAIResultView(discord.ui.View):
         preset_name: Optional[str],
         user_id: int,
         cost: int,
+        artist_string: Optional[str] = None,
     ):
         super().__init__(timeout=600)  # 10 分钟超时
-        self._prompt = prompt
+        normalized_artist = str(artist_string or "").strip()
+        self._artist_string = normalized_artist or None
+
+        normalized_prompt = str(prompt or "").strip()
+        if self._artist_string:
+            stripped_prompt = _strip_artist_tokens(normalized_prompt, [self._artist_string])
+            self._prompt = stripped_prompt or normalized_prompt
+        else:
+            self._prompt = normalized_prompt
+
         self._negative_prompt = negative_prompt
         self._width = width
         self._height = height
@@ -1484,6 +1637,7 @@ class SlashNovelAIResultView(discord.ui.View):
                 preset_name=self._preset_name,
                 user_id=self._user_id,
                 cost=self._cost,
+                artist_string=self._artist_string,
             )
         except Exception as e:
             log.error(f"斜杠命令重新生成失败: {e}", exc_info=True)
@@ -1511,6 +1665,7 @@ class SlashNovelAIResultView(discord.ui.View):
             preset_name=self._preset_name,
             user_id=self._user_id,
             cost=self._cost,
+            current_artist_string=self._artist_string,
         )
         await interaction.response.send_modal(modal)
 
@@ -1524,10 +1679,12 @@ class SlashNovelAIResultView(discord.ui.View):
 
         await interaction.response.defer(thinking=True)
         try:
+            prompt_for_imagen = _compose_prompt_with_artist(self._prompt, self._artist_string)
             await _slash_regenerate_with_imagen(
                 interaction=interaction,
-                prompt=self._prompt,
+                prompt=prompt_for_imagen,
                 user_id=self._user_id,
+                force_prompt_rewrite=True,
             )
         except Exception as e:
             log.error(f"斜杠命令切换到 Imagen 失败: {e}", exc_info=True)
@@ -1538,17 +1695,15 @@ class SlashNovelAIResultView(discord.ui.View):
 
     @discord.ui.button(label="查看提示词", style=discord.ButtonStyle.secondary, emoji="📋", row=1)
     async def view_prompt_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """以 ephemeral 消息展示完整提示词"""
-        prompt_text = self._prompt or "（无）"
-        negative_text = self._negative_prompt or "（使用默认）"
-
-        content_parts = [f"**正面提示词：**\n```\n{prompt_text[:900]}\n```"]
-        if len(prompt_text) > 900:
-            content_parts.append(f"```\n{prompt_text[900:1800]}\n```")
-        content_parts.append(f"**负面提示词：**\n```\n{negative_text[:500]}\n```")
-
-        content = "\n".join(content_parts)
-        await interaction.response.send_message(content[:2000], ephemeral=True)
+        """以 ephemeral 消息展示提示词（三段代码块）"""
+        pages = _build_prompt_preview_pages(
+            artist_string=self._artist_string,
+            positive_prompt=self._prompt,
+            negative_prompt=self._negative_prompt,
+        )
+        await interaction.response.send_message(pages[0], ephemeral=True)
+        for page in pages[1:]:
+            await interaction.followup.send(page, ephemeral=True)
 
     @discord.ui.button(label="AI 重写", style=discord.ButtonStyle.secondary, row=1)
     async def ai_rewrite_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1569,6 +1724,7 @@ class SlashNovelAIResultView(discord.ui.View):
             preset_name=self._preset_name,
             user_id=self._user_id,
             cost=self._cost,
+            artist_string=self._artist_string,
         )
         await interaction.response.send_modal(modal)
 
@@ -1580,7 +1736,8 @@ class SlashNovelAIResultView(discord.ui.View):
                 await interaction.response.send_message("只有原始请求者才能操作哦~", ephemeral=True)
                 return
 
-        modal = SlashGenerateVideoModal(image_prompt=self._prompt)
+        prompt_for_video = _compose_prompt_with_artist(self._prompt, self._artist_string)
+        modal = SlashGenerateVideoModal(image_prompt=prompt_for_video)
         await interaction.response.send_modal(modal)
 
     async def on_timeout(self):
@@ -1607,10 +1764,20 @@ async def _slash_regenerate_novelai(
     preset_name: Optional[str],
     user_id: int,
     cost: int,
+    artist_string: Optional[str] = None,
     title_suffix: str = "（重新生成）",
 ):
     """内部函数：斜杠命令 NovelAI 重新生成图片"""
     from src.chat.utils.database import chat_db_manager
+
+    base_prompt = str(prompt or "").strip()
+    normalized_artist = str(artist_string or "").strip()
+    effective_artist_string = normalized_artist or None
+    final_prompt = _compose_prompt_with_artist(base_prompt, effective_artist_string)
+
+    if not final_prompt:
+        await interaction.followup.send("提示词不能为空！", ephemeral=True)
+        return
 
     # 成本实时读取数据库配置（避免旧消息按钮使用到历史成本）
     try:
@@ -1635,7 +1802,7 @@ async def _slash_regenerate_novelai(
 
     # 生成图片（新种子）
     result = await novelai_service.generate_image(
-        prompt=prompt,
+        prompt=final_prompt,
         negative_prompt=negative_prompt,
         width=width,
         height=height,
@@ -1653,7 +1820,7 @@ async def _slash_regenerate_novelai(
     if cost > 0:
         try:
             await coin_service.remove_coins(
-                billing_user_id, cost, f"NovelAI重新生图: {prompt[:25]}..."
+                billing_user_id, cost, f"NovelAI重新生图: {final_prompt[:25]}..."
             )
         except Exception as e:
             log.error(f"扣除月光币失败: {e}")
@@ -1689,9 +1856,14 @@ async def _slash_regenerate_novelai(
     )
     # 不使用 embed.set_image()，让 spoiler 遮罩正常生效
 
+    prompt_without_artist = _strip_artist_tokens(final_prompt, [effective_artist_string])
+    if not prompt_without_artist:
+        prompt_without_artist = base_prompt or final_prompt
+
     # 创建新的交互按钮
     new_view = SlashNovelAIResultView(
-        prompt=prompt,
+        prompt=prompt_without_artist,
+        artist_string=effective_artist_string,
         negative_prompt=negative_prompt,
         width=width,
         height=height,
@@ -1861,7 +2033,10 @@ class ImagenSwitchResultView(discord.ui.View):
 
         await interaction.response.defer(thinking=True)
         try:
-            nai_prompt = await _convert_imagen_prompt_to_novelai_prompt(self._prompt)
+            nai_prompt = await _convert_imagen_prompt_to_novelai_prompt(
+                self._prompt,
+                force_rewrite=True,
+            )
             await _slash_regenerate_novelai(
                 interaction=interaction,
                 prompt=nai_prompt,
@@ -1940,6 +2115,7 @@ async def _slash_regenerate_with_imagen(
     user_id: int,
     resolution: str = "default",
     content_rating: str = "nsfw",
+    force_prompt_rewrite: bool = False,
 ):
     """内部函数：斜杠命令使用 Gemini Imagen 重新生成图片"""
     from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
@@ -1964,7 +2140,10 @@ async def _slash_regenerate_with_imagen(
             )
             return
 
-    imagen_prompt = await _convert_tag_prompt_to_imagen_prompt(prompt)
+    imagen_prompt = await _convert_tag_prompt_to_imagen_prompt(
+        prompt,
+        force_rewrite=force_prompt_rewrite,
+    )
     result = await gemini_imagen_service.generate_single_image(
         prompt=imagen_prompt,
         negative_prompt=None,
