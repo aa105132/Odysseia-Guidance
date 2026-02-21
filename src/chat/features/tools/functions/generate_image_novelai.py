@@ -332,13 +332,6 @@ def _build_prompt_summary_for_embed(
         stripped_prompt = _strip_artist_tokens(normalized_prompt, [normalized_artist])
         normalized_prompt = stripped_prompt or normalized_prompt
 
-    default_negative_prompt = str(
-        NOVELAI_CONFIG.get("DEFAULT_NEGATIVE_PROMPT", "") or ""
-    ).strip()
-    normalized_negative = (
-        str(negative_prompt or "").strip() or default_negative_prompt or "（无）"
-    )
-
     def _truncate(text: str, limit: int) -> str:
         compact = re.sub(r"\s+", " ", str(text or "")).strip()
         if len(compact) <= limit:
@@ -425,8 +418,7 @@ def _build_prompt_summary_for_embed(
 
     appearance_text = ", ".join(selected_tokens) if selected_tokens else "（未提取到明确外貌标签）"
     appearance_preview = _truncate(appearance_text, 420)
-    negative_preview = _truncate(normalized_negative, 120)
-    return f"主体外貌: {appearance_preview}\n负面约束: {negative_preview}"
+    return f"主体外貌: {appearance_preview}"
 
 
 def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
