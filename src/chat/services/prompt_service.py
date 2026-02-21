@@ -222,6 +222,27 @@ class PromptService:
             }
         )
 
+        # --- NovelAI 提示词分工注入（主AI vs 提示词AI）---
+        final_conversation.append(
+            {
+                "role": "user",
+                "parts": [
+                    "NovelAI 提示词分工规则（双串策略）："
+                    "1) 调用 generate_image_novelai 时，prompt 优先传你写的 Danbooru 草稿串（英文标签、逗号分隔）；"
+                    "2) 工具会基于该草稿再调用提示词 AI 生成一版优化串；"
+                    "3) 若提示词 AI 未返回合格 Danbooru，会回退使用你传入的草稿串；"
+                    "4) 禁止在 prompt 中混入 artist:xxx 画师串（画师串必须走 artist_string）；"
+                    "5) 你只需负责草稿串质量与消息文案，并按需传 preview_message / success_message。"
+                ],
+            }
+        )
+        final_conversation.append(
+            {
+                "role": "model",
+                "parts": ["收到，NovelAI 绘图时我会先给 Danbooru 草稿串，再交给提示词AI优化；若优化失败就回退用我的草稿串，并按需传预告和成功消息。"],
+            }
+        )
+
         # --- 语音工具路由与音色规则注入（动态）---
         default_voice_type = str(
             chat_config.VOICE_CONFIG.get(

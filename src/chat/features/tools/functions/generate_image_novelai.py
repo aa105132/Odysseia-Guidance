@@ -3,7 +3,8 @@
 """
 NovelAI 图片生成工具
 让 LLM 可以在对话中自动调用 NovelAI 生成图片。
-AI 需要生成符合 Danbooru 格式的英文 Tag 来作为 prompt。
+对话场景采用“双串策略”：主 AI 先提供一版 Danbooru 草稿串，工具内提示词 AI 再生成一版优化串。
+若提示词 AI 未返回合格 Danbooru，则回退使用主 AI 草稿串继续生图。
 
 遵循 NAI 预设规则:
 - Tag 必须是 Danbooru 格式的英文单词/词语，逗号分隔
@@ -129,14 +130,29 @@ async def _convert_tag_prompt_to_imagen_prompt(prompt: str, force_rewrite: bool 
 
 
 async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: bool = False) -> str:
-    """将 Imagen 自然语言提示词转换为 NovelAI Danbooru Tag。"""
+    """将输入提示词转换/优化为 NovelAI Danbooru Tag。"""
     if not force_rewrite and _is_probably_tag_prompt(prompt):
         return prompt
 
     from src.chat.services.gemini_service import gemini_service
 
     llm_overrides = _get_novelai_prompt_llm_overrides()
-    tag_messages = get_tag_generation_messages(description=prompt)
+    normalized_input = str(prompt or "").strip()
+    is_tag_input = _is_probably_tag_prompt(normalized_input)
+
+    if is_tag_input:
+        request_messages = get_rewrite_messages(
+            prompt=normalized_input,
+            description=(
+                "请在保留核心主体、场景、动作与构图意图的前提下，"
+                "将这串 Danbooru 标签优化为更高质量、更完整、结构更清晰的 NovelAI 标签串。"
+            ),
+        )
+        request_type = "Tag->Tag 优化"
+    else:
+        request_messages = get_tag_generation_messages(description=normalized_input)
+        request_type = "描述->Tag 转换"
+
     try:
         converted = await gemini_service.generate_simple_response(
             prompt="",
@@ -144,7 +160,7 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: b
                 "temperature": 0.7,
                 "max_output_tokens": NOVELAI_PROMPT_MAX_OUTPUT_TOKENS,
             },
-            messages=tag_messages,
+            messages=request_messages,
             model_name=llm_overrides["model_name"],
             api_url=llm_overrides["api_url"],
             api_key=llm_overrides["api_key"],
@@ -152,10 +168,10 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: b
         )
         normalized = (converted or "").strip().strip('"').strip("'")
         if normalized:
-            log.info("已将 Imagen 自然语言提示词转换为 NovelAI 标签串")
+            log.info(f"已完成 NovelAI 提示词{request_type}")
             return normalized
     except Exception as e:
-        log.warning(f"Imagen->NovelAI 提示词转换失败，回退原提示词: {e}")
+        log.warning(f"NovelAI 提示词{request_type}失败，回退原提示词: {e}")
 
     return prompt
 
@@ -392,7 +408,8 @@ async def generate_image_novelai(
     """
     使用 NovelAI 引擎生成图片。当默认绘图引擎为 "novelai" 时，所有画图请求都必须使用此工具，不要使用 generate_image。
 
-    **重要：你必须生成 Danbooru 格式的英文 Tag 作为 prompt！不要使用自然语言描述！**
+    **重要：对话主 AI 需要先写一版 Danbooru 草稿串，工具会再调用提示词 AI 生成一版优化串。**
+    **若提示词 AI 没返回合格 Danbooru，会自动回退使用主 AI 草稿串。**
 
     ## 画师串自动拼接说明（重要）
     系统会自动在你的 prompt 前面拼接画师串前缀，优先级如下：
@@ -405,18 +422,19 @@ async def generate_image_novelai(
     - 你只需要专注于生成场景、角色、动作、表情等内容 Tag。
     - 如果用户明确说"不要画师串"、"不用预设"、"裸 prompt"等，请传 `skip_artist_prefix=True`。
 
-    ## Tag 生成核心规则（必须严格遵守）：
-
-    ### 1. 基本要求
-    - 使用英文 Danbooru 格式 Tag，逗号分隔
-    - 单图 Tag 数量 ≥ 90 个
-    - 禁止使用中文或自然语言句子
-    - 定格画面：单图为同一时刻的静态瞬间，禁止连续动作过程
+    ## 对话主 AI 输入规则（必须严格遵守）：
+    ### 1. 你传入 prompt 时的要求
+    - prompt 优先写成 Danbooru 草稿串（英文标签、逗号分隔，可不完美）
+    - 工具会基于你的草稿，再调用提示词 AI 生成一版优化 Danbooru
+    - 若提示词 AI 没返回合格 Danbooru，系统会回退使用你传入的草稿串
+    - 若用户只给自然语言，你需先细化并转成一版 Danbooru 草稿再传入
+    - 你负责补全用户意图里的关键信息：主体、场景、动作、构图、光影、氛围、服饰、表情
+    - 定格画面：描述应聚焦单一静态瞬间，避免连续动作过程
     - 单图最多 4 个角色，最多 2 个女性角色
-    - **不要在 prompt 中写画师串（artist:xxx），系统会自动拼接**
+    - **不要在 prompt 中写画师串（artist:xxx），系统会自动拼接或由 artist_string/preset_name 控制**
 
-    ### 2. Tag 构成顺序（按优先级）
-    按以下顺序构建 Tag：
+    ### 2. Tag 构成顺序（工具内提示词 AI 执行，主 AI 仅需理解）
+    系统会按以下顺序自动构建 Tag：
     1. **质量 Tag**: masterpiece, best quality, amazing quality, very aesthetic, absurdres
     2. **场景构成 (5~10%)**: nsfw/sfw, 角色数量(1girl, solo), 角色关系(hetero, harem, yuri)
     3. **背景 (10~20%)**: 年代(modern, medieval, fantasy), 环境(bedroom, park, outdoor, onsen, train interior), 时间(night, sunset, golden hour), 氛围(mystical atmosphere), 光影(backlighting, rim lighting, sidelighting, dramatic shadows, moonlight, neon light, spotlight, tyndall effect)
@@ -532,23 +550,23 @@ async def generate_image_novelai(
     酒吧: bar (place), cocktail, dim lighting, neon light, looking at viewer
     直播: livestream, chat log, fake screenshot, sitting, gaming chair, webcam
 
-    ### 11. 示例
-    用户说"画一个银发少女在月光下"，你应该生成：
+    ### 11. 示例（以下是提示词 AI 的输出示例，不是主 AI 手写内容）
+    用户说"画一个银发少女在月光下"，提示词 AI 会生成：
     ```
     masterpiece, best quality, amazing quality, very aesthetic, absurdres, sfw, 1girl, solo, outdoors, night, 1.2::moonlight::, starry sky, rim lighting, backlighting, full body, front view, cinematic angle, depth of field, girl, bishoujo, 1.3::silver hair::, long hair, flowing hair, blue eyes, medium breasts, white skin, dress, white dress, long dress, elegant, standing, wind, hair flowing, looking at viewer, gentle smile, serene, falling leaves, light particles
     ```
 
-    用户说"画月月在温泉里"，你应该生成：
+    用户说"画月月在温泉里"，提示词 AI 会生成：
     ```
     masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, 1.3::silver hair::, high ponytail, crescent hair ornament, blue grey eyes, fox ears, white fox ears, fox tail, silver white tail, fluffy tail, medium breasts, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, small triangular watermelon earrings, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
     ```
 
     Args:
-        prompt: Danbooru 格式的英文 Tag 提示词（逗号分隔）。
-                **必须是英文 Tag，不能是中文或自然语言！**
-                Tag 数量必须 ≥ 70 个。
-                按照 "质量Tag, 场景, 背景, 构图, 角色DNA, 动作, 表情" 顺序排列。
-                使用权重语法调整核心元素: 1.2::Tag:: 增强, 0.8::Tag:: 减弱。
+        prompt: 建议传主 AI 写的 Danbooru 草稿串（英文标签、逗号分隔，可不完美）。
+                工具会再调用提示词 AI，将你的草稿优化为更高质量 Danbooru Tag 后生图。
+                若提示词 AI 未返回合格 Danbooru，会回退使用你传入的草稿串。
+                当用户只给自然语言时，你应先细化需求并转成一版 Danbooru 草稿再传入。
+                草稿需尽量覆盖：主体、场景、动作、构图、光影、氛围、服饰、表情与风格倾向。
 
         negative_prompt: 负面提示词（可选），使用英文 Tag。
                 留空则使用系统默认负面提示词。
@@ -806,13 +824,53 @@ async def generate_image_novelai(
                 "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够。"
             }
 
+    # 对话场景：双串策略（主 AI 草稿串 + 提示词 AI 优化串）
+    main_prompt_draft = str(prompt or "").strip()
+    if not main_prompt_draft:
+        return {
+            "generation_failed": True,
+            "reason": "empty_description",
+            "hint": "你没有提供可用的绘图草稿。请先补充 Danbooru 草稿标签串。"
+        }
+
+    rewritten_prompt = await _convert_imagen_prompt_to_novelai_prompt(
+        main_prompt_draft,
+        force_rewrite=True,
+    )
+    normalized_rewritten_prompt = str(rewritten_prompt or "").strip().strip('"').strip("'")
+    normalized_main_prompt = main_prompt_draft.strip().strip('"').strip("'")
+
+    if normalized_rewritten_prompt and _is_probably_tag_prompt(normalized_rewritten_prompt):
+        # 优先使用提示词 AI 的优化串
+        prompt = normalized_rewritten_prompt
+        log.info("双串策略：已采用提示词 AI 生成的优化 Danbooru 标签串。")
+    else:
+        # 回退：提示词 AI 未产出合格 Danbooru 时，使用主 AI 草稿串
+        if normalized_rewritten_prompt:
+            log.warning("提示词 AI 返回内容疑似不是 Danbooru 标签，已回退使用主 AI 草稿串。")
+        else:
+            log.warning("提示词 AI 返回空内容，已回退使用主 AI 草稿串。")
+
+        if not normalized_main_prompt:
+            return {
+                "generation_failed": True,
+                "reason": "prompt_rewrite_empty",
+                "hint": "提示词 AI 与主提示词都不可用，请稍后重试。"
+            }
+
+        prompt = normalized_main_prompt
+        if _is_probably_tag_prompt(prompt):
+            log.info("双串策略回退：使用主 AI 草稿 Danbooru 标签串继续生成。")
+        else:
+            log.warning("回退草稿串疑似不是 Danbooru 标签串，已继续尝试生成。建议主 AI 输出 Danbooru 草稿。")
+
     # 画师串应用策略：
     # skip_artist_prefix=True 时跳过所有画师串拼接
     # 1) 显式 artist_string 优先（AI 自行编写画师串时应使用该参数）
     # 2) 指定 preset_name 时，先匹配用户预设，再匹配管理员预设（均支持大小写不敏感）
     # 3) 未指定 preset_name 时，优先读取用户持久化画师串模式（default/preset/none）
     # 4) 若仍无可用预设，则回退全局默认画师串
-    base_prompt = str(prompt or "").strip()
+    base_prompt = prompt
     final_prompt = base_prompt
     applied_artist = False
     effective_preset_name: Optional[str] = None
