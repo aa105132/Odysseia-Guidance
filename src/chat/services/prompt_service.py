@@ -285,9 +285,9 @@ class PromptService:
         voice_lines = [
             "语音工具规则：",
             "1) 语音是可选表达方式，不是每轮必用，正常对话时还是优选选择文本对话；",
-            "2) 凡是“总结/搜索/检索/资料整理”类任务（含 web_search、论坛搜索、教程搜索、频道总结等），默认禁止调用 generate_voice，直接文本回答；",
-            "3) 当你预计这条回复文本超过 50 字时，默认不要调用 generate_voice，改为纯文本输出；",
-            "4) 只有用户在当前轮明确要求“语音回复/发语音”时，才允许在上述场景或超过 50 字时使用 generate_voice；",
+            "2) 你要在语音和文字之间动态平衡，避免连续多轮都只用一种形态（除非用户明确要求）。",
+            "3) 当情绪明显（激动、撒娇、安慰、强调、讲故事、角色演绎）或你觉得语气表现比信息密度更重要时，可以主动调用 generate_voice；",
+            "4) 用户明确要求语音时优先调用 generate_voice；信息密集或步骤说明类内容通常优先文本，但不是绝对禁用语音；",
             "5) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
             "6) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
             "7) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
@@ -353,7 +353,7 @@ class PromptService:
         final_conversation.append(
             {
                 "role": "model",
-                "parts": ["收到，我会优先文本回复；总结/搜索类和超过50字时默认不用语音，除非用户明确要求；调用语音时会显式传 send_text_after_voice=true，失败则立刻改为文字继续回复。"],
+                "parts": ["收到，我会在文字和语音之间灵活切换：日常优先文字，但在情绪更强或更有表现力的场景主动发语音，并避免连续多轮全语音或全文字；调用语音时会显式传 send_text_after_voice=true，失败则立刻改为文字继续回复。"],
             }
         )
 
@@ -506,6 +506,10 @@ class PromptService:
                     "只有用户明确要求修改原图/图生图时才调用 edit_image；"
                     "如果用户是照这个画风画新内容、参考风格二创、或继续之前 NovelAI 风格，"
                     "应优先调用 generate_image_novelai。"
+                    "当调用 edit_image 时，你可以根据意图决定参考图策略："
+                    "单图精修用 reference_image_mode='single'；"
+                    "多图融合/综合参考用 reference_image_mode='multi'；"
+                    "不确定时用 reference_image_mode='auto'。"
                 )
             
             final_conversation.append(
@@ -638,6 +642,8 @@ class PromptService:
                         "涉及画图请求时，请先观察图片内容（角色、画风、构图、色调），"
                         "再判断工具：明确改原图才用 edit_image；"
                         "参考画风/元素新画一张优先 generate_image_novelai。"
+                        "若调用 edit_image：按意图设置 reference_image_mode（single/multi/auto），"
+                        "并可通过 max_reference_images 控制最多参考图数量。"
                     ],
                 }
             )

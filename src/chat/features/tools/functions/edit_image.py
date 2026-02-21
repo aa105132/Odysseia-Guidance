@@ -28,6 +28,8 @@ async def edit_image(
     emoji_id: Optional[str] = None,
     avatar_user_id: Optional[str] = None,
     avatar_user_ids: Optional[List[str]] = None,
+    reference_image_mode: str = "auto",
+    max_reference_images: int = 4,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     **kwargs
@@ -111,6 +113,14 @@ async def edit_image(
                 传入的多个头像会作为多参考图传给图生图接口（不再强制拼接）。
                 最多支持 10 个用户ID。
                 例如: ["123456789", "987654321"]
+
+        reference_image_mode: 参考图模式（让 AI 决定单图/多图策略）：
+                - "single": 强制只使用 1 张参考图（适合“只改这张图”）
+                - "multi": 尽量使用多张参考图（适合“融合多图元素”）
+                - "auto": 自动模式；检测到多图时会尽量多图传入（默认）
+        
+        max_reference_images: 最多传给图生图模型的参考图数量（1-10，默认 4）。
+                当 reference_image_mode 为 "multi"/"auto" 时生效。
                 
         preview_message: （必填）你对这次图片修改请求的回复消息。
                 这条消息会在生成前先发送给用户，作为预告。
@@ -157,32 +167,56 @@ async def edit_image(
                 log.warning(f"移除反应失败: {e}")
     
     # 辅助函数：从消息中提取图片
-    async def extract_image_from_message(msg: discord.Message) -> Optional[Dict[str, Any]]:
-        """从消息中提取第一张图片"""
+    async def extract_images_from_message(
+        msg: discord.Message, max_images: int = 4
+    ) -> List[Dict[str, Any]]:
+        """从消息中提取图片列表（附件 + 文本/Embed URL）。"""
+        images: List[Dict[str, Any]] = []
+        if not msg:
+            return images
+
+        try:
+            max_images = int(max_images)
+        except (TypeError, ValueError):
+            max_images = 1
+        max_images = min(max(1, max_images), 10)
+
         if msg.attachments:
             for attachment in msg.attachments:
+                if len(images) >= max_images:
+                    break
                 if attachment.content_type and attachment.content_type.startswith("image/"):
                     try:
                         image_bytes = await attachment.read()
-                        return {
-                            "data": image_bytes,
-                            "mime_type": attachment.content_type,
-                            "filename": attachment.filename
-                        }
+                        images.append(
+                            {
+                                "data": image_bytes,
+                                "mime_type": attachment.content_type,
+                                "filename": attachment.filename,
+                            }
+                        )
                     except Exception as e:
                         log.error(f"读取附件图片失败: {e}")
-        # 附件未命中时，尝试从消息文本/Embed 的 URL 提取图片（支持 webp）
-        try:
-            from src.chat.features.tools.utils.discord_image_utils import (
-                extract_image_from_message_url,
-            )
 
-            url_image = await extract_image_from_message_url(msg)
-            if url_image:
-                return url_image
-        except Exception as e:
-            log.warning(f"从消息 URL 提取图片失败: {e}")
-        return None
+        # 附件未命中或不足时，尝试从消息文本/Embed 的 URL 提取图片（支持 webp）
+        if len(images) < max_images:
+            try:
+                from src.chat.features.tools.utils.discord_image_utils import (
+                    extract_images_from_message_url,
+                )
+
+                url_images = await extract_images_from_message_url(
+                    msg, max_images=max_images - len(images)
+                )
+                for url_image in url_images:
+                    if len(images) >= max_images:
+                        break
+                    if url_image and url_image.get("data"):
+                        images.append(url_image)
+            except Exception as e:
+                log.warning(f"从消息 URL 提取图片失败: {e}")
+
+        return images
     
     # 1. 尝试获取参考图片（优先级：emoji > sticker > avatar_user_ids/avatar_user_id > 消息附件 > 回复 > 历史）
     # reference_image: 向后兼容的单图引用（通常取第一张）
@@ -190,6 +224,31 @@ async def edit_image(
     reference_image = None
     reference_images = []
     user_id = kwargs.get("user_id")  # 获取当前用户ID
+
+    # 由 AI 控制参考图策略（single / multi / auto）
+    reference_image_mode = (reference_image_mode or "auto").strip().lower()
+    if reference_image_mode not in {"auto", "single", "multi"}:
+        log.warning(f"无效的 reference_image_mode={reference_image_mode}，回退到 auto")
+        reference_image_mode = "auto"
+
+    try:
+        max_reference_images = int(max_reference_images)
+    except (TypeError, ValueError):
+        max_reference_images = 4
+    max_reference_images = min(max(1, max_reference_images), 10)
+
+    def _select_reference_images(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        valid = [
+            item
+            for item in (candidates or [])
+            if isinstance(item, dict) and item.get("data")
+        ]
+        if not valid:
+            return []
+        if reference_image_mode == "single":
+            return [valid[0]]
+        # auto / multi: 允许多图
+        return valid[:max_reference_images]
     
     # 优先提取自定义表情图片（自动解析消息内容 + 显式 emoji_id）
     if not reference_image:
@@ -257,12 +316,15 @@ async def edit_image(
                         log.warning(f"无法提取用户 {all_avatar_ids[idx]} 的头像")
 
                 if successful_avatar_refs:
-                    reference_images = successful_avatar_refs
+                    selected_avatar_refs = _select_reference_images(
+                        successful_avatar_refs
+                    )
+                    reference_images = selected_avatar_refs
                     # 向后兼容：单图链路使用第一张
-                    reference_image = successful_avatar_refs[0]
-                    if len(successful_avatar_refs) > 1:
+                    reference_image = selected_avatar_refs[0]
+                    if len(selected_avatar_refs) > 1:
                         log.info(
-                            f"已提取 {len(successful_avatar_refs)} 个用户头像作为多参考图"
+                            f"已提取 {len(selected_avatar_refs)} 个用户头像作为多参考图（mode={reference_image_mode}）"
                         )
                     else:
                         log.info(
@@ -275,51 +337,98 @@ async def edit_image(
     
     # 然后检查当前消息的附件
     if not reference_image and not reference_images and message:
-        reference_image = await extract_image_from_message(message)
-        
+        requested_max = max_reference_images if reference_image_mode != "single" else 1
+
+        current_images = await extract_images_from_message(
+            message, max_images=requested_max
+        )
+        selected_images = _select_reference_images(current_images)
+        if selected_images:
+            reference_images = selected_images
+            reference_image = selected_images[0]
+            if len(selected_images) > 1:
+                log.info(f"已从当前消息提取 {len(selected_images)} 张参考图")
+
         # 如果当前消息没有图片，检查回复的消息
         if not reference_image and message.reference and message.reference.message_id:
             try:
                 ref_msg = await message.channel.fetch_message(message.reference.message_id)
                 if ref_msg:
-                    reference_image = await extract_image_from_message(ref_msg)
-                    
+                    reply_candidates: List[Dict[str, Any]] = []
+                    reply_candidates.extend(
+                        await extract_images_from_message(ref_msg, max_images=requested_max)
+                    )
+
                     # 也检查转发消息中的图片
-                    if not reference_image and hasattr(ref_msg, "message_snapshots") and ref_msg.message_snapshots:
+                    if (
+                        len(reply_candidates) < requested_max
+                        and hasattr(ref_msg, "message_snapshots")
+                        and ref_msg.message_snapshots
+                    ):
                         for snapshot in ref_msg.message_snapshots:
+                            if len(reply_candidates) >= requested_max:
+                                break
                             if hasattr(snapshot, "attachments") and snapshot.attachments:
                                 for attachment in snapshot.attachments:
-                                    if attachment.content_type and attachment.content_type.startswith("image/"):
+                                    if len(reply_candidates) >= requested_max:
+                                        break
+                                    if (
+                                        attachment.content_type
+                                        and attachment.content_type.startswith("image/")
+                                    ):
                                         try:
                                             image_bytes = await attachment.read()
-                                            reference_image = {
-                                                "data": image_bytes,
-                                                "mime_type": attachment.content_type,
-                                                "filename": attachment.filename
-                                            }
-                                            break
+                                            reply_candidates.append(
+                                                {
+                                                    "data": image_bytes,
+                                                    "mime_type": attachment.content_type,
+                                                    "filename": attachment.filename,
+                                                }
+                                            )
                                         except Exception as e:
                                             log.error(f"读取转发消息图片失败: {e}")
-                            if reference_image:
-                                break
+
+                    selected_images = _select_reference_images(reply_candidates)
+                    if selected_images:
+                        reference_images = selected_images
+                        reference_image = selected_images[0]
+                        if len(selected_images) > 1:
+                            log.info(
+                                f"已从回复消息提取 {len(selected_images)} 张参考图"
+                            )
             except Exception as e:
                 log.warning(f"获取回复消息失败: {e}")
-        
+
         # 如果还是没有找到图片，检查频道的最近消息（用户可能先发图片再请求修改）
         if not reference_image and channel:
             try:
                 log.info("未在当前消息或回复中找到图片，正在搜索频道最近消息...")
+                history_candidates: List[Dict[str, Any]] = []
                 # 获取最近的 5 条消息（包含所有用户，让AI自行判断上下文）
                 async for hist_msg in channel.history(limit=5):
                     # 跳过当前消息
                     if hist_msg.id == message.id:
                         continue
-                    # 搜索所有用户发送的图片
-                    found_image = await extract_image_from_message(hist_msg)
-                    if found_image:
-                        log.info(f"在最近消息中找到图片 (消息 ID: {hist_msg.id}, 发送者: {hist_msg.author})")
-                        reference_image = found_image
+
+                    remaining = requested_max - len(history_candidates)
+                    if remaining <= 0:
                         break
+
+                    found_images = await extract_images_from_message(
+                        hist_msg, max_images=remaining
+                    )
+                    if found_images:
+                        log.info(
+                            f"在最近消息中找到 {len(found_images)} 张图片 (消息 ID: {hist_msg.id}, 发送者: {hist_msg.author})"
+                        )
+                        history_candidates.extend(found_images)
+                        if reference_image_mode == "single":
+                            break
+
+                selected_images = _select_reference_images(history_candidates)
+                if selected_images:
+                    reference_images = selected_images
+                    reference_image = selected_images[0]
             except Exception as e:
                 log.warning(f"搜索频道历史消息失败: {e}")
     
@@ -403,6 +512,10 @@ async def edit_image(
             log.warning(f"无效的内容分级参数，已重置为默认值 sfw")
         
         log.info(f"图生图内容分级: {content_rating}")
+        log.info(
+            f"图生图参考图策略: mode={reference_image_mode}, max={max_reference_images}, "
+            f"实际数量={len(reference_images) if reference_images else (1 if reference_image else 0)}"
+        )
         
         # 调用图生图服务（支持多参考图）
         edited_image_bytes = await gemini_imagen_service.edit_image(

@@ -174,14 +174,21 @@ async def fetch_image_from_url(
         return None
 
 
-async def extract_image_from_message_url(
+async def extract_images_from_message_url(
     message: Optional[discord.Message],
-) -> Optional[Dict[str, Any]]:
+    max_images: int = 4,
+) -> List[Dict[str, Any]]:
     """
-    从消息文本和 Embed 中提取第一张 URL 图片并下载。
+    从消息文本和 Embed 中提取 URL 图片并下载（支持多张）。
     """
     if not message:
-        return None
+        return []
+
+    try:
+        max_images = int(max_images)
+    except (TypeError, ValueError):
+        max_images = 1
+    max_images = min(max(1, max_images), 10)
 
     candidate_urls: List[str] = []
     seen = set()
@@ -217,15 +224,28 @@ async def extract_image_from_message_url(
                     _append_url(url)
 
     if not candidate_urls:
-        return None
+        return []
 
+    images: List[Dict[str, Any]] = []
     for url in candidate_urls:
+        if len(images) >= max_images:
+            break
         image = await fetch_image_from_url(url)
         if image:
             log.info(f"已从消息 URL 提取图片: {url[:120]}")
-            return image
+            images.append(image)
 
-    return None
+    return images
+
+
+async def extract_image_from_message_url(
+    message: Optional[discord.Message],
+) -> Optional[Dict[str, Any]]:
+    """
+    从消息文本和 Embed 中提取第一张 URL 图片并下载（兼容旧调用）。
+    """
+    images = await extract_images_from_message_url(message, max_images=1)
+    return images[0] if images else None
 
 
 async def auto_extract_emoji_from_message(
