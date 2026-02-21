@@ -459,14 +459,25 @@ def _parse_doubao_app_pool_setting(raw_value: Optional[str]) -> List[Dict[str, s
         if split_index < 0:
             split_index = text.find("=")
         if split_index < 0:
+            split_index = text.find(":")
+        if split_index < 0:
+            split_index = text.find("：")
+
+        if split_index >= 0:
+            app_id = text[:split_index].strip()
+            access_token = text[split_index + 1 :].strip()
+            if not app_id or not access_token:
+                continue
+            parsed_rows.append({"app_id": app_id, "access_token": access_token})
             continue
 
-        app_id = text[:split_index].strip()
-        access_token = text[split_index + 1 :].strip()
-        if not app_id or not access_token:
-            continue
-
-        parsed_rows.append({"app_id": app_id, "access_token": access_token})
+        # 兼容“app_id 空格 access_token”格式
+        parts = text.split()
+        if len(parts) >= 2:
+            app_id = parts[0].strip()
+            access_token = " ".join(parts[1:]).strip()
+            if app_id and access_token:
+                parsed_rows.append({"app_id": app_id, "access_token": access_token})
 
     return _normalize_doubao_app_pool(parsed_rows)
 

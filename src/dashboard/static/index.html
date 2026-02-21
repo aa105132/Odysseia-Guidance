@@ -4604,12 +4604,26 @@
                                         if (splitIndex < 0) splitIndex = line.indexOf(',');
                                         if (splitIndex < 0) splitIndex = line.indexOf('，');
                                         if (splitIndex < 0) splitIndex = line.indexOf('=');
-                                        if (splitIndex < 0) return null;
+                                        if (splitIndex < 0) splitIndex = line.indexOf(':');
+                                        if (splitIndex < 0) splitIndex = line.indexOf('：');
 
-                                        const app_id = line.slice(0, splitIndex).trim();
-                                        const access_token = line.slice(splitIndex + 1).trim();
-                                        if (!app_id || !access_token) return null;
-                                        return { app_id, access_token };
+                                        if (splitIndex >= 0) {
+                                            const app_id = line.slice(0, splitIndex).trim();
+                                            const access_token = line.slice(splitIndex + 1).trim();
+                                            if (!app_id || !access_token) return null;
+                                            return { app_id, access_token };
+                                        }
+
+                                        // 兼容“app_id 空格 access_token”
+                                        const whitespaceMatch = line.match(/^(\S+)\s+(.+)$/);
+                                        if (whitespaceMatch) {
+                                            const app_id = String(whitespaceMatch[1] || '').trim();
+                                            const access_token = String(whitespaceMatch[2] || '').trim();
+                                            if (!app_id || !access_token) return null;
+                                            return { app_id, access_token };
+                                        }
+
+                                        return null;
                                     })
                                     .filter(Boolean);
                             }
@@ -4624,6 +4638,11 @@
                             dedupedAppPoolMap.set(`${app_id}||${access_token}`, { app_id, access_token });
                         });
                         const uniqueAppPool = Array.from(dedupedAppPoolMap.values());
+                        if (appPoolText && uniqueAppPool.length === 0) {
+                            this.showToast('豆包账号池格式无效，请使用“app_id | access_token”或 JSON 数组', 'error');
+                            this.saving = false;
+                            return;
+                        }
 
                         const cloneVoiceBindingsText = (this.voiceForm.clone_voice_app_bindings_text || '').trim();
                         let cloneVoiceAppBindings = {};

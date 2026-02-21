@@ -242,9 +242,18 @@ def _parse_doubao_app_pool_env(
         if split_index < 0:
             split_index = text.find("=")
         if split_index < 0:
+            split_index = text.find(":")
+        if split_index < 0:
+            split_index = text.find("：")
+
+        if split_index >= 0:
+            _append_item(text[:split_index], text[split_index + 1 :])
             continue
 
-        _append_item(text[:split_index], text[split_index + 1 :])
+        # 兼容“app_id 空格 access_token”
+        parts = text.split()
+        if len(parts) >= 2:
+            _append_item(parts[0], " ".join(parts[1:]))
 
     return normalized if normalized else default
 
