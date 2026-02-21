@@ -1053,52 +1053,69 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
     return {"success": True, "updated": updated}
 
 
+def _format_env_value(value: Any) -> str:
+    """
+    将值安全序列化为 .env 可写格式。
+    重点：避免 JSON 字符串内的双引号破坏 .env 语法（例如 {"k":"v"}）。
+    """
+    text = "" if value is None else str(value)
+    escaped = (
+        text.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
+    return f'"{escaped}"'
+
+
 def update_env_file(updates: Dict[str, str]):
     """更新 .env 文件中的环境变量"""
     # 优先使用工作目录，其次使用相对路径
     if os.path.exists("/app/.env"):
         env_path = "/app/.env"
     else:
-        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
-    
+        env_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"
+        )
+
     log.info(f"尝试更新 .env 文件: {env_path}")
-    
+
     if not os.path.exists(env_path):
         log.warning(f".env 文件不存在: {env_path}，尝试创建")
         # 如果不存在，创建一个新文件
         try:
             with open(env_path, "w", encoding="utf-8") as f:
                 for key, value in updates.items():
-                    f.write(f'{key}="{value}"\n')
-            log.info(f"已创建新的 .env 文件并写入配置")
+                    f.write(f"{key}={_format_env_value(value)}\n")
+            log.info("已创建新的 .env 文件并写入配置")
             return
         except Exception as e:
             log.error(f"创建 .env 文件失败: {e}")
             return
-    
+
     # 读取现有内容
     with open(env_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
-    
+
     # 更新或添加变量
     updated_keys = set()
     new_lines = []
-    
+
     for line in lines:
-        key_match = re.match(r'^([A-Z_][A-Z0-9_]*)=', line.strip())
+        key_match = re.match(r"^([A-Z_][A-Z0-9_]*)=", line.strip())
         if key_match:
             key = key_match.group(1)
             if key in updates:
-                new_lines.append(f'{key}="{updates[key]}"\n')
+                new_lines.append(f"{key}={_format_env_value(updates[key])}\n")
                 updated_keys.add(key)
                 continue
         new_lines.append(line)
-    
+
     # 添加新的变量
     for key, value in updates.items():
         if key not in updated_keys:
-            new_lines.append(f'{key}="{value}"\n')
-    
+            new_lines.append(f"{key}={_format_env_value(value)}\n")
+
     # 写入文件
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)

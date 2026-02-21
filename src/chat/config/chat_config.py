@@ -9,6 +9,54 @@ import json
 from src.config import _parse_ids
 
 
+def _strip_wrapping_quotes(raw_text: str) -> str:
+    """去掉环境变量值外层成对引号（如 "..." 或 '...'）。"""
+    text = str(raw_text or "").strip()
+    if len(text) >= 2 and (
+        (text[0] == text[-1] == '"') or (text[0] == text[-1] == "'")
+    ):
+        return text[1:-1].strip()
+    return text
+
+
+def _try_parse_env_json(raw_text: str):
+    """
+    兼容解析环境变量中的 JSON：
+    1) 直接 JSON（如 [{"a":1}]）
+    2) 外层再包一层引号（如 "[{\"a\":1}]" 或 "[{"a":1}]"）
+    3) json.loads 后得到字符串，再二次 json.loads
+    """
+    text = str(raw_text or "").strip()
+    if not text:
+        return None
+
+    candidates = [text]
+    unquoted = _strip_wrapping_quotes(text)
+    if unquoted and unquoted not in candidates:
+        candidates.append(unquoted)
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            continue
+
+        if isinstance(parsed, str):
+            nested = parsed.strip()
+            if not nested:
+                return parsed
+            try:
+                return json.loads(nested)
+            except Exception:
+                return parsed
+
+        return parsed
+
+    return None
+
+
 def _parse_int_env(key: str, default: int) -> int:
     """安全解析整数环境变量，解析失败时回退默认值。"""
     try:
@@ -38,25 +86,22 @@ def _parse_int_list_env(key: str, default: list[int]) -> list[int]:
     return values or default
 
 def _parse_str_list_env(key: str, default: list[str]) -> list[str]:
-    """解析字符串列表环境变量。支持 JSON 数组或逗号/换行分隔。"""
+    """解析字符串列表环境变量。支持 JSON 数组、包裹引号 JSON、逗号/换行分隔。"""
     raw = os.getenv(key)
     if not raw:
         return default
 
-    raw = raw.strip()
+    raw = str(raw).strip()
     values: list[str] = []
 
-    # 优先尝试 JSON 数组格式
-    if raw.startswith("[") and raw.endswith("]"):
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                for item in parsed:
-                    text = str(item).strip()
-                    if text:
-                        values.append(text)
-        except Exception:
-            pass
+    parsed = _try_parse_env_json(raw)
+    if isinstance(parsed, list):
+        for item in parsed:
+            text = str(item).strip()
+            if text:
+                values.append(text)
+    elif isinstance(parsed, str):
+        raw = parsed.strip()
 
     # 回退：逗号/换行分隔
     if not values:
@@ -76,20 +121,16 @@ def _parse_str_list_env(key: str, default: list[str]) -> list[str]:
 
 
 def _parse_str_map_env(key: str, default: dict[str, str]) -> dict[str, str]:
-    """解析字符串映射环境变量，支持 JSON 对象。"""
+    """解析字符串映射环境变量，支持 JSON 对象与包裹引号 JSON。"""
     raw = os.getenv(key)
     if not raw:
         return default
 
-    raw = raw.strip()
+    raw = str(raw).strip()
     if not raw:
         return default
 
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        return default
-
+    parsed = _try_parse_env_json(raw)
     if not isinstance(parsed, dict):
         return default
 
@@ -107,20 +148,16 @@ def _parse_str_map_env(key: str, default: dict[str, str]) -> dict[str, str]:
 def _parse_json_object_env(
     key: str, default: dict[str, object]
 ) -> dict[str, object]:
-    """解析 JSON 对象环境变量，失败时回退默认值。"""
+    """解析 JSON 对象环境变量，兼容包裹引号 JSON，失败时回退默认值。"""
     raw = os.getenv(key)
     if not raw:
         return default
 
-    raw = raw.strip()
+    raw = str(raw).strip()
     if not raw:
         return default
 
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        return default
-
+    parsed = _try_parse_env_json(raw)
     if not isinstance(parsed, dict):
         return default
 
@@ -147,15 +184,11 @@ def _parse_voice_references_env(
     if not raw:
         return default
 
-    raw = raw.strip()
+    raw = str(raw).strip()
     if not raw:
         return default
 
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        return default
-
+    parsed = _try_parse_env_json(raw)
     if not isinstance(parsed, list):
         return default
 
@@ -213,18 +246,15 @@ def _parse_doubao_app_pool_env(
             }
         )
 
-    # 优先 JSON
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            for item in parsed:
-                if not isinstance(item, dict):
-                    continue
-                _append_item(item.get("app_id"), item.get("access_token"))
+    # 优先 JSON（兼容外层套引号或 JSON 字符串再包裹）
+    parsed = _try_parse_env_json(raw)
+    if isinstance(parsed, list):
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            _append_item(item.get("app_id"), item.get("access_token"))
         if normalized:
             return normalized
-    except Exception:
-        pass
 
     # 回退：逐行解析
     for line in raw.replace("\r", "\n").split("\n"):

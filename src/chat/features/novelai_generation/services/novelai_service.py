@@ -20,6 +20,7 @@ from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 
 from src.chat.config import chat_config as app_config
+from src import config as global_config
 
 log = logging.getLogger(__name__)
 
@@ -128,6 +129,14 @@ class NovelAIService:
             "model": config.get("MODEL"),
             "available": self.is_available(),
         }
+
+    def _get_proxy_url(self) -> Optional[str]:
+        """
+        获取 NovelAI 请求代理地址。
+        与 Discord 统一使用全局 PROXY_URL 配置。
+        """
+        proxy_url = (global_config.PROXY_URL or "").strip()
+        return proxy_url or None
 
     async def generate_image(
         self,
@@ -314,6 +323,7 @@ class NovelAIService:
             }
 
             timeout = aiohttp.ClientTimeout(total=120)
+            proxy_url = self._get_proxy_url()
 
             # 使用 semaphore 确保同一时间只有一个请求（队列功能）
             log.info("NovelAI 请求进入队列，等待获取许可...")
@@ -331,6 +341,7 @@ class NovelAIService:
                                     NOVELAI_API_URL,
                                     json=request_body,
                                     headers=headers,
+                                    proxy=proxy_url,
                                 ) as response:
                                     if response.status in (200, 201):
                                         # 成功: 返回 ZIP 文件（官方文档为 201，但某些情况可能返回 200）
@@ -658,6 +669,7 @@ class NovelAIService:
             }
 
             timeout = aiohttp.ClientTimeout(total=15)
+            proxy_url = self._get_proxy_url()
 
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 # 使用 /user/subscription 端点验证 token
@@ -665,6 +677,7 @@ class NovelAIService:
                 async with session.get(
                     "https://api.novelai.net/user/subscription",
                     headers=headers,
+                    proxy=proxy_url,
                 ) as response:
                     if response.status == 200:
                         try:
