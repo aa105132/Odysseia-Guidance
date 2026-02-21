@@ -501,6 +501,10 @@ def _get_voice_config():
         "ACCESS_TOKEN": os.getenv("VOICE_ACCESS_TOKEN", ""),
         # 豆包账号池（可选）。填写后优先从池子轮询挑选 app_id/access_token。
         "APP_POOL": _parse_doubao_app_pool_env("VOICE_APP_POOL", []),
+        # 豆包 app_id -> 默认音色映射（可选，额度切换账号时用于自动切换音色）。
+        "APP_DEFAULT_VOICE_TYPES": _parse_str_map_env(
+            "VOICE_APP_DEFAULT_VOICE_TYPES", {}
+        ),
         # 复刻音色 -> 指定 app_id 绑定（可选），仅对复刻音色生效。
         "CLONE_VOICE_APP_BINDINGS": _parse_str_map_env(
             "VOICE_CLONE_VOICE_APP_BINDINGS", {}

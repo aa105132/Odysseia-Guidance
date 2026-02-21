@@ -984,13 +984,24 @@
                             </div>
 
                             <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">APP ID 默认音色映射（可选）</label>
+                                <textarea x-model="voiceForm.app_default_voice_types_text"
+                                          rows="4"
+                                          placeholder="每行一条，格式：app_id = voice_type&#10;示例：&#10;7690056285 = zh_female_wanwanxiaohe_moon_bigtts&#10;7690056286 = zh_male_haoyang_bigtts&#10;&#10;也支持直接粘贴 JSON 对象：{"7690056285":"zh_female_wanwanxiaohe_moon_bigtts"}"
+                                          class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                                <p class="text-xs text-slate-500 mt-1">
+                                    当某个 APP ID 额度超限并自动切换到下一个 APP ID 时，会优先切到该 APP ID 对应默认音色（仅在未显式指定音色时生效）。
+                                </p>
+                            </div>
+
+                            <div>
                                 <label class="block text-sm font-medium text-slate-300 mb-2">复刻音色绑定 APP ID（可选）</label>
                                 <textarea x-model="voiceForm.clone_voice_app_bindings_text"
                                           rows="4"
                                           placeholder="每行一条，格式：voice_type = app_id&#10;示例：&#10;S_03FKArQO1 = 7690056285&#10;S_03FKArQO2 = 7690056286&#10;&#10;也支持直接粘贴 JSON 对象：{"S_03FKArQO1":"7690056285"}"
                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
                                 <p class="text-xs text-slate-500 mt-1">
-                                    仅对复刻音色生效。命中绑定时优先使用绑定 APP ID 对应账号；未命中再走轮询池。
+                                    仅对复刻音色生效。命中绑定时强制使用绑定 APP ID 对应账号。
                                 </p>
                             </div>
                         </div>
@@ -2868,6 +2879,7 @@
                     app_id: '',
                     access_token: '',
                     app_pool_text: '',
+                    app_default_voice_types_text: '',
                     clone_voice_app_bindings_text: '',
                     cluster: '',
                     clone_cluster: 'volcano_icl',
@@ -4455,6 +4467,15 @@
                                 })
                                 .filter(Boolean)
                                 .join('\n');
+                            const appDefaultVoiceTypes = (
+                                data.app_default_voice_types
+                                && typeof data.app_default_voice_types === 'object'
+                                && !Array.isArray(data.app_default_voice_types)
+                            ) ? data.app_default_voice_types : {};
+                            this.voiceForm.app_default_voice_types_text = Object.entries(appDefaultVoiceTypes)
+                                .map(([appId, voiceType]) => `${appId} = ${voiceType}`)
+                                .join('\n');
+
                             const cloneVoiceAppBindings = (
                                 data.clone_voice_app_bindings
                                 && typeof data.clone_voice_app_bindings === 'object'
@@ -4654,6 +4675,55 @@
                             }
                         }
 
+                        const appDefaultVoiceTypesText = (this.voiceForm.app_default_voice_types_text || '').trim();
+                        let appDefaultVoiceTypes = {};
+                        if (appDefaultVoiceTypesText) {
+                            if (appDefaultVoiceTypesText.startsWith('{')) {
+                                try {
+                                    const parsedJsonMappings = JSON.parse(appDefaultVoiceTypesText);
+                                    if (!parsedJsonMappings || typeof parsedJsonMappings !== 'object' || Array.isArray(parsedJsonMappings)) {
+                                        this.showToast('APP ID 默认音色映射 JSON 必须是对象', 'error');
+                                        this.saving = false;
+                                        return;
+                                    }
+                                    appDefaultVoiceTypes = Object.fromEntries(
+                                        Object.entries(parsedJsonMappings)
+                                            .map(([rawAppId, rawVoiceType]) => {
+                                                const appId = String(rawAppId || '').trim();
+                                                const voiceType = String(rawVoiceType || '').trim();
+                                                if (!appId || !voiceType) return null;
+                                                return [appId, voiceType];
+                                            })
+                                            .filter(Boolean)
+                                    );
+                                } catch (e) {
+                                    this.showToast('APP ID 默认音色映射 JSON 解析失败', 'error');
+                                    this.saving = false;
+                                    return;
+                                }
+                            } else {
+                                const parsedDefaultVoiceEntries = appDefaultVoiceTypesText
+                                    .replace(/\r/g, '\n')
+                                    .split('\n')
+                                    .map(line => line.trim())
+                                    .filter(Boolean)
+                                    .map(line => {
+                                        let splitIndex = line.indexOf('=');
+                                        if (splitIndex < 0) splitIndex = line.indexOf('：');
+                                        if (splitIndex < 0) splitIndex = line.indexOf(':');
+                                        if (splitIndex < 0) splitIndex = line.indexOf('|');
+                                        if (splitIndex < 0) return null;
+
+                                        const appId = line.slice(0, splitIndex).trim();
+                                        const voiceType = line.slice(splitIndex + 1).trim();
+                                        if (!appId || !voiceType) return null;
+                                        return [appId, voiceType];
+                                    })
+                                    .filter(Boolean);
+                                appDefaultVoiceTypes = Object.fromEntries(parsedDefaultVoiceEntries);
+                            }
+                        }
+
                         const parsedSiliconflowReferences = (this.voiceForm.siliconflow_references_text || '')
                             .replace(/\r/g, '\n')
                             .split('\n')
@@ -4696,6 +4766,7 @@
                             model_name: this.voiceForm.model_name ?? '',
                             app_id: this.voiceForm.app_id ?? '',
                             app_pool: uniqueAppPool,
+                            app_default_voice_types: appDefaultVoiceTypes,
                             clone_voice_app_bindings: cloneVoiceAppBindings,
                             cluster: (this.voiceForm.cluster ?? '').trim(),
                             clone_cluster: (this.voiceForm.clone_cluster ?? '').trim(),

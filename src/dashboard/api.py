@@ -127,6 +127,8 @@ class VoiceConfigUpdate(BaseModel):
     access_token: Optional[str] = None
     # 豆包账号池（可选）：[{app_id, access_token}]
     app_pool: Optional[List[Dict[str, str]]] = None
+    # 豆包 app_id -> 默认音色映射（可选）：{app_id: voice_type}
+    app_default_voice_types: Optional[Dict[str, str]] = None
     # 复刻音色绑定到指定 app_id（可选）：{voice_type: app_id}
     clone_voice_app_bindings: Optional[Dict[str, str]] = None
     cluster: Optional[str] = None
@@ -622,6 +624,9 @@ async def get_all_config(token: str = Depends(verify_token)):
     voice_api_key = str(voice_config.get("API_KEY", "")).strip()
     voice_access_token = str(voice_config.get("ACCESS_TOKEN", "")).strip()
     voice_app_pool = _normalize_doubao_app_pool(voice_config.get("APP_POOL", []))
+    voice_app_default_voice_types = _normalize_string_map(
+        voice_config.get("APP_DEFAULT_VOICE_TYPES", {})
+    )
     voice_clone_voice_app_bindings = _normalize_string_map(
         voice_config.get("CLONE_VOICE_APP_BINDINGS", {})
     )
@@ -723,6 +728,7 @@ async def get_all_config(token: str = Depends(verify_token)):
             "has_access_token": bool(voice_access_token),
             "app_pool": voice_app_pool,
             "app_pool_count": len(voice_app_pool),
+            "app_default_voice_types": voice_app_default_voice_types,
             "clone_voice_app_bindings": voice_clone_voice_app_bindings,
             "cluster": voice_config.get("CLUSTER", ""),
             "clone_cluster": voice_config.get("CLONE_CLUSTER", "volcano_icl"),
@@ -1725,6 +1731,9 @@ async def get_voice_config(token: str = Depends(verify_token)):
     db_app_id = await chat_db_manager.get_global_setting("voice_app_id")
     db_access_token = await chat_db_manager.get_global_setting("voice_access_token")
     db_app_pool = await chat_db_manager.get_global_setting("voice_app_pool")
+    db_app_default_voice_types = await chat_db_manager.get_global_setting(
+        "voice_app_default_voice_types"
+    )
     db_clone_voice_app_bindings = await chat_db_manager.get_global_setting(
         "voice_clone_voice_app_bindings"
     )
@@ -1764,6 +1773,11 @@ async def get_voice_config(token: str = Depends(verify_token)):
         _parse_doubao_app_pool_setting(db_app_pool)
         if db_app_pool is not None
         else _normalize_doubao_app_pool(config.get("APP_POOL", []))
+    )
+    app_default_voice_types = (
+        _parse_string_map_setting(db_app_default_voice_types)
+        if db_app_default_voice_types is not None
+        else _normalize_string_map(config.get("APP_DEFAULT_VOICE_TYPES", {}))
     )
     clone_voice_app_bindings = (
         _parse_string_map_setting(db_clone_voice_app_bindings)
@@ -1918,6 +1932,7 @@ async def get_voice_config(token: str = Depends(verify_token)):
         "has_access_token": bool(access_token),
         "app_pool": app_pool,
         "app_pool_count": len(app_pool),
+        "app_default_voice_types": app_default_voice_types,
         "clone_voice_app_bindings": clone_voice_app_bindings,
         "cluster": cluster,
         "clone_cluster": clone_cluster,
@@ -2023,6 +2038,19 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
         env_updates["VOICE_APP_POOL"] = serialized_app_pool
         updated["app_pool_count"] = len(app_pool)
         await chat_db_manager.set_global_setting("voice_app_pool", serialized_app_pool)
+
+    if config.app_default_voice_types is not None:
+        app_default_voice_types = _normalize_string_map(config.app_default_voice_types)
+        serialized_app_default_voice_types = json.dumps(
+            app_default_voice_types, ensure_ascii=False
+        )
+        chat_config.VOICE_CONFIG["APP_DEFAULT_VOICE_TYPES"] = app_default_voice_types
+        os.environ["VOICE_APP_DEFAULT_VOICE_TYPES"] = serialized_app_default_voice_types
+        env_updates["VOICE_APP_DEFAULT_VOICE_TYPES"] = serialized_app_default_voice_types
+        updated["app_default_voice_types_count"] = len(app_default_voice_types)
+        await chat_db_manager.set_global_setting(
+            "voice_app_default_voice_types", serialized_app_default_voice_types
+        )
 
     if config.clone_voice_app_bindings is not None:
         clone_voice_app_bindings = _normalize_string_map(config.clone_voice_app_bindings)

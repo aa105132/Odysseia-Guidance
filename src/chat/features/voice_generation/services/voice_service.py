@@ -52,6 +52,9 @@ class VoiceGenerationService:
             app_id = str(config.get("APP_ID", "")).strip()
             access_token = str(config.get("ACCESS_TOKEN", "")).strip()
             app_pool = self._normalize_doubao_app_pool(config.get("APP_POOL", []))
+            app_default_voice_types = self._normalize_app_default_voice_types(
+                config.get("APP_DEFAULT_VOICE_TYPES", {})
+            )
             clone_voice_app_bindings = self._normalize_clone_voice_app_bindings(
                 config.get("CLONE_VOICE_APP_BINDINGS", {})
             )
@@ -82,12 +85,14 @@ class VoiceGenerationService:
                 "app_id": app_id,
                 "access_token": access_token,
                 "app_pool": effective_pool,
+                "app_default_voice_types": app_default_voice_types,
                 "clone_voice_app_bindings": clone_voice_app_bindings,
                 "cluster": cluster,
             }
             log.info(
-                "语音服务已初始化（provider=doubao, app_pool=%s, clone_bindings=%s）",
+                "语音服务已初始化（provider=doubao, app_pool=%s, app_defaults=%s, clone_bindings=%s）",
                 len(effective_pool),
+                len(app_default_voice_types),
                 len(clone_voice_app_bindings),
             )
             return
@@ -250,6 +255,21 @@ class VoiceGenerationService:
         return normalized
 
     @staticmethod
+    def _normalize_app_default_voice_types(values: Any) -> Dict[str, str]:
+        if not isinstance(values, dict):
+            return {}
+
+        normalized: Dict[str, str] = {}
+        for raw_app_id, raw_voice_type in values.items():
+            app_id = str(raw_app_id).strip()
+            voice_type = str(raw_voice_type).strip()
+            if not app_id or not voice_type:
+                continue
+            normalized[app_id] = voice_type
+
+        return normalized
+
+    @staticmethod
     def _normalize_clone_voice_app_bindings(values: Any) -> Dict[str, str]:
         if not isinstance(values, dict):
             return {}
@@ -383,6 +403,20 @@ class VoiceGenerationService:
         # 按用户约定：不在官方音色命名规则内的音色，视为复刻音色
         return not cls._is_doubao_official_voice(value)
 
+    @staticmethod
+    def _is_doubao_quota_exceeded_error(error_payload: Any) -> bool:
+        text = str(error_payload or "").strip().lower()
+        if not text:
+            return False
+
+        if "quota exceeded" in text or "quota_exceeded" in text or "exceed quota" in text:
+            return True
+
+        if "试用版用量用完" in text or "用量用完" in text or "额度用完" in text:
+            return True
+
+        return False
+
     @classmethod
     def _resolve_doubao_cluster(cls, configured_cluster: str, voice_type: str) -> str:
         """根据音色类型自动选择豆包 cluster。"""
@@ -494,86 +528,99 @@ class VoiceGenerationService:
             )
             configured_clone_cluster = "volcano_icl"
 
-        selected_voice = (voice_type or config.get("VOICE_TYPE") or "").strip()
+        requested_voice = (voice_type or "").strip()
+        selected_voice = requested_voice or str(config.get("VOICE_TYPE") or "").strip()
         if not selected_voice:
             selected_voice = "zh_female_wanwanxiaohe_moon_bigtts"
+        is_voice_explicit = bool(requested_voice)
 
-        is_clone_voice = self._is_doubao_clone_voice(selected_voice)
+        initial_is_clone_voice = self._is_doubao_clone_voice(selected_voice)
         app_pool = self._normalize_doubao_app_pool(self._client.get("app_pool", []))
+        app_default_voice_types = self._normalize_app_default_voice_types(
+            self._client.get("app_default_voice_types", {})
+        )
         clone_voice_app_bindings = self._normalize_clone_voice_app_bindings(
             self._client.get("clone_voice_app_bindings", {})
         )
         fallback_app_id = str(self._client.get("app_id", "")).strip()
         fallback_access_token = str(self._client.get("access_token", "")).strip()
-        app_id, access_token, account_route = self._select_doubao_credentials(
-            selected_voice=selected_voice,
-            is_clone_voice=is_clone_voice,
-            app_pool=app_pool,
-            clone_voice_app_bindings=clone_voice_app_bindings,
-            fallback_app_id=fallback_app_id,
-            fallback_access_token=fallback_access_token,
-        )
-        if not app_id or not access_token:
-            log.error(
-                "豆包语音账号不可用：未找到可用 APP_ID / ACCESS_TOKEN（route=%s, voice_type=%s, clone_voice=%s）",
-                account_route,
-                selected_voice,
-                is_clone_voice,
-            )
-            return None
 
-        normalized_clone_resource_id = configured_clone_resource_id.lower()
-        if is_clone_voice:
-            if normalized_clone_resource_id in {
-                "volcano_icl",
-                "volcano_icl_concurr",
-                "volcano_mega",
-                "volcano_mega_tts",
-                "volcano_mega_concurr",
-                "volcano_mega_tts_concurr",
-            }:
-                log.warning(
-                    "检测到 CLONE_RESOURCE_ID 误填为 cluster 值：%s，已自动纠正为 seed-icl-2.0",
-                    configured_clone_resource_id,
+        account_candidates: list[Tuple[str, str, str]] = []
+        attempted_credentials: set[tuple[str, str]] = set()
+
+        if initial_is_clone_voice:
+            app_id, access_token, account_route = self._select_doubao_credentials(
+                selected_voice=selected_voice,
+                is_clone_voice=True,
+                app_pool=app_pool,
+                clone_voice_app_bindings=clone_voice_app_bindings,
+                fallback_app_id=fallback_app_id,
+                fallback_access_token=fallback_access_token,
+            )
+            if not app_id or not access_token:
+                log.error(
+                    "豆包语音账号不可用：未找到可用 APP_ID / ACCESS_TOKEN（route=%s, voice_type=%s, clone_voice=%s）",
+                    account_route,
+                    selected_voice,
+                    initial_is_clone_voice,
                 )
-                configured_clone_resource_id = "seed-icl-2.0"
-                normalized_clone_resource_id = configured_clone_resource_id
-            elif (
-                configured_clone_resource_id
-                and not normalized_clone_resource_id.startswith("seed-icl-")
+                return None
+            account_candidates.append((app_id, access_token, account_route))
+        else:
+            app_id, access_token, account_route = self._select_doubao_credentials(
+                selected_voice=selected_voice,
+                is_clone_voice=False,
+                app_pool=app_pool,
+                clone_voice_app_bindings=clone_voice_app_bindings,
+                fallback_app_id=fallback_app_id,
+                fallback_access_token=fallback_access_token,
+            )
+            if app_id and access_token:
+                first_credential = (app_id, access_token)
+                attempted_credentials.add(first_credential)
+                account_candidates.append((app_id, access_token, account_route))
+
+            if app_pool:
+                start_index = self._doubao_rr_index if account_route == "round_robin_pool" else -1
+                if 0 <= start_index < len(app_pool):
+                    remaining_indices = list(range(start_index + 1, len(app_pool)))
+                    remaining_indices.extend(range(0, start_index))
+                else:
+                    remaining_indices = list(range(len(app_pool)))
+
+                for idx in remaining_indices:
+                    candidate = app_pool[idx]
+                    candidate_app_id = str(candidate.get("app_id", "")).strip()
+                    candidate_access_token = str(candidate.get("access_token", "")).strip()
+                    if not candidate_app_id or not candidate_access_token:
+                        continue
+
+                    dedupe_key = (candidate_app_id, candidate_access_token)
+                    if dedupe_key in attempted_credentials:
+                        continue
+
+                    attempted_credentials.add(dedupe_key)
+                    account_candidates.append(
+                        (candidate_app_id, candidate_access_token, "round_robin_pool_retry")
+                    )
+
+            fallback_credential = (fallback_app_id, fallback_access_token)
+            if (
+                fallback_app_id
+                and fallback_access_token
+                and fallback_credential not in attempted_credentials
             ):
-                log.warning(
-                    "检测到 CLONE_RESOURCE_ID 非法值：%s，已自动回退为 seed-icl-2.0",
-                    configured_clone_resource_id,
+                account_candidates.append(
+                    (fallback_app_id, fallback_access_token, "single_fallback")
                 )
-                configured_clone_resource_id = "seed-icl-2.0"
 
-        cluster_input = (
-            configured_clone_cluster if is_clone_voice and configured_clone_cluster else configured_cluster
-        )
-        cluster = self._resolve_doubao_cluster(cluster_input, selected_voice)
-        resource_id = (
-            configured_clone_resource_id or "seed-icl-2.0"
-            if is_clone_voice
-            else "volc.megatts.default"
-        )
-        if cluster != cluster_input:
-            log.info(
-                "豆包 cluster 已自动调整: %s -> %s（voice_type=%s）",
-                cluster_input or "<empty>",
-                cluster,
-                selected_voice,
-            )
-        log.info(
-            "豆包语音路由: voice_type=%s, cluster=%s, resource_id=%s, clone_voice=%s, clone_cluster_config=%s, app_route=%s, app_id=%s",
-            selected_voice,
-            cluster,
-            resource_id,
-            is_clone_voice,
-            configured_clone_cluster or "<empty>",
-            account_route,
-            app_id,
-        )
+            if not account_candidates:
+                log.error(
+                    "豆包语音账号不可用：未找到可用 APP_ID / ACCESS_TOKEN（voice_type=%s, clone_voice=%s）",
+                    selected_voice,
+                    initial_is_clone_voice,
+                )
+                return None
 
         requested_format = str(config.get("AUDIO_FORMAT", "mp3")).strip().lower()
         doubao_encoding_map = {
@@ -591,12 +638,6 @@ class VoiceGenerationService:
             default=1.0,
             minimum=0.2,
             maximum=3.0,
-        )
-        volume = self._safe_float(
-            volume_ratio if volume_ratio is not None else config.get("VOLUME_RATIO", 1.0),
-            default=1.0,
-            minimum=0.5 if is_clone_voice else 0.2,
-            maximum=2.0 if is_clone_voice else 3.0,
         )
         pitch = self._safe_float(
             pitch_ratio if pitch_ratio is not None else config.get("PITCH_RATIO", 1.0),
@@ -621,153 +662,286 @@ class VoiceGenerationService:
             maximum=5.0,
         )
 
-        # 声音复刻链路按 ICL 文档白名单收敛参数：
-        # /api/v1/tts 的 audio 仅传 voice_type / encoding / speed_ratio / loudness_ratio。
-        # model_type=4 属于训练接口参数，合成阶段不透传，避免触发参数校验失败。
-        audio_payload = {
-            "voice_type": selected_voice,
-            "encoding": encoding,
-            "speed_ratio": speed,
-            "loudness_ratio": volume,
-        }
-
-        if is_clone_voice:
-            if selected_emotion or selected_enable_emotion or enable_emotion is not None:
-                log.info("复刻音色请求已忽略情感参数，按 ICL 白名单发送")
-        else:
-            audio_payload["pitch_ratio"] = pitch
-            if selected_emotion:
-                audio_payload["emotion"] = selected_emotion
-            if selected_emotion or selected_enable_emotion or enable_emotion is not None:
-                audio_payload["enable_emotion"] = bool(selected_enable_emotion)
-                audio_payload["emotion_scale"] = selected_emotion_scale
-
-        payload = {
-            "app": {
-                "appid": app_id,
-                "token": access_token,
-                "cluster": cluster,
-            },
-            "user": {
-                "uid": str(user_id or "odysseia-guidance"),
-            },
-            "audio": audio_payload,
-            "request": {
-                "reqid": str(uuid.uuid4()),
-                "text": text,
-                "text_type": "plain",
-                "operation": "query",
-            },
-        }
-
         endpoint = f"{base_url}/api/v1/tts"
-        auth_candidates = [
-            f"Bearer;{access_token}",
-            f"Bearer {access_token}",
-        ]
-
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            for idx, auth_value in enumerate(auth_candidates):
-                headers = {
-                    "Authorization": auth_value,
-                    "Content-Type": "application/json",
-                    "Resource-Id": resource_id,
-                }
-                # 关键：HTTP /api/v1/tts 复刻链路不携带 X-Api-Resource-Id。
-                # 实测该头会导致 403(resource not granted)；最小必填请求仅需 Resource-Id。
-                try:
-                    async with session.post(endpoint, headers=headers, json=payload) as response:
-                        status_code = response.status
-                        content_type = (
-                            response.headers.get("Content-Type", "")
-                            .split(";")[0]
-                            .strip()
-                            .lower()
-                        )
-
-                        if status_code == 401 and idx < len(auth_candidates) - 1:
-                            log.debug("豆包鉴权格式重试中（Bearer/Bearer;）")
-                            continue
-
-                        if status_code != 200:
-                            error_text = await response.text()
-                            log.error(
-                                f"豆包语音 API 返回错误 {status_code}: {error_text[:500]}"
+            for account_index, (app_id, access_token, account_route) in enumerate(
+                account_candidates
+            ):
+                attempt_voice = selected_voice
+                if not initial_is_clone_voice and not is_voice_explicit:
+                    mapped_default_voice = str(
+                        app_default_voice_types.get(app_id, "")
+                    ).strip()
+                    if mapped_default_voice:
+                        if self._is_doubao_clone_voice(mapped_default_voice):
+                            log.warning(
+                                "APP 默认音色映射为复刻音色，已忽略：app_id=%s, mapped_voice=%s",
+                                app_id,
+                                mapped_default_voice,
                             )
-                            return None
+                        else:
+                            if mapped_default_voice != attempt_voice:
+                                log.info(
+                                    "根据 APP 默认音色映射切换 voice_type: app_id=%s, %s -> %s",
+                                    app_id,
+                                    attempt_voice,
+                                    mapped_default_voice,
+                                )
+                            attempt_voice = mapped_default_voice
 
-                        # 部分网关可能直接返回音频流
-                        if content_type.startswith("audio/"):
-                            audio_bytes = await response.read()
-                            if not audio_bytes:
-                                log.error("豆包语音返回了空音频流")
+                attempt_is_clone_voice = self._is_doubao_clone_voice(attempt_voice)
+
+                normalized_clone_resource_id = configured_clone_resource_id.lower()
+                resolved_clone_resource_id = configured_clone_resource_id
+                if attempt_is_clone_voice:
+                    if normalized_clone_resource_id in {
+                        "volcano_icl",
+                        "volcano_icl_concurr",
+                        "volcano_mega",
+                        "volcano_mega_tts",
+                        "volcano_mega_concurr",
+                        "volcano_mega_tts_concurr",
+                    }:
+                        log.warning(
+                            "检测到 CLONE_RESOURCE_ID 误填为 cluster 值：%s，已自动纠正为 seed-icl-2.0",
+                            configured_clone_resource_id,
+                        )
+                        resolved_clone_resource_id = "seed-icl-2.0"
+                        normalized_clone_resource_id = resolved_clone_resource_id
+                    elif (
+                        resolved_clone_resource_id
+                        and not normalized_clone_resource_id.startswith("seed-icl-")
+                    ):
+                        log.warning(
+                            "检测到 CLONE_RESOURCE_ID 非法值：%s，已自动回退为 seed-icl-2.0",
+                            configured_clone_resource_id,
+                        )
+                        resolved_clone_resource_id = "seed-icl-2.0"
+
+                cluster_input = (
+                    configured_clone_cluster
+                    if attempt_is_clone_voice and configured_clone_cluster
+                    else configured_cluster
+                )
+                cluster = self._resolve_doubao_cluster(cluster_input, attempt_voice)
+                resource_id = (
+                    resolved_clone_resource_id or "seed-icl-2.0"
+                    if attempt_is_clone_voice
+                    else "volc.megatts.default"
+                )
+                if cluster != cluster_input:
+                    log.info(
+                        "豆包 cluster 已自动调整: %s -> %s（voice_type=%s）",
+                        cluster_input or "<empty>",
+                        cluster,
+                        attempt_voice,
+                    )
+                log.info(
+                    "豆包语音路由: voice_type=%s, cluster=%s, resource_id=%s, clone_voice=%s, clone_cluster_config=%s, app_route=%s, app_id=%s, attempt=%s/%s",
+                    attempt_voice,
+                    cluster,
+                    resource_id,
+                    attempt_is_clone_voice,
+                    configured_clone_cluster or "<empty>",
+                    account_route,
+                    app_id,
+                    account_index + 1,
+                    len(account_candidates),
+                )
+
+                volume = self._safe_float(
+                    volume_ratio if volume_ratio is not None else config.get("VOLUME_RATIO", 1.0),
+                    default=1.0,
+                    minimum=0.5 if attempt_is_clone_voice else 0.2,
+                    maximum=2.0 if attempt_is_clone_voice else 3.0,
+                )
+
+                # 声音复刻链路按 ICL 文档白名单收敛参数：
+                # /api/v1/tts 的 audio 仅传 voice_type / encoding / speed_ratio / loudness_ratio。
+                # model_type=4 属于训练接口参数，合成阶段不透传，避免触发参数校验失败。
+                audio_payload = {
+                    "voice_type": attempt_voice,
+                    "encoding": encoding,
+                    "speed_ratio": speed,
+                    "loudness_ratio": volume,
+                }
+
+                if attempt_is_clone_voice:
+                    if selected_emotion or selected_enable_emotion or enable_emotion is not None:
+                        log.info("复刻音色请求已忽略情感参数，按 ICL 白名单发送")
+                else:
+                    audio_payload["pitch_ratio"] = pitch
+                    if selected_emotion:
+                        audio_payload["emotion"] = selected_emotion
+                    if selected_emotion or selected_enable_emotion or enable_emotion is not None:
+                        audio_payload["enable_emotion"] = bool(selected_enable_emotion)
+                        audio_payload["emotion_scale"] = selected_emotion_scale
+
+                payload = {
+                    "app": {
+                        "appid": app_id,
+                        "token": access_token,
+                        "cluster": cluster,
+                    },
+                    "user": {
+                        "uid": str(user_id or "odysseia-guidance"),
+                    },
+                    "audio": audio_payload,
+                    "request": {
+                        "reqid": str(uuid.uuid4()),
+                        "text": text,
+                        "text_type": "plain",
+                        "operation": "query",
+                    },
+                }
+
+                auth_candidates = [
+                    f"Bearer;{access_token}",
+                    f"Bearer {access_token}",
+                ]
+
+                should_try_next_account = False
+                for idx, auth_value in enumerate(auth_candidates):
+                    headers = {
+                        "Authorization": auth_value,
+                        "Content-Type": "application/json",
+                        "Resource-Id": resource_id,
+                    }
+                    # 关键：HTTP /api/v1/tts 复刻链路不携带 X-Api-Resource-Id。
+                    # 实测该头会导致 403(resource not granted)；最小必填请求仅需 Resource-Id。
+                    try:
+                        async with session.post(
+                            endpoint, headers=headers, json=payload
+                        ) as response:
+                            status_code = response.status
+                            content_type = (
+                                response.headers.get("Content-Type", "")
+                                .split(";")[0]
+                                .strip()
+                                .lower()
+                            )
+
+                            if status_code == 401 and idx < len(auth_candidates) - 1:
+                                log.debug("豆包鉴权格式重试中（Bearer/Bearer;）")
+                                continue
+
+                            if status_code != 200:
+                                error_text = await response.text()
+                                if (
+                                    self._is_doubao_quota_exceeded_error(error_text)
+                                    and not attempt_is_clone_voice
+                                    and account_index < len(account_candidates) - 1
+                                ):
+                                    log.warning(
+                                        "豆包额度不足，自动切换下一账号重试：app_id=%s, route=%s, error=%s",
+                                        app_id,
+                                        account_route,
+                                        error_text[:200],
+                                    )
+                                    should_try_next_account = True
+                                    break
+
+                                log.error(
+                                    "豆包语音 API 返回错误 %s（app_id=%s, route=%s）: %s",
+                                    status_code,
+                                    app_id,
+                                    account_route,
+                                    error_text[:500],
+                                )
                                 return None
+
+                            # 部分网关可能直接返回音频流
+                            if content_type.startswith("audio/"):
+                                audio_bytes = await response.read()
+                                if not audio_bytes:
+                                    log.error("豆包语音返回了空音频流")
+                                    return None
+                                return VoiceResult(
+                                    audio_bytes=audio_bytes,
+                                    mime_type=content_type,
+                                    file_ext=self._ext_from_mime(content_type, requested_format),
+                                    provider="doubao",
+                                    model_name="doubao-tts",
+                                    voice_type=attempt_voice,
+                                )
+
+                            # 常规返回 JSON，音频通常在 data(base64) 字段
+                            try:
+                                data = await response.json(content_type=None)
+                            except Exception:
+                                raw_text = await response.text()
+                                log.error(f"豆包语音响应无法解析为 JSON: {raw_text[:500]}")
+                                return None
+
+                            if not isinstance(data, dict):
+                                log.error(f"豆包语音返回结构异常: {type(data)}")
+                                return None
+
+                            code = data.get("code")
+                            if code not in (0, 3000, "0", "3000", None):
+                                error_message = str(data.get("message", "")).strip()
+                                if (
+                                    self._is_doubao_quota_exceeded_error(error_message)
+                                    and not attempt_is_clone_voice
+                                    and account_index < len(account_candidates) - 1
+                                ):
+                                    log.warning(
+                                        "豆包额度不足（JSON code），自动切换下一账号重试：app_id=%s, route=%s, code=%s, message=%s",
+                                        app_id,
+                                        account_route,
+                                        code,
+                                        error_message[:200],
+                                    )
+                                    should_try_next_account = True
+                                    break
+
+                                log.error(
+                                    f"豆包语音返回失败 code={code}, message={data.get('message')}"
+                                )
+                                return None
+
+                            audio_b64 = data.get("data")
+                            if isinstance(audio_b64, dict):
+                                audio_b64 = (
+                                    audio_b64.get("audio")
+                                    or audio_b64.get("data")
+                                    or audio_b64.get("audio_data")
+                                )
+
+                            if not isinstance(audio_b64, str) or not audio_b64.strip():
+                                log.error("豆包语音返回中未找到有效的 base64 音频数据")
+                                return None
+
+                            try:
+                                audio_bytes = base64.b64decode(audio_b64)
+                            except Exception as decode_error:
+                                log.error(f"豆包语音 base64 解码失败: {decode_error}")
+                                return None
+
+                            if not audio_bytes:
+                                log.error("豆包语音解码后音频为空")
+                                return None
+
+                            result_format = "opus" if encoding == "ogg_opus" else requested_format
                             return VoiceResult(
                                 audio_bytes=audio_bytes,
-                                mime_type=content_type,
-                                file_ext=self._ext_from_mime(content_type, requested_format),
+                                mime_type=self._mime_type_from_format(result_format),
+                                file_ext=self._ext_from_format(result_format),
                                 provider="doubao",
                                 model_name="doubao-tts",
-                                voice_type=selected_voice,
+                                voice_type=attempt_voice,
                             )
+                    except aiohttp.ClientError as e:
+                        log.error(f"请求豆包语音失败: {e}")
+                        return None
+                    except Exception as e:
+                        log.error(f"豆包语音合成异常: {e}", exc_info=True)
+                        return None
 
-                        # 常规返回 JSON，音频通常在 data(base64) 字段
-                        try:
-                            data = await response.json(content_type=None)
-                        except Exception:
-                            raw_text = await response.text()
-                            log.error(f"豆包语音响应无法解析为 JSON: {raw_text[:500]}")
-                            return None
-
-                        if not isinstance(data, dict):
-                            log.error(f"豆包语音返回结构异常: {type(data)}")
-                            return None
-
-                        code = data.get("code")
-                        if code not in (0, 3000, "0", "3000", None):
-                            log.error(
-                                f"豆包语音返回失败 code={code}, message={data.get('message')}"
-                            )
-                            return None
-
-                        audio_b64 = data.get("data")
-                        if isinstance(audio_b64, dict):
-                            audio_b64 = (
-                                audio_b64.get("audio")
-                                or audio_b64.get("data")
-                                or audio_b64.get("audio_data")
-                            )
-
-                        if not isinstance(audio_b64, str) or not audio_b64.strip():
-                            log.error("豆包语音返回中未找到有效的 base64 音频数据")
-                            return None
-
-                        try:
-                            audio_bytes = base64.b64decode(audio_b64)
-                        except Exception as decode_error:
-                            log.error(f"豆包语音 base64 解码失败: {decode_error}")
-                            return None
-
-                        if not audio_bytes:
-                            log.error("豆包语音解码后音频为空")
-                            return None
-
-                        result_format = "opus" if encoding == "ogg_opus" else requested_format
-                        return VoiceResult(
-                            audio_bytes=audio_bytes,
-                            mime_type=self._mime_type_from_format(result_format),
-                            file_ext=self._ext_from_format(result_format),
-                            provider="doubao",
-                            model_name="doubao-tts",
-                            voice_type=selected_voice,
-                        )
-                except aiohttp.ClientError as e:
-                    log.error(f"请求豆包语音失败: {e}")
-                    return None
-                except Exception as e:
-                    log.error(f"豆包语音合成异常: {e}", exc_info=True)
-                    return None
+                if should_try_next_account:
+                    continue
 
         return None
 
