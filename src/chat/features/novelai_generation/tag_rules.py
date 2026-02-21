@@ -6,6 +6,7 @@ NovelAI Tag 生成规则库
 供 AI 在对话生图和 /draw 面板中参考使用。
 """
 
+import re
 from typing import List, Dict
 
 
@@ -17,7 +18,7 @@ NOVELAI_TAG_RULES = (
     "## NovelAI Tag 生成核心规则\n\n"
     "### 基本要求\n"
     "- 使用英文 Danbooru 格式 Tag，逗号分隔\n"
-    "- 单图 Tag 数量 >= 90 个\n"
+    "- 单图 Tag 数量 ≤ 90 个（建议 75~90）\n"
     "- 禁止使用中文或自然语言句子\n"
     "- 定格画面：单图为同一时刻的静态瞬间，禁止连续动作过程\n"
     "- 单图最多 4 个角色，最多 2 个女性角色\n\n"
@@ -675,7 +676,7 @@ AI_TAG_GENERATION_PROMPT_V2 = (
     "for NovelAI Diffusion.\n\n"
     "## STRICT RULES:\n"
     "1. Output ONLY comma-separated English tags, NO explanation, NO numbering\n"
-    "2. Tag count MUST be >= 90\n"
+    "2. Tag count MUST be <= 90 (recommended 75~90)\n"
     "3. Use weight syntax for emphasis: 1.2::Tag:: or 1.3::Tag:: (3~8 times), "
     "0.8::Tag:: for de-emphasis (2~4 times)\n"
     "4. Priority for weight: character name (with work) > core action > outfit > effects > expression\n"
@@ -724,7 +725,7 @@ AI_REWRITE_PROMPT_V2 = (
     "7. Use weight syntax: 1.2::Tag:: for emphasis (3~8 times), 0.8::Tag:: for de-emphasis (2~4 times)\n"
     "8. Weight priority: character name (with work) > core action > outfit > effects > expression\n"
     "9. Output ONLY the improved comma-separated tags, no explanation\n"
-    "10. Tag count MUST be >= 90\n"
+    "10. Tag count MUST be <= 90 (recommended 75~90)\n"
     "11. Decompose complex concepts into specific tags\n"
     "12. Only include visually visible elements\n"
     "13. Add expressiveness: atmosphere, physiological reactions, dynamic effects, particles\n\n"
@@ -747,6 +748,46 @@ def _build_prefill_messages() -> List[Dict[str, str]]:
         {"role": "user", "content": NOVELAI_TAG_PREFILL_USER},
         {"role": "model", "content": NOVELAI_TAG_PREFILL_MODEL},
     ]
+
+
+def clamp_danbooru_tags(raw_text: str, max_tags: int = 90) -> str:
+    """清洗并截断 AI 输出的 Danbooru 标签串，确保标签数不超过上限。"""
+    text = str(raw_text or "").strip().strip('"').strip("'")
+    if not text:
+        return ""
+
+    # 清理可能出现的代码块或标题前缀
+    text = re.sub(r"^```[\w-]*\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    text = re.sub(r"^\s*(tags|improved tags)\s*:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if max_tags <= 0:
+        max_tags = 90
+
+    tokens: List[str] = []
+    seen = set()
+
+    for segment in text.split(","):
+        token = str(segment or "").strip()
+        if not token:
+            continue
+
+        # 清理列表序号等噪声
+        token = re.sub(r"^[\-\d\.\)\s]+", "", token).strip().strip("[]")
+        if not token:
+            continue
+
+        normalized = token.lower()
+        if normalized in seen:
+            continue
+
+        seen.add(normalized)
+        tokens.append(token)
+        if len(tokens) >= max_tags:
+            break
+
+    return ", ".join(tokens)
 
 
 def get_tag_generation_prompt(description: str) -> str:

@@ -8,7 +8,7 @@ NovelAI 图片生成工具
 
 遵循 NAI 预设规则:
 - Tag 必须是 Danbooru 格式的英文单词/词语，逗号分隔
-- 单图 Tag 数量 ≥ 90 个
+- 单图 Tag 数量 ≤ 90 个（建议 75~90）
 - 使用权重语法: n::Tag:: (n>1 增强, n<1 减弱)
 - 支持角色 DNA 系统确保角色一致性
 - 同人角色强制使用 `character_name (work_name)` 英文身份标签（如 `raiden shogun (genshin impact)`）
@@ -28,6 +28,7 @@ from src.chat.config.chat_config import NOVELAI_CONFIG
 from src.chat.features.novelai_generation.tag_rules import (
     NOVELAI_TAG_RULES,
     TAG_LIBRARY_COMPACT,
+    clamp_danbooru_tags,
     get_rewrite_prompt,
     get_rewrite_messages,
     get_tag_generation_messages,
@@ -166,9 +167,9 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: b
             api_key=llm_overrides["api_key"],
             api_format=llm_overrides["api_format"],
         )
-        normalized = (converted or "").strip().strip('"').strip("'")
+        normalized = clamp_danbooru_tags(converted, max_tags=90)
         if normalized:
-            log.info(f"已完成 NovelAI 提示词{request_type}")
+            log.info(f"已完成 NovelAI 提示词{request_type}（标签数已限制为≤90）")
             return normalized
     except Exception as e:
         log.warning(f"NovelAI 提示词{request_type}失败，回退原提示词: {e}")
@@ -1531,8 +1532,8 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
                 await interaction.followup.send("AI 重写失败，请稍后重试。", ephemeral=True)
                 return
 
-            new_prompt = new_tags.strip().strip('"').strip("'")
-            log.info(f"对话工具 AI 重写 prompt 成功: {new_prompt[:100]}...")
+            new_prompt = clamp_danbooru_tags(new_tags, max_tags=90)
+            log.info(f"对话工具 AI 重写 prompt 成功（标签数≤90）: {new_prompt[:100]}...")
 
             await _regenerate_novelai(
                 interaction=interaction,

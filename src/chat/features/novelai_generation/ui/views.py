@@ -20,7 +20,13 @@ import discord
 
 from src.chat.config.chat_config import NOVELAI_CONFIG
 from src.chat.features.novelai_generation.services.novelai_service import novelai_service
-from src.chat.features.novelai_generation.tag_rules import get_tag_generation_prompt, get_rewrite_prompt, get_tag_generation_messages, get_rewrite_messages
+from src.chat.features.novelai_generation.tag_rules import (
+    clamp_danbooru_tags,
+    get_tag_generation_prompt,
+    get_rewrite_prompt,
+    get_tag_generation_messages,
+    get_rewrite_messages,
+)
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
 from src.chat.utils.database import chat_db_manager
 
@@ -142,9 +148,9 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: b
             api_key=llm_overrides["api_key"],
             api_format=llm_overrides["api_format"],
         )
-        normalized = (converted or "").strip().strip('"').strip("'")
+        normalized = clamp_danbooru_tags(converted, max_tags=90)
         if normalized:
-            log.info("已将 Imagen 自然语言提示词转换为 NovelAI 标签串")
+            log.info("已将 Imagen 自然语言提示词转换为 NovelAI 标签串（标签数≤90）")
             return normalized
     except Exception as e:
         log.warning(f"Imagen->NovelAI 提示词转换失败，回退原提示词: {e}")
@@ -921,9 +927,9 @@ class NovelAIDrawPanel(discord.ui.View):
                     api_format=llm_overrides["api_format"],
                 )
                 if tags:
-                    tags = tags.strip().strip('"').strip("'")
+                    tags = clamp_danbooru_tags(tags, max_tags=90)
                     parts.append(tags)
-                    log.info(f"AI描述模式生成Tag: {tags[:100]}...")
+                    log.info(f"AI描述模式生成Tag（标签数≤90）: {tags[:100]}...")
                 else:
                     log.warning("AI描述模式生成Tag失败，回退使用原始描述")
                     parts.append(self.session.scene_prompt)
@@ -1627,8 +1633,8 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
                 await interaction.followup.send("AI 重写失败，请稍后重试。", ephemeral=True)
                 return
 
-            new_prompt = new_tags.strip().strip('"').strip("'")
-            log.info(f"AI 重写 prompt 成功: {new_prompt[:100]}...")
+            new_prompt = clamp_danbooru_tags(new_tags, max_tags=90)
+            log.info(f"AI 重写 prompt 成功（标签数≤90）: {new_prompt[:100]}...")
 
             await _slash_regenerate_novelai(
                 interaction=interaction,
