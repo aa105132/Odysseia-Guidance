@@ -37,15 +37,34 @@ log = logging.getLogger(__name__)
 NOVELAI_PROMPT_MAX_OUTPUT_TOKENS = 8196
 
 
+def _detect_novelai_prompt_api_format(prompt_api_url: Optional[str]) -> Optional[str]:
+    """根据 NovelAI 提示词专用 URL 自动推断 API 格式。"""
+    if not prompt_api_url:
+        return None
+
+    lowered = prompt_api_url.lower()
+    if (
+        "generativelanguage.googleapis.com" in lowered
+        or "aiplatform.googleapis.com" in lowered
+        or "/v1beta" in lowered
+    ):
+        return "gemini"
+
+    # 非 Gemini 风格端点默认按 OpenAI 兼容处理（如 /v1/chat/completions）
+    return "openai"
+
+
 def _get_novelai_prompt_llm_overrides() -> Dict[str, Optional[str]]:
-    """获取 NovelAI 提示词专用 LLM 覆盖配置（模型 / URL / KEY）。"""
+    """获取 NovelAI 提示词专用 LLM 覆盖配置（模型 / URL / KEY / API 格式）。"""
     prompt_model = str(NOVELAI_CONFIG.get("PROMPT_MODEL", "") or "").strip() or None
     prompt_api_url = str(NOVELAI_CONFIG.get("PROMPT_API_URL", "") or "").strip() or None
     prompt_api_key = str(NOVELAI_CONFIG.get("PROMPT_API_KEY", "") or "").strip() or None
+    prompt_api_format = _detect_novelai_prompt_api_format(prompt_api_url)
     return {
         "model_name": prompt_model,
         "api_url": prompt_api_url,
         "api_key": prompt_api_key,
+        "api_format": prompt_api_format,
     }
 
 
@@ -97,6 +116,7 @@ async def _convert_tag_prompt_to_imagen_prompt(prompt: str) -> str:
             model_name=llm_overrides["model_name"],
             api_url=llm_overrides["api_url"],
             api_key=llm_overrides["api_key"],
+            api_format=llm_overrides["api_format"],
         )
         normalized = (converted or "").strip().strip('"').strip("'")
         if normalized:
@@ -128,6 +148,7 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str) -> str:
             model_name=llm_overrides["model_name"],
             api_url=llm_overrides["api_url"],
             api_key=llm_overrides["api_key"],
+            api_format=llm_overrides["api_format"],
         )
         normalized = (converted or "").strip().strip('"').strip("'")
         if normalized:
@@ -1201,6 +1222,7 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
                 model_name=llm_overrides["model_name"],
                 api_url=llm_overrides["api_url"],
                 api_key=llm_overrides["api_key"],
+                api_format=llm_overrides["api_format"],
             )
 
             if not new_tags or not new_tags.strip():
@@ -1437,6 +1459,7 @@ class ToolImagenAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
                 model_name=llm_overrides["model_name"],
                 api_url=llm_overrides["api_url"],
                 api_key=llm_overrides["api_key"],
+                api_format=llm_overrides["api_format"],
             )
             new_prompt = (rewritten or "").strip().strip('"').strip("'") or self._current_prompt
 
