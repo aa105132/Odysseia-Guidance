@@ -969,8 +969,8 @@ class GeminiService:
             )
 
         # 稳定性优化：
-        # 当仅依赖 Dashboard 全局 URL 且格式是 openai 时，若当前模型并无专属端点配置，
-        # 直接走“官方 API 回退路径”（与失败后回退一致），避免先经历两次长时间超时重试。
+        # 当仅依赖 Dashboard 全局 URL 且格式是 openai 时，
+        # 直接走 OpenAI 兼容路径，避免误入官方 Gemini SDK 路径导致参数不兼容。
         api_format = str(getattr(app_config, "_db_api_format", None) or "gemini").strip().lower()
         if (
             use_custom_endpoint
@@ -978,13 +978,31 @@ class GeminiService:
             and custom_endpoint_from_global_url
             and api_format == "openai"
         ):
-            fallback_model_name = self.default_model_name
-            log.warning(
+            direct_model_name = model_name or self.default_model_name
+            log.info(
                 "检测到 Dashboard 全局 OpenAI 兼容端点且当前模型无专属端点配置，"
-                f"将直接使用回退路径并跳过自定义端点重试。回退模型: '{fallback_model_name}'。"
+                "将直接使用 OpenAI 兼容路径（跳过官方 API 回退）。"
+                f"模型: '{direct_model_name}'。"
             )
-            model_name = fallback_model_name
-            use_custom_endpoint = False
+            return await self._generate_with_custom_endpoint(
+                user_id=user_id,
+                guild_id=guild_id,
+                message=message,
+                channel=channel,
+                replied_message=replied_message,
+                images=images,
+                user_name=user_name,
+                channel_context=channel_context,
+                world_book_entries=world_book_entries,
+                personal_summary=personal_summary,
+                affection_status=affection_status,
+                user_profile_data=user_profile_data,
+                guild_name=guild_name,
+                location_name=location_name,
+                model_name=direct_model_name,
+                discord_message=discord_message,
+                user_id_for_settings=user_id_for_settings,
+            )
 
         if use_custom_endpoint:
             log.info(f"检测到自定义模型 '{model_name}'，将优先尝试使用自定义端点。")
@@ -1023,12 +1041,37 @@ class GeminiService:
                         await asyncio.sleep(1)  # 在重试前稍作等待
 
             # 如果所有尝试都失败了，则执行回退逻辑
+            fallback_model_name = self.default_model_name
+
+            if api_format == "openai":
+                log.warning(
+                    f"自定义端点 '{model_name}' 的所有 {max_attempts} 次尝试均失败。最终错误: {last_exception}. "
+                    "当前为 OpenAI 兼容格式，将回退到 OpenAI 兼容路径。"
+                )
+                return await self._generate_with_custom_endpoint(
+                    user_id=user_id,
+                    guild_id=guild_id,
+                    message=message,
+                    channel=channel,
+                    replied_message=replied_message,
+                    images=images,
+                    user_name=user_name,
+                    channel_context=channel_context,
+                    world_book_entries=world_book_entries,
+                    personal_summary=personal_summary,
+                    affection_status=affection_status,
+                    user_profile_data=user_profile_data,
+                    guild_name=guild_name,
+                    location_name=location_name,
+                    model_name=fallback_model_name,
+                    discord_message=discord_message,
+                    user_id_for_settings=user_id_for_settings,
+                )
+
             log.warning(
                 f"自定义端点 '{model_name}' 的所有 {max_attempts} 次尝试均失败。最终错误: {last_exception}. "
-                f"将回退到官方 API。"
+                "将回退到官方 API。"
             )
-            # --- [新逻辑] 回退时使用默认模型 ---
-            fallback_model_name = self.default_model_name
             log.info(f"回退到官方 API，使用默认模型 '{fallback_model_name}'。")
 
             return await self._generate_with_official_api(
