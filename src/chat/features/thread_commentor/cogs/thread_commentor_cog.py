@@ -104,6 +104,10 @@ class ThreadCommentorCog(commands.Cog):
         if not recent_messages:
             return
 
+        latest_message = recent_messages[-1]
+        if self.bot.user and latest_message.author.id == self.bot.user.id:
+            return
+
         activity = self._analyze_thread_activity(recent_messages)
         last_human_message_at = activity["last_human_message_at"]
         if last_human_message_at is None:
@@ -189,6 +193,10 @@ class ThreadCommentorCog(commands.Cog):
         history_limit = max(context_limit * 2, 40)
         recent_messages = await self._fetch_recent_messages(channel, history_limit)
         if not recent_messages:
+            return
+
+        latest_message = recent_messages[-1]
+        if self.bot.user and latest_message.author.id == self.bot.user.id:
             return
 
         activity = self._analyze_thread_activity(recent_messages)
