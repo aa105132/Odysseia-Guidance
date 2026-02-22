@@ -16,10 +16,42 @@ from src.chat.features.games.config import blackjack_config
 from src.chat.features.games.services.blackjack_service import blackjack_service
 from src.chat.utils.database import chat_db_manager
 
-# 从根目录加载 .env 文件
-load_dotenv(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".env")
-)
+def _strip_wrapping_quotes(value: Optional[str]) -> str:
+    """去除环境变量值外层的一对引号，兼容被错误写成 '"xxx"' 的情况。"""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if len(text) >= 2 and (
+        (text[0] == '"' and text[-1] == '"')
+        or (text[0] == "'" and text[-1] == "'")
+    ):
+        return text[1:-1].strip()
+    return text
+
+
+def _load_project_env() -> None:
+    """尽可能加载项目根目录 .env，并记录实际检查路径。"""
+    candidate_paths = [
+        os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", ".env")
+        ),
+        os.path.abspath(os.path.join(os.getcwd(), ".env")),
+    ]
+
+    for dotenv_path in candidate_paths:
+        if os.path.isfile(dotenv_path):
+            loaded = load_dotenv(dotenv_path=dotenv_path, override=False)
+            logging.getLogger(__name__).info(
+                "Loaded .env file from: %s (loaded=%s)", dotenv_path, loaded
+            )
+            return
+
+    logging.getLogger(__name__).warning(
+        "No .env file found for blackjack-web. Checked paths: %s", candidate_paths
+    )
+
+
+_load_project_env()
 
 app = FastAPI()
 log = logging.getLogger(__name__)
@@ -166,21 +198,41 @@ class BetRequest(BaseModel):
 async def exchange_code_for_token(request: TokenRequest):
     """API: 用Discord返回的code换取access_token"""
     log.info(f"收到令牌交换请求，代码: '{request.code[:10]}...'")
-    client_id = os.getenv("VITE_DISCORD_CLIENT_ID")
-    client_secret = os.getenv("DISCORD_CLIENT_SECRET")
+    code = _strip_wrapping_quotes(request.code)
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    client_id = _strip_wrapping_quotes(
+        os.getenv("DISCORD_CLIENT_ID") or os.getenv("VITE_DISCORD_CLIENT_ID")
+    )
+    client_secret = _strip_wrapping_quotes(os.getenv("DISCORD_CLIENT_SECRET"))
+    redirect_uri = _strip_wrapping_quotes(
+        os.getenv("DISCORD_REDIRECT_URI") or os.getenv("DISCORD_OAUTH_REDIRECT_URI")
+    )
 
     if not client_id or not client_secret:
-        log.error("服务器缺少 VITE_DISCORD_CLIENT_ID 或 DISCORD_CLIENT_SECRET")
+        log.error(
+            "服务器缺少 DISCORD_CLIENT_ID/VITE_DISCORD_CLIENT_ID 或 DISCORD_CLIENT_SECRET"
+        )
         raise HTTPException(
             status_code=500, detail="Server is missing Discord credentials"
         )
+
+    log.info(
+        "OAuth配置检查: client_id_prefix=%s, client_secret_len=%s, redirect_uri=%s",
+        (client_id[:8] + "...") if len(client_id) > 8 else client_id,
+        len(client_secret),
+        redirect_uri or "<empty>",
+    )
 
     data = {
         "client_id": client_id,
         "client_secret": client_secret,
         "grant_type": "authorization_code",
-        "code": request.code,
+        "code": code,
     }
+    if redirect_uri:
+        data["redirect_uri"] = redirect_uri
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     log.info("正在向Discord API发送令牌交换请求...")

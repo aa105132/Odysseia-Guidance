@@ -58,11 +58,39 @@ def _try_parse_env_json(raw_text: str):
 
 
 def _parse_int_env(key: str, default: int) -> int:
-    """安全解析整数环境变量，解析失败时回退默认值。"""
+    """安全解析整数环境变量，自动处理外层引号，失败时回退默认值。"""
+    raw = os.getenv(key, str(default))
+    text = _strip_wrapping_quotes(str(raw).strip())
+    if not text:
+        return default
+
     try:
-        return int(os.getenv(key, str(default)))
+        return int(text)
+    except (TypeError, ValueError):
+        try:
+            return int(float(text))
+        except (TypeError, ValueError):
+            return default
+
+
+def _parse_float_env(key: str, default: float) -> float:
+    """安全解析浮点环境变量，自动处理外层引号，失败时回退默认值。"""
+    raw = os.getenv(key, str(default))
+    text = _strip_wrapping_quotes(str(raw).strip())
+    if not text:
+        return default
+
+    try:
+        return float(text)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_bool_env(key: str, default: str = "False") -> bool:
+    """解析布尔类型环境变量，自动处理外层引号。"""
+    raw = os.getenv(key, default)
+    text = _strip_wrapping_quotes(str(raw).strip()).lower()
+    return text == "true"
 
 
 def _parse_int_list_env(key: str, default: list[int]) -> list[int]:
@@ -289,7 +317,7 @@ def _parse_doubao_app_pool_env(
 
 
 # --- Chat 功能总开关 ---
-CHAT_ENABLED = os.getenv("CHAT_ENABLED", "False").lower() == "true"
+CHAT_ENABLED = _parse_bool_env("CHAT_ENABLED", "False")
 
 # --- 交互禁用配置 ---
 # 在这些频道ID中，所有交互（包括 @mention 和 /命令）都将被完全禁用。
@@ -308,9 +336,8 @@ UNRESTRICTED_CHANNEL_IDS = _parse_ids("UNRESTRICTED_CHANNEL_IDS")
 # --- 工具加载器配置 ---
 # 禁用的工具模块列表（文件名，不含.py扩展名）
 # 例如: ["get_yearly_summary", "some_other_tool"]
-DISABLED_TOOLS = (
-    os.getenv("DISABLED_TOOLS", "").split(",") if os.getenv("DISABLED_TOOLS") else []
-)
+_disabled_tools_raw = _strip_wrapping_quotes(os.getenv("DISABLED_TOOLS", ""))
+DISABLED_TOOLS = [item.strip() for item in _disabled_tools_raw.split(",") if item.strip()]
 
 # 隐藏的工具列表（用户在UI中看不到，也无法禁用的工具）
 # 这些工具是系统必须保留的，不应该让用户控制
@@ -340,11 +367,10 @@ SUMMARY_CONFIG = {
 # --- 新春活动配置 ---
 # 这些值作为默认值，可通过 Dashboard 动态修改
 SPRING_FESTIVAL_CONFIG = {
-    "enabled": os.getenv("SPRING_FESTIVAL_ENABLED", "true").lower() == "true",
-    "daily_limit_enabled": os.getenv("SPRING_FESTIVAL_DAILY_LIMIT", "true").lower()
-    == "true",
-    "min_reward": int(os.getenv("SPRING_FESTIVAL_MIN_REWARD", "500")),
-    "max_reward": int(os.getenv("SPRING_FESTIVAL_MAX_REWARD", "1000")),
+    "enabled": _parse_bool_env("SPRING_FESTIVAL_ENABLED", "true"),
+    "daily_limit_enabled": _parse_bool_env("SPRING_FESTIVAL_DAILY_LIMIT", "true"),
+    "min_reward": _parse_int_env("SPRING_FESTIVAL_MIN_REWARD", 500),
+    "max_reward": _parse_int_env("SPRING_FESTIVAL_MAX_REWARD", 1000),
     "dm_title": os.getenv("SPRING_FESTIVAL_DM_TITLE", "新春红包"),
     "dm_description": os.getenv(
         "SPRING_FESTIVAL_DM_DESCRIPTION", "你收到了一份新春祝福，点击按钮开启吧。"
@@ -363,8 +389,8 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-custom")
 # 用于 Dashboard 动态修改
 PROMPT_CONFIG = {
     "model": GEMINI_MODEL,
-    "temperature": float(os.getenv("GEMINI_TEMPERATURE", "1.0")),
-    "max_output_tokens": int(os.getenv("GEMINI_MAX_TOKENS", "8192")),
+    "temperature": _parse_float_env("GEMINI_TEMPERATURE", 1.0),
+    "max_output_tokens": _parse_int_env("GEMINI_MAX_TOKENS", 8192),
 }
 
 # 用于个人记忆摘要的模型（从环境变量读取）
@@ -408,12 +434,6 @@ CUSTOM_GEMINI_ENDPOINTS = {
 }
 
 # --- Gemini Imagen 图像生成配置 ---
-def _parse_bool_env(key: str, default: str = "False") -> bool:
-    """解析布尔类型的环境变量，处理可能的引号"""
-    value = os.getenv(key, default).strip().strip('"').strip("'").lower()
-    return value == "true"
-
-
 def _get_imagen_config():
     """获取 Imagen 配置，从环境变量读取"""
     return {
@@ -452,9 +472,9 @@ def _get_imagen_config():
         "NSFW_EDIT_MODEL_NAME_2K": os.getenv("GEMINI_IMAGEN_NSFW_EDIT_MODEL_2K", ""),  # NSFW 2K图生图
         "NSFW_MODEL_NAME_4K": os.getenv("GEMINI_IMAGEN_NSFW_MODEL_4K", ""),  # NSFW 4K文生图
         "NSFW_EDIT_MODEL_NAME_4K": os.getenv("GEMINI_IMAGEN_NSFW_EDIT_MODEL_4K", ""),  # NSFW 4K图生图
-        "IMAGE_GENERATION_COST": int(os.getenv("GEMINI_IMAGEN_COST", "1")),  # 生成一张图片的月光币成本
-        "IMAGE_EDIT_COST": int(os.getenv("GEMINI_IMAGEN_EDIT_COST", "1")),  # 图生图的月光币成本
-        "MAX_IMAGES_PER_REQUEST": int(os.getenv("GEMINI_IMAGEN_MAX_IMAGES", "20")),  # 单次请求最多生成图片数量
+        "IMAGE_GENERATION_COST": _parse_int_env("GEMINI_IMAGEN_COST", 1),  # 生成一张图片的月光币成本
+        "IMAGE_EDIT_COST": _parse_int_env("GEMINI_IMAGEN_EDIT_COST", 1),  # 图生图的月光币成本
+        "MAX_IMAGES_PER_REQUEST": _parse_int_env("GEMINI_IMAGEN_MAX_IMAGES", 20),  # 单次请求最多生成图片数量
         "SAFETY_FILTER_LEVEL": os.getenv("GEMINI_IMAGEN_SAFETY_LEVEL", "BLOCK_ONLY_HIGH"),
         "PERSON_GENERATION": os.getenv("GEMINI_IMAGEN_PERSON_GEN", "ALLOW_ADULT"),
         # 支持的宽高比: "1:1", "3:4", "4:3", "9:16", "16:9"
@@ -476,7 +496,7 @@ def _get_imagen_config():
         "IMAGE_RESPONSE_FORMAT": os.getenv("GEMINI_IMAGEN_RESPONSE_FORMAT", "auto"),
         # 空回自动重试次数（图片/视频全局共用）
         # 仅在上游成功响应但未返回图片/视频时触发重试
-        "EMPTY_RESULT_MAX_RETRIES": int(os.getenv("GENERATION_EMPTY_RESULT_MAX_RETRIES", "3")),
+        "EMPTY_RESULT_MAX_RETRIES": _parse_int_env("GENERATION_EMPTY_RESULT_MAX_RETRIES", 3),
     }
 
 GEMINI_IMAGEN_CONFIG = _get_imagen_config()
@@ -506,11 +526,11 @@ def _get_video_config():
         # - "html": 从响应中提取 HTML 页面内的视频链接
         "VIDEO_FORMAT": os.getenv("VIDEO_GEN_FORMAT", "url"),
         # 月光币成本
-        "VIDEO_GENERATION_COST": int(os.getenv("VIDEO_GEN_COST", "10")),
+        "VIDEO_GENERATION_COST": _parse_int_env("VIDEO_GEN_COST", 10),
         # 视频时长限制（秒）
-        "MAX_DURATION": int(os.getenv("VIDEO_GEN_MAX_DURATION", "8")),
+        "MAX_DURATION": _parse_int_env("VIDEO_GEN_MAX_DURATION", 8),
         # 空回自动重试次数（图片/视频全局共用）
-        "EMPTY_RESULT_MAX_RETRIES": int(os.getenv("GENERATION_EMPTY_RESULT_MAX_RETRIES", "3")),
+        "EMPTY_RESULT_MAX_RETRIES": _parse_int_env("GENERATION_EMPTY_RESULT_MAX_RETRIES", 3),
     }
 
 VIDEO_GEN_CONFIG = _get_video_config()
@@ -566,17 +586,17 @@ def _get_voice_config():
             "VOICE_SILICONFLOW_REFERENCES", []
         ),
         "AUDIO_FORMAT": os.getenv("VOICE_AUDIO_FORMAT", "mp3"),  # mp3/wav/ogg/opus/pcm/flac
-        "SPEED_RATIO": float(os.getenv("VOICE_SPEED_RATIO", "1.0")),
-        "VOLUME_RATIO": float(os.getenv("VOICE_VOLUME_RATIO", "1.0")),
-        "PITCH_RATIO": float(os.getenv("VOICE_PITCH_RATIO", "1.0")),
+        "SPEED_RATIO": _parse_float_env("VOICE_SPEED_RATIO", 1.0),
+        "VOLUME_RATIO": _parse_float_env("VOICE_VOLUME_RATIO", 1.0),
+        "PITCH_RATIO": _parse_float_env("VOICE_PITCH_RATIO", 1.0),
         # 豆包情感参数（主要影响语气风格，如开心/愤怒/悲伤）
         "EMOTION": os.getenv("VOICE_EMOTION", "").strip(),
         "ENABLE_EMOTION": _parse_bool_env("VOICE_ENABLE_EMOTION", "False"),
-        "EMOTION_SCALE": float(os.getenv("VOICE_EMOTION_SCALE", "4.0")),
+        "EMOTION_SCALE": _parse_float_env("VOICE_EMOTION_SCALE", 4.0),
         # 成本与限制
-        "VOICE_GENERATION_COST": int(os.getenv("VOICE_GEN_COST", "3")),
-        "MAX_TEXT_LENGTH": int(os.getenv("VOICE_MAX_TEXT_LENGTH", "500")),
-        "REQUEST_TIMEOUT_SECONDS": int(os.getenv("VOICE_TIMEOUT_SECONDS", "120")),
+        "VOICE_GENERATION_COST": _parse_int_env("VOICE_GEN_COST", 3),
+        "MAX_TEXT_LENGTH": _parse_int_env("VOICE_MAX_TEXT_LENGTH", 500),
+        "REQUEST_TIMEOUT_SECONDS": _parse_int_env("VOICE_TIMEOUT_SECONDS", 120),
     }
 
 
@@ -600,28 +620,28 @@ def _get_novelai_config():
         # 生成模型
         "MODEL": os.getenv("NOVELAI_MODEL", "nai-diffusion-4-5-full"),
         # 默认图片尺寸
-        "DEFAULT_WIDTH": int(os.getenv("NOVELAI_DEFAULT_WIDTH", "832")),
-        "DEFAULT_HEIGHT": int(os.getenv("NOVELAI_DEFAULT_HEIGHT", "1216")),
+        "DEFAULT_WIDTH": _parse_int_env("NOVELAI_DEFAULT_WIDTH", 832),
+        "DEFAULT_HEIGHT": _parse_int_env("NOVELAI_DEFAULT_HEIGHT", 1216),
         # 采样参数
-        "DEFAULT_STEPS": int(os.getenv("NOVELAI_DEFAULT_STEPS", "28")),
-        "DEFAULT_SCALE": float(os.getenv("NOVELAI_DEFAULT_SCALE", "5.0")),
+        "DEFAULT_STEPS": _parse_int_env("NOVELAI_DEFAULT_STEPS", 28),
+        "DEFAULT_SCALE": _parse_float_env("NOVELAI_DEFAULT_SCALE", 5.0),
         "DEFAULT_SAMPLER": os.getenv("NOVELAI_DEFAULT_SAMPLER", "k_euler_ancestral"),
         # 质量与UC预设
         "QUALITY_TOGGLE": _parse_bool_env("NOVELAI_QUALITY_TOGGLE", "True"),
-        "UC_PRESET": int(os.getenv("NOVELAI_UC_PRESET", "0")),
+        "UC_PRESET": _parse_int_env("NOVELAI_UC_PRESET", 0),
         # CFG Rescale
-        "CFG_RESCALE": float(os.getenv("NOVELAI_CFG_RESCALE", "0")),
+        "CFG_RESCALE": _parse_float_env("NOVELAI_CFG_RESCALE", 0.0),
         # 噪声调度
         "NOISE_SCHEDULE": os.getenv("NOVELAI_NOISE_SCHEDULE", "karras"),
         # SMEA 设置
         "SMEA": _parse_bool_env("NOVELAI_SMEA", "False"),
         "SMEA_DYN": _parse_bool_env("NOVELAI_SMEA_DYN", "False"),
         # 月光币成本
-        "IMAGE_GENERATION_COST": int(os.getenv("NOVELAI_GENERATION_COST", "5")),
+        "IMAGE_GENERATION_COST": _parse_int_env("NOVELAI_GENERATION_COST", 5),
         # 429 重试次数（请求队列中的最大重试次数）
-        "MAX_RETRIES": int(os.getenv("NOVELAI_MAX_RETRIES", "3")),
+        "MAX_RETRIES": _parse_int_env("NOVELAI_MAX_RETRIES", 3),
         # 空回自动重试次数（图片/视频全局共用）
-        "EMPTY_RESULT_MAX_RETRIES": int(os.getenv("GENERATION_EMPTY_RESULT_MAX_RETRIES", "3")),
+        "EMPTY_RESULT_MAX_RETRIES": _parse_int_env("GENERATION_EMPTY_RESULT_MAX_RETRIES", 3),
         # 默认负面提示词
         "DEFAULT_NEGATIVE_PROMPT": os.getenv(
             "NOVELAI_DEFAULT_NEGATIVE",
@@ -666,12 +686,12 @@ EMBEDDING_CONFIG = {
     # 模型名称
     "MODEL_NAME": os.getenv("EMBEDDING_MODEL", "gemini-embedding-001"),
     # 向量维度 (不同模型维度不同)
-    "DIMENSIONS": int(os.getenv("EMBEDDING_DIMENSIONS", "768")),
+    "DIMENSIONS": _parse_int_env("EMBEDDING_DIMENSIONS", 768),
 }
 
 # --- ComfyUI 图像生成配置 ---
 COMFYUI_CONFIG = {
-    "ENABLED": os.getenv("COMFYUI_ENABLED", "True").lower() == "true",
+    "ENABLED": _parse_bool_env("COMFYUI_ENABLED", "True"),
     "SERVER_ADDRESS": os.getenv(
         "COMFYUI_SERVER_ADDRESS", "https://wp08.unicorn.org.cn:14727/"
     ),
@@ -773,12 +793,12 @@ MODEL_GENERATION_CONFIG = {
 
 # --- 月光币配置 ---
 COIN_CONFIG = {
-    "DAILY_CHECKIN_REWARD": int(os.getenv("DAILY_CHECKIN_REWARD", "50")),
-    "DAILY_CHAT_REWARD": int(os.getenv("DAILY_CHAT_REWARD", "10")),
-    "MAX_LOAN_AMOUNT": int(os.getenv("MAX_LOAN_AMOUNT", "1000")),
+    "DAILY_CHECKIN_REWARD": _parse_int_env("DAILY_CHECKIN_REWARD", 50),
+    "DAILY_CHAT_REWARD": _parse_int_env("DAILY_CHAT_REWARD", 10),
+    "MAX_LOAN_AMOUNT": _parse_int_env("MAX_LOAN_AMOUNT", 1000),
     "CURRENCY_NAME": "月光币",
     # 21点游戏配置
-    "BLACKJACK_MIN_BET": int(os.getenv("BLACKJACK_MIN_BET", "10")),
+    "BLACKJACK_MIN_BET": _parse_int_env("BLACKJACK_MIN_BET", 10),
     "BLACKJACK_MAX_BET": None,  # None 表示无上限，只受余额限制
     "BLACKJACK_MESSAGE_DELETE_DELAY": 180,  # 3分钟后删除消息（秒）
 }
@@ -834,7 +854,7 @@ BLACKLIST_BAN_DURATION_MINUTES = (15, 30)
 
 # --- 警告与拉黑配置 ---
 # 用户警告次数达到此阈值后将被拉黑
-BLACKLIST_WARNING_THRESHOLD = int(os.getenv("BLACKLIST_WARNING_THRESHOLD", "10"))
+BLACKLIST_WARNING_THRESHOLD = _parse_int_env("BLACKLIST_WARNING_THRESHOLD", 10)
 
 # --- API 并发与密钥配置 ---
 MAX_CONCURRENT_REQUESTS = 50  # 同时处理的最大API请求数
@@ -869,8 +889,7 @@ FORUM_SYNC_DELAY_SECONDS = 30
 THREAD_COMMENTOR_CONFIG = {
     "INITIAL_DELAY_SECONDS": 600,  # 暖贴功能的初始延迟（秒）
     # 自动发言开关（按帖子ID轮询）
-    "AUTO_CHAT_ENABLED": os.getenv("THREAD_AUTO_SPEAKER_ENABLED", "false").lower()
-    == "true",
+    "AUTO_CHAT_ENABLED": _parse_bool_env("THREAD_AUTO_SPEAKER_ENABLED", "false"),
     # 自动发言目标帖子ID集合（由 Dashboard 配置）
     "AUTO_CHAT_THREAD_IDS": _parse_ids("THREAD_AUTO_SPEAKER_THREAD_IDS"),
     # 后台轮询间隔（秒）

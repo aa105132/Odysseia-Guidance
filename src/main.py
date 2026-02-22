@@ -531,10 +531,28 @@ async def main():
         return
 
     # 6. 启动 Dashboard FastAPI 服务器（在后台线程中运行）
-    dashboard_enabled = os.getenv("DASHBOARD_ENABLED", "true").lower() == "true"
+    dashboard_enabled = (
+        str(os.getenv("DASHBOARD_ENABLED", "true"))
+        .strip()
+        .strip('"')
+        .strip("'")
+        .lower()
+        == "true"
+    )
     if dashboard_enabled:
         dashboard_host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
-        dashboard_port = int(os.getenv("DASHBOARD_PORT", "8080"))
+
+        dashboard_port_raw = (
+            str(os.getenv("DASHBOARD_PORT", "8080")).strip().strip('"').strip("'")
+        )
+        try:
+            dashboard_port = int(float(dashboard_port_raw))
+        except (TypeError, ValueError):
+            dashboard_port = 8080
+            log.warning(
+                "检测到 DASHBOARD_PORT 非法值: %s，已回退为 8080",
+                dashboard_port_raw,
+            )
         
         # 在单独的线程中启动 Dashboard
         dashboard_thread = threading.Thread(

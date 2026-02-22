@@ -13,9 +13,19 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
 
+def _strip_wrapping_quotes(raw_text: str) -> str:
+    """去掉环境变量值外层成对引号（如 "..." 或 '...'）。"""
+    text = str(raw_text or "").strip()
+    if len(text) >= 2 and (
+        (text[0] == text[-1] == '"') or (text[0] == text[-1] == "'")
+    ):
+        return text[1:-1].strip()
+    return text
+
+
 def _parse_ids(env_var: str) -> set[int]:
     """从环境变量中解析逗号分隔的 ID 列表"""
-    ids_str = os.getenv(env_var)
+    ids_str = _strip_wrapping_quotes(os.getenv(env_var, ""))
     if not ids_str:
         return set()
     try:
@@ -24,6 +34,20 @@ def _parse_ids(env_var: str) -> set[int]:
     except ValueError:
         # 如果转换整数失败，返回空集合。在实际应用中，这里可以添加日志记录。
         return set()
+
+
+def _parse_int_env(env_var: str, default: int) -> int:
+    """安全解析整数环境变量，自动处理外层引号并允许 1.0 形式。"""
+    text = _strip_wrapping_quotes(os.getenv(env_var, str(default)))
+    if not text:
+        return default
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        try:
+            return int(float(text))
+        except (TypeError, ValueError):
+            return default
 
 
 # --- 机器人与服务器配置 ---
@@ -45,21 +69,13 @@ ADMIN_ROLE_IDS = _parse_ids("ADMIN_ROLE_IDS")
 # --- 主人配置 ---
 # 主人的 Discord 用户 ID，月月只会完全信任这个人
 # 主人可以进行人设修改、覆写指令等特殊操作
-_master_user_id = os.getenv("MASTER_USER_ID")
-MASTER_USER_ID = (
-    int(_master_user_id)
-    if _master_user_id and _master_user_id.isdigit()
-    else None
-)
+_master_user_id = _strip_wrapping_quotes(os.getenv("MASTER_USER_ID", ""))
+MASTER_USER_ID = int(_master_user_id) if _master_user_id.isdigit() else None
 
 # --- AI 身份配置 ---
 # 用于识别AI自身发布的消息，请在 .env 文件中设置
-_brain_girl_app_id = os.getenv("BRAIN_GIRL_APP_ID")
-BRAIN_GIRL_APP_ID = (
-    int(_brain_girl_app_id)
-    if _brain_girl_app_id and _brain_girl_app_id.isdigit()
-    else None
-)
+_brain_girl_app_id = _strip_wrapping_quotes(os.getenv("BRAIN_GIRL_APP_ID", ""))
+BRAIN_GIRL_APP_ID = int(_brain_girl_app_id) if _brain_girl_app_id.isdigit() else None
 
 # --- 交互视图相关 ---
 VIEW_TIMEOUT = 300  # 交互视图的超时时间（秒），例如按钮、下拉菜单
@@ -83,7 +99,7 @@ EMBED_COLOR_PRIMARY = 0x49989A  # 主要 Embed 颜色
 
 # --- RAG 相关配置 ---
 # 是否启用RAG查询重写功能 (1 for enabled, 0 for disabled)
-RAG_QUERY_REWRITING_ENABLED = int(os.getenv("RAG_QUERY_REWRITING_ENABLED", 1))
+RAG_QUERY_REWRITING_ENABLED = _parse_int_env("RAG_QUERY_REWRITING_ENABLED", 1)
 
 # --- 可用 AI 模型 ---
 # 第一个模型是默认值（当数据库中没有设置时使用）

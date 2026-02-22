@@ -33,6 +33,7 @@ from src.chat.features.games.config.text_config import (
 )
 
 log = logging.getLogger(__name__)
+_ENV_SAFE_UNQUOTED_RE = re.compile(r"^[A-Za-z0-9_./:@%+\-]+$")
 
 # --- FastAPI 应用 ---
 app = FastAPI(
@@ -1106,9 +1107,37 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
 def _format_env_value(value: Any) -> str:
     """
     将值安全序列化为 .env 可写格式。
-    重点：避免 JSON 字符串内的双引号破坏 .env 语法（例如 {"k":"v"}）。
+
+    规则：
+    1) bool/int/float 保持无引号，避免下游 int()/float() 解析报错
+    2) 简单字符串（安全字符集合）保持无引号
+    3) 包含空白/引号/反斜杠/换行/特殊符号的字符串，使用双引号并转义
     """
-    text = "" if value is None else str(value)
+    if value is None:
+        return '""'
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+
+    if isinstance(value, (int, float)):
+        return str(value)
+
+    text = str(value)
+    normalized = text.strip()
+
+    # 字符串形式的布尔 / 数值也尽量保持无引号，兼容直接 int/float/os.getenv(...).lower()
+    if normalized.lower() in {"true", "false"}:
+        return normalized.lower()
+
+    if re.fullmatch(r"[+-]?\d+", normalized):
+        return normalized
+
+    if re.fullmatch(r"[+-]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?", normalized):
+        return normalized
+
+    if _ENV_SAFE_UNQUOTED_RE.fullmatch(text):
+        return text
+
     escaped = (
         text.replace("\\", "\\\\")
         .replace('"', '\\"')

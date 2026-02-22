@@ -100,7 +100,15 @@ class GeminiImagenService:
             
             # 更新配置
             import os
-            app_config.GEMINI_IMAGEN_CONFIG["ENABLED"] = os.getenv("GEMINI_IMAGEN_ENABLED", "False").lower() == "true"
+
+            enabled_raw = (
+                str(os.getenv("GEMINI_IMAGEN_ENABLED", "False"))
+                .strip()
+                .strip('"')
+                .strip("'")
+                .lower()
+            )
+            app_config.GEMINI_IMAGEN_CONFIG["ENABLED"] = enabled_raw == "true"
             app_config.GEMINI_IMAGEN_CONFIG["API_KEY"] = os.getenv("GEMINI_IMAGEN_API_KEY")
             app_config.GEMINI_IMAGEN_CONFIG["BASE_URL"] = os.getenv("GEMINI_IMAGEN_BASE_URL")
             app_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = os.getenv("GEMINI_IMAGEN_MODEL", "imagen-3.0-generate-002")
