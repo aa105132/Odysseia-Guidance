@@ -2,10 +2,11 @@
 
 import discord
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 import re
 import asyncio
 import aiohttp
+from urllib.parse import urlparse
 
 from src.chat.services.regex_service import regex_service
 from src import config
@@ -17,6 +18,19 @@ log = logging.getLogger(__name__)
 # 定义一个正则表达式来匹配自定义表情
 # <a:emoji_name:emoji_id> (动态) 或 <:emoji_name:emoji_id> (静态)
 EMOJI_REGEX = re.compile(r"<a?:(\w+):(\d+)>")
+MARKDOWN_LINK_URL_REGEX = re.compile(r"\[[^\]]+\]\((https?://[^\s\)]+)\)")
+BARE_URL_REGEX = re.compile(r"(https?://[^\s<>\]\)]+)")
+
+SUPPORTED_DISCORD_IMAGE_HOSTS = ("cdn.discordapp.com", "media.discordapp.net")
+IMAGE_EXT_TO_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".avif": "image/avif",
+}
 
 
 class MessageProcessor:
@@ -94,6 +108,105 @@ class MessageProcessor:
 
         return modified_content, emoji_images
 
+    def _guess_mime_type_from_url(self, url: str) -> Optional[str]:
+        """根据 URL 后缀推断 MIME 类型。"""
+        try:
+            parsed = urlparse(url.strip())
+            path = (parsed.path or "").lower()
+        except Exception:
+            return None
+
+        for ext, mime in IMAGE_EXT_TO_MIME.items():
+            if path.endswith(ext):
+                return mime
+        return None
+
+    def _extract_image_urls_from_text(self, text: str) -> List[str]:
+        """从文本中提取 URL（支持 Markdown 链接和裸链接），并保持顺序去重。"""
+        if not text:
+            return []
+
+        ordered_urls: List[str] = []
+        seen: Set[str] = set()
+
+        def _push(url: str):
+            normalized = (url or "").strip().rstrip(".,;:!?")
+            if not normalized or normalized in seen:
+                return
+            seen.add(normalized)
+            ordered_urls.append(normalized)
+
+        for m in MARKDOWN_LINK_URL_REGEX.finditer(text):
+            _push(m.group(1))
+
+        for m in BARE_URL_REGEX.finditer(text):
+            _push(m.group(1))
+
+        return ordered_urls
+
+    def _is_supported_discord_image_url(self, url: str) -> bool:
+        """只允许 Discord CDN/Media 的图片链接，避免抓取任意站点。"""
+        try:
+            parsed = urlparse(url.strip())
+            host = (parsed.netloc or "").lower()
+        except Exception:
+            return False
+
+        if not host or not any(host.endswith(h) for h in SUPPORTED_DISCORD_IMAGE_HOSTS):
+            return False
+        return self._guess_mime_type_from_url(url) is not None
+
+    async def _extract_images_from_text_links(
+        self, content: str, source: str, seen_urls: Optional[Set[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """从文本链接下载 Discord 图片，并转换为统一图片输入结构。"""
+        if not content:
+            return []
+
+        candidate_urls = self._extract_image_urls_from_text(content)
+        if not candidate_urls:
+            return []
+
+        if seen_urls is None:
+            seen_urls = set()
+
+        collected_urls: List[str] = []
+        for url in candidate_urls:
+            if not self._is_supported_discord_image_url(url):
+                continue
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            collected_urls.append(url)
+
+        if not collected_urls:
+            return []
+
+        proxy_url = config.PROXY_URL
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                asyncio.create_task(self._fetch_image_aio(session, url, proxy=proxy_url))
+                for url in collected_urls
+            ]
+            results = await asyncio.gather(*tasks)
+
+        image_data_list: List[Dict[str, Any]] = []
+        for url, image_bytes in zip(collected_urls, results):
+            if not image_bytes:
+                continue
+
+            mime_type = self._guess_mime_type_from_url(url) or "image/webp"
+            image_data_list.append(
+                {
+                    "mime_type": mime_type,
+                    "data": image_bytes,
+                    "source": source,
+                }
+            )
+            log.debug(f"成功从文本链接下载图片: {url}")
+
+        return image_data_list
+
     async def process_message(
         self, message: discord.Message, bot: discord.Client
     ) -> Optional[Dict[str, Any]]:
@@ -118,11 +231,22 @@ class MessageProcessor:
             return None
 
         image_data_list = []
+        seen_text_image_urls: Set[str] = set()
         bot_user = message.guild.me
 
         if message.attachments:
             image_data_list.extend(
                 await self._extract_images_from_attachments(message.attachments)
+            )
+
+        # 新增：处理文本中的 Discord 图片链接（例如 [󠄀](https://cdn.discordapp.com/emojis/...webp)）
+        if message.content:
+            image_data_list.extend(
+                await self._extract_images_from_text_links(
+                    message.content,
+                    source="attachment",
+                    seen_urls=seen_text_image_urls,
+                )
             )
 
         replied_message_content = ""
@@ -152,6 +276,16 @@ class MessageProcessor:
 
                             if hasattr(snapshot, "content") and snapshot.content:
                                 snapshot_content_parts.append(snapshot.content)
+
+                                # 新增：转发快照文本中的图片链接也作为“回复图片”处理
+                                snapshot_link_images = (
+                                    await self._extract_images_from_text_links(
+                                        snapshot.content,
+                                        source="replied_attachment",
+                                        seen_urls=seen_text_image_urls,
+                                    )
+                                )
+                                image_data_list.extend(snapshot_link_images)
 
                             if hasattr(snapshot, "embeds") and snapshot.embeds:
                                 for embed in snapshot.embeds:
@@ -235,6 +369,17 @@ class MessageProcessor:
                         ref_content_cleaned = self._clean_message_content(
                             ref_msg.content, ref_msg.mentions, bot_user
                         )
+
+                        # 新增：普通回复文本中的 Discord 图片链接
+                        if ref_msg.content:
+                            replied_link_images = (
+                                await self._extract_images_from_text_links(
+                                    ref_msg.content,
+                                    source="replied_attachment",
+                                    seen_urls=seen_text_image_urls,
+                                )
+                            )
+                            image_data_list.extend(replied_link_images)
 
                         full_ref_content = [
                             ref for ref in [ref_content_cleaned, embed_content] if ref

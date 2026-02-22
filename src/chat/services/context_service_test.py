@@ -280,11 +280,18 @@ class ContextServiceTest:
     ) -> str:
         """
         净化消息内容，移除或替换不适合模型处理的元素。
+        - 还原 Discord 的 Markdown 转义。
+        - 移除独立的 Discord CDN 直链（保留 Markdown 链接里的 URL，避免打断 `[text](url)`）。
         """
         # 还原 Discord 为了 Markdown 显示而自动添加的转义
         content = content.replace("\\_", "_")
 
-        content = re.sub(r"https?://cdn\.discordapp\.com\S+", "", content)
+        content = re.sub(
+            r"(?<!\]\()https?://(?:cdn\.discordapp\.com|media\.discordapp\.net)[^\s\)]+",
+            "",
+            content,
+            flags=re.IGNORECASE,
+        )
         if guild:
 
             def replace_mention(match):

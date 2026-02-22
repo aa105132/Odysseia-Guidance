@@ -269,9 +269,10 @@ class GeminiImagenCog(commands.Cog):
                 "处理你的请求时发生了一个意料之外的错误。"
             )
 
-    @app_commands.command(name="图生图", description="上传一张图片，让 AI 根据你的指令修改它")
+    @app_commands.command(name="图生图", description="上传一张或两张图片，让 AI 根据你的指令修改它")
     @app_commands.describe(
-        image="要修改的参考图片",
+        image="要修改的参考图片（图一）",
+        image2="第二张参考图片（可选，图二）",
         edit_prompt="描述你想要如何修改这张图片",
         aspect_ratio="输出图片的宽高比",
         count="生成图片数量 (1-20)",
@@ -280,6 +281,7 @@ class GeminiImagenCog(commands.Cog):
     )
     @app_commands.rename(
         image="参考图片",
+        image2="参考图片2",
         edit_prompt="修改指令",
         aspect_ratio="宽高比",
         count="数量",
@@ -309,19 +311,25 @@ class GeminiImagenCog(commands.Cog):
         interaction: discord.Interaction,
         image: discord.Attachment,
         edit_prompt: str,
+        image2: discord.Attachment = None,
         aspect_ratio: str = None,
         count: int = 1,
         resolution: str = "default",
         content_rating: str = "sfw",
     ):
         """/图生图 命令的实现"""
-        # 检查附件是否是图片
-        if not image.content_type or not image.content_type.startswith("image/"):
-            await interaction.response.send_message(
-                "你上传的不是图片！请上传一张 PNG、JPG 或 WebP 格式的图片。",
-                ephemeral=True,
-            )
-            return
+        # 检查附件是否是图片（支持 1~2 张参考图）
+        reference_attachments = [image]
+        if image2:
+            reference_attachments.append(image2)
+
+        for idx, attachment in enumerate(reference_attachments, start=1):
+            if not attachment.content_type or not attachment.content_type.startswith("image/"):
+                await interaction.response.send_message(
+                    f"第 {idx} 张参考图不是图片，请上传 PNG/JPG/WebP/GIF 等图片格式。",
+                    ephemeral=True,
+                )
+                return
 
         # 检查服务是否可用
         if not gemini_imagen_service.is_available():
@@ -359,16 +367,38 @@ class GeminiImagenCog(commands.Cog):
                 f"用户 {user_id} 请求图生图 {count} 张, "
                 f"编辑指令: {edit_prompt[:100]}..., 宽高比: {aspect_ratio}"
             )
-            
-            try:
-                reference_image_bytes = await image.read()
-                reference_mime_type = image.content_type
-            except Exception as e:
-                log.error(f"读取参考图片失败: {e}")
-                await interaction.followup.send(
-                    "读取你上传的图片时出了点问题..."
-                )
-                return
+
+            # 读取 1~2 张参考图
+            reference_images_payload = []
+            reference_images_data = []
+            reference_images_mime_types = []
+            for idx, attachment in enumerate(reference_attachments, start=1):
+                try:
+                    image_bytes = await attachment.read()
+                    if not image_bytes:
+                        raise ValueError("图片数据为空")
+                    mime_type = attachment.content_type or "image/png"
+
+                    reference_images_payload.append(
+                        {
+                            "data": image_bytes,
+                            "mime_type": mime_type,
+                        }
+                    )
+                    reference_images_data.append(image_bytes)
+                    reference_images_mime_types.append(mime_type)
+                except Exception as e:
+                    log.error(f"读取第 {idx} 张参考图片失败: {e}")
+                    await interaction.followup.send(
+                        f"读取第 {idx} 张参考图片失败了，请检查图片是否有效后重试。"
+                    )
+                    return
+
+            # 向后兼容：保留单图字段（取第一张）
+            reference_image_bytes = reference_images_data[0]
+            reference_mime_type = reference_images_mime_types[0]
+
+            log.info(f"/图生图 实际参考图数量: {len(reference_images_payload)}")
             
             # 3. 并行调用：图生图 + AI 个性化回复
             import asyncio
@@ -403,6 +433,7 @@ class GeminiImagenCog(commands.Cog):
                     reference_image=reference_image_bytes,
                     edit_prompt=edit_prompt,
                     reference_mime_type=reference_mime_type,
+                    reference_images=reference_images_payload,
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
                     content_rating=content_rating,
@@ -489,11 +520,11 @@ class GeminiImagenCog(commands.Cog):
                         "number_of_images": count,
                         "resolution": resolution,
                         "content_rating": content_rating,
-                        # 保存参考图，供“重新生成”继续执行图生图
+                        # 保存参考图，供“重新生成”继续执行图生图（支持多参考图）
                         "reference_image_data": reference_image_bytes,
                         "reference_image_mime_type": reference_mime_type,
-                        "reference_images_data": [reference_image_bytes],
-                        "reference_images_mime_types": [reference_mime_type],
+                        "reference_images_data": reference_images_data,
+                        "reference_images_mime_types": reference_images_mime_types,
                     },
                     user_id=user_id,
                 )

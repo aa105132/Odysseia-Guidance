@@ -295,6 +295,10 @@ class PromptService:
             "9) 不确定时可以不传上述参数，让后端按默认配置处理；",
             "10) 若传 emotion_scale，建议使用 1.0~5.0；",
             "11) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
+            "11.1) 当用户是寒暄问候（如“早安/早上好/午安/晚安/hi/hello”）且内容偏社交时，优先调用 generate_voice，用友善语气回应；",
+            "11.2) 这类问候语音优先选择友善情感；若当前提供商支持 emotion，建议传 emotion=happy（可选 tender/comfort），并可搭配 enable_emotion=true、emotion_scale=3.0~4.0；",
+            "11.3) 当回复内容包含回击、斥责、骂人或明显怒气时，优先语音并显式传愤怒情感；若支持 emotion，优先 emotion=angry（更强烈可 tension），并建议 enable_emotion=true、emotion_scale=4.0~5.0；",
+            "11.4) 若用户先辱骂你且你决定用语音回击，回击要短促，随后恢复正常语气，不要长篇辱骂；",
             "12) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
             f"13) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
         ]
@@ -331,7 +335,7 @@ class PromptService:
                 "20) 英文音色情感枚举：neutral,happy,angry,sad,excited,chat,asmr,warm,affectionate,authoritative。"
             )
             voice_lines.append(
-                "21) 情感选择要贴合语义：安慰优先 comfort/tender，生气优先 angry/tension，撒娇优先 lovey-dovey/shy，讲故事优先 storytelling。"
+                "21) 情感选择要贴合语义：问候/寒暄优先 happy（可选 tender/comfort）；安慰优先 comfort/tender；生气或回击优先 angry（更强烈可 tension）；撒娇优先 lovey-dovey/shy；讲故事优先 storytelling。"
             )
             voice_lines.append(
                 "22) 若使用复刻音色（如 S_ 开头或非官方音色），后端会强制走该音色绑定的 APP_ID；未绑定或绑定不可用会失败。"
@@ -353,7 +357,7 @@ class PromptService:
         final_conversation.append(
             {
                 "role": "model",
-                "parts": ["收到，我会在文字和语音之间灵活切换：日常优先文字，但在情绪更强或更有表现力的场景主动发语音，并避免连续多轮全语音或全文字；调用语音时会显式传 send_text_after_voice=true，失败则立刻改为文字继续回复。"],
+                "parts": ["收到，我会在文字和语音之间灵活切换：日常优先文字，但在情绪更强或更有表现力的场景主动发语音；遇到早安/晚安等问候时优先友善语音，遇到回击或骂人语气时优先愤怒语音；并避免连续多轮全语音或全文字；调用语音时会显式传 send_text_after_voice=true，失败则立刻改为文字继续回复。"],
             }
         )
 

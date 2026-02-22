@@ -294,13 +294,20 @@ class ContextService:
     ) -> str:
         """
         净化消息内容，移除或替换不适合模型处理的元素。
-        - 移除 Discord CDN 链接。
+        - 移除独立的 Discord CDN 直链（保留 Markdown 链接里的 URL，避免打断 `[text](url)` 结构）。
         - 移除自定义表情符号代码 <a:name:id> 或 <:name:id>。
         - 替换用户提及 <@USER_ID> 为 @USERNAME。
         - 清理用户输入中的所有指定括号。
         """
-        # 1. 移除 Discord CDN 链接 (例如 https://cdn.discordapp.com/...)
-        content = re.sub(r"https?://cdn\.discordapp\.com\S+", "", content)
+        # 1. 移除独立的 Discord CDN 链接（但保留 Markdown 链接内的 URL）
+        #    例如保留: [表情](https://cdn.discordapp.com/...)
+        #    仅移除: https://cdn.discordapp.com/...（裸链接）
+        content = re.sub(
+            r"(?<!\]\()https?://(?:cdn\.discordapp\.com|media\.discordapp\.net)[^\s\)]+",
+            "",
+            content,
+            flags=re.IGNORECASE,
+        )
 
         # 3. 将用户提及 <@USER_ID> 替换为 @USERNAME
         log.info("[Mention Clean] ----- Start Mention Cleaning -----")
