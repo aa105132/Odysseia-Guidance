@@ -1056,20 +1056,21 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-else-if="viewMode === 'single'" id="game-view" class="table-wrapper">
-        <div id="game-table" style="height: auto; min-height: 70vh;">
+        <div id="game-table" class="green-table">
             <div class="toolbar-actions" style="position: absolute; top: 10px; right: 10px; z-index: 100;">
               <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回</button>
               <button :disabled="requestInFlight || !singleGame" @click="forfeitSingleGame">放弃</button>
             </div>
 
-            <!-- Dealer Cards -->
-            <div class="game-area">
-                <div id="dealer-section" class="dealer-section">
-                    <img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" class="dealer-image" alt="荷官" />
-                    <div v-if="dealerSpeech" class="dialogue-box">
-                        <p>{{ dealerSpeech }}</p>
-                    </div>
+            <div id="game-dealer-section" class="dealer-section position-top">
+                <img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" class="dealer-image" alt="荷官" />
+                <div v-if="dealerSpeech" class="dialogue-box">
+                    <p>{{ dealerSpeech }}</p>
                 </div>
+            </div>
+
+            <!-- Dealer Cards -->
+            <div class="game-area position-top-cards">
                 <h2>月月 (<span>{{ singleGame?.dealer_score ?? 0 }}</span>)</h2>
                 <TransitionGroup name="card" tag="div" class="hand">
                     <img v-for="(card, index) in singleGame?.dealer_hand || []" :key="'dealer-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
@@ -1077,7 +1078,7 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Player (Bottom center) -->
-            <div class="game-area">
+            <div class="game-area position-bottom">
                 <h2>玩家 (<span>{{ singleGame?.player_score ?? 0 }}</span>)</h2>
                 <TransitionGroup name="card" tag="div" class="hand">
                     <img v-for="(card, index) in singleGame?.player_hand || []" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
