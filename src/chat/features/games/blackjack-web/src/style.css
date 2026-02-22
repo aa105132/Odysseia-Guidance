@@ -104,11 +104,12 @@ body {
   justify-content: center;
   align-items: flex-end;
   position: relative;
+  height: 250px;
 }
 
 .dealer-image {
-  max-width: 100%;
-  max-height: 100%;
+  max-width: 250px;
+  max-height: 250px;
   object-fit: contain;
   filter: drop-shadow(0 0 10px rgba(0, 0, 0, 0.5));
   /* 呼吸动画：让看板娘更有生气 */
@@ -156,8 +157,8 @@ body {
 /* Dialogue Box adjustments */
 .dialogue-box {
   position: absolute;
-  top: 40%;
-  left: 110%; /* Right next to the dealer */
+  top: 10%;
+  left: 100%; /* Right next to the dealer */
   transform: translateY(-50%);
   width: max-content;
   max-width: 200px;

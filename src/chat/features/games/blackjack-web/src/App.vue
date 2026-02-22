@@ -1062,16 +1062,14 @@ onBeforeUnmount(() => {
               <button :disabled="requestInFlight || !singleGame" @click="forfeitSingleGame">放弃</button>
             </div>
 
-            <!-- Dealer (Top center) -->
-            <div id="game-dealer-section" class="dealer-section">
-                <img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" class="dealer-image" alt="荷官" />
-                <div v-if="dealerSpeech" class="dialogue-box">
-                    <p>{{ dealerSpeech }}</p>
-                </div>
-            </div>
-
             <!-- Dealer Cards -->
-            <div class="game-area position-top-cards">
+            <div class="game-area">
+                <div id="dealer-section" class="dealer-section">
+                    <img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" class="dealer-image" alt="荷官" />
+                    <div v-if="dealerSpeech" class="dialogue-box">
+                        <p>{{ dealerSpeech }}</p>
+                    </div>
+                </div>
                 <h2>月月 (<span>{{ singleGame?.dealer_score ?? 0 }}</span>)</h2>
                 <TransitionGroup name="card" tag="div" class="hand">
                     <img v-for="(card, index) in singleGame?.dealer_hand || []" :key="'dealer-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
@@ -1079,7 +1077,7 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Player (Bottom center) -->
-            <div class="game-area position-bottom">
+            <div class="game-area">
                 <h2>玩家 (<span>{{ singleGame?.player_score ?? 0 }}</span>)</h2>
                 <TransitionGroup name="card" tag="div" class="hand">
                     <img v-for="(card, index) in singleGame?.player_hand || []" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
