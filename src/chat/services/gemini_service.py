@@ -1234,8 +1234,21 @@ class GeminiService:
                 )
 
             for idx, img_data in enumerate(images_to_process, 1):
-                # --- [优化] 仅当图片来源是用户附件时才进行净化 ---
-                if img_data.get("source") == "attachment":
+                source = img_data.get("source")
+                mime_type = (img_data.get("mime_type") or "").lower()
+                is_attachment_source = source in ("attachment", "replied_attachment")
+                is_gif_image = "gif" in mime_type
+
+                # GIF 需要在 prompt_service 中进行拆帧，不能在这里先净化成静态 WEBP。
+                if is_attachment_source and is_gif_image:
+                    log.info(
+                        f"第 {idx}/{len(images_to_process)} 张图片为 GIF，保留原图用于后续自动拆帧。"
+                    )
+                    sanitized_images_for_endpoint.append(img_data)
+                    continue
+
+                # --- [优化] 仅当图片来源是用户附件/回复附件且非 GIF 时才进行净化 ---
+                if is_attachment_source:
                     try:
                         # [修复] 增加健壮性，同时检查 'data' 和 'bytes' 键
                         image_bytes = img_data.get("data") or img_data.get("bytes")
@@ -1260,7 +1273,7 @@ class GeminiService:
                             {
                                 "data": sanitized_bytes,
                                 "mime_type": new_mime_type,
-                                "source": "attachment",  # 来源是确定的
+                                "source": source or "attachment",
                             }
                         )
 

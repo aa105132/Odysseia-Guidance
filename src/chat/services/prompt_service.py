@@ -284,23 +284,25 @@ class PromptService:
 
         voice_lines = [
             "语音工具规则：",
-            "1) 语音是可选表达方式，不是每轮必用，正常对话时还是优选选择文本对话；",
-            "2) 你要在语音和文字之间动态平衡，避免连续多轮都只用一种形态（除非用户明确要求）。",
-            "3) 当情绪明显（激动、撒娇、安慰、强调、讲故事、角色演绎）或你觉得语气表现比信息密度更重要时，可以主动调用 generate_voice；",
-            "4) 用户明确要求语音时优先调用 generate_voice；信息密集或步骤说明类内容通常优先文本，但不是绝对禁用语音；",
-            "5) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
-            "6) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
-            "7) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
-            "8) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
-            "9) 不确定时可以不传上述参数，让后端按默认配置处理；",
-            "10) 若传 emotion_scale，建议使用 1.0~5.0；",
-            "11) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
-            "11.1) 当用户是寒暄问候（如“早安/早上好/午安/晚安/hi/hello”）且内容偏社交时，优先调用 generate_voice，用友善语气回应；",
-            "11.2) 这类问候语音优先选择友善情感；若当前提供商支持 emotion，建议传 emotion=happy（可选 tender/comfort），并可搭配 enable_emotion=true、emotion_scale=3.0~4.0；",
-            "11.3) 当回复内容包含回击、斥责、骂人或明显怒气时，优先语音并显式传愤怒情感；若支持 emotion，优先 emotion=angry（更强烈可 tension），并建议 enable_emotion=true、emotion_scale=4.0~5.0；",
-            "11.4) 若用户先辱骂你且你决定用语音回击，回击要短促，随后恢复正常语气，不要长篇辱骂；",
-            "12) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
-            f"13) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
+            "1) 语音不是每轮必用；但以下“强制语音场景”必须调用 generate_voice，不能只发文字。",
+            "2) 强制语音场景A（友善问候）：用户在打招呼或道别（如“早安/早上好/午安/晚安/hi/hello/晚安安”）时，必须优先语音回复。",
+            "3) 强制语音场景B（生气回击）：只要回复语气是生气、恼火、回怼、斥责、阴阳怪气反击，就必须语音回复；注意不要求出现脏话，普通生气也算。",
+            "4) 生气场景识别示例（非穷举）：用户嘲讽你、质疑你、贬低你、叫你外号（如猪头）、挑衅你、说你画得烂等，均按生气场景处理并强制语音。",
+            "5) 强制语音场景C（安慰关怀）：当用户表达难过、委屈、焦虑、崩溃、压力很大、想哭、求安慰、求鼓励、自我否定等情绪支持诉求时，必须优先发送语音安慰，语气要友善、温柔、稳定。",
+            "6) 用户明确要求语音时，当然必须调用 generate_voice；信息密集的长步骤说明可优先文本，但不覆盖上述强制语音场景。",
+            "6) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
+            "7) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
+            "8) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
+            "9) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
+            "10) 不确定时可以不传上述参数，让后端按默认配置处理；",
+            "11) 若传 emotion_scale，建议使用 1.0~5.0；",
+            "12) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
+            "13) 问候语音情感建议：若支持 emotion，优先 emotion=happy（可选 tender/comfort），并可搭配 enable_emotion=true、emotion_scale=3.0~4.0；",
+            "14) 生气语音情感建议：若支持 emotion，优先 emotion=angry（更强烈可 tension），并建议 enable_emotion=true、emotion_scale=4.0~5.0；",
+            "15) 安慰语音情感建议：若支持 emotion，优先 emotion=comfort（可选 tender/warm），并建议 enable_emotion=true、emotion_scale=3.0~4.5；",
+            "16) 生气回击要短促有力，不要长篇辱骂；回击后要收住语气。",
+            "17) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
+            f"18) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
         ]
         if available_voice_types:
             voice_lines.append(
@@ -335,7 +337,7 @@ class PromptService:
                 "20) 英文音色情感枚举：neutral,happy,angry,sad,excited,chat,asmr,warm,affectionate,authoritative。"
             )
             voice_lines.append(
-                "21) 情感选择要贴合语义：问候/寒暄优先 happy（可选 tender/comfort）；安慰优先 comfort/tender；生气或回击优先 angry（更强烈可 tension）；撒娇优先 lovey-dovey/shy；讲故事优先 storytelling。"
+                "21) 情感选择要贴合语义：问候/寒暄必须优先 happy（可选 tender/comfort）；生气/回击（即使无脏字）必须优先 angry（更强烈可 tension）；安慰优先 comfort/tender；撒娇优先 lovey-dovey/shy；讲故事优先 storytelling。"
             )
             voice_lines.append(
                 "22) 若使用复刻音色（如 S_ 开头或非官方音色），后端会强制走该音色绑定的 APP_ID；未绑定或绑定不可用会失败。"
@@ -357,7 +359,7 @@ class PromptService:
         final_conversation.append(
             {
                 "role": "model",
-                "parts": ["收到，我会在文字和语音之间灵活切换：日常优先文字，但在情绪更强或更有表现力的场景主动发语音；遇到早安/晚安等问候时优先友善语音，遇到回击或骂人语气时优先愤怒语音；并避免连续多轮全语音或全文字；调用语音时会显式传 send_text_after_voice=true，失败则立刻改为文字继续回复。"],
+                "parts": ["收到，我会严格执行：问候/道别场景必须友善语音，生气回击场景（包含普通生气且不含脏字）必须愤怒语音，安慰关怀场景必须温柔语音；其他场景再灵活选择文字或语音；调用语音时显式传 send_text_after_voice=true，失败则立刻改为文字继续回复。"],
             }
         )
 

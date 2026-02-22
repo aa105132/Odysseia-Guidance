@@ -40,8 +40,8 @@ class MessageProcessor:
 
     async def _fetch_image_aio(
         self, session: aiohttp.ClientSession, url: str, proxy: Optional[str] = None
-    ) -> Optional[bytes]:
-        """下载图片"""
+    ) -> Optional[Dict[str, Any]]:
+        """下载图片，返回字节数据及响应中的 MIME 类型。"""
         try:
             headers = {
                 "Accept": "image/gif,image/png,image/jpeg,image/webp,*/*",
@@ -54,12 +54,27 @@ class MessageProcessor:
                 headers=headers,
             ) as response:
                 response.raise_for_status()
-                return await response.read()
+                image_bytes = await response.read()
+                if not image_bytes:
+                    return None
+
+                content_type = (
+                    (response.headers.get("Content-Type") or "")
+                    .split(";", 1)[0]
+                    .strip()
+                    .lower()
+                )
+
+                return {
+                    "data": image_bytes,
+                    "mime_type": content_type,
+                    "final_url": str(response.url),
+                }
         except asyncio.TimeoutError:
-            log.warning(f"下载表情图片超时: {url}")
+            log.warning(f"下载图片超时: {url}")
             return None
         except aiohttp.ClientError as e:
-            log.warning(f"下载表情图片失败: {url}, 错误: {e}")
+            log.warning(f"下载图片失败: {url}, 错误: {e}")
             return None
 
     async def _extract_emojis_as_images(
@@ -88,16 +103,23 @@ class MessageProcessor:
             results = await asyncio.gather(*tasks)
 
         modified_content = content
-        for match, image_bytes in zip(matches, results):
-            if image_bytes:
+        for match, fetch_result in zip(matches, results):
+            if fetch_result and fetch_result.get("data"):
                 emoji_name = match.group(1)
-                mime_type = (
+                default_mime_type = (
                     "image/gif" if match.group(0).startswith("<a:") else "image/png"
                 )
+                response_mime_type = (fetch_result.get("mime_type") or "").lower()
+                mime_type = (
+                    response_mime_type
+                    if response_mime_type.startswith("image/")
+                    else default_mime_type
+                )
+
                 emoji_images.append(
                     {
                         "mime_type": mime_type,
-                        "data": image_bytes,
+                        "data": fetch_result["data"],
                         "source": "emoji",
                         "name": emoji_name,
                     }
@@ -149,12 +171,19 @@ class MessageProcessor:
         try:
             parsed = urlparse(url.strip())
             host = (parsed.netloc or "").lower()
+            path = (parsed.path or "").lower()
         except Exception:
             return False
 
         if not host or not any(host.endswith(h) for h in SUPPORTED_DISCORD_IMAGE_HOSTS):
             return False
-        return self._guess_mime_type_from_url(url) is not None
+
+        # 优先按后缀判断常规图片链接
+        if self._guess_mime_type_from_url(url) is not None:
+            return True
+
+        # 兼容 Discord Emoji 链接在极端情况下缺少扩展名的形式
+        return "/emojis/" in path
 
     async def _extract_images_from_text_links(
         self, content: str, source: str, seen_urls: Optional[Set[str]] = None
@@ -191,11 +220,25 @@ class MessageProcessor:
             results = await asyncio.gather(*tasks)
 
         image_data_list: List[Dict[str, Any]] = []
-        for url, image_bytes in zip(collected_urls, results):
-            if not image_bytes:
+        for url, fetch_result in zip(collected_urls, results):
+            if not fetch_result or not fetch_result.get("data"):
                 continue
 
-            mime_type = self._guess_mime_type_from_url(url) or "image/webp"
+            image_bytes = fetch_result["data"]
+            response_mime_type = (fetch_result.get("mime_type") or "").lower()
+            final_url = fetch_result.get("final_url") or url
+            guessed_mime_type = self._guess_mime_type_from_url(
+                final_url
+            ) or self._guess_mime_type_from_url(url)
+
+            if response_mime_type.startswith("image/"):
+                mime_type = response_mime_type
+            elif guessed_mime_type:
+                mime_type = guessed_mime_type
+            else:
+                log.warning(f"文本链接返回了非图片内容，已跳过: {url}")
+                continue
+
             image_data_list.append(
                 {
                     "mime_type": mime_type,
@@ -203,7 +246,7 @@ class MessageProcessor:
                     "source": source,
                 }
             )
-            log.debug(f"成功从文本链接下载图片: {url}")
+            log.debug(f"成功从文本链接下载图片: {url} ({mime_type})")
 
         return image_data_list
 

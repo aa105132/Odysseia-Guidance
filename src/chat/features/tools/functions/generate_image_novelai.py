@@ -326,100 +326,22 @@ def _build_prompt_summary_for_embed(
     negative_prompt: Optional[str],
     artist_string: Optional[str],
 ) -> str:
-    """构建主体身份/外貌优先的摘要，便于上下文生图保持角色一致。"""
+    """构建主体外貌展示文本：直接使用 AI 提供的提示词，不做代码规则提取。"""
+    _ = negative_prompt  # 保留参数签名，避免影响现有调用方
+
     normalized_prompt = str(prompt or "").strip()
     normalized_artist = str(artist_string or "").strip()
     if normalized_artist and normalized_prompt:
         stripped_prompt = _strip_artist_tokens(normalized_prompt, [normalized_artist])
         normalized_prompt = stripped_prompt or normalized_prompt
 
-    def _truncate(text: str, limit: int) -> str:
-        compact = re.sub(r"\s+", " ", str(text or "")).strip()
-        if len(compact) <= limit:
-            return compact
-        return compact[: max(0, limit - 3)] + "..."
+    compact_prompt = re.sub(r"\s+", " ", normalized_prompt).strip()
+    if not compact_prompt:
+        return "（AI未提供主体外貌标签）"
 
-    def _is_identity_token(tag: str) -> bool:
-        identity_exact = {
-            "original",
-            "solo",
-            "girl",
-            "girls",
-            "boy",
-            "boys",
-            "woman",
-            "man",
-            "female",
-            "male",
-        }
-        if tag in identity_exact:
-            return True
-        if re.fullmatch(r"\d+\s*(girl|girls|boy|boys)", tag):
-            return True
-        # 同人身份标签，例如：raiden shogun (genshin impact)
-        if "(" in tag and ")" in tag:
-            return True
-        return False
-
-    appearance_keywords = [
-        "hair", "bangs", "ponytail", "twintail", "braid", "bun", "ahoge",
-        "eye", "eyes", "eyelash", "eyebrow", "pupil", "heterochromia",
-        "face", "lips", "lipstick", "nose", "fang", "teeth", "smile",
-        "skin", "pale", "tan", "dark skin", "freckles", "mole",
-        "ears", "fox ears", "animal ears", "tail", "horn", "halo", "wings",
-        "petite", "curvy", "slim", "thick", "waist", "hips", "thigh",
-        "legs", "body", "breasts", "chest",
-        "silver hair", "white hair", "black hair", "blonde hair", "blue hair",
-        "red hair", "pink hair", "purple hair", "green hair", "brown hair",
-        "blue eyes", "red eyes", "green eyes", "golden eyes", "grey eyes",
-    ]
-    skip_keywords = [
-        "masterpiece", "best quality", "amazing quality", "very aesthetic", "absurdres",
-        "highres", "4k", "8k", "score_", "year",
-        "nsfw", "sfw",
-        "background", "scenery", "landscape", "city", "street", "forest", "sky", "cloud",
-        "sunset", "night", "day", "indoors", "outdoors", "room", "bedroom",
-        "lighting", "shadow", "cinematic", "depth of field", "dof", "bokeh",
-        "close-up", "cowboy shot", "wide shot", "from above", "from below", "from behind",
-        "pose", "sitting", "standing", "lying", "kneeling", "all fours",
-        "walking", "running", "jumping", "dancing", "holding", "grabbing",
-        "sex", "fellatio", "masturbation",
-    ]
-
-    selected_tokens: List[str] = []
-    seen_normalized = set()
-
-    for raw_token in _split_prompt_tokens(normalized_prompt):
-        normalized_token = _normalize_tag_for_match(raw_token)
-        if not normalized_token or normalized_token in seen_normalized:
-            continue
-        if any(skip in normalized_token for skip in skip_keywords):
-            continue
-
-        if _is_identity_token(normalized_token) or any(
-            kw in normalized_token for kw in appearance_keywords
-        ):
-            selected_tokens.append(raw_token.strip())
-            seen_normalized.add(normalized_token)
-            if len(selected_tokens) >= 14:
-                break
-
-    # 兜底：若未提取到明显外貌标签，保留前若干个非场景动作类标签
-    if not selected_tokens:
-        for raw_token in _split_prompt_tokens(normalized_prompt):
-            normalized_token = _normalize_tag_for_match(raw_token)
-            if not normalized_token or normalized_token in seen_normalized:
-                continue
-            if any(skip in normalized_token for skip in skip_keywords):
-                continue
-            selected_tokens.append(raw_token.strip())
-            seen_normalized.add(normalized_token)
-            if len(selected_tokens) >= 10:
-                break
-
-    appearance_text = ", ".join(selected_tokens) if selected_tokens else "（未提取到明确外貌标签）"
-    appearance_preview = _truncate(appearance_text, 420)
-    return f"主体外貌: {appearance_preview}"
+    if len(compact_prompt) > 980:
+        return compact_prompt[:977] + "..."
+    return compact_prompt
 
 
 def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
@@ -1300,7 +1222,7 @@ async def generate_image_novelai(
                         inline=True,
                     )
                     embed.add_field(
-                        name="人物外貌摘要",
+                        name="主体外貌（AI原文）",
                         value=_build_prompt_summary_for_embed(
                             prompt=final_prompt,
                             negative_prompt=negative_prompt,
@@ -2485,7 +2407,7 @@ async def _regenerate_novelai(
         inline=True,
     )
     embed.add_field(
-        name="人物外貌摘要",
+        name="主体外貌（AI原文）",
         value=_build_prompt_summary_for_embed(
             prompt=final_prompt,
             negative_prompt=negative_prompt,
