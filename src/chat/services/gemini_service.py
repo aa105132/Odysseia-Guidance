@@ -1006,7 +1006,7 @@ class GeminiService:
             use_custom_endpoint
             and (not custom_endpoint_from_model)
             and custom_endpoint_from_global_url
-            and api_format == "openai"
+            and api_format in {"openai", "openai_compatible", "openai-compatible"}
         ):
             direct_model_name = model_name or self.default_model_name
             log.info(
@@ -1073,7 +1073,7 @@ class GeminiService:
             # 如果所有尝试都失败了，则执行回退逻辑
             fallback_model_name = self.default_model_name
 
-            if api_format == "openai":
+            if api_format in {"openai", "openai_compatible", "openai-compatible"}:
                 log.warning(
                     f"自定义端点 '{model_name}' 的所有 {max_attempts} 次尝试均失败。最终错误: {last_exception}. "
                     "当前为 OpenAI 兼容格式，将回退到 OpenAI 兼容路径。"
@@ -1209,11 +1209,11 @@ class GeminiService:
             raise ValueError(error_msg)
 
         # 获取 API 格式配置
-        api_format = getattr(app_config, '_db_api_format', None) or "gemini"
+        api_format = str(getattr(app_config, '_db_api_format', None) or "gemini").strip().lower()
         log.info(f"正在为自定义端点创建客户端: {endpoint_config['base_url']} (格式: {api_format})")
         
         # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
-        if api_format == "openai":
+        if api_format in {"openai", "openai_compatible", "openai-compatible"}:
             return await self._generate_with_openai_compatible(
                 user_id=user_id,
                 guild_id=guild_id,
@@ -1564,7 +1564,7 @@ class GeminiService:
         called_tool_names = []
         thinking_was_used = False
         max_calls = 5
-        max_web_search_calls = 2
+        max_web_search_calls = 1
         web_search_call_count = 0
         executed_web_search_signatures: set[str] = set()
         web_search_source_links: List[tuple] = []
@@ -1647,13 +1647,6 @@ class GeminiService:
             for call in function_calls:
                 called_tool_names.append(call.name)
 
-            # 如果调用了 web_search，给用户消息加 🔍 reaction 表示正在搜索
-            if any(call.name == "web_search" for call in function_calls) and discord_message:
-                try:
-                    await discord_message.add_reaction("🔍")
-                except Exception:
-                    pass
-
             if (
                 response
                 and response.candidates
@@ -1668,7 +1661,7 @@ class GeminiService:
             tool_result_parts = []
             prepared_results: List[Any] = []
             coroutine_indices: List[int] = []
-
+            web_search_executed_in_current_turn = False
             for call in function_calls:
                 if call.name == "web_search":
                     raw_call_args = getattr(call, "args", {}) or {}
@@ -1715,7 +1708,7 @@ class GeminiService:
 
                     executed_web_search_signatures.add(call_signature)
                     web_search_call_count += 1
-
+                    web_search_executed_in_current_turn = True
                 prepared_results.append(
                     self.tool_service.execute_tool_call(
                         tool_call=call,
@@ -1727,6 +1720,12 @@ class GeminiService:
                     )
                 )
                 coroutine_indices.append(len(prepared_results) - 1)
+
+            if web_search_executed_in_current_turn and discord_message:
+                try:
+                    await discord_message.add_reaction("🔍")
+                except Exception:
+                    pass
 
             if coroutine_indices:
                 coroutine_results = await asyncio.gather(
@@ -1796,7 +1795,14 @@ class GeminiService:
                         )
 
                     # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
-                    if tool_name == "web_search" and discord_message:
+                    if (
+                        tool_name == "web_search"
+                        and discord_message
+                        and not (
+                            isinstance(original_result, str)
+                            and original_result.startswith("[web_search 已跳过]")
+                        )
+                    ):
                         try:
                             await discord_message.remove_reaction("🔍", discord_message.guild.me)
                         except Exception:
@@ -2204,7 +2210,7 @@ class GeminiService:
         
         # 工具调用循环
         max_tool_calls = 5
-        max_web_search_calls = 2
+        max_web_search_calls = 1
         web_search_call_count = 0
         executed_web_search_signatures: set[str] = set()
         called_tool_names = []
@@ -2291,19 +2297,14 @@ class GeminiService:
 
                         called_tool_names.append(tool_name)
 
-                        # 如果调用了 web_search，给用户消息加 🔍 reaction 表示正在搜索
-                        if tool_name == "web_search" and discord_message:
-                            try:
-                                await discord_message.add_reaction("🔍")
-                            except Exception:
-                                pass
-
                         log.info(f"执行工具: {tool_name}, 参数: {tool_args_str}")
 
                         try:
                             tool_args = json.loads(tool_args_str)
                         except json.JSONDecodeError:
                             tool_args = {}
+
+                        web_search_executed = False
 
                         # 执行工具（包含 web_search 防循环保护）
                         if tool_name == "web_search":
@@ -2327,6 +2328,12 @@ class GeminiService:
                             else:
                                 executed_web_search_signatures.add(call_signature)
                                 web_search_call_count += 1
+                                web_search_executed = True
+                                if discord_message:
+                                    try:
+                                        await discord_message.add_reaction("🔍")
+                                    except Exception:
+                                        pass
                                 tool_result = await self._execute_openai_tool_call(
                                     tool_name=tool_name,
                                     tool_args=tool_args,
@@ -2344,7 +2351,7 @@ class GeminiService:
                             )
 
                         # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
-                        if tool_name == "web_search" and discord_message:
+                        if tool_name == "web_search" and web_search_executed and discord_message:
                             try:
                                 await discord_message.remove_reaction("🔍", discord_message.guild.me)
                             except Exception:

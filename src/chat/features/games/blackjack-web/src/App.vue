@@ -1,861 +1,1743 @@
 <script setup lang="ts">
-import { ref, onMounted, computed} from 'vue';
-import dialogueConfig from './dialogue.json';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import dialogueConfig from "./dialogue.json";
 
-// --- Enums and Types ---
-type View = 'loading' | 'betting' | 'game' | 'end-game';
-type GameResult = 'win' | 'loss' | 'push' | 'blackjack';
-type DialogueKey = keyof typeof dialogueConfig;
+type ViewMode =
+  | "loading"
+  | "game_hub"
+  | "blackjack_mode_select"
+  | "single"
+  | "lobby"
+  | "table";
+type RoomStage = "waiting" | "playing" | "dealer_turn" | "finished";
+
 type PublicConfigResponse = {
-    discord_client_id?: string;
+  discord_client_id?: string;
 };
 
-// --- Reactive State ---
-const currentView = ref<View>('loading');
-const loadingMessage = ref('加载中...');
-const progress = ref(0);
-const balance = ref(0);
-const betAmount = ref<number | null>(null);
-const currentBet = ref(0);
-const dealerScore = ref(0);
-const playerScore = ref(0);
-const dealerHand = ref<string[]>([]);
-const playerHand = ref<string[]>([]);
-const messages = ref('');
-const dealerDialogue = ref('');
-const dealerExpression = ref('normal');
-const isRequestInFlight = ref(false);
-const countdown = ref(10);
-const gameEnded = ref(false);
-const optimisticCard = ref<string | null>(null);
-const screenSize = ref('');
- 
-// --- Floating Text State ---
-interface FloatingText {
-    id: number;
-    text: string;
-    type: 'win' | 'loss';
-}
-const floatingTexts = ref<FloatingText[]>([]);
-let nextFloatingId = 0;
+type ProfileResponse = {
+  success: boolean;
+  user_id: string;
+  username: string;
+  avatar_url: string;
+  balance: number;
+};
+
+type PlayerState = {
+  user_id: number;
+  username: string;
+  avatar_url: string;
+  seat_index: number;
+  bet_amount: number;
+  hand: string[];
+  score: number;
+  status: string;
+  result: string | null;
+  payout_amount: number;
+  is_ready: boolean;
+  is_current_turn: boolean;
+};
+
+type DealerState = {
+  name: string;
+  avatar_path: string;
+  expression: string;
+  hand: string[];
+  score: number;
+};
+
+type RoomState = {
+  room_id: string;
+  host_user_id: number;
+  max_players: number;
+  state: RoomStage;
+  current_turn_user_id: number | null;
+  ready_player_count: number;
+  all_players_ready: boolean;
+  dealer: DealerState;
+  players: PlayerState[];
+};
+
+type RoomEnvelope = {
+  success: boolean;
+  room?: RoomState;
+  viewer_balance?: number;
+};
+
+type AutoJoinRoomResponse = RoomEnvelope & {
+  session_key?: string;
+};
+
+type SingleGameState =
+  | "player_turn"
+  | "dealer_turn"
+  | "finished_win"
+  | "finished_loss"
+  | "finished_push"
+  | "finished_blackjack";
+
+type SingleGameStatePayload = {
+  user_id: number;
+  bet_amount: number;
+  game_state: SingleGameState;
+  player_hand: string[];
+  dealer_hand: string[];
+  player_score: number;
+  dealer_score: number;
+};
+
+type SingleGameEnvelope = {
+  success: boolean;
+  game: SingleGameStatePayload;
+  new_balance?: number;
+};
+
+const viewMode = ref<ViewMode>("loading");
+const loadingText = ref("初始化中...");
+const statusMessage = ref("");
+const errorMessage = ref("");
+const roomInput = ref("");
+const betInput = ref<number | null>(null);
+const singleBetInput = ref<number | null>(null);
+const roomState = ref<RoomState | null>(null);
+const singleGame = ref<SingleGameStatePayload | null>(null);
+const profile = ref<ProfileResponse | null>(null);
+const requestInFlight = ref(false);
+const dealerSpeech = ref("月月正在观察牌局...");
+let dealerSpeechTimer: number | null = null;
+
+const queryParams = new URLSearchParams(window.location.search);
+const isEmbedded = queryParams.get("frame_id") != null;
+const shouldUseDiscordAuth = ref(isEmbedded);
+const runtimeDiscordClientId = ref("");
+const discordSessionKey = ref("");
+
+const devUserId = queryParams.get("dev_user_id")?.trim() ?? "";
+const devUsername = queryParams.get("dev_username")?.trim() ?? "";
+const devAvatarUrl = queryParams.get("dev_avatar")?.trim() ?? "";
+
+const ASSET_VERSION =
+  String(import.meta.env.VITE_ASSET_VERSION ?? "dev").trim() || "dev";
 
 let accessToken: string | null = null;
-let countdownInterval: number | null = null;
-let dialogueTimeout: number | null = null;
-let typewriterInterval: number | null = null;
+let roomPollTimer: number | null = null;
 
-// 优化6: 添加资源缓存，避免重复加载
-const assetCache = new Map<string, boolean>();
-let assetsPreloaded = false;
-
-// --- Discord SDK & Environment ---
-const queryParams = new URLSearchParams(window.location.search);
-const isEmbedded = queryParams.get('frame_id') != null;
-const shouldUseDiscordAuth = ref(isEmbedded);
-const runtimeDiscordClientId = ref('');
-const ASSET_VERSION = String(import.meta.env.VITE_ASSET_VERSION ?? 'dev').trim() || 'dev';
-
-const withAssetVersion = (path: string) => {
-    const separator = path.includes('?') ? '&' : '?';
-    return `${path}${separator}v=${encodeURIComponent(ASSET_VERSION)}`;
+const seatIndices = [0, 1, 2];
+const seatClassByIndex: Record<number, string> = {
+  0: "seat-top-left",
+  1: "seat-bottom-left",
+  2: "seat-bottom-right",
 };
 
-const characterImageSrc = computed(() => withAssetVersion(`/character/${dealerExpression.value}.webp`));
+const viewerUserId = computed(() => Number(profile.value?.user_id ?? 0));
+const isDiscordMode = computed(() => shouldUseDiscordAuth.value);
 
-const cardImageSrc = (card: string) =>
-    withAssetVersion(card === 'Hidden' ? '/cards/Background.webp' : `/cards/${card}.webp`);
-
-// --- Computed Properties ---
-const canDouble = computed(() => {
-    return playerHand.value.length === 2 && balance.value >= currentBet.value;
+const hostDisplayName = computed(() => {
+  if (!roomState.value) return "";
+  const hostId = Number(roomState.value.host_user_id);
+  return (
+    roomState.value.players.find((p) => Number(p.user_id) === hostId)?.username ??
+    String(roomState.value.host_user_id)
+  );
 });
 
-const betOptions = computed(() => {
-    const percentages = { small: 0.05, medium: 0.15, large: 0.30 };
-    const minimums = { small: 10, medium: 50, large: 100 };
-    let options: { [key: string]: number } = {
-        small: Math.max(minimums.small, Math.floor(balance.value * percentages.small)),
-        medium: Math.max(minimums.medium, Math.floor(balance.value * percentages.medium)),
-        large: Math.max(minimums.large, Math.floor(balance.value * percentages.large)),
-        all_in: balance.value,
-    };
-    const uniqueBets: { [key: string]: number } = {};
-    for (const key in options) {
-        const value = options[key as keyof typeof options];
-        if (value > 0 && !Object.values(uniqueBets).includes(value) && value <= balance.value) {
-            uniqueBets[key] = value;
-        }
+const players = computed(() => roomState.value?.players ?? []);
+
+const dealer = computed(() => roomState.value?.dealer ?? null);
+
+const seatPlayerMap = computed<Record<number, PlayerState | null>>(() => {
+  const mapping: Record<number, PlayerState | null> = {
+    0: null,
+    1: null,
+    2: null,
+  };
+  for (const player of players.value) {
+    if (Object.prototype.hasOwnProperty.call(mapping, player.seat_index)) {
+      mapping[player.seat_index] = player;
     }
-    return Object.entries(uniqueBets).sort(([, aValue], [, bValue]) => aValue - bValue);
+  }
+  return mapping;
 });
 
-const countdownClass = computed(() => {
-    const remaining = countdown.value;
-    const classes = [];
-    if (remaining <= 3) {
-        classes.push('warning', 'shake-strong');
-    } else if (remaining <= 6) {
-        classes.push('shake-medium');
-    }
-    return classes.join(' ');
+const viewerPlayer = computed(() => {
+  const uid = viewerUserId.value;
+  if (!uid) return null;
+  return players.value.find((p) => Number(p.user_id) === uid) ?? null;
 });
 
-const countdownStyle = computed(() => {
-    // Scale from 1.0 at 10s to 1.5 at 1s
-    const scale = 1 + (10 - countdown.value) * 0.05;
-    return {
-        transform: `scale(${scale})`,
-    };
+const isHost = computed(() => {
+  if (!roomState.value) return false;
+  return Number(roomState.value.host_user_id) === viewerUserId.value;
 });
 
-// --- Core Logic ---
-async function apiCall(endpoint: string, method: 'GET' | 'POST', body?: object, retries = 2) {
-    // The mock API has been removed. All requests now go to the backend via the Vite proxy.
-    if (shouldUseDiscordAuth.value && !accessToken) {
-        // In embedded mode, we must have an access token.
-        throw new Error("Access Token is not available in embedded mode.");
-    }
+const isMyTurn = computed(() => Boolean(viewerPlayer.value?.is_current_turn));
 
-    for (let i = 0; i <= retries; i++) {
-        try {
-            const headers: HeadersInit = {
-                'Content-Type': 'application/json',
-            };
+const canSetBet = computed(() => {
+  return roomState.value?.state === "waiting" && Boolean(viewerPlayer.value);
+});
 
-            // Only add the Authorization header if we are in the embedded client and have a token.
-            // For local development, the backend should handle unauthenticated requests.
-            if (shouldUseDiscordAuth.value && accessToken) {
-                headers['Authorization'] = `Bearer ${accessToken}`;
-            }
+const canToggleReady = computed(() => {
+  if (!roomState.value || roomState.value.state !== "waiting") {
+    return false;
+  }
+  return Boolean(viewerPlayer.value) && Number(viewerPlayer.value?.bet_amount ?? 0) > 0;
+});
 
-            const response = await fetch(endpoint, {
-                method,
-                headers,
-                body: body ? JSON.stringify(body) : undefined,
-            });
+const readyButtonText = computed(() => {
+  if (!viewerPlayer.value) return "准备";
+  return viewerPlayer.value.is_ready ? "取消准备" : "准备";
+});
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ detail: 'API请求失败，服务器返回了非预期的响应。' }));
-                throw new Error(errorData.detail || 'API请求失败');
-            }
-            return response.json();
-        } catch (error) {
-            if (i === retries) {
-                if (error instanceof Error) throw error;
-                throw new Error('未知错误，请稍后再试');
-            }
-            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+const canStartRound = computed(() => {
+  if (!roomState.value || !isHost.value || roomState.value.state !== "waiting") {
+    return false;
+  }
+  return Boolean(roomState.value.all_players_ready);
+});
+
+const canSingleStart = computed(() => {
+  const amount = Number(singleBetInput.value ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return false;
+  }
+  if (!singleGame.value) return true;
+  return !["player_turn", "dealer_turn"].includes(singleGame.value.game_state);
+});
+
+const canSingleOperate = computed(
+  () => singleGame.value?.game_state === "player_turn",
+);
+
+const canSingleDouble = computed(() => {
+  if (!singleGame.value || singleGame.value.game_state !== "player_turn") {
+    return false;
+  }
+  if (singleGame.value.player_hand.length !== 2) {
+    return false;
+  }
+  return Number(profile.value?.balance ?? 0) >= Number(singleGame.value.bet_amount);
+});
+
+const singleStateText = computed(() => {
+  const game = singleGame.value;
+  if (!game) return "请输入下注金额后点击开始对战。";
+  if (game.game_state === "player_turn") return "当前轮到你操作。";
+  if (game.game_state === "dealer_turn") return "月月正在结算本局。";
+  if (game.game_state === "finished_blackjack") return "本局结束：BlackJack";
+  if (game.game_state === "finished_win") return "本局结束：你赢了";
+  if (game.game_state === "finished_push") return "本局结束：平局";
+  return "本局结束：你输了";
+});
+
+const singleResultText = computed(() => {
+  const game = singleGame.value;
+  if (!game) return "";
+  if (game.game_state === "finished_blackjack") return "BlackJack";
+  if (game.game_state === "finished_win") return "胜利";
+  if (game.game_state === "finished_push") return "平局";
+  if (game.game_state === "finished_loss") return "失败";
+  return "";
+});
+
+const roomStateText = computed(() => {
+  const stage = roomState.value?.state;
+  if (!stage) return "";
+  if (stage === "waiting") return "等待下注";
+  if (stage === "playing") return "玩家操作中";
+  if (stage === "dealer_turn") return "月月结算中";
+  return "本局结束";
+});
+
+const dealerAvatarSrc = computed(() => {
+  const path = dealer.value?.avatar_path || "/character/normal.webp";
+  return withAssetVersion(path);
+});
+
+function withAssetVersion(path: string): string {
+  if (!path.startsWith("/")) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}v=${encodeURIComponent(ASSET_VERSION)}`;
+}
+
+function playerAvatarSrc(player: PlayerState | null): string {
+  if (!player) return withAssetVersion("/character/normal.webp");
+  if (player.avatar_url.startsWith("/")) {
+    return withAssetVersion(player.avatar_url);
+  }
+  return player.avatar_url;
+}
+
+function cardImageSrc(card: string): string {
+  if (card === "Hidden") {
+    return withAssetVersion("/cards/Background.webp");
+  }
+  return withAssetVersion(`/cards/${card}.webp`);
+}
+
+function getPlayerStatusText(player: PlayerState): string {
+  if (player.status === "waiting") {
+    if (player.is_ready) return "已准备";
+    if (player.bet_amount > 0) return "待准备";
+    return "等待";
+  }
+  if (player.status === "playing") return "操作中";
+  if (player.status === "stood") return "已停牌";
+  if (player.status === "bust") return "爆牌";
+  if (player.status === "blackjack") return "BlackJack";
+  return "已完成";
+}
+
+function getPlayerResultText(player: PlayerState): string {
+  if (!player.result) return "";
+  if (player.result === "win") return "胜利";
+  if (player.result === "loss") return "失败";
+  if (player.result === "push") return "平局";
+  return "BlackJack";
+}
+
+function getSingleActionText(gameState: SingleGameState): string {
+  if (gameState === "player_turn") return "你的回合";
+  if (gameState === "dealer_turn") return "结算中";
+  if (gameState === "finished_blackjack") return "BlackJack";
+  if (gameState === "finished_win") return "胜利";
+  if (gameState === "finished_push") return "平局";
+  return "失败";
+}
+
+function extractDialogueList(category: string): string[] {
+  const source = (dialogueConfig as Record<string, unknown>)[category];
+  if (Array.isArray(source)) {
+    return source.filter((item): item is string => typeof item === "string");
+  }
+
+  if (source && typeof source === "object") {
+    const nested = source as Record<string, unknown>;
+    const orderedKeys = ["any_bet", "low_bet", "medium_bet", "high_bet", "all_in"];
+    const merged: string[] = [];
+    const visited = new Set<string>();
+
+    for (const key of orderedKeys) {
+      const value = nested[key];
+      if (!Array.isArray(value)) continue;
+      for (const item of value) {
+        if (typeof item === "string" && !visited.has(item)) {
+          visited.add(item);
+          merged.push(item);
         }
+      }
     }
-}
 
-function showDialogue(key: DialogueKey, dynamicData?: { amount?: number, isAllIn?: boolean }) {
-    if (dialogueTimeout) clearTimeout(dialogueTimeout);
-    if (typewriterInterval) clearInterval(typewriterInterval);
-
-    let dialogues: string[] | undefined;
-    const configEntry = (dialogueConfig as any)[key];
-
-    const getRandomDialogue = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
-
-    if (Array.isArray(configEntry)) {
-        dialogues = configEntry;
-    } else if (typeof configEntry === 'object' && configEntry !== null) {
-        const amount = dynamicData?.amount ?? 0;
-        if (key === 'bet_placed') {
-            if (dynamicData?.isAllIn) {
-                dialogues = configEntry.all_in;
-            } else {
-                if (amount > 1000) dialogues = configEntry.high_bet;
-                else if (amount > 100) dialogues = configEntry.medium_bet;
-                else dialogues = configEntry.low_bet;
-            }
-        } else if (key === 'win' || key === 'loss') {
-            if (amount > 1000) dialogues = configEntry.high_bet;
-            else if (amount > 100) dialogues = configEntry.medium_bet;
-            else dialogues = configEntry.low_bet;
-        } else if (configEntry.any_bet) { // For push, blackjack
-            dialogues = configEntry.any_bet;
+    for (const value of Object.values(nested)) {
+      if (!Array.isArray(value)) continue;
+      for (const item of value) {
+        if (typeof item === "string" && !visited.has(item)) {
+          visited.add(item);
+          merged.push(item);
         }
+      }
     }
+    return merged;
+  }
 
-    if (dialogues) {
-        let fullDialogue = getRandomDialogue(dialogues);
-        if (dynamicData?.amount) {
-            fullDialogue = fullDialogue.replace(/\${amount}/g, dynamicData.amount.toString());
-        }
-        
-        dealerDialogue.value = '';
-        let i = 0;
-        typewriterInterval = setInterval(() => {
-            if (i < fullDialogue.length) {
-                dealerDialogue.value += fullDialogue.charAt(i);
-                i++;
-            } else {
-                clearInterval(typewriterInterval!);
-                typewriterInterval = null;
-                dialogueTimeout = setTimeout(() => {
-                    if (currentView.value === 'betting') {
-                        showDialogue('welcome');
-                    } else if (currentView.value === 'game') {
-                        showDialogue('bet_placed', {
-                            amount: currentBet.value,
-                            isAllIn: currentBet.value === balance.value
-                        });
-                    } else if (currentView.value === 'end-game') {
-                        // Use dealerExpression to determine the dialogue, as it reflects the dealer's outcome.
-                        // dealerExpression 'lose' means player won.
-                        // dealerExpression 'win' means player lost.
-                        const resultKey = dealerExpression.value === 'lose' ? 'loss' : 'win';
-                        showDialogue(resultKey, { amount: currentBet.value });
-                    }
-                }, 4000);
-            }
-        }, 50); // 50ms typing speed
-
-    } else {
-        dealerDialogue.value = '';
-    }
+  return [];
 }
 
-function updateUIFromGameState(game: any) {
-    playerHand.value = game.player_hand;
-    dealerHand.value = game.dealer_hand;
-    playerScore.value = game.player_score;
-    dealerScore.value = game.dealer_score;
+function pickRandomLine(lines: string[], fallback: string): string {
+  if (!lines.length) return fallback;
+  const index = Math.floor(Math.random() * lines.length);
+  return lines[index] ?? fallback;
 }
 
-function addFloatingText(text: string, type: 'win' | 'loss') {
-    const id = nextFloatingId++;
-    floatingTexts.value.push({ id, text, type });
-    setTimeout(() => {
-        floatingTexts.value = floatingTexts.value.filter(t => t.id !== id);
-    }, 1500);
+function resolveDealerDialogueCategory(): string {
+  if (viewMode.value === "table") {
+    const stage = roomState.value?.state;
+    if (stage === "waiting") return "new_round";
+    if (stage === "playing") return "welcome";
+    if (stage === "dealer_turn") return "loading";
+
+    const result = viewerPlayer.value?.result;
+    if (result === "win") return "end_game_win";
+    if (result === "loss") return "end_game_loss";
+    if (result === "push") return "end_game_push";
+    return "new_round";
+  }
+
+  if (viewMode.value === "single") {
+    const state = singleGame.value?.game_state;
+    if (!state) return "welcome";
+    if (state === "player_turn") return "welcome";
+    if (state === "dealer_turn") return "loading";
+    if (state === "finished_blackjack") return "blackjack";
+    if (state === "finished_win") return "end_game_win";
+    if (state === "finished_loss") return "end_game_loss";
+    return "end_game_push";
+  }
+
+  if (viewMode.value === "lobby") return "bet_required";
+  if (viewMode.value === "blackjack_mode_select") return "welcome";
+  return "welcome";
 }
 
-function endGame(finalGameState: any, newBalance: number) {
-    updateUIFromGameState(finalGameState);
-    
-    // Calculate payout for floating text
-    const oldBalance = balance.value;
-    if (newBalance !== undefined) {
-        balance.value = newBalance;
-    }
-    const diff = newBalance - oldBalance;
-
-    let gameResult: GameResult = 'loss';
-    if (finalGameState.game_state === 'finished_win') gameResult = 'win';
-    else if (finalGameState.game_state === 'finished_blackjack') gameResult = 'blackjack';
-    else if (finalGameState.game_state === 'finished_push') gameResult = 'push';
-
-    if (diff > 0) {
-        addFloatingText(`+${diff}`, 'win');
-    } else if (gameResult === 'loss') {
-        // If balance didn't change (0 payout), but it's a loss, maybe show -Bet?
-        // The bet was already deducted.
-        addFloatingText(`-${currentBet.value}`, 'loss');
-    }
-
-    dealerExpression.value = gameResult === 'win' || gameResult === 'blackjack' ? 'lose' : 'win';
-    let dialogueKey: DialogueKey = gameResult;
-    if (gameResult === 'win') {
-        dialogueKey = 'loss'; // Player wins, so dealer shows 'loss' dialogue.
-    } else if (gameResult === 'loss') {
-        dialogueKey = 'win'; // Player loses, so dealer shows 'win' dialogue.
-    }
-    // 'blackjack' and 'push' have their own specific dialogues and are passed through correctly.
-    showDialogue(dialogueKey, { amount: currentBet.value });
-
-    setTimeout(() => {
-        currentView.value = 'end-game';
-        startEndGameCountdown();
-    }, 2000);
+function refreshDealerSpeech() {
+  const category = resolveDealerDialogueCategory();
+  const lines = extractDialogueList(category);
+  const fallback = "月月正在观察牌局...";
+  const betAmount = Number(singleGame.value?.bet_amount ?? viewerPlayer.value?.bet_amount ?? 0);
+  const line = pickRandomLine(lines, fallback).replace(/\$\{amount\}/g, String(betAmount || 0));
+  dealerSpeech.value = line;
 }
 
-function startEndGameCountdown() {
-    if (countdownInterval) clearInterval(countdownInterval);
-    countdown.value = 10;
-    countdownInterval = setInterval(() => {
-        countdown.value--;
-        if (countdown.value === 0) {
-            clearInterval(countdownInterval!);
-            resetGame();
-        }
-    }, 1000);
+function stopDealerSpeechLoop() {
+  if (dealerSpeechTimer !== null) {
+    window.clearInterval(dealerSpeechTimer);
+    dealerSpeechTimer = null;
+  }
 }
 
-function resetGame() {
-    if (countdownInterval) clearInterval(countdownInterval);
-    currentBet.value = 0;
-    betAmount.value = null;
-    dealerExpression.value = 'normal';
-    gameEnded.value = false;
-    showDialogue('new_round');
-    currentView.value = 'betting';
+function startDealerSpeechLoop() {
+  stopDealerSpeechLoop();
+  refreshDealerSpeech();
+  dealerSpeechTimer = window.setInterval(() => {
+    refreshDealerSpeech();
+  }, 3800);
 }
 
-// --- Animation ---
-function animateDealerTurn(finalGameState: any): Promise<void> {
-    return new Promise(resolve => {
-        const finalDealerHand = finalGameState.dealer_hand;
+function buildRequestHeaders(includeJson: boolean): HeadersInit {
+  const headers: HeadersInit = {};
+  if (includeJson) {
+    headers["Content-Type"] = "application/json";
+  }
 
-        // This function will be called sequentially to reveal/deal cards
-        const dealCardsSequentially = (index: number) => {
-            // When all cards are dealt, resolve the promise after a short delay
-            if (index >= finalDealerHand.length) {
-                setTimeout(resolve, 500);
-                return;
-            }
+  if (shouldUseDiscordAuth.value && accessToken) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
+  }
 
-            // The first card is already visible. We start by revealing the second.
-            if (index === 1) {
-                // Replace the hand with the first two real cards
-                dealerHand.value = [finalDealerHand[0], finalDealerHand[1]];
-                // Calculate and show the score based on the currently visible cards
-                updateDealerScore([finalDealerHand[0], finalDealerHand[1]]);
-            } else if (index > 1) {
-                // For subsequent cards, just push them to the hand
-                dealerHand.value.push(finalDealerHand[index]);
-                // Update the score after adding each new card
-                updateDealerScore(dealerHand.value);
-            }
+  if (!shouldUseDiscordAuth.value) {
+    if (devUserId) headers["X-Dev-User-Id"] = devUserId;
+    if (devUsername) headers["X-Dev-Username"] = devUsername;
+    if (devAvatarUrl) headers["X-Dev-Avatar-Url"] = devAvatarUrl;
+  }
 
-            // Schedule the next card reveal/deal
-            setTimeout(() => dealCardsSequentially(index + 1), 750);
-        };
-
-        // Start the animation sequence by revealing the second card (index 1)
-        // after an initial delay to make the reveal feel deliberate.
-        setTimeout(() => dealCardsSequentially(1), 750);
-    });
+  return headers;
 }
 
-// Helper function to calculate and update dealer score
-function updateDealerScore(hand: string[]) {
-    let score = 0;
-    let aceCount = 0;
-    
-    for (const card of hand) {
-        if (card === "Hidden") continue;
-        
-        // Get card value
-        if (card.endsWith("10")) {
-            score += 10;
-        } else {
-            const rankChar = card.slice(-1);
-            if (["J", "Q", "K"].includes(rankChar)) {
-                score += 10;
-            } else if (rankChar === "A") {
-                score += 11;
-                aceCount++;
-            } else {
-                score += parseInt(rankChar);
-            }
-        }
-    }
-    
-    // Adjust for aces if needed
-    while (score > 21 && aceCount > 0) {
-        score -= 10;
-        aceCount--;
-    }
-    
-    dealerScore.value = score;
-}
+async function apiCall<T>(
+  endpoint: string,
+  method: "GET" | "POST",
+  body?: unknown,
+  retries = 1,
+): Promise<T> {
+  let lastError: unknown = null;
 
-// --- Player Actions ---
-async function handleBet() {
-    if (isRequestInFlight.value) return;
-    const amount = betAmount.value;
-
-    if (!amount || amount <= 0) {
-        return showDialogue('invalid_bet');
-    }
-    if (amount > balance.value) {
-        return showDialogue('insufficient_funds');
-    }
-
-    isRequestInFlight.value = true;
-    gameEnded.value = false; // New game starts, so controls are enabled.
+  for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-        const response = await apiCall('/api/game/start', 'POST', { amount });
-        if (response.success) {
-            // Floating text for bet deduction
-            const oldBalance = balance.value;
-            const diff = response.new_balance - oldBalance;
-            if (diff < 0) {
-                addFloatingText(`${diff}`, 'loss');
-            }
+      const includeJson = method !== "GET";
+      const headers = buildRequestHeaders(includeJson);
 
-            currentBet.value = amount;
-            balance.value = response.new_balance;
-            currentView.value = 'game';
-            updateUIFromGameState(response.game);
-            showDialogue('bet_placed', { amount, isAllIn: amount === balance.value });
-            if (response.game.game_state.startsWith('finished')) {
-                gameEnded.value = true; // Game ended on deal, disable controls.
-                endGame(response.game, response.new_balance);
-            }
-        }
-    } catch (error: any) {
-        messages.value = error.message;
-    } finally {
-        isRequestInFlight.value = false;
+      const response = await fetch(endpoint, {
+        method,
+        headers,
+        body: includeJson && body !== undefined ? JSON.stringify(body) : undefined,
+      });
+
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({ detail: "请求失败，服务端返回异常响应" }));
+        throw new Error(errorData.detail || "请求失败");
+      }
+
+      return (await response.json()) as T;
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+      }
     }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error("未知网络错误");
+}
+
+async function fetchPublicConfig(): Promise<void> {
+  const response = await fetch("/api/config");
+  if (!response.ok) {
+    const errorData = await response
+      .json()
+      .catch(() => ({ detail: "获取配置失败" }));
+    throw new Error(errorData.detail || "获取配置失败");
+  }
+
+  const configData = (await response.json()) as PublicConfigResponse;
+  runtimeDiscordClientId.value = String(configData.discord_client_id ?? "").trim();
+}
+
+async function setupDiscordSdk(resolvedClientId: string): Promise<string> {
+  const sdkModule = await import("@discord/embedded-app-sdk");
+  const DiscordSDKCtor = sdkModule.DiscordSDK;
+  const discordSdk = new DiscordSDKCtor(resolvedClientId);
+
+  await discordSdk.ready();
+  const { code } = await discordSdk.commands.authorize({
+    client_id: discordSdk.clientId,
+    response_type: "code",
+    state: "",
+    prompt: "none",
+    scope: ["identify", "guilds"],
+  });
+
+  const tokenResponse = await fetch("/api/token", {
+    method: "POST",
+    headers: buildRequestHeaders(true),
+    body: JSON.stringify({ code }),
+  });
+
+  if (!tokenResponse.ok) {
+    const errorData = await tokenResponse
+      .json()
+      .catch(() => ({ detail: "Token 交换失败" }));
+    throw new Error(errorData.detail || "Token 交换失败");
+  }
+
+  const tokenPayload = await tokenResponse.json();
+  accessToken = String(tokenPayload.access_token ?? "").trim();
+
+  if (!accessToken) {
+    throw new Error("Discord access token 为空");
+  }
+
+  const auth = await discordSdk.commands.authenticate({ access_token: accessToken });
+  if (!auth) {
+    throw new Error("Discord authenticate 失败");
+  }
+
+  const instanceId = String((discordSdk as { instanceId?: string }).instanceId ?? "").trim();
+  const channelId = String(
+    (discordSdk as { channelId?: string | null }).channelId ?? "",
+  ).trim();
+  const guildId = String((discordSdk as { guildId?: string | null }).guildId ?? "").trim();
+
+  const sessionKey = instanceId
+    ? `instance:${instanceId}`
+    : channelId
+      ? `channel:${guildId || "dm"}:${channelId}`
+      : "";
+
+  if (!sessionKey) {
+    throw new Error("无法识别 Discord 活动会话，无法自动加入房间");
+  }
+
+  return sessionKey;
+}
+
+async function loadProfile(): Promise<void> {
+  const data = await apiCall<ProfileResponse>("/api/profile", "GET");
+  profile.value = data;
+}
+
+function applyRoomEnvelope(data: RoomEnvelope | { room_closed?: boolean; room_id?: string }) {
+  if ("room_closed" in data && data.room_closed) {
+    roomState.value = null;
+    viewMode.value = "lobby";
+    statusMessage.value = `房间 ${data.room_id ?? ""} 已关闭`;
+    stopRoomPolling();
+    return;
+  }
+
+  const envelope = data as RoomEnvelope;
+  if (envelope.room) {
+    roomState.value = envelope.room;
+    viewMode.value = "table";
+    roomInput.value = envelope.room.room_id;
+    startRoomPolling();
+  } else {
+    roomState.value = null;
+    viewMode.value = "lobby";
+    stopRoomPolling();
+  }
+
+  if (profile.value && envelope.viewer_balance !== undefined) {
+    profile.value.balance = Number(envelope.viewer_balance);
+  }
+}
+
+function applySingleEnvelope(data: SingleGameEnvelope) {
+  singleGame.value = data.game;
+  viewMode.value = "single";
+  if (profile.value && data.new_balance !== undefined) {
+    profile.value.balance = Number(data.new_balance);
+  }
+}
+
+async function autoJoinCurrentSession(showNotice = false) {
+  if (requestInFlight.value) return;
+
+  const sessionKey = discordSessionKey.value.trim();
+  if (!sessionKey) {
+    errorMessage.value = "当前未获取到 Discord 会话标识";
+    return;
+  }
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<AutoJoinRoomResponse>("/api/multi/room/auto-join", "POST", {
+      session_key: sessionKey,
+    });
+    applyRoomEnvelope(data);
+
+    if (data.session_key) {
+      const normalized = String(data.session_key).trim();
+      if (normalized) {
+        discordSessionKey.value = normalized;
+      }
+    }
+
+    if (showNotice) {
+      statusMessage.value = "已连接当前 Discord 会话房间";
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "自动加入房间失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+function clearNotices() {
+  statusMessage.value = "";
+  errorMessage.value = "";
+}
+
+function enterGameHub() {
+  stopRoomPolling();
+  viewMode.value = "game_hub";
+}
+
+function enterBlackjackModeSelect() {
+  stopRoomPolling();
+  viewMode.value = "blackjack_mode_select";
+}
+
+function openComingSoon(gameName: string) {
+  clearNotices();
+  statusMessage.value = `${gameName} 功能开发中，敬请期待。`;
+}
+
+async function enterSingleMode() {
+  clearNotices();
+  stopRoomPolling();
+  viewMode.value = "single";
+}
+
+async function forfeitSingleGame() {
+  if (requestInFlight.value) return;
+
+  requestInFlight.value = true;
+  clearNotices();
+  try {
+    await apiCall<{ success: boolean; message: string }>("/api/game/forfeit", "POST", {});
+    singleGame.value = null;
+    statusMessage.value = "已放弃当前单人对局";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "放弃单人对局失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function startSingleGame() {
+  if (requestInFlight.value) return;
+
+  const amount = Number(singleBetInput.value ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    errorMessage.value = "请输入有效下注金额";
+    return;
+  }
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<SingleGameEnvelope>("/api/game/start", "POST", { amount });
+    applySingleEnvelope(data);
+    statusMessage.value = "单人对战已开始";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "开始单人对战失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function singleHit() {
+  if (requestInFlight.value || !singleGame.value) return;
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<SingleGameEnvelope>("/api/game/hit", "POST", {});
+    applySingleEnvelope(data);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "要牌失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function singleStand() {
+  if (requestInFlight.value || !singleGame.value) return;
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<SingleGameEnvelope>("/api/game/stand", "POST", {});
+    applySingleEnvelope(data);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "停牌失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function singleDouble() {
+  if (requestInFlight.value || !singleGame.value) return;
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<SingleGameEnvelope>("/api/game/double", "POST", {});
+    applySingleEnvelope(data);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "加倍失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function enterMultiMode() {
+  clearNotices();
+  if (roomState.value) {
+    viewMode.value = "table";
+    return;
+  }
+
+  if (isDiscordMode.value) {
+    await autoJoinCurrentSession(true);
+    return;
+  }
+
+  viewMode.value = "lobby";
+}
+
+async function createRoom() {
+  if (requestInFlight.value) return;
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<RoomEnvelope>("/api/multi/room/create", "POST");
+    applyRoomEnvelope(data);
+    statusMessage.value = "房间已创建";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "创建房间失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function joinRoom() {
+  if (requestInFlight.value) return;
+
+  const roomId = roomInput.value.trim().toUpperCase();
+  if (!roomId) {
+    errorMessage.value = "请输入房间号";
+    return;
+  }
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<RoomEnvelope>("/api/multi/room/join", "POST", {
+      room_id: roomId,
+    });
+    applyRoomEnvelope(data);
+    statusMessage.value = "已加入房间";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "加入房间失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function leaveRoom() {
+  if (requestInFlight.value || !roomState.value) return;
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<RoomEnvelope | { room_closed?: boolean; room_id?: string }>(
+      "/api/multi/room/leave",
+      "POST",
+      { room_id: roomState.value.room_id },
+    );
+    applyRoomEnvelope(data);
+    statusMessage.value = "已离开房间";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "离开房间失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function refreshRoom(showNotice = false) {
+  if (!roomState.value) return;
+
+  try {
+    const roomId = encodeURIComponent(roomState.value.room_id);
+    const data = await apiCall<RoomEnvelope>(`/api/multi/room/${roomId}`, "GET", undefined, 0);
+    applyRoomEnvelope(data);
+    if (showNotice) {
+      statusMessage.value = "房间状态已同步";
+    }
+  } catch (error) {
+    if (showNotice) {
+      errorMessage.value = error instanceof Error ? error.message : "同步房间失败";
+    }
+  }
+}
+
+async function setBet() {
+  if (requestInFlight.value || !roomState.value) return;
+
+  const amount = Number(betInput.value ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    errorMessage.value = "请输入有效下注金额";
+    return;
+  }
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<RoomEnvelope>("/api/multi/room/bet", "POST", {
+      room_id: roomState.value.room_id,
+      amount,
+    });
+    applyRoomEnvelope(data);
+    statusMessage.value = "下注已更新，请点击准备";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "设置下注失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function toggleReady() {
+  if (!viewerPlayer.value) return;
+  await setReady(!viewerPlayer.value.is_ready);
+}
+
+async function setReady(ready: boolean) {
+  if (requestInFlight.value || !roomState.value) return;
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<RoomEnvelope>("/api/multi/room/ready", "POST", {
+      room_id: roomState.value.room_id,
+      ready,
+    });
+    applyRoomEnvelope(data);
+    statusMessage.value = ready ? "已准备，等待其他玩家" : "已取消准备";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "设置准备状态失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
+async function startRound() {
+  if (requestInFlight.value || !roomState.value) return;
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<RoomEnvelope>("/api/multi/room/start", "POST", {
+      room_id: roomState.value.room_id,
+    });
+    applyRoomEnvelope(data);
+    statusMessage.value = "本局开始";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "开始失败";
+  } finally {
+    requestInFlight.value = false;
+  }
 }
 
 async function hit() {
-    if (isRequestInFlight.value) return;
-    isRequestInFlight.value = true;
-    optimisticCard.value = 'Hidden'; // Optimistically add a card back
+  if (requestInFlight.value || !roomState.value) return;
 
-    try {
-        const response = await apiCall('/api/game/hit', 'POST');
-        if (response.success) {
-            updateUIFromGameState(response.game);
-            if (response.game.game_state === 'finished_loss') {
-                gameEnded.value = true; // Player busted, disable controls.
-                endGame(response.game, response.new_balance);
-            }
-        }
-    } catch (error: any) {
-        messages.value = error.message;
-    } finally {
-        optimisticCard.value = null; // Clear the optimistic card
-        isRequestInFlight.value = false;
-    }
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<RoomEnvelope>("/api/multi/room/hit", "POST", {
+      room_id: roomState.value.room_id,
+    });
+    applyRoomEnvelope(data);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "要牌失败";
+  } finally {
+    requestInFlight.value = false;
+  }
 }
 
 async function stand() {
-    if (isRequestInFlight.value) return;
-    isRequestInFlight.value = true;
-    try {
-        const response = await apiCall('/api/game/stand', 'POST');
-        if (response.success) {
-            gameEnded.value = true; // Game over, disable controls.
-            await animateDealerTurn(response.game);
-            endGame(response.game, response.new_balance);
-        }
-    } catch (error: any) {
-        messages.value = error.message;
-    } finally {
-        isRequestInFlight.value = false;
-    }
-}
+  if (requestInFlight.value || !roomState.value) return;
 
-async function doubleDown() {
-    if (isRequestInFlight.value || !canDouble.value) return;
-    isRequestInFlight.value = true;
-    optimisticCard.value = 'Hidden';
-    try {
-        const response = await apiCall('/api/game/double', 'POST');
-        if (response.success) {
-            gameEnded.value = true;
-            // Manually update player hand and score right away for responsiveness
-            playerHand.value = response.game.player_hand;
-            playerScore.value = response.game.player_score;
-            optimisticCard.value = null; // Hide placeholder, show real card
+  requestInFlight.value = true;
+  clearNotices();
 
-            await animateDealerTurn(response.game);
-            endGame(response.game, response.new_balance);
-        } else {
-            // If the API call itself fails but doesn't throw, clear the card.
-            optimisticCard.value = null;
-        }
-    } catch (error: any) {
-        messages.value = error.message;
-        optimisticCard.value = null;
-    } finally {
-        isRequestInFlight.value = false;
-    }
-}
-
-async function continueWithSameBet() {
-    if (isRequestInFlight.value) return;
-    if (countdownInterval) clearInterval(countdownInterval);
-    betAmount.value = currentBet.value;
-    await handleBet();
-}
-
-function quitGame() {
-    resetGame();
-}
-
-function setBetOption(value: number) {
-    betAmount.value = value;
-}
-
-// --- Initialization ---
-async function fetchPublicConfig() {
-    const response = await fetch('/api/config');
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Config request failed' }));
-        throw new Error(errorData.detail || 'Failed to fetch public config');
-    }
-
-    const configData = await response.json().catch(() => ({} as PublicConfigResponse));
-    runtimeDiscordClientId.value = String(configData.discord_client_id ?? '').trim();
-}
-
-async function setupDiscordSdk(resolvedClientId: string) {
-    // 改为动态导入，避免 SDK 在模块初始化阶段异常导致整页白屏
-    const sdkModule = await import("@discord/embedded-app-sdk");
-    const DiscordSDKCtor = sdkModule.DiscordSDK;
-    const discordSdk = new DiscordSDKCtor(resolvedClientId);
-
-    await discordSdk.ready();
-    const { code } = await discordSdk.commands.authorize({
-        client_id: discordSdk.clientId,
-        response_type: "code",
-        state: "",
-        prompt: "none",
-        scope: ["identify", "guilds"],
+  try {
+    const data = await apiCall<RoomEnvelope>("/api/multi/room/stand", "POST", {
+      room_id: roomState.value.room_id,
     });
-
-    const response = await fetch("/api/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-    });
-
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: "Token exchange failed" }));
-        throw new Error(errorData.detail || "Token exchange failed");
-    }
-
-    const { access_token } = await response.json();
-    const auth = await discordSdk.commands.authenticate({ access_token });
-    if (!auth) throw new Error("Authenticate command failed");
-    accessToken = access_token;
+    applyRoomEnvelope(data);
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "停牌失败";
+  } finally {
+    requestInFlight.value = false;
+  }
 }
 
-async function fetchUserInfo() {
-    const data = await apiCall('/api/user', 'GET');
-    balance.value = data.balance;
+function stopRoomPolling() {
+  if (roomPollTimer !== null) {
+    window.clearInterval(roomPollTimer);
+    roomPollTimer = null;
+  }
 }
 
-async function preloadAssets(startPercent: number, endPercent: number) {
-    // 优化6: 如果资源已经预加载过，直接更新进度并返回
-    if (assetsPreloaded) {
-        progress.value = endPercent;
-        console.log('[Preload] Assets already cached, skipping preload.');
-        return;
-    }
+function startRoomPolling() {
+  stopRoomPolling();
+  roomPollTimer = window.setInterval(() => {
+    void refreshRoom(false);
+  }, 1500);
+}
 
-    const suits = ['Club', 'Diamond', 'Heart', 'Spade'];
-    
-    // 优化1: 优先加载关键资源
-    const criticalImages = [
-        withAssetVersion('/cards/Background.webp'),
-        withAssetVersion('/character/normal.webp'),
-    ];
-    const secondaryImages = [
-        withAssetVersion('/character/win.webp'),
-        withAssetVersion('/character/lose.webp'),
-    ];
-    
-    // 优化2: 将扑克牌分为两批加载，先加载常用牌
-    const commonRanks = ['A', 'K', 'Q', 'J', '10'];
-    const rareRanks = ['2', '3', '4', '5', '6', '7', '8', '9'];
-    
-    const commonCards: string[] = [];
-    const rareCards: string[] = [];
-    
-    suits.forEach(suit => {
-        commonRanks.forEach(rank => commonCards.push(withAssetVersion(`/cards/${suit}${rank}.webp`)));
-        rareRanks.forEach(rank => rareCards.push(withAssetVersion(`/cards/${suit}${rank}.webp`)));
-    });
-    
-    // 按优先级排序: 关键图像 -> 常用扑克牌 -> 次要图像 -> 罕见扑克牌
-    const imagePaths = [...criticalImages, ...commonCards, ...secondaryImages, ...rareCards];
+async function bootstrap() {
+  loadingText.value = "正在连接服务...";
 
-    // 优化6: 过滤已缓存的资源
-    const uncachedPaths = imagePaths.filter(path => !assetCache.has(path));
-    if (uncachedPaths.length === 0) {
-        assetsPreloaded = true;
-        progress.value = endPercent;
-        console.log('[Preload] All assets already cached.');
-        return;
-    }
-
-    console.log(`[Preload] Loading ${uncachedPaths.length} uncached assets out of ${imagePaths.length} total.`);
-
-    let loadedCount = 0;
-    const totalCount = uncachedPaths.length;
-    
-    // 优化3: 使用更高效的并发控制，限制同时加载的图片数量
-    const concurrentLimit = 6; // 限制同时加载的图片数量
-    let currentIndex = 0;
-    
-    const loadNextBatch = async () => {
-        const batch = [];
-        for (let i = 0; i < concurrentLimit && currentIndex < uncachedPaths.length; i++) {
-            batch.push(loadImage(uncachedPaths[currentIndex++]));
+  try {
+    if (isEmbedded) {
+      try {
+        await fetchPublicConfig();
+        if (!runtimeDiscordClientId.value) {
+          throw new Error("DISCORD_CLIENT_ID 未配置");
         }
-        return Promise.all(batch);
-    };
-    
-    const loadImage = (path: string) => new Promise((resolve) => {
-        // 优化6: 检查是否已在缓存中
-        if (assetCache.has(path)) {
-            resolve(true);
-            return;
-        }
-
-        const img = new Image();
-        img.onload = () => {
-            assetCache.set(path, true); // 添加到缓存
-            loadedCount++;
-            progress.value = startPercent + (loadedCount / totalCount) * (endPercent - startPercent);
-            // 优化4: 减少日志输出频率，只在每10%进度时记录
-            if (loadedCount % Math.ceil(totalCount / 10) === 0) {
-                console.log(`[Preload] Progress: ${progress.value.toFixed(2)}%`);
-            }
-            resolve(true);
-        };
-        img.onerror = (err) => {
-            console.error(`[Preload] FAILED to load: ${path}`, err);
-            // 优化5: 不让单个图片加载失败中断整个过程
-            resolve(false); // 改为resolve而不是reject
-        };
-        img.src = path;
-    });
-    
-    // 分批加载图像
-    while (currentIndex < uncachedPaths.length) {
-        await loadNextBatch();
+        discordSessionKey.value = await setupDiscordSdk(runtimeDiscordClientId.value);
+      } catch (embeddedError) {
+        shouldUseDiscordAuth.value = false;
+        accessToken = null;
+        discordSessionKey.value = "";
+        console.warn("[Bootstrap] Discord 鉴权失败，降级到本地调试身份模式", embeddedError);
+      }
+    } else {
+      shouldUseDiscordAuth.value = false;
     }
-    
-    assetsPreloaded = true;
-    console.log('[Preload] All assets loaded and cached.');
+
+    await loadProfile();
+    viewMode.value = "game_hub";
+    loadingText.value = "初始化完成";
+  } catch (error) {
+    loadingText.value = "初始化失败";
+    errorMessage.value = error instanceof Error ? error.message : "初始化异常";
+  }
 }
 
-async function main() {
-    // Restore the original logic
-    console.log('[Main] Starting initialization...');
-    const loadingFlavorTexts = dialogueConfig.loading as string[];
-    loadingMessage.value = loadingFlavorTexts[Math.floor(Math.random() * loadingFlavorTexts.length)];
-    const loadingInterval = setInterval(() => {
-        loadingMessage.value = loadingFlavorTexts[Math.floor(Math.random() * loadingFlavorTexts.length)];
-    }, 1500);
-
-    try {
-        progress.value = 5;
-        if (isEmbedded) {
-            console.log('[Main] Embedded environment detected. Fetching runtime config...');
-            try {
-                await fetchPublicConfig();
-                if (!runtimeDiscordClientId.value) {
-                    throw new Error("DISCORD_CLIENT_ID is not set on server.");
-                }
-
-                console.log('[Main] Runtime config loaded. Setting up Discord SDK...');
-                await setupDiscordSdk(runtimeDiscordClientId.value);
-                console.log('[Main] Discord SDK setup complete.');
-            } catch (embeddedError) {
-                shouldUseDiscordAuth.value = false;
-                accessToken = null;
-                console.warn(
-                    '[Main] Embedded auth unavailable (possibly mobile client limitations). Fallback to unauthenticated mode.',
-                    embeddedError
-                );
-            }
-
-            progress.value = 30;
-            console.log('[Main] Fetching user info...');
-            await fetchUserInfo();
-            console.log('[Main] User info fetched.');
-            progress.value = 50;
-            console.log('[Main] Preloading assets for embedded...');
-            await preloadAssets(50, 100);
-            console.log('[Main] Assets preloaded for embedded.');
-        } else {
-            console.log('[Main] Browser environment detected.');
-            // In browser mode, we directly call the backend via Vite's proxy.
-            await fetchUserInfo();
-            progress.value = 50;
-            console.log('[Main] Preloading assets for browser...');
-            await preloadAssets(50, 100);
-            console.log('[Main] Assets preloaded for browser.');
-        }
-        clearInterval(loadingInterval);
-        loadingMessage.value = '游戏开始!';
-        progress.value = 100;
-        console.log('[Main] Initialization successful. Preparing to switch view.');
-
-        setTimeout(() => {
-            console.log('[Main] setTimeout triggered. Switching view to "betting".');
-            currentView.value = 'betting';
-            showDialogue('welcome');
-        }, 500);
-
-    } catch (e: any) {
-        clearInterval(loadingInterval);
-        console.error('[Main] CRITICAL ERROR during initialization:', e);
-        const errorMessage = `加载失败: ${e.message}`;
-        loadingMessage.value = errorMessage;
-    }
-}
-
-onMounted(main);
+watch(
+  () => [viewMode.value, roomState.value?.state ?? "", singleGame.value?.game_state ?? ""],
+  () => {
+    startDealerSpeechLoop();
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
-    const updateScreenSize = () => {
-        screenSize.value = `${window.innerWidth}px x ${window.innerHeight}px`;
-    };
-    window.addEventListener('resize', updateScreenSize);
-    updateScreenSize(); // Initial call
+  void bootstrap();
 });
 
-// --- Debugging ---
-// The debug utilities associated with the second onMounted hook have been removed
-// as they were causing conflicts with Vue's reactivity system.
-
-/*
-// This second onMounted hook, specifically the MutationObserver, is suspected of
-// conflicting with Vue's reactivity system and has been disabled.
-onMounted(() => {
-    // Also update sizes on resize
-    window.addEventListener('resize', () => {
-        updateDebugSizes();
-        updateScreenSize();
-    });
-    // Initial update
-    updateScreenSize();
-    const observer = new MutationObserver(() => {
-        requestAnimationFrame(updateDebugSizes);
-    });
-    observer.observe(document.getElementById('app-root')!, { childList: true, subtree: true, attributes: true });
+onBeforeUnmount(() => {
+  stopRoomPolling();
+  stopDealerSpeechLoop();
 });
-*/
 </script>
 
 <template>
-    <div id="app-root">
-        <!-- <div id="screen-size-debug">{{ screenSize }}</div> -->
-        <!-- Loading View -->
-        <div v-if="currentView === 'loading'" id="loading-view">
-            <div>
-                <h1 id="loading-message">{{ loadingMessage }}</h1>
-                <div id="progress-bar-container">
-                    <div id="progress-bar" :style="{ width: progress + '%' }"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Betting View -->
-        <div v-if="currentView === 'betting'" id="betting-view" data-debug-size>
-            <div id="betting-content-wrapper">
-                <h1>月月的BlackJack</h1>
-                <div class="messages">{{ messages }}</div>
-                <div id="betting-area" data-debug-size>
-                    <div class="balance-text">
-                        你的余额: <span>{{ balance }}</span>
-                        <!-- Floating Text Container -->
-                        <div class="floating-text-container">
-                            <div v-for="text in floatingTexts" :key="text.id" class="floating-text" :class="text.type">
-                                {{ text.text }}
-                            </div>
-                        </div>
-                    </div>
-                    <div id="betting-controls">
-                        <div id="manual-bet-container">
-                            <input type="number" v-model="betAmount" placeholder="输入赌注" min="1" :disabled="isRequestInFlight">
-                            <button @click="handleBet" :disabled="isRequestInFlight || !betAmount || betAmount <= 0">下注</button>
-                        </div>
-                        <div id="bet-options-container">
-                                <button v-for="([key, value]) in betOptions" :key="key" @click="setBetOption(value)" class="bet-option-button" :disabled="isRequestInFlight">
-                                {{ key === 'small' ? '小' : key === 'medium' ? '中' : key === 'large' ? '大' : '梭哈' }} ({{ value }})
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="betting-dealer-section" class="dealer-section">
-                <img :src="characterImageSrc" alt="荷官" class="dealer-image">
-                <div v-if="dealerDialogue" class="dialogue-box">
-                    <p>{{ dealerDialogue }}</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Game View -->
-        <div v-if="currentView === 'game'" id="game-view" data-debug-size>
-            <div id="game-table" data-debug-size>
-                <div class="game-area" data-debug-size>
-                    <h2>月月 (<span>{{ dealerScore }}</span>)</h2>
-                    <TransitionGroup name="card" tag="div" class="hand" data-debug-size>
-                        <img v-for="(card, index) in dealerHand" :key="'dealer-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
-                    </TransitionGroup>
-                </div>
-                <div class="game-area" data-debug-size>
-                    <h2>玩家 (<span>{{ playerScore }}</span>)</h2>
-                    <TransitionGroup name="card" tag="div" class="hand" data-debug-size>
-                        <img v-for="(card, index) in playerHand" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
-                        <img v-if="optimisticCard" key="optimistic" :src="withAssetVersion('/cards/Background.webp')" class="card">
-                    </TransitionGroup>
-                </div>
-                <div class="messages">{{ messages }}</div>
-                <div id="controls" data-debug-size>
-                    <button @click="hit" :disabled="isRequestInFlight || gameEnded">要牌</button>
-                    <button @click="stand" :disabled="isRequestInFlight || gameEnded">停牌</button>
-                    <button @click="doubleDown" :disabled="isRequestInFlight || !canDouble || gameEnded">双倍下注</button>
-                </div>
-            </div>
-                <div id="game-dealer-section" class="dealer-section">
-                <img :src="characterImageSrc" alt="荷官" class="dealer-image">
-                <div v-if="dealerDialogue" class="dialogue-box">
-                    <p>{{ dealerDialogue }}</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- End Game View -->
-        <div v-if="currentView === 'end-game'" id="end-game-view" data-debug-size :class="countdownClass">
-            <div id="end-game-content">
-                <div id="countdown-container">
-                    <span id="end-game-countdown" :style="countdownStyle">{{ countdown }}</span>
-                </div>
-                <div id="end-game-dealer-section" class="dealer-section" data-debug-size>
-                    <img :src="characterImageSrc" alt="荷官" id="end-game-dealer-image" class="dealer-image">
-                    <div v-if="dealerDialogue" id="end-game-dialogue-box" class="dialogue-box">
-                        <p>{{ dealerDialogue }}</p>
-                    </div>
-                </div>
-                <div id="end-game-controls" data-debug-size>
-                    <button @click="continueWithSameBet">继续挑战</button>
-                    <button @click="quitGame">不玩了</button>
-                </div>
-            </div>
-        </div>
+  <div class="multi-root">
+    <div v-if="viewMode === 'loading'" class="panel loading-panel">
+      <h2>月月游戏中心</h2>
+      <p>{{ loadingText }}</p>
     </div>
+
+    <template v-else>
+      <header class="top-bar">
+        <div class="title-group">
+          <h1>月月游戏中心</h1>
+          <p>先选游戏，再选模式，和月月开战</p>
+        </div>
+
+        <div v-if="profile" class="profile-chip">
+          <img class="profile-avatar" :src="playerAvatarSrc({
+            user_id: Number(profile.user_id),
+            username: profile.username,
+            avatar_url: profile.avatar_url,
+            seat_index: -1,
+            bet_amount: 0,
+            hand: [],
+            score: 0,
+            status: '',
+            result: null,
+            payout_amount: 0,
+            is_ready: false,
+            is_current_turn: false
+          })" alt="玩家头像" />
+          <div class="profile-meta">
+            <div class="profile-name">{{ profile.username }}</div>
+            <div class="profile-balance">余额：{{ profile.balance }}</div>
+          </div>
+        </div>
+      </header>
+
+      <section v-if="viewMode === 'game_hub'" class="panel lobby-panel">
+        <h3>选择游戏</h3>
+        <div class="game-grid">
+          <button class="game-card primary-btn" :disabled="requestInFlight" @click="enterBlackjackModeSelect">
+            <span class="game-name">21点</span>
+            <span class="game-desc">立即游玩</span>
+          </button>
+          <button class="game-card" :disabled="requestInFlight" @click="openComingSoon('四人麻将')">
+            <span class="game-name">四人麻将</span>
+            <span class="game-desc">待开发</span>
+          </button>
+          <button class="game-card" :disabled="requestInFlight" @click="openComingSoon('斗地主')">
+            <span class="game-name">斗地主</span>
+            <span class="game-desc">待开发</span>
+          </button>
+        </div>
+        <div class="dealer-dialogue">{{ dealerSpeech }}</div>
+      </section>
+
+      <section v-else-if="viewMode === 'blackjack_mode_select'" class="panel lobby-panel">
+        <h3>21点模式</h3>
+        <div class="game-grid">
+          <button class="game-card primary-btn" :disabled="requestInFlight" @click="enterSingleMode">
+            <span class="game-name">单人对战</span>
+            <span class="game-desc">你 vs 月月</span>
+          </button>
+          <button class="game-card primary-btn" :disabled="requestInFlight" @click="enterMultiMode">
+            <span class="game-name">多人对战</span>
+            <span class="game-desc">最多3人同桌</span>
+          </button>
+        </div>
+        <div class="toolbar-actions">
+          <button :disabled="requestInFlight" @click="enterGameHub">返回上一级</button>
+        </div>
+        <div class="dealer-dialogue">{{ dealerSpeech }}</div>
+      </section>
+
+      <section v-else-if="viewMode === 'single'" class="table-wrapper">
+        <div class="table-toolbar">
+          <div class="room-info">
+            <span>模式：单人对战</span>
+            <span>{{ singleStateText }}</span>
+            <span v-if="singleResultText">结果：{{ singleResultText }}</span>
+          </div>
+          <div class="toolbar-actions">
+            <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回模式选择</button>
+            <button :disabled="requestInFlight || !singleGame" @click="forfeitSingleGame">放弃当前对局</button>
+          </div>
+        </div>
+
+        <div class="board single-board">
+          <div class="seat dealer-seat seat-top-right">
+            <div class="avatar-ring dealer-ring">
+              <img :src="withAssetVersion('/character/normal.webp')" alt="月月头像" />
+            </div>
+            <div class="seat-name">月月 · 庄家</div>
+            <div class="seat-meta">点数：{{ singleGame?.dealer_score ?? 0 }}</div>
+            <div class="dealer-dialogue dealer-dialogue-inline">{{ dealerSpeech }}</div>
+            <div class="card-row">
+              <img
+                v-for="(card, idx) in singleGame?.dealer_hand || []"
+                :key="`single-dealer-${idx}-${card}`"
+                :src="cardImageSrc(card)"
+                class="card"
+                alt="庄家手牌"
+              />
+            </div>
+          </div>
+
+          <div class="seat single-player-seat">
+            <div class="avatar-ring">
+              <img
+                :src="playerAvatarSrc({
+                  user_id: Number(profile?.user_id ?? 0),
+                  username: profile?.username ?? '',
+                  avatar_url: profile?.avatar_url ?? '/character/normal.webp',
+                  seat_index: -1,
+                  bet_amount: Number(singleGame?.bet_amount ?? 0),
+                  hand: singleGame?.player_hand ?? [],
+                  score: Number(singleGame?.player_score ?? 0),
+                  status: singleGame?.game_state ?? '',
+                  result: null,
+                  payout_amount: 0,
+                  is_ready: false,
+                  is_current_turn: singleGame?.game_state === 'player_turn'
+                })"
+                alt="玩家头像"
+              />
+            </div>
+            <div class="seat-name">{{ profile?.username ?? "玩家" }}</div>
+            <div class="seat-meta">下注：{{ singleGame?.bet_amount ?? 0 }}</div>
+            <div class="seat-meta">余额：{{ profile?.balance ?? 0 }}</div>
+            <div class="seat-meta">
+              点数：{{ singleGame?.player_score ?? 0 }} ·
+              {{ singleGame ? getSingleActionText(singleGame.game_state) : "未开局" }}
+            </div>
+            <div class="card-row">
+              <img
+                v-for="(card, idx) in singleGame?.player_hand || []"
+                :key="`single-player-${idx}-${card}`"
+                :src="cardImageSrc(card)"
+                class="card"
+                alt="玩家手牌"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="panel control-panel">
+          <div class="control-row">
+            <input
+              v-model.number="singleBetInput"
+              type="number"
+              min="1"
+              placeholder="输入下注"
+              :disabled="requestInFlight || canSingleOperate"
+            />
+            <button :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">
+              {{ singleGame ? (canSingleOperate ? "对局进行中" : "再来一局") : "开始对战" }}
+            </button>
+          </div>
+
+          <div class="control-row">
+            <button :disabled="requestInFlight || !canSingleOperate" @click="singleHit">要牌</button>
+            <button :disabled="requestInFlight || !canSingleOperate" @click="singleStand">停牌</button>
+            <button :disabled="requestInFlight || !canSingleDouble" @click="singleDouble">加倍</button>
+          </div>
+
+          <div class="control-hint">
+            <span v-if="singleGame">当前状态：{{ getSingleActionText(singleGame.game_state) }}</span>
+            <span v-else>输入下注金额后开始单人对战。</span>
+          </div>
+        </div>
+      </section>
+
+      <section v-else-if="viewMode === 'lobby'" class="panel lobby-panel">
+        <h3>多人房间大厅</h3>
+
+        <template v-if="isDiscordMode">
+          <p class="hint-text">已连接 Discord 活动，点击下方按钮可重新加入当前会话房间。</p>
+          <div class="lobby-actions">
+            <button class="primary-btn" :disabled="requestInFlight" @click="autoJoinCurrentSession(true)">
+              连接当前会话
+            </button>
+            <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">
+              返回模式选择
+            </button>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="lobby-actions">
+            <button class="primary-btn" :disabled="requestInFlight" @click="createRoom">
+              创建房间
+            </button>
+            <div class="join-group">
+              <input
+                v-model="roomInput"
+                maxlength="16"
+                placeholder="输入房间号"
+                :disabled="requestInFlight"
+              />
+              <button class="primary-btn" :disabled="requestInFlight" @click="joinRoom">
+                加入房间
+              </button>
+            </div>
+            <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">
+              返回模式选择
+            </button>
+          </div>
+
+          <p class="hint-text">
+            本地多人测试可在地址栏添加参数：
+            <code>?dev_user_id=1001&dev_username=玩家A</code>
+          </p>
+        </template>
+        <div class="dealer-dialogue">{{ dealerSpeech }}</div>
+      </section>
+
+      <section v-else-if="viewMode === 'table' && roomState" class="table-wrapper">
+        <div class="table-toolbar">
+          <div class="room-info">
+            <span v-if="isDiscordMode">会话：Discord 活动房间</span>
+            <span v-else>房间：{{ roomState.room_id }}</span>
+            <span>状态：{{ roomStateText }}</span>
+            <span v-if="roomState.state === 'waiting'">
+              准备：{{ roomState.ready_player_count }}/{{ roomState.players.length }}
+            </span>
+            <span>房主：{{ hostDisplayName }}</span>
+          </div>
+          <div class="toolbar-actions">
+            <button :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
+            <button :disabled="requestInFlight" @click="leaveRoom">离开</button>
+            <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回模式选择</button>
+          </div>
+        </div>
+
+        <div class="board">
+          <div class="seat dealer-seat seat-top-right">
+            <div class="avatar-ring dealer-ring">
+              <img :src="dealerAvatarSrc" alt="月月头像" />
+            </div>
+            <div class="seat-name">月月 · 庄家</div>
+            <div class="seat-meta">点数：{{ dealer?.score ?? 0 }}</div>
+            <div class="dealer-dialogue dealer-dialogue-inline">{{ dealerSpeech }}</div>
+            <div class="card-row">
+              <img
+                v-for="(card, idx) in dealer?.hand || []"
+                :key="`dealer-${idx}-${card}`"
+                :src="cardImageSrc(card)"
+                class="card"
+                alt="庄家手牌"
+              />
+            </div>
+          </div>
+
+          <div
+            v-for="seatIndex in seatIndices"
+            :key="seatIndex"
+            class="seat"
+            :class="seatClassByIndex[seatIndex]"
+          >
+            <template v-if="seatPlayerMap[seatIndex]">
+              <div
+                class="avatar-ring"
+                :class="{ 'avatar-turn': seatPlayerMap[seatIndex]?.is_current_turn }"
+              >
+                <img :src="playerAvatarSrc(seatPlayerMap[seatIndex])" alt="玩家头像" />
+              </div>
+              <div class="seat-name">
+                {{ seatPlayerMap[seatIndex]?.username }}
+              </div>
+              <div class="seat-meta">
+                下注：{{ seatPlayerMap[seatIndex]?.bet_amount || 0 }}
+              </div>
+              <div class="seat-meta" v-if="roomState.state === 'waiting'">
+                准备：{{ seatPlayerMap[seatIndex]?.is_ready ? "已准备" : "未准备" }}
+              </div>
+              <div
+                v-if="Number(seatPlayerMap[seatIndex]?.user_id) === viewerUserId"
+                class="seat-meta"
+              >
+                余额：{{ profile?.balance ?? 0 }}
+              </div>
+              <div class="seat-meta">
+                点数：{{ seatPlayerMap[seatIndex]?.score || 0 }} ·
+                {{ getPlayerStatusText(seatPlayerMap[seatIndex]!) }}
+              </div>
+              <div v-if="seatPlayerMap[seatIndex]?.result" class="seat-result">
+                结果：{{ getPlayerResultText(seatPlayerMap[seatIndex]!) }}
+              </div>
+              <div class="card-row">
+                <img
+                  v-for="(card, idx) in seatPlayerMap[seatIndex]?.hand || []"
+                  :key="`player-${seatIndex}-${idx}-${card}`"
+                  :src="cardImageSrc(card)"
+                  class="card"
+                  alt="玩家手牌"
+                />
+              </div>
+            </template>
+            <template v-else>
+              <div class="empty-seat">空位</div>
+              <div class="seat-meta">等待玩家加入</div>
+            </template>
+          </div>
+        </div>
+
+        <div class="panel control-panel">
+          <div class="control-row">
+            <input
+              v-model.number="betInput"
+              type="number"
+              min="1"
+              placeholder="输入下注"
+              :disabled="requestInFlight || !canSetBet"
+            />
+            <button :disabled="requestInFlight || !canSetBet" @click="setBet">
+              设置下注
+            </button>
+            <button :disabled="requestInFlight || !canToggleReady" @click="toggleReady">
+              {{ readyButtonText }}
+            </button>
+            <button :disabled="requestInFlight || !canStartRound" @click="startRound">
+              房主开始
+            </button>
+          </div>
+
+          <div class="control-row">
+            <button
+              :disabled="requestInFlight || roomState.state !== 'playing' || !isMyTurn"
+              @click="hit"
+            >
+              要牌
+            </button>
+            <button
+              :disabled="requestInFlight || roomState.state !== 'playing' || !isMyTurn"
+              @click="stand"
+            >
+              停牌
+            </button>
+          </div>
+
+          <div class="control-hint">
+            <span v-if="roomState.state === 'waiting'">
+              每位玩家先设置下注并点击准备，全部准备后由房主开始本局。
+            </span>
+            <span v-else-if="roomState.state === 'playing'">
+              当前轮到高亮玩家操作。
+            </span>
+            <span v-else-if="roomState.state === 'dealer_turn'">
+              月月正在结算本局。
+            </span>
+            <span v-else>
+              本局已结束，重新下注后可再开一局。
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <div v-if="statusMessage" class="status-message">{{ statusMessage }}</div>
+      <div v-if="errorMessage" class="error-message">{{ errorMessage }}</div>
+    </template>
+  </div>
 </template>
 
-<style>
-/* Re-importing styles from style.css */
-@import './style.css';
-
-/* Global styles from original index.html and style.css */
-html, body {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-    font-family: 'Poppins', sans-serif;
-    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 50%, rgba(0,0,0,0.4) 100%), #0f3d0f;
-    color: white;
-    text-align: center;
+<style scoped>
+:global(html),
+:global(body),
+:global(#app) {
+  min-height: 100%;
 }
 
-#app-root {
-    height: 100%;
-    width: 100%;
+:global(body) {
+  overflow: auto !important;
 }
 
-#loading-view {
-  height: 100%;
+.multi-root {
+  min-height: 100vh;
+  color: #f4f0e8;
+  padding: 16px;
+  box-sizing: border-box;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.top-bar {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.title-group h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.title-group p {
+  margin: 4px 0 0;
+  opacity: 0.9;
+}
+
+.profile-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(23, 33, 50, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+
+.profile-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #d8bd84;
+}
+
+.profile-meta {
+  text-align: left;
+}
+
+.profile-name {
+  font-weight: 700;
+}
+
+.profile-balance {
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.panel {
+  background: rgba(13, 24, 39, 0.62);
+  border: 1px solid rgba(215, 191, 140, 0.35);
+  border-radius: 14px;
+  padding: 14px;
+  box-sizing: border-box;
+}
+
+.loading-panel {
+  text-align: center;
+  margin-top: 20vh;
+}
+
+.lobby-panel {
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.lobby-panel h3 {
+  margin-top: 0;
+}
+
+.lobby-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.game-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.game-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+  padding: 12px;
+}
+
+.game-name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.game-desc {
+  font-size: 13px;
+  opacity: 0.88;
+}
+
+.join-group {
+  display: flex;
+  gap: 10px;
+}
+
+.join-group input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.hint-text {
+  margin: 12px 0 0;
+  opacity: 0.9;
+  word-break: break-all;
+}
+
+.hint-text code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.dealer-dialogue {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(215, 191, 140, 0.3);
+  background: rgba(32, 22, 14, 0.45);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #ffe7bd;
+}
+
+.dealer-dialogue-inline {
+  margin-top: 6px;
+  margin-bottom: 8px;
+}
+
+.table-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.room-info {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.board {
+  position: relative;
+  min-height: 560px;
+  border-radius: 16px;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  background:
+    radial-gradient(circle at center, rgba(47, 109, 76, 0.9), rgba(22, 58, 38, 0.95)),
+    rgba(13, 21, 31, 0.4);
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.seat {
+  position: absolute;
+  width: 260px;
+  min-height: 170px;
+  background: rgba(8, 17, 29, 0.58);
+  border: 1px solid rgba(216, 189, 132, 0.3);
+  border-radius: 12px;
+  padding: 10px;
+  box-sizing: border-box;
+  text-align: left;
+  backdrop-filter: blur(4px);
+}
+
+.seat-top-left {
+  top: 14px;
+  left: 14px;
+}
+
+.seat-bottom-left {
+  bottom: 14px;
+  left: 14px;
+}
+
+.seat-bottom-right {
+  bottom: 14px;
+  right: 14px;
+}
+
+.seat-top-right {
+  top: 14px;
+  right: 14px;
+}
+
+.dealer-seat {
+  border-color: rgba(235, 203, 133, 0.6);
+  background: rgba(35, 24, 16, 0.56);
+}
+
+.single-player-seat {
+  bottom: 14px;
+  left: 14px;
+}
+
+.avatar-ring {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid rgba(216, 189, 132, 0.85);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.avatar-ring img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.dealer-ring {
+  border-color: rgba(233, 205, 130, 0.95);
+}
+
+.avatar-turn {
+  box-shadow: 0 0 0 3px rgba(109, 214, 138, 0.45);
+}
+
+.seat-name {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.seat-meta {
+  font-size: 13px;
+  opacity: 0.92;
+  margin-bottom: 4px;
+}
+
+.seat-result {
+  font-size: 13px;
+  color: #ffde8d;
+  margin-bottom: 6px;
+}
+
+.empty-seat {
+  font-weight: 700;
+  opacity: 0.8;
+  margin-bottom: 6px;
+}
+
+.card-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-height: 62px;
+  align-items: flex-start;
+}
+
+.card {
+  width: 42px;
+  height: 58px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.control-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.control-row input {
+  width: 160px;
+  max-width: 100%;
+}
+
+.control-hint {
+  opacity: 0.92;
+  font-size: 14px;
+}
+
+input,
+button {
+  border: 1px solid rgba(214, 190, 140, 0.42);
+  border-radius: 8px;
+  background: rgba(18, 34, 53, 0.68);
+  color: #f4f0e8;
+  padding: 8px 12px;
+  box-sizing: border-box;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.primary-btn {
+  background: linear-gradient(180deg, rgba(189, 148, 70, 0.9), rgba(140, 103, 39, 0.9));
+  color: #fff8eb;
+}
+
+.status-message,
+.error-message {
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.status-message {
+  background: rgba(36, 108, 76, 0.5);
+  border: 1px solid rgba(135, 219, 171, 0.35);
+}
+
+.error-message {
+  background: rgba(120, 42, 42, 0.5);
+  border: 1px solid rgba(255, 141, 141, 0.35);
+}
+
+@media (max-width: 980px) {
+  .board {
+    min-height: unset;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .seat {
+    position: relative !important;
+    top: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    width: 100%;
+    min-height: 120px;
+  }
+
+  .dealer-seat {
+    order: -1;
+  }
+
+  .card {
+    width: 36px;
+    height: 50px;
+  }
 }
 </style>
