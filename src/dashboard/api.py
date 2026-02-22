@@ -526,6 +526,9 @@ class CoinConfigUpdate(BaseModel):
     daily_reward: Optional[int] = None
     chat_reward: Optional[int] = None
     max_loan: Optional[int] = None
+    feeding_response_image_url: Optional[str] = None
+    confession_response_image_url: Optional[str] = None
+    loan_thumbnail_url: Optional[str] = None
 
 
 class ModerationConfigUpdate(BaseModel):
@@ -677,6 +680,16 @@ async def get_all_config(token: str = Depends(verify_token)):
     if current_model and current_model not in available_models:
         available_models.insert(0, current_model)
 
+    db_feeding_response_image_url = await chat_db_manager.get_global_setting(
+        "feeding_response_image_url"
+    )
+    db_confession_response_image_url = await chat_db_manager.get_global_setting(
+        "confession_response_image_url"
+    )
+    db_loan_thumbnail_url = await chat_db_manager.get_global_setting(
+        "coin_loan_thumbnail_url"
+    )
+
     payload = {
         "ai": {
             "model": chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL,
@@ -764,6 +777,21 @@ async def get_all_config(token: str = Depends(verify_token)):
             "daily_reward": chat_config.COIN_CONFIG.get("DAILY_CHECKIN_REWARD", 50),
             "chat_reward": chat_config.COIN_CONFIG.get("DAILY_CHAT_REWARD", 10),
             "max_loan": chat_config.COIN_CONFIG.get("MAX_LOAN_AMOUNT", 1000),
+            "feeding_response_image_url": (
+                db_feeding_response_image_url
+                if db_feeding_response_image_url is not None
+                else chat_config.FEEDING_CONFIG.get("RESPONSE_IMAGE_URL", "")
+            ),
+            "confession_response_image_url": (
+                db_confession_response_image_url
+                if db_confession_response_image_url is not None
+                else chat_config.CONFESSION_CONFIG.get("RESPONSE_IMAGE_URL", "")
+            ),
+            "loan_thumbnail_url": (
+                db_loan_thumbnail_url
+                if db_loan_thumbnail_url is not None
+                else chat_config.COIN_CONFIG.get("LOAN_THUMBNAIL_URL", "")
+            ),
             "currency_name": "月光币",
         },
         "moderation": {
@@ -3003,11 +3031,38 @@ async def update_embedding_config(config: EmbeddingConfigUpdate, token: str = De
 @app.get("/api/config/coin")
 async def get_coin_config(token: str = Depends(verify_token)):
     """获取货币配置"""
+    from src.chat.utils.database import chat_db_manager
+
     config = chat_config.COIN_CONFIG
+    db_feeding_response_image_url = await chat_db_manager.get_global_setting(
+        "feeding_response_image_url"
+    )
+    db_confession_response_image_url = await chat_db_manager.get_global_setting(
+        "confession_response_image_url"
+    )
+    db_loan_thumbnail_url = await chat_db_manager.get_global_setting(
+        "coin_loan_thumbnail_url"
+    )
+
     return {
         "daily_reward": config.get("DAILY_CHECKIN_REWARD", 50),
         "chat_reward": config.get("DAILY_CHAT_REWARD", 10),
         "max_loan": config.get("MAX_LOAN_AMOUNT", 1000),
+        "feeding_response_image_url": (
+            db_feeding_response_image_url
+            if db_feeding_response_image_url is not None
+            else chat_config.FEEDING_CONFIG.get("RESPONSE_IMAGE_URL", "")
+        ),
+        "confession_response_image_url": (
+            db_confession_response_image_url
+            if db_confession_response_image_url is not None
+            else chat_config.CONFESSION_CONFIG.get("RESPONSE_IMAGE_URL", "")
+        ),
+        "loan_thumbnail_url": (
+            db_loan_thumbnail_url
+            if db_loan_thumbnail_url is not None
+            else config.get("LOAN_THUMBNAIL_URL", "")
+        ),
         "currency_name": "月光币",
         "tax_rate": config.get("TRANSFER_TAX_RATE", 0.05),
     }
@@ -3016,6 +3071,14 @@ async def get_coin_config(token: str = Depends(verify_token)):
 @app.put("/api/config/coin")
 async def update_coin_config(config: CoinConfigUpdate, token: str = Depends(verify_token)):
     """更新货币配置"""
+    from src.chat.utils.database import chat_db_manager
+
+    def _normalize_url(value: str, field_label: str) -> str:
+        normalized = value.strip()
+        if normalized and not (normalized.startswith("http://") or normalized.startswith("https://")):
+            raise HTTPException(400, f"{field_label} 必须以 http:// 或 https:// 开头")
+        return normalized
+
     updated = {}
     
     if config.daily_reward is not None:
@@ -3035,6 +3098,24 @@ async def update_coin_config(config: CoinConfigUpdate, token: str = Depends(veri
             raise HTTPException(400, "最大贷款额不能为负数")
         chat_config.COIN_CONFIG["MAX_LOAN_AMOUNT"] = config.max_loan
         updated["max_loan"] = config.max_loan
+
+    if config.feeding_response_image_url is not None:
+        normalized = _normalize_url(config.feeding_response_image_url, "投喂回应图片 URL")
+        chat_config.FEEDING_CONFIG["RESPONSE_IMAGE_URL"] = normalized
+        await chat_db_manager.set_global_setting("feeding_response_image_url", normalized)
+        updated["feeding_response_image_url"] = normalized
+
+    if config.confession_response_image_url is not None:
+        normalized = _normalize_url(config.confession_response_image_url, "忏悔回应图片 URL")
+        chat_config.CONFESSION_CONFIG["RESPONSE_IMAGE_URL"] = normalized
+        await chat_db_manager.set_global_setting("confession_response_image_url", normalized)
+        updated["confession_response_image_url"] = normalized
+
+    if config.loan_thumbnail_url is not None:
+        normalized = _normalize_url(config.loan_thumbnail_url, "借贷中心缩略图 URL")
+        chat_config.COIN_CONFIG["LOAN_THUMBNAIL_URL"] = normalized
+        await chat_db_manager.set_global_setting("coin_loan_thumbnail_url", normalized)
+        updated["loan_thumbnail_url"] = normalized
     
     log.info(f"货币配置已更新: {updated}")
     return {"success": True, "updated": updated}

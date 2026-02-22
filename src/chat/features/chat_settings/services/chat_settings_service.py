@@ -162,6 +162,28 @@ class ChatSettingsService:
             chat_config.VIDEO_GEN_CONFIG["MAX_DURATION"] = int(db_video_duration)
             log.info(f"  ✅ 视频最大时长: {db_video_duration}s")
 
+        # --- 投喂/忏悔/借贷图片配置 ---
+        db_feeding_response_image_url = await self.db_manager.get_global_setting(
+            "feeding_response_image_url"
+        )
+        if db_feeding_response_image_url is not None:
+            chat_config.FEEDING_CONFIG["RESPONSE_IMAGE_URL"] = db_feeding_response_image_url
+            log.info("  ✅ 投喂回应图片 URL: 已加载")
+
+        db_confession_response_image_url = await self.db_manager.get_global_setting(
+            "confession_response_image_url"
+        )
+        if db_confession_response_image_url is not None:
+            chat_config.CONFESSION_CONFIG["RESPONSE_IMAGE_URL"] = db_confession_response_image_url
+            log.info("  ✅ 忏悔回应图片 URL: 已加载")
+
+        db_loan_thumbnail_url = await self.db_manager.get_global_setting(
+            "coin_loan_thumbnail_url"
+        )
+        if db_loan_thumbnail_url is not None:
+            chat_config.COIN_CONFIG["LOAN_THUMBNAIL_URL"] = db_loan_thumbnail_url
+            log.info("  ✅ 借贷中心缩略图 URL: 已加载")
+
         # --- 自动暖贴配置 ---
         db_auto_enabled = await self.db_manager.get_global_setting(
             "thread_auto_speaker_enabled"

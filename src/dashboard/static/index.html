@@ -1882,6 +1882,24 @@
                             <input type="number" x-model="coinForm.max_loan" min="0"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">投喂回应图片 URL</label>
+                            <input type="url" x-model="coinForm.feeding_response_image_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">忏悔回应图片 URL</label>
+                            <input type="url" x-model="coinForm.confession_response_image_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">借贷中心缩略图 URL</label>
+                            <input type="url" x-model="coinForm.loan_thumbnail_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
                         
                         <button @click="saveCoinConfig()"
                                 :disabled="saving"
@@ -2938,7 +2956,14 @@
                 showEmbeddingApiKey: false,
                 showVoiceApiKey: false,
                 showVoiceAccessToken: false,
-                coinForm: { daily_reward: 50, chat_reward: 10, max_loan: 1000 },
+                coinForm: {
+                    daily_reward: 50,
+                    chat_reward: 10,
+                    max_loan: 1000,
+                    feeding_response_image_url: '',
+                    confession_response_image_url: '',
+                    loan_thumbnail_url: ''
+                },
                 moderationForm: { warning_threshold: 10, ban_duration_min: 15, ban_duration_max: 30, image_feedback_enabled: true, image_feedback_ban_trigger_count: 3, image_feedback_repeat_window_minutes: 60, image_feedback_ban_ladder_minutes: '10,30,60,180,720' },
                 
                 // 模型获取
@@ -3233,6 +3258,9 @@
                         this.coinForm.daily_reward = this.config.coin.daily_reward;
                         this.coinForm.chat_reward = this.config.coin.chat_reward;
                         this.coinForm.max_loan = this.config.coin.max_loan;
+                        this.coinForm.feeding_response_image_url = this.config.coin.feeding_response_image_url || '';
+                        this.coinForm.confession_response_image_url = this.config.coin.confession_response_image_url || '';
+                        this.coinForm.loan_thumbnail_url = this.config.coin.loan_thumbnail_url || '';
                     }
                     if (this.config.moderation) {
                         this.moderationForm.warning_threshold = this.config.moderation.warning_threshold;
@@ -5111,7 +5139,10 @@
                             body: JSON.stringify({
                                 daily_reward: parseInt(this.coinForm.daily_reward),
                                 chat_reward: parseInt(this.coinForm.chat_reward),
-                                max_loan: parseInt(this.coinForm.max_loan)
+                                max_loan: parseInt(this.coinForm.max_loan),
+                                feeding_response_image_url: (this.coinForm.feeding_response_image_url || '').trim(),
+                                confession_response_image_url: (this.coinForm.confession_response_image_url || '').trim(),
+                                loan_thumbnail_url: (this.coinForm.loan_thumbnail_url || '').trim()
                             })
                         });
                         
