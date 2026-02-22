@@ -53,6 +53,14 @@ def _load_project_env() -> None:
 
 _load_project_env()
 
+
+def _resolve_discord_client_id() -> str:
+    """统一解析 Discord Client ID，兼容历史变量名。"""
+    return _strip_wrapping_quotes(
+        os.getenv("DISCORD_CLIENT_ID") or os.getenv("VITE_DISCORD_CLIENT_ID")
+    )
+
+
 app = FastAPI()
 log = logging.getLogger(__name__)
 
@@ -202,9 +210,7 @@ async def exchange_code_for_token(request: TokenRequest):
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code")
 
-    client_id = _strip_wrapping_quotes(
-        os.getenv("DISCORD_CLIENT_ID") or os.getenv("VITE_DISCORD_CLIENT_ID")
-    )
+    client_id = _resolve_discord_client_id()
     client_secret = _strip_wrapping_quotes(os.getenv("DISCORD_CLIENT_SECRET"))
     redirect_uri = _strip_wrapping_quotes(
         os.getenv("DISCORD_REDIRECT_URI") or os.getenv("DISCORD_OAUTH_REDIRECT_URI")
@@ -259,6 +265,19 @@ async def exchange_code_for_token(request: TokenRequest):
                 status_code=503,
                 detail="Service Unavailable: Cannot connect to Discord API",
             )
+
+
+@app.get("/api/config")
+async def get_public_config():
+    """
+    API: 返回前端初始化所需的公开配置（不包含敏感信息）。
+    """
+    client_id = _resolve_discord_client_id()
+    if not client_id:
+        log.error("服务器缺少 DISCORD_CLIENT_ID/VITE_DISCORD_CLIENT_ID")
+        raise HTTPException(status_code=500, detail="Server is missing Discord client id")
+
+    return JSONResponse(content={"discord_client_id": client_id})
 
 
 @app.get("/api/user")

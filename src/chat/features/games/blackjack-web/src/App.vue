@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { ref, onMounted, computed} from 'vue';
-import { DiscordSDK } from "@discord/embedded-app-sdk";
 import dialogueConfig from './dialogue.json';
 
 // --- Enums and Types ---
 type View = 'loading' | 'betting' | 'game' | 'end-game';
 type GameResult = 'win' | 'loss' | 'push' | 'blackjack';
 type DialogueKey = keyof typeof dialogueConfig;
+type PublicConfigResponse = {
+    discord_client_id?: string;
+};
 
 // --- Reactive State ---
 const currentView = ref<View>('loading');
-const loadingMessage = ref('');
+const loadingMessage = ref('加载中...');
 const progress = ref(0);
 const balance = ref(0);
 const betAmount = ref<number | null>(null);
@@ -47,9 +49,9 @@ const assetCache = new Map<string, boolean>();
 let assetsPreloaded = false;
 
 // --- Discord SDK & Environment ---
-const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
 const queryParams = new URLSearchParams(window.location.search);
 const isEmbedded = queryParams.get('frame_id') != null;
+const runtimeDiscordClientId = ref('');
 
 // --- Computed Properties ---
 const canDouble = computed(() => {
@@ -472,8 +474,23 @@ function setBetOption(value: number) {
 }
 
 // --- Initialization ---
-async function setupDiscordSdk() {
-    const discordSdk = new DiscordSDK(clientId!);
+async function fetchPublicConfig() {
+    const response = await fetch('/api/config');
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Config request failed' }));
+        throw new Error(errorData.detail || 'Failed to fetch public config');
+    }
+
+    const configData = await response.json().catch(() => ({} as PublicConfigResponse));
+    runtimeDiscordClientId.value = String(configData.discord_client_id ?? '').trim();
+}
+
+async function setupDiscordSdk(resolvedClientId: string) {
+    // 改为动态导入，避免 SDK 在模块初始化阶段异常导致整页白屏
+    const sdkModule = await import("@discord/embedded-app-sdk");
+    const DiscordSDKCtor = sdkModule.DiscordSDK;
+    const discordSdk = new DiscordSDKCtor(resolvedClientId);
+
     await discordSdk.ready();
     const { code } = await discordSdk.commands.authorize({
         client_id: discordSdk.clientId,
@@ -482,11 +499,18 @@ async function setupDiscordSdk() {
         prompt: "none",
         scope: ["identify", "guilds"],
     });
+
     const response = await fetch("/api/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
     });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "Token exchange failed" }));
+        throw new Error(errorData.detail || "Token exchange failed");
+    }
+
     const { access_token } = await response.json();
     const auth = await discordSdk.commands.authenticate({ access_token });
     if (!auth) throw new Error("Authenticate command failed");
@@ -600,9 +624,14 @@ async function main() {
     try {
         progress.value = 5;
         if (isEmbedded) {
-            console.log('[Main] Embedded environment detected. Setting up Discord SDK...');
-            if (!clientId) throw new Error("VITE_DISCORD_CLIENT_ID is not set.");
-            await setupDiscordSdk();
+            console.log('[Main] Embedded environment detected. Fetching runtime config...');
+            await fetchPublicConfig();
+            if (!runtimeDiscordClientId.value) {
+                throw new Error("DISCORD_CLIENT_ID is not set on server.");
+            }
+
+            console.log('[Main] Runtime config loaded. Setting up Discord SDK...');
+            await setupDiscordSdk(runtimeDiscordClientId.value);
             console.log('[Main] Discord SDK setup complete.');
             progress.value = 30;
             console.log('[Main] Fetching user info...');
