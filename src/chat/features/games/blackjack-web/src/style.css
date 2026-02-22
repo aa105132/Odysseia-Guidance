@@ -156,11 +156,12 @@ body {
 /* Dialogue Box adjustments */
 .dialogue-box {
   position: absolute;
-  top: 50%;
+  top: 40%;
   left: 110%; /* Right next to the dealer */
   transform: translateY(-50%);
   width: max-content;
   max-width: 200px;
+  z-index: 25;
 }
 .dialogue-box::before {
   content: '';
@@ -562,6 +563,7 @@ h2 {
     align-items: center;
     position: absolute;
     min-height: 140px;
+    z-index: 5;
   }
 
   .game-area h2 {
@@ -592,7 +594,7 @@ h2 {
 
 .position-top {
   position: absolute;
-  top: -60px; /* Let dealer head poke out */
+  top: -80px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;
@@ -600,14 +602,14 @@ h2 {
 
 .position-top-cards {
   position: absolute;
-  top: 15%;
+  top: 10%;
   left: 50%;
   transform: translateX(-50%);
 }
 
 .position-bottom {
   position: absolute;
-  bottom: 15%;
+  bottom: 5%;
   left: 50%;
   transform: translateX(-50%);
 }

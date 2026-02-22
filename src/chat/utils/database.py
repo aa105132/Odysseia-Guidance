@@ -1162,6 +1162,88 @@ class ChatDatabaseManager:
         await self._execute(self._db_transaction, query, (key, value), commit=True)
         log.info(f"已更新全局设置: {key} = {value}")
 
+    async def get_image_feedback_runtime_config(self) -> Dict[str, Any]:
+        """获取图片负反馈封禁配置（数据库优先，回退到内存默认）。"""
+        default_config = getattr(chat_config, "IMAGE_FEEDBACK_CONFIG", {}) or {}
+
+        def _parse_positive_int(raw_value: Any, fallback: int) -> int:
+            try:
+                return max(1, int(raw_value))
+            except (TypeError, ValueError):
+                return fallback
+
+        def _parse_ladder(raw_value: Any) -> List[int]:
+            parsed: List[int] = []
+            if isinstance(raw_value, str):
+                raw_iterable = raw_value.split(",")
+            elif isinstance(raw_value, (list, tuple)):
+                raw_iterable = raw_value
+            else:
+                raw_iterable = []
+
+            for item in raw_iterable:
+                try:
+                    value = int(str(item).strip())
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    parsed.append(value)
+            return parsed
+
+        default_ladder = _parse_ladder(
+            default_config.get("BAN_DURATION_LADDER_MINUTES", [10, 30, 60, 180, 720])
+        )
+        if not default_ladder:
+            default_ladder = [10, 30, 60, 180, 720]
+
+        db_enabled = await self.get_global_setting("image_feedback_enabled")
+        db_trigger_count = await self.get_global_setting(
+            "image_feedback_ban_trigger_count"
+        )
+        db_repeat_window = await self.get_global_setting(
+            "image_feedback_repeat_window_minutes"
+        )
+        db_ladder = await self.get_global_setting("image_feedback_ban_ladder_minutes")
+
+        default_enabled_raw = default_config.get("ENABLED", True)
+        if isinstance(default_enabled_raw, str):
+            default_enabled = (
+                default_enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
+            )
+        else:
+            default_enabled = bool(default_enabled_raw)
+
+        if db_enabled is None:
+            enabled = default_enabled
+        else:
+            enabled = str(db_enabled).strip().lower() in {"1", "true", "yes", "on"}
+
+        trigger_count = _parse_positive_int(
+            db_trigger_count,
+            _parse_positive_int(default_config.get("BAN_TRIGGER_COUNT", 3), 3),
+        )
+        repeat_window_minutes = _parse_positive_int(
+            db_repeat_window,
+            _parse_positive_int(default_config.get("REPEAT_WINDOW_MINUTES", 60), 60),
+        )
+
+        ladder = _parse_ladder(db_ladder)
+        if not ladder:
+            ladder = default_ladder
+
+        report_emoji_raw = default_config.get("REPORT_EMOJI", "💩")
+        report_emoji = str(report_emoji_raw).strip() if report_emoji_raw else "💩"
+        if not report_emoji:
+            report_emoji = "💩"
+
+        return {
+            "ENABLED": enabled,
+            "REPORT_EMOJI": report_emoji,
+            "BAN_TRIGGER_COUNT": trigger_count,
+            "REPEAT_WINDOW_MINUTES": repeat_window_minutes,
+            "BAN_DURATION_LADDER_MINUTES": ladder,
+        }
+
     async def get_global_chat_config(self, guild_id: int) -> Optional[sqlite3.Row]:
         """获取服务器的全局聊天配置。"""
         query = "SELECT * FROM global_chat_config WHERE guild_id = ?"
@@ -1662,7 +1744,7 @@ class ChatDatabaseManager:
         )
         last_updated_at = self._parse_utc_datetime(row["updated_at"]) if row else None
 
-        feedback_config = getattr(chat_config, "IMAGE_FEEDBACK_CONFIG", {}) or {}
+        feedback_config = await self.get_image_feedback_runtime_config()
 
         try:
             repeat_window_minutes = int(

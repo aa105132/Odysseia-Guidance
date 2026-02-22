@@ -1055,16 +1055,16 @@ onBeforeUnmount(() => {
         <div class="dealer-dialogue">{{ dealerSpeech }}</div>
       </section>
 
-      <section v-else-if="viewMode === 'single'" id="game-view">
-        <div id="game-table" class="green-table">
+      <section v-else-if="viewMode === 'single'" id="game-view" class="table-wrapper">
+        <div id="game-table" style="height: auto; min-height: 70vh;">
             <div class="toolbar-actions" style="position: absolute; top: 10px; right: 10px; z-index: 100;">
               <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回</button>
               <button :disabled="requestInFlight || !singleGame" @click="forfeitSingleGame">放弃</button>
             </div>
 
             <!-- Dealer (Top center) -->
-            <div class="position-top dealer-section">
-                <img :src="withAssetVersion('/character/normal.webp')" class="dealer-image" style="max-height: 200px" alt="荷官" />
+            <div id="game-dealer-section" class="dealer-section">
+                <img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" class="dealer-image" alt="荷官" />
                 <div v-if="dealerSpeech" class="dialogue-box">
                     <p>{{ dealerSpeech }}</p>
                 </div>
@@ -1085,21 +1085,32 @@ onBeforeUnmount(() => {
                     <img v-for="(card, index) in singleGame?.player_hand || []" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
                 </TransitionGroup>
                 
-                <div class="player-info-tag">
-                    余额：{{ profile?.balance ?? 0 }} &nbsp;|&nbsp; 下注：{{ singleGame?.bet_amount ?? 0 }}
-                    <span v-if="singleResultText"> &nbsp;|&nbsp; 结果: {{singleResultText}}</span>
-                </div>
-
-                <!-- Controls -->
-                <div id="controls" style="margin-top: 10px;">
-                    <div v-if="!singleGame || !canSingleOperate" style="margin-bottom: 5px;">
-                        <input v-model.number="singleBetInput" type="number" min="1" placeholder="输入赌注" :disabled="requestInFlight">
-                        <button :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">{{ singleGame ? "再来一局" : "下注" }}</button>
+                <div id="betting-area" style="margin-top: 10px;">
+                    <div class="balance-text">
+                        你的余额: <span>{{ profile?.balance ?? 0 }}</span>
+                        <span v-if="singleGame"> | 下注: <span>{{ singleGame?.bet_amount ?? 0 }}</span></span>
+                        <span v-if="singleResultText"> | 结果: {{singleResultText}}</span>
                     </div>
-                    <div v-if="canSingleOperate">
-                        <button @click="singleHit" :disabled="requestInFlight">要牌</button>
-                        <button @click="singleStand" :disabled="requestInFlight">停牌</button>
-                        <button @click="singleDouble" :disabled="requestInFlight || !canSingleDouble">双倍</button>
+
+                    <!-- Controls -->
+                    <div id="controls" style="margin-top: 10px;">
+                        <div v-if="!singleGame || !canSingleOperate" id="betting-controls">
+                            <div id="manual-bet-container">
+                                <input v-model.number="singleBetInput" type="number" min="1" placeholder="输入赌注" :disabled="requestInFlight">
+                                <button :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">{{ singleGame ? "再来一局" : "下注" }}</button>
+                            </div>
+                            <div id="bet-options-container" v-if="!singleGame || !canSingleOperate">
+                                <button class="bet-option-button" @click="singleBetInput = Math.max(10, Math.floor((profile?.balance || 0) * 0.05))" :disabled="requestInFlight">小 ({{Math.max(10, Math.floor((profile?.balance || 0) * 0.05))}})</button>
+                                <button class="bet-option-button" @click="singleBetInput = Math.max(50, Math.floor((profile?.balance || 0) * 0.15))" :disabled="requestInFlight">中 ({{Math.max(50, Math.floor((profile?.balance || 0) * 0.15))}})</button>
+                                <button class="bet-option-button" @click="singleBetInput = Math.max(100, Math.floor((profile?.balance || 0) * 0.30))" :disabled="requestInFlight">大 ({{Math.max(100, Math.floor((profile?.balance || 0) * 0.30))}})</button>
+                                <button class="bet-option-button" @click="singleBetInput = profile?.balance || 0" :disabled="requestInFlight">梭哈 ({{profile?.balance || 0}})</button>
+                            </div>
+                        </div>
+                        <div v-if="canSingleOperate" style="display:flex; justify-content:center; gap: 10px;">
+                            <button @click="singleHit" class="primary" :disabled="requestInFlight">要牌</button>
+                            <button @click="singleStand" :disabled="requestInFlight">停牌</button>
+                            <button @click="singleDouble" class="primary" :disabled="requestInFlight || !canSingleDouble">双倍</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1150,8 +1161,8 @@ onBeforeUnmount(() => {
         <div class="dealer-dialogue">{{ dealerSpeech }}</div>
       </section>
 
-      <section v-else-if="viewMode === 'table' && roomState" id="game-view">
-        <div id="game-table" class="green-table">
+      <section v-else-if="viewMode === 'table' && roomState" id="game-view" class="table-wrapper">
+        <div id="game-table" class="green-table" style="height: auto; min-height: 70vh;">
           <div class="toolbar-actions" style="position: absolute; top: 10px; left: 10px; z-index: 100;">
             <button :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
             <button :disabled="requestInFlight" @click="leaveRoom">离开房间</button>
@@ -1161,13 +1172,13 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- Dealer -->
-          <div class="position-top dealer-section">
-              <img :src="dealerAvatarSrc" class="dealer-image" style="max-height: 200px" alt="荷官" />
+          <div id="game-dealer-section" class="dealer-section">
+              <img :src="dealerAvatarSrc" class="dealer-image" alt="荷官" />
               <div v-if="dealerSpeech" class="dialogue-box">
                   <p>{{ dealerSpeech }}</p>
               </div>
           </div>
-          <div class="game-area position-top-cards">
+          <div class="game-area position-top-cards" style="position:absolute; top: 5%; left: 50%; transform: translateX(-50%);">
               <h2>月月 (<span>{{ dealer?.score ?? 0 }}</span>)</h2>
               <TransitionGroup name="card" tag="div" class="hand">
                   <img v-for="(card, idx) in dealer?.hand || []" :key="`dealer-${idx}-${card}`" :src="cardImageSrc(card)" class="card">
@@ -1176,7 +1187,7 @@ onBeforeUnmount(() => {
 
           <!-- Players distributed left, bottom, right -->
           <!-- Left Player (Seat 0) -->
-          <div class="game-area position-left" :class="{'empty-seat-area': !seatPlayerMap[0]}">
+          <div class="game-area position-left" :class="{'empty-seat-area': !seatPlayerMap[0]}" style="position:absolute; top: 40%; left: 5%; transform: translateY(-50%);">
               <div v-if="seatPlayerMap[0]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[0]?.is_current_turn}">
                   {{ seatPlayerMap[0]?.username }} ({{ seatPlayerMap[0]?.score ?? 0 }})
                   <br>下注: {{ seatPlayerMap[0]?.bet_amount ?? 0 }}
@@ -1184,26 +1195,35 @@ onBeforeUnmount(() => {
                   <span v-if="roomState.state === 'waiting'"><br>{{ seatPlayerMap[0]?.is_ready ? '已准备' : '未准备' }}</span>
               </div>
               <div v-else class="player-info-tag">空位</div>
-              <TransitionGroup v-if="seatPlayerMap[0]" name="card" tag="div" class="hand" style="flex-direction: column;">
+              <TransitionGroup v-if="seatPlayerMap[0]" name="card" tag="div" class="hand" style="flex-direction: column; min-height: unset;">
                   <img v-for="(card, idx) in seatPlayerMap[0]?.hand || []" :key="`p0-${idx}-${card}`" :src="cardImageSrc(card)" class="card" style="margin-top: -80px; margin-left: 0;">
               </TransitionGroup>
           </div>
 
           <!-- Bottom Player (Seat 1 - usually viewer) -->
-          <div class="game-area position-bottom" :class="{'empty-seat-area': !seatPlayerMap[1]}">
+          <div class="game-area position-bottom" :class="{'empty-seat-area': !seatPlayerMap[1]}" style="position:absolute; bottom: 15%; left: 50%; transform: translateX(-50%);">
               <h2><span v-if="seatPlayerMap[1]">{{ seatPlayerMap[1]?.username }}</span><span v-else>空位</span> (<span v-if="seatPlayerMap[1]">{{ seatPlayerMap[1]?.score ?? 0 }}</span><span v-else>0</span>)</h2>
               <TransitionGroup v-if="seatPlayerMap[1]" name="card" tag="div" class="hand">
                   <img v-for="(card, idx) in seatPlayerMap[1]?.hand || []" :key="`p1-${idx}-${card}`" :src="cardImageSrc(card)" class="card">
               </TransitionGroup>
-              <div v-if="seatPlayerMap[1]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[1]?.is_current_turn}">
+              <div v-if="seatPlayerMap[1]" class="balance-text" :class="{'turn-active': seatPlayerMap[1]?.is_current_turn}" style="font-size: 1.2em; padding: 5px 20px; margin: 10px 0;">
                   <span v-if="Number(seatPlayerMap[1]?.user_id) === viewerUserId">余额：{{ profile?.balance ?? 0 }} | </span>下注: {{ seatPlayerMap[1]?.bet_amount ?? 0 }}
                   <span v-if="seatPlayerMap[1]?.result"> | {{ getPlayerResultText(seatPlayerMap[1]!) }}</span>
                   <span v-if="roomState.state === 'waiting'"> | {{ seatPlayerMap[1]?.is_ready ? '已准备' : '未准备' }}</span>
               </div>
           </div>
+          
+          <div v-if="roomState.state === 'waiting' && !viewerPlayer?.is_ready && viewerPlayer" class="multi-controls" style="bottom: 8%;">
+              <div id="bet-options-container">
+                  <button class="bet-option-button" @click="betInput = Math.max(10, Math.floor((profile?.balance || 0) * 0.05))" :disabled="requestInFlight">小</button>
+                  <button class="bet-option-button" @click="betInput = Math.max(50, Math.floor((profile?.balance || 0) * 0.15))" :disabled="requestInFlight">中</button>
+                  <button class="bet-option-button" @click="betInput = Math.max(100, Math.floor((profile?.balance || 0) * 0.30))" :disabled="requestInFlight">大</button>
+                  <button class="bet-option-button" @click="betInput = profile?.balance || 0" :disabled="requestInFlight">梭哈</button>
+              </div>
+          </div>
 
           <!-- Right Player (Seat 2) -->
-          <div class="game-area position-right" :class="{'empty-seat-area': !seatPlayerMap[2]}">
+          <div class="game-area position-right" :class="{'empty-seat-area': !seatPlayerMap[2]}" style="position:absolute; top: 40%; right: 5%; transform: translateY(-50%);">
               <div v-if="seatPlayerMap[2]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[2]?.is_current_turn}">
                   {{ seatPlayerMap[2]?.username }} ({{ seatPlayerMap[2]?.score ?? 0 }})
                   <br>下注: {{ seatPlayerMap[2]?.bet_amount ?? 0 }}
@@ -1211,7 +1231,7 @@ onBeforeUnmount(() => {
                   <span v-if="roomState.state === 'waiting'"><br>{{ seatPlayerMap[2]?.is_ready ? '已准备' : '未准备' }}</span>
               </div>
               <div v-else class="player-info-tag">空位</div>
-              <TransitionGroup v-if="seatPlayerMap[2]" name="card" tag="div" class="hand" style="flex-direction: column;">
+              <TransitionGroup v-if="seatPlayerMap[2]" name="card" tag="div" class="hand" style="flex-direction: column; min-height: unset;">
                   <img v-for="(card, idx) in seatPlayerMap[2]?.hand || []" :key="`p2-${idx}-${card}`" :src="cardImageSrc(card)" class="card" style="margin-top: -80px; margin-left: 0;">
               </TransitionGroup>
           </div>

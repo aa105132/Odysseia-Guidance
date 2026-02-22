@@ -13,7 +13,6 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
-from src.chat.config import chat_config
 from src.chat.utils.database import chat_db_manager
 
 log = logging.getLogger(__name__)
@@ -26,8 +25,8 @@ class ImageFeedbackCog(commands.Cog):
         self.bot = bot
 
     @staticmethod
-    def _get_feedback_config() -> dict:
-        return getattr(chat_config, "IMAGE_FEEDBACK_CONFIG", {}) or {}
+    async def _get_feedback_config() -> dict:
+        return await chat_db_manager.get_image_feedback_runtime_config()
 
     @staticmethod
     def _is_feedback_enabled(feedback_config: dict) -> bool:
@@ -76,7 +75,7 @@ class ImageFeedbackCog(commands.Cog):
             return
 
         # 2) 检查功能开关并处理目标反馈 emoji
-        feedback_config = self._get_feedback_config()
+        feedback_config = await self._get_feedback_config()
         if not self._is_feedback_enabled(feedback_config):
             return
 
