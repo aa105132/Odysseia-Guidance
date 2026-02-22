@@ -1254,13 +1254,22 @@ async def generate_image_novelai(
 
     # 发送预告消息
     channel = kwargs.get("channel")
-    if channel and preview_message:
+    current_turn_tool_names = {
+        str(name).strip().lower()
+        for name in (kwargs.get("current_turn_tool_names") or [])
+        if str(name).strip()
+    }
+    suppress_preview_message = "generate_voice" in current_turn_tool_names
+
+    if channel and preview_message and not suppress_preview_message:
         try:
             processed_message = replace_emojis(preview_message)
             await channel.send(processed_message)
             log.info(f"已发送 NovelAI 图片生成预告消息")
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
+    elif channel and preview_message and suppress_preview_message:
+        log.info("检测到同轮包含 generate_voice，已跳过 NovelAI 图片生成预告消息。")
 
     try:
         # 验证尺寸参数

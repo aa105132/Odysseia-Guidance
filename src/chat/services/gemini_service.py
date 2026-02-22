@@ -1781,6 +1781,12 @@ class GeminiService:
             if log_detailed:
                 log.info(f"准备执行 {len(function_calls)} 个工具调用...")
 
+            current_turn_tool_names = [
+                str(call.name).strip()
+                for call in function_calls
+                if call and getattr(call, "name", None)
+            ]
+
             tool_result_parts = []
             prepared_results: List[Any] = []
             coroutine_indices: List[int] = []
@@ -1840,6 +1846,7 @@ class GeminiService:
                         log_detailed=log_detailed,
                         message=discord_message,
                         user_id_for_settings=user_id_for_settings,
+                        current_turn_tool_names=current_turn_tool_names,
                     )
                 )
                 coroutine_indices.append(len(prepared_results) - 1)
@@ -2412,6 +2419,12 @@ class GeminiService:
                         }
                     )
 
+                    current_turn_tool_names = [
+                        str(call.get("function", {}).get("name", "")).strip()
+                        for call in tool_calls
+                        if str(call.get("function", {}).get("name", "")).strip()
+                    ]
+
                     # 执行每个工具调用
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name", "")
@@ -2463,6 +2476,7 @@ class GeminiService:
                                     channel=channel,
                                     user_id=user_id,
                                     discord_message=discord_message,
+                                    current_turn_tool_names=current_turn_tool_names,
                                 )
                         else:
                             tool_result = await self._execute_openai_tool_call(
@@ -2471,6 +2485,7 @@ class GeminiService:
                                 channel=channel,
                                 user_id=user_id,
                                 discord_message=discord_message,
+                                current_turn_tool_names=current_turn_tool_names,
                             )
 
                         # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
@@ -2634,6 +2649,7 @@ class GeminiService:
         channel: Optional[Any] = None,
         user_id: Optional[int] = None,
         discord_message: Optional[Any] = None,
+        current_turn_tool_names: Optional[List[str]] = None,
     ) -> Any:
         """
         执行 OpenAI 格式的工具调用。
@@ -2653,6 +2669,12 @@ class GeminiService:
                 tool_args["channel"] = channel
             if discord_message is not None:
                 tool_args["message"] = discord_message
+            if current_turn_tool_names is not None:
+                tool_args["current_turn_tool_names"] = [
+                    str(name).strip()
+                    for name in current_turn_tool_names
+                    if str(name).strip()
+                ]
             
             # 执行工具
             result = await tool_function(**tool_args)

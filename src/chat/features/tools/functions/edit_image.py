@@ -490,7 +490,13 @@ async def edit_image(
     
     # 发送预告消息并保存消息引用
     preview_msg: Optional[discord.Message] = None
-    if channel and preview_message:
+    current_turn_tool_names = {
+        str(name).strip().lower()
+        for name in (kwargs.get('current_turn_tool_names') or [])
+        if str(name).strip()
+    }
+    suppress_preview_message = 'generate_voice' in current_turn_tool_names
+    if channel and preview_message and not suppress_preview_message:
         try:
             # 替换表情占位符为实际表情
             processed_message = replace_emojis(preview_message)

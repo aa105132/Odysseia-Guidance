@@ -99,17 +99,27 @@ body {
 }
 
 /* --- NEW: Generic Dealer Styles --- */
+/* Betting and Game View Dealers (PC) */
+#betting-dealer-section,
+#game-dealer-section {
+  position: fixed;
+  bottom: 0;
+  right: 20px;
+  width: 300px;
+  height: 360px;
+  z-index: 10;
+}
+
 .dealer-section {
   display: flex;
   justify-content: center;
   align-items: flex-end;
   position: relative;
-  height: 200px;
 }
 
 .dealer-image {
-  max-width: 200px;
-  max-height: 200px;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
   filter: drop-shadow(0 0 10px rgba(0, 0, 0, 0.5));
   /* 呼吸动画：让看板娘更有生气 */
@@ -158,7 +168,7 @@ body {
 .dialogue-box {
   position: absolute;
   top: 40%;
-  left: 110%; /* Right next to the dealer */
+  left: -120%; /* Left of the dealer */
   transform: translateY(-50%);
   width: max-content;
   max-width: 200px;
@@ -167,12 +177,13 @@ body {
 .dialogue-box::before {
   content: '';
   position: absolute;
-  left: -10px;
+  right: -10px; /* Pointing right */
+  left: auto;
   top: 50%;
   transform: translateY(-50%);
-  border-width: 5px 10px 5px 0;
+  border-width: 5px 0 5px 10px;
   border-style: solid;
-  border-color: transparent #dcd0c0 transparent transparent;
+  border-color: transparent transparent transparent #dcd0c0;
 }
 .dialogue-box::before {
   content: '';
@@ -604,6 +615,30 @@ h2 {
   min-height: 500px;
 }
 
+.position-top {
+  position: absolute;
+  top: 0px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+}
+
+.position-top-cards {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+}
+
+.position-bottom {
+  position: absolute;
+  bottom: 5%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+}
+
 .position-left {
   position: absolute;
   top: 50%;
@@ -672,32 +707,35 @@ h2 {
 }
 
 .game-area h2 {
-  margin-bottom: 10px;
+  grid-column: 1 / 2;
+  margin-bottom: 0;
+  border: none !important;
+  padding: 0 10px 0 0;
+  justify-self: end;
+  text-align: right;
   font-size: 1.2em;
-  opacity: 0.9;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  padding-bottom: 5px;
-  display: inline-block;
-  min-width: 150px;
+  display: flex;
+  align-items: center;
+  height: 100px;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
 }
 
 .hand {
-  display: flex;
+  grid-column: 2 / 3;
+  margin: 0;
+  min-height: auto;
   justify-content: center;
+  display: flex;
   align-items: center;
-  /* 移除背景、圆角和内边距，使其透明 */
   background-color: transparent;
   border-radius: 0;
-  margin: 0;
-  /* 移除垂直边距 */
   padding: 0;
   flex-wrap: wrap;
-  min-height: 100px;
-  /* 进一步减小最小高度 */
   max-width: 100%;
   box-sizing: border-box;
   position: relative;
-  /* 为动画定位 */
 }
 
 .card {

@@ -77,6 +77,7 @@ class ToolService:
         log_detailed: bool = False,
         message: Optional[discord.Message] = None,
         user_id_for_settings: Optional[str] = None,
+        current_turn_tool_names: Optional[List[str]] = None,
     ) -> types.Part:
         """
         执行单个工具调用，并以可发送回 Gemini 模型的格式返回结果。
@@ -88,6 +89,7 @@ class ToolService:
             user_id: 可选的当前消息作者的 Discord ID，用作某些参数的备用值。
             log_detailed: 是否记录详细日志。
             user_id_for_settings: 用于检查工具设置的用户ID（通常是帖子所有者的ID）。
+            current_turn_tool_names: 当前这轮模型计划执行的工具名列表。
 
         Returns:
             一个格式化为 FunctionResponse 的 Part 对象，其中包含工具的输出。
@@ -198,6 +200,24 @@ class ToolService:
                 tool_args["message"] = message
                 if log_detailed:
                     log.info(f"已注入 'message' (ID: {message.id}) 到 **kwargs。")
+
+            supports_kwargs = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in sig.parameters.values()
+            )
+            if current_turn_tool_names is not None and (
+                "current_turn_tool_names" in sig.parameters or supports_kwargs
+            ):
+                tool_args["current_turn_tool_names"] = [
+                    str(name).strip()
+                    for name in current_turn_tool_names
+                    if str(name).strip()
+                ]
+                if log_detailed:
+                    log.info(
+                        "已注入 'current_turn_tool_names': "
+                        f"{tool_args['current_turn_tool_names']}"
+                    )
 
             # 步骤 4: 智能地传递 log_detailed 参数
             if "log_detailed" in sig.parameters:

@@ -200,7 +200,14 @@ async def generate_image(
     # 发送预告消息（先回复用户，使用 LLM 生成的消息）并保存消息引用
     channel = kwargs.get("channel")
     preview_msg: Optional[discord.Message] = None
-    if channel and preview_message:
+    current_turn_tool_names = {
+        str(name).strip().lower()
+        for name in (kwargs.get('current_turn_tool_names') or [])
+        if str(name).strip()
+    }
+    suppress_preview_message = 'generate_voice' in current_turn_tool_names
+
+    if channel and preview_message and not suppress_preview_message:
         try:
             # 替换表情占位符为实际表情
             processed_message = replace_emojis(preview_message)
@@ -558,12 +565,21 @@ async def generate_images_batch(
     
     # 发送预告消息并保存消息引用
     preview_msg: Optional[discord.Message] = None
-    if channel and preview_message:
+    current_turn_tool_names = {
+        str(name).strip().lower()
+        for name in (kwargs.get("current_turn_tool_names") or [])
+        if str(name).strip()
+    }
+    suppress_preview_message = "generate_voice" in current_turn_tool_names
+
+    if channel and preview_message and not suppress_preview_message:
         try:
             processed_message = replace_emojis(preview_message)
             preview_msg = await channel.send(processed_message)
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
+    elif channel and preview_message and suppress_preview_message:
+        log.info("检测到同轮包含 generate_voice，已跳过 Imagen 图片生成预告消息。")
     
     try:
         # 验证宽高比
