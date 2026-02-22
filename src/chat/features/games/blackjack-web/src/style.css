@@ -157,8 +157,9 @@ body {
 /* Dialogue Box adjustments */
 .dialogue-box {
   position: absolute;
-  top: 30px;
-  left: 80%; /* Right next to the dealer */
+  top: 40%;
+  left: 110%; /* Right next to the dealer */
+  transform: translateY(-50%);
   width: max-content;
   max-width: 200px;
   z-index: 25;
@@ -173,13 +174,24 @@ body {
   border-style: solid;
   border-color: transparent #dcd0c0 transparent transparent;
 }
+.dialogue-box::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 5px 10px 5px 0;
+  border-style: solid;
+  border-color: transparent #dcd0c0 transparent transparent;
+}
 
 .game-area {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  /* 移除固定的min-height，让其由内容决定 */
+  min-height: 140px;
+  position: relative;
+  margin-bottom: 10px;
 }
 
 /* --- 诊断模式 --- */
@@ -556,7 +568,7 @@ h2 {
     display: none;
   }
 
-  /* PC端布局重构：适应散落布局 */
+  /* PC端布局重构：横向排列标题和卡牌，解决垂直重叠问题 */
   .game-area {
     display: flex;
     flex-direction: column;
@@ -592,29 +604,20 @@ h2 {
   min-height: 500px;
 }
 
-.position-top {
+.position-left {
   position: absolute;
-  top: 0px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
+  top: 50%;
+  left: 5%;
+  transform: translateY(-50%);
 }
 
-.position-top-cards {
+.position-right {
   position: absolute;
-  top: 30%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 100%;
+  top: 50%;
+  right: 5%;
+  transform: translateY(-50%);
 }
 
-.position-bottom {
-  position: absolute;
-  bottom: 5%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 100%;
-}
 
 .position-left {
   position: absolute;

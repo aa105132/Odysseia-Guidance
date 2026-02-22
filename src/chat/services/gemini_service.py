@@ -774,23 +774,134 @@ class GeminiService:
         return payload
 
     @staticmethod
+    def _build_openai_image_content_parts(
+        images: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        """构建 OpenAI 兼容消息中的图片 content parts。"""
+        if not images:
+            return []
+
+        max_images = app_config.IMAGE_PROCESSING_CONFIG.get("MAX_IMAGES_PER_MESSAGE", 9)
+        parts: List[Dict[str, Any]] = []
+
+        for img_data in images[:max_images]:
+            try:
+                img_bytes = img_data.get("data") or img_data.get("bytes")
+                if not img_bytes:
+                    continue
+
+                mime_type = str(img_data.get("mime_type") or "image/png").strip() or "image/png"
+                img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{img_base64}"
+                        },
+                    }
+                )
+            except Exception as e:
+                log.warning(f"构建 OpenAI 图片 part 失败，已跳过该图片: {e}")
+
+        return parts
+
+    @staticmethod
+    def _build_gemini_parts_from_images(
+        images: Optional[List[Dict[str, Any]]],
+    ) -> List[types.Part]:
+        """构建 Gemini SDK 的图片 parts，支持 GIF 拆帧。"""
+        if not images:
+            return []
+
+        max_images = app_config.IMAGE_PROCESSING_CONFIG.get("MAX_IMAGES_PER_MESSAGE", 9)
+        max_gif_frames = app_config.IMAGE_PROCESSING_CONFIG.get("GIF_MAX_FRAMES", 4)
+        parts: List[types.Part] = []
+
+        for idx, img_data in enumerate(images[:max_images], start=1):
+            try:
+                img_bytes = img_data.get("data") or img_data.get("bytes")
+                if not img_bytes:
+                    continue
+
+                mime_type = str(img_data.get("mime_type") or "image/png").strip() or "image/png"
+                frames, frame_meta = extract_image_frames_for_ai(
+                    image_bytes=img_bytes,
+                    mime_type=mime_type,
+                    max_gif_frames=max_gif_frames,
+                )
+
+                if frame_meta.get("is_animated"):
+                    sampled_frames = frame_meta.get("sampled_frames", len(frames))
+                    total_frames = frame_meta.get("total_frames", len(frames))
+                    parts.append(
+                        types.Part(
+                            text=(
+                                f"参考图{idx}为GIF，已抽取关键帧 {sampled_frames}/{total_frames} 参与分析。"
+                            )
+                        )
+                    )
+
+                for frame in frames:
+                    with io.BytesIO() as output_buffer:
+                        frame.save(output_buffer, format="PNG")
+                        frame_bytes = output_buffer.getvalue()
+                    parts.append(
+                        types.Part(
+                            inline_data=types.Blob(
+                                mime_type="image/png",
+                                data=frame_bytes,
+                            )
+                        )
+                    )
+            except Exception as e:
+                log.warning(f"构建 Gemini 图片 part 失败，已跳过第 {idx} 张参考图: {e}")
+
+        return parts
+
+    @staticmethod
     def _build_gemini_contents_from_messages(
         messages: List[Dict[str, str]],
+        images: Optional[List[Dict[str, Any]]] = None,
     ) -> List[types.Content]:
         """将 messages 列表转换为 Gemini SDK 的 Contents 列表。
         messages 格式: [{"role": "user"|"model", "content": "..."}]
         """
         contents = []
-        for msg in messages:
+        target_user_index: Optional[int] = None
+        if images:
+            for idx in range(len(messages) - 1, -1, -1):
+                role = messages[idx].get("role", "user")
+                if role == "user":
+                    target_user_index = idx
+                    break
+            if target_user_index is None and messages:
+                target_user_index = len(messages) - 1
+
+        for msg_index, msg in enumerate(messages):
             role = msg.get("role", "user")
             # 将 "assistant" 映射为 Gemini 的 "model"
             if role == "assistant":
                 role = "model"
             content_text = msg.get("content", "")
+
+            parts: List[types.Part] = []
+            if content_text:
+                parts.append(types.Part(text=content_text))
+
+            if (
+                images
+                and target_user_index is not None
+                and msg_index == target_user_index
+            ):
+                parts.extend(GeminiService._build_gemini_parts_from_images(images))
+
+            if not parts:
+                parts = [types.Part(text="")]
+
             contents.append(
                 types.Content(
                     role=role,
-                    parts=[types.Part(text=content_text)],
+                    parts=parts,
                 )
             )
         return contents
@@ -802,6 +913,7 @@ class GeminiService:
         prompt: str,
         generation_config: Dict[str, Any],
         messages: Optional[List[Dict[str, str]]] = None,
+        images: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
         loop = asyncio.get_event_loop()
         gen_config_data = copy.deepcopy(generation_config)
@@ -817,8 +929,19 @@ class GeminiService:
 
         # 构建 contents：优先使用 messages（多轮预填充），否则回退到单个 prompt
         if messages:
-            contents = self._build_gemini_contents_from_messages(messages)
+            contents = self._build_gemini_contents_from_messages(
+                messages,
+                images=images,
+            )
             log.debug(f"_generate_sync_content_with_param_fallback 使用多轮 messages ({len(messages)} 条)")
+        elif images:
+            prompt_parts: List[types.Part] = []
+            if prompt:
+                prompt_parts.append(types.Part(text=prompt))
+            prompt_parts.extend(self._build_gemini_parts_from_images(images))
+            if not prompt_parts:
+                prompt_parts = [types.Part(text="请根据参考图生成结果。")]
+            contents = [types.Content(role="user", parts=prompt_parts)]
         else:
             contents = [prompt]
 
@@ -2789,6 +2912,7 @@ class GeminiService:
         api_url: Optional[str] = None,
         api_key: Optional[str] = None,
         api_format: Optional[str] = None,
+        images: Optional[List[Dict[str, Any]]] = None,
         return_error_text: bool = True,
     ) -> Optional[str]:
         """
@@ -2806,6 +2930,8 @@ class GeminiService:
             messages: (可选) 多轮对话消息列表，格式为 [{"role": "user"|"model"|"assistant", "content": "..."}]。
                       当提供此参数时，将使用多轮对话模式，支持预填充上下文（如限制解除对话）。
                       Gemini SDK 使用 role="user"/"model"，OpenAI 兼容 API 自动映射 "model"->"assistant"。
+            images: (可选) 参考图片列表，格式为 [{"data"|"bytes": 图片字节, "mime_type": "image/png"}]。
+                    当提供时会作为多模态输入附加到最后一条用户消息（或单轮 prompt）。
             api_url: (可选) 覆盖默认 API URL。常用于特定功能使用独立 LLM 端点。
             api_key: (可选) 覆盖默认 API Key。留空则沿用主配置。
             api_format: (可选) 覆盖 API 格式，仅支持 "gemini"/"openai"。留空则沿用主配置。
@@ -2897,6 +3023,7 @@ class GeminiService:
                 api_url=resolved_api_url,
                 api_key=resolved_api_key,
                 messages=messages,
+                images=images,
                 return_error_text=return_error_text,
             )
         
@@ -2910,6 +3037,7 @@ class GeminiService:
                 api_url=resolved_api_url,
                 api_key=resolved_api_key,
                 messages=messages,
+                images=images,
                 return_error_text=return_error_text,
             )
         
@@ -2920,6 +3048,7 @@ class GeminiService:
             generation_config=generation_config,
             model_name=final_model_name,
             messages=messages,
+            images=images,
             return_error_text=return_error_text,
         )
     
@@ -2931,6 +3060,7 @@ class GeminiService:
         api_url: str,
         api_key: str,
         messages: Optional[List[Dict[str, str]]] = None,
+        images: Optional[List[Dict[str, Any]]] = None,
         return_error_text: bool = True,
     ) -> Optional[str]:
         """
@@ -2948,6 +3078,7 @@ class GeminiService:
                 prompt=prompt,
                 generation_config=generation_config,
                 messages=messages,
+                images=images,
             )
 
             if response.parts:
@@ -2974,6 +3105,7 @@ class GeminiService:
         model_name: str,
         client: Any = None,
         messages: Optional[List[Dict[str, str]]] = None,
+        images: Optional[List[Dict[str, Any]]] = None,
         return_error_text: bool = True,
     ) -> Optional[str]:
         """
@@ -2989,6 +3121,7 @@ class GeminiService:
             prompt=prompt,
             generation_config=generation_config,
             messages=messages,
+            images=images,
         )
 
         if response.parts:
@@ -3010,6 +3143,7 @@ class GeminiService:
         api_url: str,
         api_key: str,
         messages: Optional[List[Dict[str, str]]] = None,
+        images: Optional[List[Dict[str, Any]]] = None,
         return_error_text: bool = True,
     ) -> Optional[str]:
         """
@@ -3033,6 +3167,30 @@ class GeminiService:
             openai_messages = [
                 {"role": "user", "content": prompt}
             ]
+
+        image_content_parts = self._build_openai_image_content_parts(images)
+        if image_content_parts:
+            target_index: Optional[int] = None
+            for idx in range(len(openai_messages) - 1, -1, -1):
+                if openai_messages[idx].get("role") == "user":
+                    target_index = idx
+                    break
+
+            if target_index is None:
+                openai_messages.append({"role": "user", "content": []})
+                target_index = len(openai_messages) - 1
+
+            existing_content = openai_messages[target_index].get("content", "")
+            if isinstance(existing_content, list):
+                merged_content = list(existing_content)
+            else:
+                merged_content = []
+                text_content = str(existing_content or "").strip()
+                if text_content:
+                    merged_content.append({"type": "text", "text": text_content})
+
+            merged_content.extend(image_content_parts)
+            openai_messages[target_index]["content"] = merged_content
         
         headers = {
             "Authorization": f"Bearer {api_key}",

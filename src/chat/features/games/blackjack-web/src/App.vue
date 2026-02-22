@@ -1070,7 +1070,7 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Dealer Cards -->
-            <div class="game-area position-top-cards">
+            <div class="game-area position-top-cards" style="flex-direction: column;">
                 <h2>月月 (<span>{{ singleGame?.dealer_score ?? 0 }}</span>)</h2>
                 <TransitionGroup name="card" tag="div" class="hand">
                     <img v-for="(card, index) in singleGame?.dealer_hand || []" :key="'dealer-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
@@ -1078,13 +1078,13 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Player (Bottom center) -->
-            <div class="game-area position-bottom">
+            <div class="game-area position-bottom" style="flex-direction: column;">
                 <h2>玩家 (<span>{{ singleGame?.player_score ?? 0 }}</span>)</h2>
                 <TransitionGroup name="card" tag="div" class="hand">
                     <img v-for="(card, index) in singleGame?.player_hand || []" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
                 </TransitionGroup>
                 
-                <div id="betting-area" style="margin-top: 10px;">
+                <div id="betting-area" style="margin-top: 10px; width: 100%;">
                     <div class="balance-text">
                         你的余额: <span>{{ profile?.balance ?? 0 }}</span>
                         <span v-if="singleGame"> | 下注: <span>{{ singleGame?.bet_amount ?? 0 }}</span></span>

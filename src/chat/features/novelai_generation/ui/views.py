@@ -96,8 +96,9 @@ async def _convert_tag_prompt_to_imagen_prompt(prompt: str, force_rewrite: bool 
                 "你是图像提示词转换助手。请把下面的 Danbooru 标签串转换为适配 Gemini Imagen 的简体中文自然语言提示词。"
                 "要求：\n"
                 "1) 只输出最终中文提示词，不要解释。\n"
-                "2) 保留关键主体、服饰、场景、光影、构图、氛围。\n"
-                "3) 不要输出英文标签列表，不要输出多段。\n\n"
+                "2) 保留并准确传达原标签中的主体、身份、服饰、场景、动作、构图、光影、氛围，不得篡改。\n"
+                "3) 仅可在不改变语义的前提下做细化补充。\n"
+                "4) 不要输出英文标签列表，不要输出多段。\n\n"
                 f"标签串：{prompt}"
             ),
         }
@@ -139,7 +140,7 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: b
         converted = await gemini_service.generate_simple_response(
             prompt="",
             generation_config={
-                "temperature": 0.7,
+                "temperature": 0.45,
                 "max_output_tokens": NOVELAI_PROMPT_MAX_OUTPUT_TOKENS,
             },
             messages=tag_messages,
@@ -841,7 +842,7 @@ class NovelAIDrawPanel(discord.ui.View):
                 tags = await gemini_service.generate_simple_response(
                     prompt="",  # messages 模式下 prompt 被忽略
                     generation_config={
-                        "temperature": 0.7,
+                        "temperature": 0.45,
                         "max_output_tokens": NOVELAI_PROMPT_MAX_OUTPUT_TOKENS,
                     },
                     messages=prefill_messages,
@@ -1530,7 +1531,7 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
         try:
-            description = self.description_input.value.strip() if self.description_input.value else "自动优化和增强提示词，使画面更精美细腻"
+            description = self.description_input.value.strip() if self.description_input.value else "在不改变原始设定与用户意图的前提下，细化画面细节、光影和层次"
 
             # 调用 AI 重写 prompt
             from src.chat.services.gemini_service import gemini_service
@@ -1543,7 +1544,7 @@ class AIRewriteDescriptionModal(discord.ui.Modal, title="AI 重写提示词"):
             new_tags = await gemini_service.generate_simple_response(
                 prompt="",  # messages 模式下 prompt 被忽略
                 generation_config={
-                    "temperature": 0.8,
+                    "temperature": 0.45,
                     "max_output_tokens": NOVELAI_PROMPT_MAX_OUTPUT_TOKENS,
                 },
                 messages=rewrite_messages,

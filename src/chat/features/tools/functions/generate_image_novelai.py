@@ -21,7 +21,7 @@ import io
 import random
 import re
 import discord
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 from src.chat.utils.prompt_utils import replace_emojis
 from src.chat.config.chat_config import NOVELAI_CONFIG
@@ -100,8 +100,9 @@ async def _convert_tag_prompt_to_imagen_prompt(prompt: str, force_rewrite: bool 
                 "你是图像提示词转换助手。请把下面的 Danbooru 标签串转换为适配 Gemini Imagen 的简体中文自然语言提示词。"
                 "要求：\n"
                 "1) 只输出最终中文提示词，不要解释。\n"
-                "2) 保留关键主体、服饰、场景、光影、构图、氛围。\n"
-                "3) 不要输出英文标签列表，不要输出多段。\n\n"
+                "2) 保留并准确传达原标签中的主体、身份、服饰、场景、动作、构图、光影、氛围，不得篡改。\n"
+                "3) 仅可在不改变语义的前提下做细化补充。\n"
+                "4) 不要输出英文标签列表，不要输出多段。\n\n"
                 f"标签串：{prompt}"
             ),
         }
@@ -130,7 +131,11 @@ async def _convert_tag_prompt_to_imagen_prompt(prompt: str, force_rewrite: bool 
     return prompt
 
 
-async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: bool = False) -> str:
+async def _convert_imagen_prompt_to_novelai_prompt(
+    prompt: str,
+    force_rewrite: bool = False,
+    reference_images: Optional[List[Dict[str, Any]]] = None,
+) -> str:
     """将输入提示词转换/优化为 NovelAI Danbooru Tag。"""
     if not force_rewrite and _is_probably_tag_prompt(prompt):
         return prompt
@@ -145,8 +150,8 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: b
         request_messages = get_rewrite_messages(
             prompt=normalized_input,
             description=(
-                "请在保留核心主体、场景、动作与构图意图的前提下，"
-                "将这串 Danbooru 标签优化为更高质量、更完整、结构更清晰的 NovelAI 标签串。"
+                "请严格保留这串 Danbooru 标签表达的主体身份、数量、外貌、服饰、动作、构图与场景语义，"
+                "仅在不改变原意的前提下补全质量与细节标签，禁止擅自改设定。"
             ),
         )
         request_type = "Tag->Tag 优化"
@@ -155,10 +160,13 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: b
         request_type = "描述->Tag 转换"
 
     try:
+        if reference_images:
+            log.info(f"提示词AI将使用 {len(reference_images)} 张参考图辅助生成标签")
+
         converted = await gemini_service.generate_simple_response(
             prompt="",
             generation_config={
-                "temperature": 0.7,
+                "temperature": 0.45,
                 "max_output_tokens": NOVELAI_PROMPT_MAX_OUTPUT_TOKENS,
             },
             messages=request_messages,
@@ -166,6 +174,7 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: b
             api_url=llm_overrides["api_url"],
             api_key=llm_overrides["api_key"],
             api_format=llm_overrides["api_format"],
+            images=reference_images,
         )
         normalized = clamp_danbooru_tags(converted, max_tags=90)
         if normalized:
@@ -175,6 +184,82 @@ async def _convert_imagen_prompt_to_novelai_prompt(prompt: str, force_rewrite: b
         log.warning(f"NovelAI 提示词{request_type}失败，回退原提示词: {e}")
 
     return prompt
+
+
+async def _collect_prompt_reference_images(
+    message: Optional[discord.Message],
+    reference_image_index: int,
+    max_candidates: int = 6,
+) -> List[Dict[str, Any]]:
+    """为提示词 AI 收集并选择参考图（按用户指定序号）。"""
+    if not message:
+        return []
+
+    candidates: List[Dict[str, Any]] = []
+    max_candidates = min(max(1, int(max_candidates)), 10)
+
+    # 1) 当前消息附件图片
+    for attachment in getattr(message, "attachments", []) or []:
+        if len(candidates) >= max_candidates:
+            break
+
+        content_type = str(getattr(attachment, "content_type", "") or "").lower()
+        filename = str(getattr(attachment, "filename", "") or "").lower()
+        looks_like_image = content_type.startswith("image/") or filename.endswith(
+            (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+        )
+        if not looks_like_image:
+            continue
+
+        try:
+            image_bytes = await attachment.read()
+            if not image_bytes:
+                continue
+
+            candidates.append(
+                {
+                    "data": image_bytes,
+                    "mime_type": content_type or "image/png",
+                    "filename": getattr(attachment, "filename", "attachment_image"),
+                    "source": "attachment",
+                }
+            )
+        except Exception as e:
+            log.warning(f"读取附件参考图失败，已跳过: {e}")
+
+    # 2) 消息正文/Embed中的图片 URL
+    remaining = max_candidates - len(candidates)
+    if remaining > 0:
+        try:
+            from src.chat.features.tools.utils.discord_image_utils import (
+                extract_images_from_message_url,
+            )
+
+            url_images = await extract_images_from_message_url(message, max_images=remaining)
+            for img in url_images:
+                if len(candidates) >= max_candidates:
+                    break
+                if img.get("data") or img.get("bytes"):
+                    img.setdefault("source", "url")
+                    candidates.append(img)
+        except Exception as e:
+            log.warning(f"提取 URL 参考图失败，已跳过: {e}")
+
+    if not candidates:
+        return []
+
+    safe_index = max(1, int(reference_image_index or 1))
+    if safe_index > len(candidates):
+        log.warning(
+            f"reference_image_index={safe_index} 超出可用参考图数量 {len(candidates)}，已回退到最后一张。"
+        )
+        safe_index = len(candidates)
+
+    selected = candidates[safe_index - 1]
+    log.info(
+        f"提示词AI已选择参考图: index={safe_index}/{len(candidates)}, source={selected.get('source', 'unknown')}"
+    )
+    return [selected]
 
 
 def _prompt_already_contains_artist(prompt: str, artist_string: str) -> bool:
@@ -427,6 +512,7 @@ async def generate_image_novelai(
     success_message: Optional[str] = None,
     character_name: Optional[str] = None,
     work_name: Optional[str] = None,
+    reference_image_index: Optional[int] = None,
     **kwargs
 ) -> dict:
     """
@@ -452,6 +538,9 @@ async def generate_image_novelai(
     - 工具会基于你的草稿，再调用提示词 AI 生成一版优化 Danbooru
     - 若提示词 AI 没返回合格 Danbooru，系统会回退使用你传入的草稿串
     - 若用户只给自然语言，你需先细化并转成一版 Danbooru 草稿再传入
+    - 你必须准确传达用户明确要求，不得篡改主体设定、数量、外貌、服饰、动作、场景与构图
+    - 只允许在用户未明确的部分补充细节，补充内容必须与用户原意一致
+    - 当用户明确说“参考第N张图”时，必须传 `reference_image_index=N`，让提示词 AI 同时参考该图
     - 你负责补全用户意图里的关键信息：主体、场景、动作、构图、光影、氛围、服饰、表情
     - 定格画面：描述应聚焦单一静态瞬间，避免连续动作过程
     - 单图最多 4 个角色，最多 2 个女性角色
@@ -650,6 +739,11 @@ async def generate_image_novelai(
                 例如: "genshin impact"。
                 与 `character_name` 同时存在时，系统会自动确保提示词中包含
                 `1.3::character_name (work_name)::` 身份标签（若原 prompt 缺失）。
+
+        reference_image_index: 参考图序号（可选，1-based）。
+                当用户明确指定“参考第几张图”时必须传入该参数。
+                工具会从当前消息图片中选择对应序号，并把该图传给提示词 AI，
+                以提升标签生成精度。
 
     Returns:
         成功后图片和你的回复会一起发送给用户。
@@ -857,9 +951,53 @@ async def generate_image_novelai(
             "hint": "你没有提供可用的绘图草稿。请先补充 Danbooru 草稿标签串。"
         }
 
+    prompt_reference_images: Optional[List[Dict[str, Any]]] = None
+    if reference_image_index is not None:
+        try:
+            normalized_reference_index = max(1, int(reference_image_index))
+        except (TypeError, ValueError):
+            normalized_reference_index = 1
+
+        prepared_candidates: List[Dict[str, Any]] = []
+        prepared_images_raw = kwargs.get("_prepared_reference_images")
+        prepared_single_raw = kwargs.get("_prepared_reference_image")
+
+        if isinstance(prepared_images_raw, list):
+            for item in prepared_images_raw:
+                if isinstance(item, dict) and (item.get("data") or item.get("bytes")):
+                    prepared_candidates.append(item)
+
+        if (not prepared_candidates) and isinstance(prepared_single_raw, dict):
+            if prepared_single_raw.get("data") or prepared_single_raw.get("bytes"):
+                prepared_candidates.append(prepared_single_raw)
+
+        if prepared_candidates:
+            if normalized_reference_index > len(prepared_candidates):
+                log.warning(
+                    f"reference_image_index={normalized_reference_index} 超出预准备参考图数量 {len(prepared_candidates)}，已回退到最后一张。"
+                )
+                normalized_reference_index = len(prepared_candidates)
+
+            selected = prepared_candidates[normalized_reference_index - 1]
+            prompt_reference_images = [selected]
+            log.info(
+                f"提示词AI已使用预准备参考图: index={normalized_reference_index}/{len(prepared_candidates)}"
+            )
+        else:
+            prompt_reference_images = await _collect_prompt_reference_images(
+                message=message,
+                reference_image_index=normalized_reference_index,
+            )
+
+            if not prompt_reference_images:
+                log.warning(
+                    "已收到 reference_image_index，但当前消息中未提取到可用参考图，提示词AI将仅使用文本草稿。"
+                )
+
     rewritten_prompt = await _convert_imagen_prompt_to_novelai_prompt(
         main_prompt_draft,
         force_rewrite=True,
+        reference_images=prompt_reference_images,
     )
     normalized_rewritten_prompt = str(rewritten_prompt or "").strip().strip('"').strip("'")
     normalized_main_prompt = main_prompt_draft.strip().strip('"').strip("'")
@@ -1427,7 +1565,7 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
         try:
-            description = self.description_input.value.strip() if self.description_input.value else "自动优化和增强提示词，使画面更精美细腻"
+            description = self.description_input.value.strip() if self.description_input.value else "在不改变原始设定与用户意图的前提下，细化画面细节、光影和层次"
 
             # 调用 AI 重写 prompt
             from src.chat.services.gemini_service import gemini_service
@@ -1440,7 +1578,7 @@ class ToolAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
             new_tags = await gemini_service.generate_simple_response(
                 prompt="",  # messages 模式下 prompt 被忽略
                 generation_config={
-                    "temperature": 0.8,
+                    "temperature": 0.45,
                     "max_output_tokens": NOVELAI_PROMPT_MAX_OUTPUT_TOKENS,
                 },
                 messages=rewrite_messages,
@@ -1657,7 +1795,7 @@ class ToolImagenAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
             description = (
                 self.description_input.value.strip()
                 if self.description_input.value
-                else "自动优化该提示词，增强画面层次、光影和细节表现"
+                else "在不改变原始设定与用户意图的前提下，细化画面层次、光影和细节表现"
             )
             llm_overrides = _get_novelai_prompt_llm_overrides()
             rewrite_messages = [
@@ -1668,8 +1806,10 @@ class ToolImagenAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
                         "用于 Gemini Imagen 生图。\n"
                         "要求：\n"
                         "1) 只输出最终提示词，不要解释。\n"
-                        "2) 保持核心主体不变，按要求修改场景/动作/光影/氛围。\n"
-                        "3) 不要输出标签列表。\n\n"
+                        "2) 必须准确保留当前提示词中的明确设定（主体/数量/外貌/服饰/道具/场景/动作/构图），除非用户明确要求修改。\n"
+                        "3) 仅按用户要求修改对应部分；未要求修改的内容保持语义一致。\n"
+                        "4) 可细化表现，但不得篡改用户想法。\n"
+                        "5) 不要输出标签列表。\n\n"
                         f"当前提示词：{self._current_prompt}\n"
                         f"用户要求：{description}"
                     ),
@@ -1678,7 +1818,7 @@ class ToolImagenAIRewriteModal(discord.ui.Modal, title="AI 重写提示词"):
             rewritten = await gemini_service.generate_simple_response(
                 prompt="",
                 generation_config={
-                    "temperature": 0.75,
+                    "temperature": 0.45,
                     "max_output_tokens": 1800,
                 },
                 messages=rewrite_messages,
