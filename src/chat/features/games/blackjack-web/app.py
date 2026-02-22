@@ -1083,6 +1083,105 @@ async def multi_set_ready(
             raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/multi/room/continue-ready")
+async def multi_continue_ready(
+    request: RoomRequest,
+    user: Dict[str, Any] = Depends(get_current_user_profile),
+):
+    room_id = _normalize_room_id(request.room_id)
+    user_id = int(user["user_id"])
+
+    async with room_locks[_room_lock_key(room_id)]:
+        deducted_amount = 0
+        try:
+            room_before = multiplayer_blackjack_service.get_room_state(room_id)
+            player_before = _find_player_in_room_state(room_before, user_id)
+            if not player_before:
+                raise ValueError("你不在该房间中")
+
+            room_stage = str(room_before.get("state") or "")
+            if room_stage in ("playing", "dealer_turn"):
+                raise ValueError("本局进行中，暂时无法继续准备")
+
+            current_bet = int(player_before.get("bet_amount") or 0)
+            if room_stage == "waiting" and current_bet > 0:
+                if bool(player_before.get("is_ready")):
+                    room_state = room_before
+                else:
+                    room_state = multiplayer_blackjack_service.set_ready(
+                        room_id=room_id,
+                        user_id=user_id,
+                        ready=True,
+                    )
+
+                balance = await _ensure_user_balance(user_id)
+                return JSONResponse(
+                    content={
+                        "success": True,
+                        "room": room_state,
+                        "viewer_balance": balance,
+                    }
+                )
+
+            continue_bet = int(
+                player_before.get("last_bet_amount")
+                or player_before.get("bet_amount")
+                or 0
+            )
+            if continue_bet <= 0:
+                raise ValueError("没有可沿用的下注金额，请先手动设置下注")
+
+            new_balance = await coin_service.remove_coins(
+                user_id,
+                continue_bet,
+                f"多人21点房间{room_id}继续准备下注",
+            )
+            if new_balance is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"余额不足，继续准备需要 {continue_bet} 月光币",
+                )
+            deducted_amount = continue_bet
+
+            room_state = multiplayer_blackjack_service.continue_ready(
+                room_id=room_id,
+                user_id=user_id,
+            )
+            balance = await _ensure_user_balance(user_id)
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "room": room_state,
+                    "viewer_balance": balance,
+                }
+            )
+        except HTTPException:
+            if deducted_amount > 0:
+                await coin_service.add_coins(
+                    user_id,
+                    deducted_amount,
+                    f"多人21点房间{room_id}继续准备失败退款",
+                )
+            raise
+        except ValueError as e:
+            if deducted_amount > 0:
+                await coin_service.add_coins(
+                    user_id,
+                    deducted_amount,
+                    f"多人21点房间{room_id}继续准备失败退款",
+                )
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            if deducted_amount > 0:
+                await coin_service.add_coins(
+                    user_id,
+                    deducted_amount,
+                    f"多人21点房间{room_id}继续准备异常退款",
+                )
+            log.error(f"多人继续准备失败: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="继续准备失败")
+
+
 @app.post("/api/multi/room/start")
 async def multi_start_round(
     request: RoomRequest,

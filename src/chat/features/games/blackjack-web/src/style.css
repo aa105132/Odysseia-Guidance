@@ -153,15 +153,24 @@ body {
 
 /* --- View-Specific Dealer Styles --- */
 
-/* Betting and Game View Dealers (PC) */
-#betting-dealer-section,
-#game-dealer-section {
-  position: fixed;
-  bottom: 0;
-  right: 20px;
-  width: 300px;
-  height: 360px;
-  z-index: 10;
+/* Dialogue Box adjustments */
+.dialogue-box {
+  position: absolute;
+  top: 50%;
+  left: 110%; /* Right next to the dealer */
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 200px;
+}
+.dialogue-box::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 5px 10px 5px 0;
+  border-style: solid;
+  border-color: transparent #dcd0c0 transparent transparent;
 }
 
 .game-area {
@@ -546,53 +555,104 @@ h2 {
     display: none;
   }
 
-  /* PC端布局重构：横向排列标题和卡牌，解决垂直重叠问题 */
+  /* PC端布局重构：适应散落布局 */
   .game-area {
-    display: grid;
-    /* 使用Grid布局实现精确控制 */
-    grid-template-columns: 1fr auto 1fr;
-    /* 左(标题) 中(卡牌) 右(空) */
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    /* 垂直居中对齐 */
+    position: absolute;
     min-height: 140px;
-    /* 稍微减小最小高度 */
-    position: relative;
-    margin-bottom: 10px;
-    /* 给两个游戏区域之间加一点间隔 */
   }
 
   .game-area h2 {
-    grid-column: 1 / 2;
-    /* 放在第一列 */
-    margin-bottom: 0;
+    margin-bottom: 5px;
     border: none !important;
-    /* 强制移除所有边框 */
-    padding: 0 30px 0 0;
-    /* 改为右侧留出间距，让文字靠近卡牌 */
-    justify-self: end;
-    /* 在网格单元内靠右对齐 */
-    text-align: right;
-    /* 文字靠右对齐 */
-    font-size: 2em;
-    /* 字号加大 */
+    text-align: center;
+    font-size: 1.5em;
     display: flex;
     align-items: center;
-    height: 100px;
     white-space: nowrap;
-    /* 防止换行 */
     color: rgba(255, 255, 255, 0.9);
     text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
   }
 
-  /* 调整手牌区域 */
   .hand {
-    grid-column: 2 / 3;
-    /* 放在中间列 */
     margin: 0;
-    min-height: auto;
     justify-content: center;
-    /* 卡牌在自己的格子内居中 */
   }
+}
+
+/* --- Scattered Positions for Green Table --- */
+.green-table {
+  position: relative;
+  width: 100%;
+  height: 70vh;
+  min-height: 500px;
+}
+
+.position-top {
+  position: absolute;
+  top: -60px; /* Let dealer head poke out */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+}
+
+.position-top-cards {
+  position: absolute;
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.position-bottom {
+  position: absolute;
+  bottom: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.position-left {
+  position: absolute;
+  top: 50%;
+  left: 5%;
+  transform: translateY(-50%);
+}
+
+.position-right {
+  position: absolute;
+  top: 50%;
+  right: 5%;
+  transform: translateY(-50%);
+}
+
+.multi-controls {
+  position: absolute;
+  bottom: 2%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.player-info-tag {
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  padding: 4px 10px;
+  border-radius: 8px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.turn-active {
+  box-shadow: 0 0 10px rgba(212, 175, 55, 0.8);
+  border-color: rgba(212, 175, 55, 1);
+}
+
+.empty-seat-area {
+  opacity: 0.5;
 }
 
 #betting-view>h1 {

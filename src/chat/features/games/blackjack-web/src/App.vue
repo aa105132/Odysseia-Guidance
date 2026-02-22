@@ -1055,101 +1055,54 @@ onBeforeUnmount(() => {
         <div class="dealer-dialogue">{{ dealerSpeech }}</div>
       </section>
 
-      <section v-else-if="viewMode === 'single'" class="table-wrapper">
-        <div class="table-toolbar">
-          <div class="room-info">
-            <span>模式：单人对战</span>
-            <span>{{ singleStateText }}</span>
-            <span v-if="singleResultText">结果：{{ singleResultText }}</span>
-          </div>
-          <div class="toolbar-actions">
-            <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回模式选择</button>
-            <button :disabled="requestInFlight || !singleGame" @click="forfeitSingleGame">放弃当前对局</button>
-          </div>
-        </div>
-
-        <div class="board single-board">
-          <div class="seat dealer-seat seat-top-right">
-            <div class="avatar-ring dealer-ring">
-              <img :src="withAssetVersion('/character/normal.webp')" alt="月月头像" />
+      <section v-else-if="viewMode === 'single'" id="game-view">
+        <div id="game-table" class="green-table">
+            <div class="toolbar-actions" style="position: absolute; top: 10px; right: 10px; z-index: 100;">
+              <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回</button>
+              <button :disabled="requestInFlight || !singleGame" @click="forfeitSingleGame">放弃</button>
             </div>
-            <div class="seat-name">月月 · 庄家</div>
-            <div class="seat-meta">点数：{{ singleGame?.dealer_score ?? 0 }}</div>
-            <div class="dealer-dialogue dealer-dialogue-inline">{{ dealerSpeech }}</div>
-            <div class="card-row">
-              <img
-                v-for="(card, idx) in singleGame?.dealer_hand || []"
-                :key="`single-dealer-${idx}-${card}`"
-                :src="cardImageSrc(card)"
-                class="card"
-                alt="庄家手牌"
-              />
-            </div>
-          </div>
 
-          <div class="seat single-player-seat">
-            <div class="avatar-ring">
-              <img
-                :src="playerAvatarSrc({
-                  user_id: Number(profile?.user_id ?? 0),
-                  username: profile?.username ?? '',
-                  avatar_url: profile?.avatar_url ?? '/character/normal.webp',
-                  seat_index: -1,
-                  bet_amount: Number(singleGame?.bet_amount ?? 0),
-                  hand: singleGame?.player_hand ?? [],
-                  score: Number(singleGame?.player_score ?? 0),
-                  status: singleGame?.game_state ?? '',
-                  result: null,
-                  payout_amount: 0,
-                  is_ready: false,
-                  is_current_turn: singleGame?.game_state === 'player_turn'
-                })"
-                alt="玩家头像"
-              />
+            <!-- Dealer (Top center) -->
+            <div class="position-top dealer-section">
+                <img :src="withAssetVersion('/character/normal.webp')" class="dealer-image" style="max-height: 200px" alt="荷官" />
+                <div v-if="dealerSpeech" class="dialogue-box">
+                    <p>{{ dealerSpeech }}</p>
+                </div>
             </div>
-            <div class="seat-name">{{ profile?.username ?? "玩家" }}</div>
-            <div class="seat-meta">下注：{{ singleGame?.bet_amount ?? 0 }}</div>
-            <div class="seat-meta">余额：{{ profile?.balance ?? 0 }}</div>
-            <div class="seat-meta">
-              点数：{{ singleGame?.player_score ?? 0 }} ·
-              {{ singleGame ? getSingleActionText(singleGame.game_state) : "未开局" }}
+
+            <!-- Dealer Cards -->
+            <div class="game-area position-top-cards">
+                <h2>月月 (<span>{{ singleGame?.dealer_score ?? 0 }}</span>)</h2>
+                <TransitionGroup name="card" tag="div" class="hand">
+                    <img v-for="(card, index) in singleGame?.dealer_hand || []" :key="'dealer-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
+                </TransitionGroup>
             </div>
-            <div class="card-row">
-              <img
-                v-for="(card, idx) in singleGame?.player_hand || []"
-                :key="`single-player-${idx}-${card}`"
-                :src="cardImageSrc(card)"
-                class="card"
-                alt="玩家手牌"
-              />
+
+            <!-- Player (Bottom center) -->
+            <div class="game-area position-bottom">
+                <h2>玩家 (<span>{{ singleGame?.player_score ?? 0 }}</span>)</h2>
+                <TransitionGroup name="card" tag="div" class="hand">
+                    <img v-for="(card, index) in singleGame?.player_hand || []" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
+                </TransitionGroup>
+                
+                <div class="player-info-tag">
+                    余额：{{ profile?.balance ?? 0 }} &nbsp;|&nbsp; 下注：{{ singleGame?.bet_amount ?? 0 }}
+                    <span v-if="singleResultText"> &nbsp;|&nbsp; 结果: {{singleResultText}}</span>
+                </div>
+
+                <!-- Controls -->
+                <div id="controls" style="margin-top: 10px;">
+                    <div v-if="!singleGame || !canSingleOperate" style="margin-bottom: 5px;">
+                        <input v-model.number="singleBetInput" type="number" min="1" placeholder="输入赌注" :disabled="requestInFlight">
+                        <button :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">{{ singleGame ? "再来一局" : "下注" }}</button>
+                    </div>
+                    <div v-if="canSingleOperate">
+                        <button @click="singleHit" :disabled="requestInFlight">要牌</button>
+                        <button @click="singleStand" :disabled="requestInFlight">停牌</button>
+                        <button @click="singleDouble" :disabled="requestInFlight || !canSingleDouble">双倍</button>
+                    </div>
+                </div>
             </div>
-          </div>
-        </div>
-
-        <div class="panel control-panel">
-          <div class="control-row">
-            <input
-              v-model.number="singleBetInput"
-              type="number"
-              min="1"
-              placeholder="输入下注"
-              :disabled="requestInFlight || canSingleOperate"
-            />
-            <button :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">
-              {{ singleGame ? (canSingleOperate ? "对局进行中" : "再来一局") : "开始对战" }}
-            </button>
-          </div>
-
-          <div class="control-row">
-            <button :disabled="requestInFlight || !canSingleOperate" @click="singleHit">要牌</button>
-            <button :disabled="requestInFlight || !canSingleOperate" @click="singleStand">停牌</button>
-            <button :disabled="requestInFlight || !canSingleDouble" @click="singleDouble">加倍</button>
-          </div>
-
-          <div class="control-hint">
-            <span v-if="singleGame">当前状态：{{ getSingleActionText(singleGame.game_state) }}</span>
-            <span v-else>输入下注金额后开始单人对战。</span>
-          </div>
         </div>
       </section>
 
@@ -1197,143 +1150,86 @@ onBeforeUnmount(() => {
         <div class="dealer-dialogue">{{ dealerSpeech }}</div>
       </section>
 
-      <section v-else-if="viewMode === 'table' && roomState" class="table-wrapper">
-        <div class="table-toolbar">
-          <div class="room-info">
-            <span v-if="isDiscordMode">会话：Discord 活动房间</span>
-            <span v-else>房间：{{ roomState.room_id }}</span>
-            <span>状态：{{ roomStateText }}</span>
-            <span v-if="roomState.state === 'waiting'">
-              准备：{{ roomState.ready_player_count }}/{{ roomState.players.length }}
-            </span>
-            <span>房主：{{ hostDisplayName }}</span>
-          </div>
-          <div class="toolbar-actions">
+      <section v-else-if="viewMode === 'table' && roomState" id="game-view">
+        <div id="game-table" class="green-table">
+          <div class="toolbar-actions" style="position: absolute; top: 10px; left: 10px; z-index: 100;">
             <button :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
-            <button :disabled="requestInFlight" @click="leaveRoom">离开</button>
-            <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回模式选择</button>
+            <button :disabled="requestInFlight" @click="leaveRoom">离开房间</button>
           </div>
-        </div>
+          <div style="position: absolute; top: 10px; right: 10px; z-index: 100;">
+            <span>状态: {{ roomStateText }}</span> | <span>房主: {{ hostDisplayName }}</span>
+          </div>
 
-        <div class="board">
-          <div class="seat dealer-seat seat-top-right">
-            <div class="avatar-ring dealer-ring">
-              <img :src="dealerAvatarSrc" alt="月月头像" />
+          <!-- Dealer -->
+          <div class="position-top dealer-section">
+              <img :src="dealerAvatarSrc" class="dealer-image" style="max-height: 200px" alt="荷官" />
+              <div v-if="dealerSpeech" class="dialogue-box">
+                  <p>{{ dealerSpeech }}</p>
+              </div>
+          </div>
+          <div class="game-area position-top-cards">
+              <h2>月月 (<span>{{ dealer?.score ?? 0 }}</span>)</h2>
+              <TransitionGroup name="card" tag="div" class="hand">
+                  <img v-for="(card, idx) in dealer?.hand || []" :key="`dealer-${idx}-${card}`" :src="cardImageSrc(card)" class="card">
+              </TransitionGroup>
+          </div>
+
+          <!-- Players distributed left, bottom, right -->
+          <!-- Left Player (Seat 0) -->
+          <div class="game-area position-left" :class="{'empty-seat-area': !seatPlayerMap[0]}">
+              <div v-if="seatPlayerMap[0]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[0]?.is_current_turn}">
+                  {{ seatPlayerMap[0]?.username }} ({{ seatPlayerMap[0]?.score ?? 0 }})
+                  <br>下注: {{ seatPlayerMap[0]?.bet_amount ?? 0 }}
+                  <span v-if="seatPlayerMap[0]?.result"><br>{{ getPlayerResultText(seatPlayerMap[0]!) }}</span>
+                  <span v-if="roomState.state === 'waiting'"><br>{{ seatPlayerMap[0]?.is_ready ? '已准备' : '未准备' }}</span>
+              </div>
+              <div v-else class="player-info-tag">空位</div>
+              <TransitionGroup v-if="seatPlayerMap[0]" name="card" tag="div" class="hand" style="flex-direction: column;">
+                  <img v-for="(card, idx) in seatPlayerMap[0]?.hand || []" :key="`p0-${idx}-${card}`" :src="cardImageSrc(card)" class="card" style="margin-top: -80px; margin-left: 0;">
+              </TransitionGroup>
+          </div>
+
+          <!-- Bottom Player (Seat 1 - usually viewer) -->
+          <div class="game-area position-bottom" :class="{'empty-seat-area': !seatPlayerMap[1]}">
+              <h2><span v-if="seatPlayerMap[1]">{{ seatPlayerMap[1]?.username }}</span><span v-else>空位</span> (<span v-if="seatPlayerMap[1]">{{ seatPlayerMap[1]?.score ?? 0 }}</span><span v-else>0</span>)</h2>
+              <TransitionGroup v-if="seatPlayerMap[1]" name="card" tag="div" class="hand">
+                  <img v-for="(card, idx) in seatPlayerMap[1]?.hand || []" :key="`p1-${idx}-${card}`" :src="cardImageSrc(card)" class="card">
+              </TransitionGroup>
+              <div v-if="seatPlayerMap[1]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[1]?.is_current_turn}">
+                  <span v-if="Number(seatPlayerMap[1]?.user_id) === viewerUserId">余额：{{ profile?.balance ?? 0 }} | </span>下注: {{ seatPlayerMap[1]?.bet_amount ?? 0 }}
+                  <span v-if="seatPlayerMap[1]?.result"> | {{ getPlayerResultText(seatPlayerMap[1]!) }}</span>
+                  <span v-if="roomState.state === 'waiting'"> | {{ seatPlayerMap[1]?.is_ready ? '已准备' : '未准备' }}</span>
+              </div>
+          </div>
+
+          <!-- Right Player (Seat 2) -->
+          <div class="game-area position-right" :class="{'empty-seat-area': !seatPlayerMap[2]}">
+              <div v-if="seatPlayerMap[2]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[2]?.is_current_turn}">
+                  {{ seatPlayerMap[2]?.username }} ({{ seatPlayerMap[2]?.score ?? 0 }})
+                  <br>下注: {{ seatPlayerMap[2]?.bet_amount ?? 0 }}
+                  <span v-if="seatPlayerMap[2]?.result"><br>{{ getPlayerResultText(seatPlayerMap[2]!) }}</span>
+                  <span v-if="roomState.state === 'waiting'"><br>{{ seatPlayerMap[2]?.is_ready ? '已准备' : '未准备' }}</span>
+              </div>
+              <div v-else class="player-info-tag">空位</div>
+              <TransitionGroup v-if="seatPlayerMap[2]" name="card" tag="div" class="hand" style="flex-direction: column;">
+                  <img v-for="(card, idx) in seatPlayerMap[2]?.hand || []" :key="`p2-${idx}-${card}`" :src="cardImageSrc(card)" class="card" style="margin-top: -80px; margin-left: 0;">
+              </TransitionGroup>
+          </div>
+          
+          <!-- Shared Multi Controls -->
+          <div class="multi-controls">
+            <div id="controls" style="background: rgba(0,0,0,0.5); padding: 10px; border-radius: 10px;">
+                <div v-if="roomState.state === 'waiting'" style="display: flex; gap: 5px; align-items: center; flex-wrap: wrap;">
+                    <input v-model.number="betInput" type="number" min="1" placeholder="输入下注" :disabled="requestInFlight || !canSetBet" style="width: 80px;" />
+                    <button :disabled="requestInFlight || !canSetBet" @click="setBet">下注</button>
+                    <button :disabled="requestInFlight || !canToggleReady" @click="toggleReady">{{ readyButtonText }}</button>
+                    <button v-if="isHost" :disabled="requestInFlight || !canStartRound" @click="startRound">开始本局</button>
+                </div>
+                <div v-if="roomState.state === 'playing'" style="display: flex; gap: 5px;">
+                    <button :disabled="requestInFlight || !isMyTurn" @click="hit">要牌</button>
+                    <button :disabled="requestInFlight || !isMyTurn" @click="stand">停牌</button>
+                </div>
             </div>
-            <div class="seat-name">月月 · 庄家</div>
-            <div class="seat-meta">点数：{{ dealer?.score ?? 0 }}</div>
-            <div class="dealer-dialogue dealer-dialogue-inline">{{ dealerSpeech }}</div>
-            <div class="card-row">
-              <img
-                v-for="(card, idx) in dealer?.hand || []"
-                :key="`dealer-${idx}-${card}`"
-                :src="cardImageSrc(card)"
-                class="card"
-                alt="庄家手牌"
-              />
-            </div>
-          </div>
-
-          <div
-            v-for="seatIndex in seatIndices"
-            :key="seatIndex"
-            class="seat"
-            :class="seatClassByIndex[seatIndex]"
-          >
-            <template v-if="seatPlayerMap[seatIndex]">
-              <div
-                class="avatar-ring"
-                :class="{ 'avatar-turn': seatPlayerMap[seatIndex]?.is_current_turn }"
-              >
-                <img :src="playerAvatarSrc(seatPlayerMap[seatIndex])" alt="玩家头像" />
-              </div>
-              <div class="seat-name">
-                {{ seatPlayerMap[seatIndex]?.username }}
-              </div>
-              <div class="seat-meta">
-                下注：{{ seatPlayerMap[seatIndex]?.bet_amount || 0 }}
-              </div>
-              <div class="seat-meta" v-if="roomState.state === 'waiting'">
-                准备：{{ seatPlayerMap[seatIndex]?.is_ready ? "已准备" : "未准备" }}
-              </div>
-              <div
-                v-if="Number(seatPlayerMap[seatIndex]?.user_id) === viewerUserId"
-                class="seat-meta"
-              >
-                余额：{{ profile?.balance ?? 0 }}
-              </div>
-              <div class="seat-meta">
-                点数：{{ seatPlayerMap[seatIndex]?.score || 0 }} ·
-                {{ getPlayerStatusText(seatPlayerMap[seatIndex]!) }}
-              </div>
-              <div v-if="seatPlayerMap[seatIndex]?.result" class="seat-result">
-                结果：{{ getPlayerResultText(seatPlayerMap[seatIndex]!) }}
-              </div>
-              <div class="card-row">
-                <img
-                  v-for="(card, idx) in seatPlayerMap[seatIndex]?.hand || []"
-                  :key="`player-${seatIndex}-${idx}-${card}`"
-                  :src="cardImageSrc(card)"
-                  class="card"
-                  alt="玩家手牌"
-                />
-              </div>
-            </template>
-            <template v-else>
-              <div class="empty-seat">空位</div>
-              <div class="seat-meta">等待玩家加入</div>
-            </template>
-          </div>
-        </div>
-
-        <div class="panel control-panel">
-          <div class="control-row">
-            <input
-              v-model.number="betInput"
-              type="number"
-              min="1"
-              placeholder="输入下注"
-              :disabled="requestInFlight || !canSetBet"
-            />
-            <button :disabled="requestInFlight || !canSetBet" @click="setBet">
-              设置下注
-            </button>
-            <button :disabled="requestInFlight || !canToggleReady" @click="toggleReady">
-              {{ readyButtonText }}
-            </button>
-            <button :disabled="requestInFlight || !canStartRound" @click="startRound">
-              房主开始
-            </button>
-          </div>
-
-          <div class="control-row">
-            <button
-              :disabled="requestInFlight || roomState.state !== 'playing' || !isMyTurn"
-              @click="hit"
-            >
-              要牌
-            </button>
-            <button
-              :disabled="requestInFlight || roomState.state !== 'playing' || !isMyTurn"
-              @click="stand"
-            >
-              停牌
-            </button>
-          </div>
-
-          <div class="control-hint">
-            <span v-if="roomState.state === 'waiting'">
-              每位玩家先设置下注并点击准备，全部准备后由房主开始本局。
-            </span>
-            <span v-else-if="roomState.state === 'playing'">
-              当前轮到高亮玩家操作。
-            </span>
-            <span v-else-if="roomState.state === 'dealer_turn'">
-              月月正在结算本局。
-            </span>
-            <span v-else>
-              本局已结束，重新下注后可再开一局。
-            </span>
           </div>
         </div>
       </section>

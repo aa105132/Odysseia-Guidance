@@ -47,6 +47,7 @@ class MultiplayerPlayerState:
     avatar_url: str
     seat_index: int
     bet_amount: int = 0
+    last_bet_amount: int = 0
     hand: List[str] = field(default_factory=list)
     status: str = "waiting"  # waiting | playing | stood | bust | blackjack | finished
     result: Optional[str] = None  # win | loss | push | blackjack
@@ -118,6 +119,7 @@ class MultiplayerBlackjackService:
             "avatar_url": player.avatar_url,
             "seat_index": player.seat_index,
             "bet_amount": player.bet_amount,
+            "last_bet_amount": player.last_bet_amount,
             "hand": player.hand,
             "score": _calculate_hand_score(player.hand),
             "status": player.status,
@@ -262,6 +264,7 @@ class MultiplayerBlackjackService:
             self._reset_round(room)
 
         player.bet_amount = amount
+        player.last_bet_amount = amount
         player.is_ready = False
         self._touch(room)
         return self._to_room_state(room)
@@ -279,6 +282,27 @@ class MultiplayerBlackjackService:
             raise ValueError("请先下注再准备")
 
         player.is_ready = bool(ready)
+        self._touch(room)
+        return self._to_room_state(room)
+
+    def continue_ready(self, room_id: str, user_id: int) -> Dict[str, Any]:
+        room = self._get_room_or_raise(room_id)
+        player = room.players.get(user_id)
+        if not player:
+            raise ValueError("你不在该房间中")
+
+        if room.state in ("playing", "dealer_turn"):
+            raise ValueError("本局进行中，暂时无法继续准备")
+
+        if room.state == "finished":
+            self._reset_round(room)
+
+        target_bet = int(player.last_bet_amount or 0)
+        if target_bet <= 0:
+            raise ValueError("你上一局没有有效下注，请先手动设置下注")
+
+        player.bet_amount = target_bet
+        player.is_ready = True
         self._touch(room)
         return self._to_room_state(room)
 
