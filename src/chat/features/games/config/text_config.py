@@ -6,7 +6,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 # -----------------------------------------------------------------------------
 # 资源常量区: 统一管理图片URL
@@ -317,3 +317,95 @@ class TextConfig:
 # 使用方式: from src.games.config.text_config import text_config
 # 调用: text_config.opening.betting
 text_config = TextConfig()
+
+
+GHOST_CARD_IMAGE_URL_FIELDS = (
+    "ghost_emotion_happy_url",
+    "ghost_emotion_sad_url",
+    "ghost_emotion_neutral_url",
+    "ghost_emotion_super_win_url",
+    "ghost_ai_thumbnail_low_url",
+    "ghost_ai_thumbnail_medium_url",
+    "ghost_ai_thumbnail_high_url",
+    "ghost_ai_thumbnail_super_url",
+    "ghost_ai_win_thumbnail_url",
+)
+
+
+def get_ghost_card_image_urls() -> Dict[str, str]:
+    """读取抽鬼牌相关的当前图片 URL 配置。"""
+    return {
+        "ghost_emotion_happy_url": EmotionImageUrls.HAPPY,
+        "ghost_emotion_sad_url": EmotionImageUrls.SAD,
+        "ghost_emotion_neutral_url": EmotionImageUrls.NEUTRAL,
+        "ghost_emotion_super_win_url": EmotionImageUrls.SUPER_WIN,
+        "ghost_ai_thumbnail_low_url": StaticUrls.AI_THUMBNAIL_LOW,
+        "ghost_ai_thumbnail_medium_url": StaticUrls.AI_THUMBNAIL_MEDIUM,
+        "ghost_ai_thumbnail_high_url": StaticUrls.AI_THUMBNAIL_HIGH,
+        "ghost_ai_thumbnail_super_url": StaticUrls.AI_THUMBNAIL_SUPER,
+        "ghost_ai_win_thumbnail_url": StaticUrls.AI_WIN_THUMBNAIL,
+    }
+
+
+def apply_ghost_card_image_urls(
+    *,
+    ghost_emotion_happy_url: Optional[str] = None,
+    ghost_emotion_sad_url: Optional[str] = None,
+    ghost_emotion_neutral_url: Optional[str] = None,
+    ghost_emotion_super_win_url: Optional[str] = None,
+    ghost_ai_thumbnail_low_url: Optional[str] = None,
+    ghost_ai_thumbnail_medium_url: Optional[str] = None,
+    ghost_ai_thumbnail_high_url: Optional[str] = None,
+    ghost_ai_thumbnail_super_url: Optional[str] = None,
+    ghost_ai_win_thumbnail_url: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    将抽鬼牌图片 URL 覆盖到运行时配置，并同步刷新依赖这些 URL 的映射。
+    传入 None 表示不改动该项；空字符串表示显式清空。
+    """
+    if ghost_emotion_happy_url is not None:
+        EmotionImageUrls.HAPPY = ghost_emotion_happy_url
+    if ghost_emotion_sad_url is not None:
+        EmotionImageUrls.SAD = ghost_emotion_sad_url
+    if ghost_emotion_neutral_url is not None:
+        EmotionImageUrls.NEUTRAL = ghost_emotion_neutral_url
+    if ghost_emotion_super_win_url is not None:
+        EmotionImageUrls.SUPER_WIN = ghost_emotion_super_win_url
+
+    if ghost_ai_thumbnail_low_url is not None:
+        StaticUrls.AI_THUMBNAIL_LOW = ghost_ai_thumbnail_low_url
+    if ghost_ai_thumbnail_medium_url is not None:
+        StaticUrls.AI_THUMBNAIL_MEDIUM = ghost_ai_thumbnail_medium_url
+    if ghost_ai_thumbnail_high_url is not None:
+        StaticUrls.AI_THUMBNAIL_HIGH = ghost_ai_thumbnail_high_url
+    if ghost_ai_thumbnail_super_url is not None:
+        StaticUrls.AI_THUMBNAIL_SUPER = ghost_ai_thumbnail_super_url
+    if ghost_ai_win_thumbnail_url is not None:
+        StaticUrls.AI_WIN_THUMBNAIL = ghost_ai_win_thumbnail_url
+
+    # 同步反应池引用的图片 URL（Reaction 对象在模块加载时已实例化）
+    ReactionPool.ENCOURAGE_SELECTION.image_url = EmotionImageUrls.HAPPY
+    ReactionPool.DISCOURAGE_SELECTION.image_url = EmotionImageUrls.SAD
+    ReactionPool.DRAWN_GHOST_HAPPY.image_url = EmotionImageUrls.HAPPY
+    ReactionPool.DRAWN_SAFE_SAD.image_url = EmotionImageUrls.SAD
+    ReactionPool.AI_DRAWN_GHOST_SAD.image_url = EmotionImageUrls.SAD
+    ReactionPool.AI_DRAWN_SAFE_HAPPY.image_url = EmotionImageUrls.HAPPY
+    ReactionPool.CANCELLED_GHOST_DISAPPOINTED.image_url = EmotionImageUrls.SAD
+    ReactionPool.CANCELLED_SAFE_RELIEVED.image_url = EmotionImageUrls.NEUTRAL
+    ReactionPool.CANCELLED_GHOST_FAKE_RELIEVED.image_url = EmotionImageUrls.HAPPY
+    ReactionPool.CANCELLED_SAFE_FAKE_DISAPPOINTED.image_url = EmotionImageUrls.SAD
+    ReactionPool.DECEPTION_EXPOSED.image_url = EmotionImageUrls.NEUTRAL
+    ReactionPool.DECEPTION_FAILED.image_url = EmotionImageUrls.SAD
+    ReactionPool.PLAYER_LOST_WIN.image_url = EmotionImageUrls.SUPER_WIN
+    ReactionPool.PLAYER_LOST_CHEATING.image_url = EmotionImageUrls.SAD
+
+    # 同步运行时实例中依赖静态 URL 的映射
+    text_config.opening.ai_strategy_thumbnail = {
+        "LOW": StaticUrls.AI_THUMBNAIL_LOW,
+        "MEDIUM": StaticUrls.AI_THUMBNAIL_MEDIUM,
+        "HIGH": StaticUrls.AI_THUMBNAIL_HIGH,
+        "SUPER": StaticUrls.AI_THUMBNAIL_SUPER,
+    }
+    text_config.game_ui.ai_win_thumbnail = StaticUrls.AI_WIN_THUMBNAIL
+
+    return get_ghost_card_image_urls()

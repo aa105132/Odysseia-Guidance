@@ -1900,6 +1900,65 @@
                             <input type="url" x-model="coinForm.loan_thumbnail_url" placeholder="https://..."
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
+
+                        <div class="pt-2 border-t border-slate-700/60">
+                            <label class="block text-sm font-medium text-slate-200 mb-1">抽鬼牌图片资源 URL</label>
+                            <p class="text-xs text-slate-400">用于抽鬼牌开局缩略图、反应图和结算图</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">抽鬼牌高兴情绪图 URL</label>
+                            <input type="url" x-model="coinForm.ghost_emotion_happy_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">抽鬼牌难过情绪图 URL</label>
+                            <input type="url" x-model="coinForm.ghost_emotion_sad_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">抽鬼牌中性情绪图 URL</label>
+                            <input type="url" x-model="coinForm.ghost_emotion_neutral_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">抽鬼牌超级胜利情绪图 URL</label>
+                            <input type="url" x-model="coinForm.ghost_emotion_super_win_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">抽鬼牌低级策略缩略图 URL</label>
+                            <input type="url" x-model="coinForm.ghost_ai_thumbnail_low_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">抽鬼牌中级策略缩略图 URL</label>
+                            <input type="url" x-model="coinForm.ghost_ai_thumbnail_medium_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">抽鬼牌高级策略缩略图 URL</label>
+                            <input type="url" x-model="coinForm.ghost_ai_thumbnail_high_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">抽鬼牌超级策略缩略图 URL</label>
+                            <input type="url" x-model="coinForm.ghost_ai_thumbnail_super_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">抽鬼牌 AI 胜利缩略图 URL</label>
+                            <input type="url" x-model="coinForm.ghost_ai_win_thumbnail_url" placeholder="https://..."
+                                   class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
                         
                         <button @click="saveCoinConfig()"
                                 :disabled="saving"
@@ -2962,7 +3021,16 @@
                     max_loan: 1000,
                     feeding_response_image_url: '',
                     confession_response_image_url: '',
-                    loan_thumbnail_url: ''
+                    loan_thumbnail_url: '',
+                    ghost_emotion_happy_url: '',
+                    ghost_emotion_sad_url: '',
+                    ghost_emotion_neutral_url: '',
+                    ghost_emotion_super_win_url: '',
+                    ghost_ai_thumbnail_low_url: '',
+                    ghost_ai_thumbnail_medium_url: '',
+                    ghost_ai_thumbnail_high_url: '',
+                    ghost_ai_thumbnail_super_url: '',
+                    ghost_ai_win_thumbnail_url: ''
                 },
                 moderationForm: { warning_threshold: 10, ban_duration_min: 15, ban_duration_max: 30, image_feedback_enabled: true, image_feedback_ban_trigger_count: 3, image_feedback_repeat_window_minutes: 60, image_feedback_ban_ladder_minutes: '10,30,60,180,720' },
                 
@@ -3261,6 +3329,15 @@
                         this.coinForm.feeding_response_image_url = this.config.coin.feeding_response_image_url || '';
                         this.coinForm.confession_response_image_url = this.config.coin.confession_response_image_url || '';
                         this.coinForm.loan_thumbnail_url = this.config.coin.loan_thumbnail_url || '';
+                        this.coinForm.ghost_emotion_happy_url = this.config.coin.ghost_emotion_happy_url || '';
+                        this.coinForm.ghost_emotion_sad_url = this.config.coin.ghost_emotion_sad_url || '';
+                        this.coinForm.ghost_emotion_neutral_url = this.config.coin.ghost_emotion_neutral_url || '';
+                        this.coinForm.ghost_emotion_super_win_url = this.config.coin.ghost_emotion_super_win_url || '';
+                        this.coinForm.ghost_ai_thumbnail_low_url = this.config.coin.ghost_ai_thumbnail_low_url || '';
+                        this.coinForm.ghost_ai_thumbnail_medium_url = this.config.coin.ghost_ai_thumbnail_medium_url || '';
+                        this.coinForm.ghost_ai_thumbnail_high_url = this.config.coin.ghost_ai_thumbnail_high_url || '';
+                        this.coinForm.ghost_ai_thumbnail_super_url = this.config.coin.ghost_ai_thumbnail_super_url || '';
+                        this.coinForm.ghost_ai_win_thumbnail_url = this.config.coin.ghost_ai_win_thumbnail_url || '';
                     }
                     if (this.config.moderation) {
                         this.moderationForm.warning_threshold = this.config.moderation.warning_threshold;
@@ -5142,7 +5219,16 @@
                                 max_loan: parseInt(this.coinForm.max_loan),
                                 feeding_response_image_url: (this.coinForm.feeding_response_image_url || '').trim(),
                                 confession_response_image_url: (this.coinForm.confession_response_image_url || '').trim(),
-                                loan_thumbnail_url: (this.coinForm.loan_thumbnail_url || '').trim()
+                                loan_thumbnail_url: (this.coinForm.loan_thumbnail_url || '').trim(),
+                                ghost_emotion_happy_url: (this.coinForm.ghost_emotion_happy_url || '').trim(),
+                                ghost_emotion_sad_url: (this.coinForm.ghost_emotion_sad_url || '').trim(),
+                                ghost_emotion_neutral_url: (this.coinForm.ghost_emotion_neutral_url || '').trim(),
+                                ghost_emotion_super_win_url: (this.coinForm.ghost_emotion_super_win_url || '').trim(),
+                                ghost_ai_thumbnail_low_url: (this.coinForm.ghost_ai_thumbnail_low_url || '').trim(),
+                                ghost_ai_thumbnail_medium_url: (this.coinForm.ghost_ai_thumbnail_medium_url || '').trim(),
+                                ghost_ai_thumbnail_high_url: (this.coinForm.ghost_ai_thumbnail_high_url || '').trim(),
+                                ghost_ai_thumbnail_super_url: (this.coinForm.ghost_ai_thumbnail_super_url || '').trim(),
+                                ghost_ai_win_thumbnail_url: (this.coinForm.ghost_ai_win_thumbnail_url || '').trim()
                             })
                         });
                         

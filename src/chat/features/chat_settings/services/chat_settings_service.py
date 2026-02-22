@@ -6,6 +6,10 @@ from src.chat.utils.database import chat_db_manager
 from src.chat.services.event_service import event_service
 from src import config
 from src.chat.config import chat_config
+from src.chat.features.games.config.text_config import (
+    apply_ghost_card_image_urls,
+    get_ghost_card_image_urls,
+)
 
 
 import logging
@@ -183,6 +187,16 @@ class ChatSettingsService:
         if db_loan_thumbnail_url is not None:
             chat_config.COIN_CONFIG["LOAN_THUMBNAIL_URL"] = db_loan_thumbnail_url
             log.info("  ✅ 借贷中心缩略图 URL: 已加载")
+
+        ghost_card_url_updates: Dict[str, str] = {}
+        for setting_key, _current_value in get_ghost_card_image_urls().items():
+            db_value = await self.db_manager.get_global_setting(setting_key)
+            if db_value is not None:
+                ghost_card_url_updates[setting_key] = db_value
+
+        if ghost_card_url_updates:
+            apply_ghost_card_image_urls(**ghost_card_url_updates)
+            log.info(f"  ✅ 抽鬼牌图片 URL 配置: 已加载 {len(ghost_card_url_updates)} 项")
 
         # --- 自动暖贴配置 ---
         db_auto_enabled = await self.db_manager.get_global_setting(

@@ -27,6 +27,10 @@ from src.chat.config import chat_config
 from src.chat.config import emoji_config
 from src.chat.features.admin_panel.services.db_services import get_parade_db_connection
 from src.dashboard.service_registry import service_registry
+from src.chat.features.games.config.text_config import (
+    apply_ghost_card_image_urls,
+    get_ghost_card_image_urls,
+)
 
 log = logging.getLogger(__name__)
 
@@ -529,6 +533,15 @@ class CoinConfigUpdate(BaseModel):
     feeding_response_image_url: Optional[str] = None
     confession_response_image_url: Optional[str] = None
     loan_thumbnail_url: Optional[str] = None
+    ghost_emotion_happy_url: Optional[str] = None
+    ghost_emotion_sad_url: Optional[str] = None
+    ghost_emotion_neutral_url: Optional[str] = None
+    ghost_emotion_super_win_url: Optional[str] = None
+    ghost_ai_thumbnail_low_url: Optional[str] = None
+    ghost_ai_thumbnail_medium_url: Optional[str] = None
+    ghost_ai_thumbnail_high_url: Optional[str] = None
+    ghost_ai_thumbnail_super_url: Optional[str] = None
+    ghost_ai_win_thumbnail_url: Optional[str] = None
 
 
 class ModerationConfigUpdate(BaseModel):
@@ -690,6 +703,14 @@ async def get_all_config(token: str = Depends(verify_token)):
         "coin_loan_thumbnail_url"
     )
 
+    ghost_card_image_urls = get_ghost_card_image_urls()
+    resolved_ghost_card_image_urls: Dict[str, str] = {}
+    for setting_key, current_value in ghost_card_image_urls.items():
+        db_value = await chat_db_manager.get_global_setting(setting_key)
+        resolved_ghost_card_image_urls[setting_key] = (
+            db_value if db_value is not None else current_value
+        )
+
     payload = {
         "ai": {
             "model": chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL,
@@ -792,6 +813,7 @@ async def get_all_config(token: str = Depends(verify_token)):
                 if db_loan_thumbnail_url is not None
                 else chat_config.COIN_CONFIG.get("LOAN_THUMBNAIL_URL", "")
             ),
+            **resolved_ghost_card_image_urls,
             "currency_name": "月光币",
         },
         "moderation": {
@@ -3043,6 +3065,13 @@ async def get_coin_config(token: str = Depends(verify_token)):
     db_loan_thumbnail_url = await chat_db_manager.get_global_setting(
         "coin_loan_thumbnail_url"
     )
+    ghost_card_image_urls = get_ghost_card_image_urls()
+    resolved_ghost_card_image_urls: Dict[str, str] = {}
+    for setting_key, current_value in ghost_card_image_urls.items():
+        db_value = await chat_db_manager.get_global_setting(setting_key)
+        resolved_ghost_card_image_urls[setting_key] = (
+            db_value if db_value is not None else current_value
+        )
 
     return {
         "daily_reward": config.get("DAILY_CHECKIN_REWARD", 50),
@@ -3063,6 +3092,7 @@ async def get_coin_config(token: str = Depends(verify_token)):
             if db_loan_thumbnail_url is not None
             else config.get("LOAN_THUMBNAIL_URL", "")
         ),
+        **resolved_ghost_card_image_urls,
         "currency_name": "月光币",
         "tax_rate": config.get("TRANSFER_TAX_RATE", 0.05),
     }
@@ -3117,6 +3147,30 @@ async def update_coin_config(config: CoinConfigUpdate, token: str = Depends(veri
         await chat_db_manager.set_global_setting("coin_loan_thumbnail_url", normalized)
         updated["loan_thumbnail_url"] = normalized
     
+    ghost_url_field_labels = {
+        "ghost_emotion_happy_url": "抽鬼牌高兴情绪图 URL",
+        "ghost_emotion_sad_url": "抽鬼牌难过情绪图 URL",
+        "ghost_emotion_neutral_url": "抽鬼牌中性情绪图 URL",
+        "ghost_emotion_super_win_url": "抽鬼牌超级胜利情绪图 URL",
+        "ghost_ai_thumbnail_low_url": "抽鬼牌低级策略缩略图 URL",
+        "ghost_ai_thumbnail_medium_url": "抽鬼牌中级策略缩略图 URL",
+        "ghost_ai_thumbnail_high_url": "抽鬼牌高级策略缩略图 URL",
+        "ghost_ai_thumbnail_super_url": "抽鬼牌超级策略缩略图 URL",
+        "ghost_ai_win_thumbnail_url": "抽鬼牌 AI 胜利缩略图 URL",
+    }
+    ghost_url_updates: Dict[str, str] = {}
+    for field_name, field_label in ghost_url_field_labels.items():
+        field_value = getattr(config, field_name, None)
+        if field_value is None:
+            continue
+        normalized = _normalize_url(field_value, field_label)
+        await chat_db_manager.set_global_setting(field_name, normalized)
+        ghost_url_updates[field_name] = normalized
+
+    if ghost_url_updates:
+        apply_ghost_card_image_urls(**ghost_url_updates)
+        updated.update(ghost_url_updates)
+
     log.info(f"货币配置已更新: {updated}")
     return {"success": True, "updated": updated}
 
