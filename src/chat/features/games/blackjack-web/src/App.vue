@@ -51,7 +51,19 @@ let assetsPreloaded = false;
 // --- Discord SDK & Environment ---
 const queryParams = new URLSearchParams(window.location.search);
 const isEmbedded = queryParams.get('frame_id') != null;
+const shouldUseDiscordAuth = ref(isEmbedded);
 const runtimeDiscordClientId = ref('');
+const ASSET_VERSION = String(import.meta.env.VITE_ASSET_VERSION ?? 'dev').trim() || 'dev';
+
+const withAssetVersion = (path: string) => {
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}v=${encodeURIComponent(ASSET_VERSION)}`;
+};
+
+const characterImageSrc = computed(() => withAssetVersion(`/character/${dealerExpression.value}.webp`));
+
+const cardImageSrc = (card: string) =>
+    withAssetVersion(card === 'Hidden' ? '/cards/Background.webp' : `/cards/${card}.webp`);
 
 // --- Computed Properties ---
 const canDouble = computed(() => {
@@ -99,7 +111,7 @@ const countdownStyle = computed(() => {
 // --- Core Logic ---
 async function apiCall(endpoint: string, method: 'GET' | 'POST', body?: object, retries = 2) {
     // The mock API has been removed. All requests now go to the backend via the Vite proxy.
-    if (isEmbedded && !accessToken) {
+    if (shouldUseDiscordAuth.value && !accessToken) {
         // In embedded mode, we must have an access token.
         throw new Error("Access Token is not available in embedded mode.");
     }
@@ -112,7 +124,7 @@ async function apiCall(endpoint: string, method: 'GET' | 'POST', body?: object, 
 
             // Only add the Authorization header if we are in the embedded client and have a token.
             // For local development, the backend should handle unauthenticated requests.
-            if (isEmbedded && accessToken) {
+            if (shouldUseDiscordAuth.value && accessToken) {
                 headers['Authorization'] = `Bearer ${accessToken}`;
             }
 
@@ -533,8 +545,14 @@ async function preloadAssets(startPercent: number, endPercent: number) {
     const suits = ['Club', 'Diamond', 'Heart', 'Spade'];
     
     // 优化1: 优先加载关键资源
-    const criticalImages = ['/cards/Background.webp', '/character/normal.webp'];
-    const secondaryImages = ['/character/win.webp', '/character/lose.webp'];
+    const criticalImages = [
+        withAssetVersion('/cards/Background.webp'),
+        withAssetVersion('/character/normal.webp'),
+    ];
+    const secondaryImages = [
+        withAssetVersion('/character/win.webp'),
+        withAssetVersion('/character/lose.webp'),
+    ];
     
     // 优化2: 将扑克牌分为两批加载，先加载常用牌
     const commonRanks = ['A', 'K', 'Q', 'J', '10'];
@@ -544,8 +562,8 @@ async function preloadAssets(startPercent: number, endPercent: number) {
     const rareCards: string[] = [];
     
     suits.forEach(suit => {
-        commonRanks.forEach(rank => commonCards.push(`/cards/${suit}${rank}.webp`));
-        rareRanks.forEach(rank => rareCards.push(`/cards/${suit}${rank}.webp`));
+        commonRanks.forEach(rank => commonCards.push(withAssetVersion(`/cards/${suit}${rank}.webp`)));
+        rareRanks.forEach(rank => rareCards.push(withAssetVersion(`/cards/${suit}${rank}.webp`)));
     });
     
     // 按优先级排序: 关键图像 -> 常用扑克牌 -> 次要图像 -> 罕见扑克牌
@@ -625,14 +643,24 @@ async function main() {
         progress.value = 5;
         if (isEmbedded) {
             console.log('[Main] Embedded environment detected. Fetching runtime config...');
-            await fetchPublicConfig();
-            if (!runtimeDiscordClientId.value) {
-                throw new Error("DISCORD_CLIENT_ID is not set on server.");
+            try {
+                await fetchPublicConfig();
+                if (!runtimeDiscordClientId.value) {
+                    throw new Error("DISCORD_CLIENT_ID is not set on server.");
+                }
+
+                console.log('[Main] Runtime config loaded. Setting up Discord SDK...');
+                await setupDiscordSdk(runtimeDiscordClientId.value);
+                console.log('[Main] Discord SDK setup complete.');
+            } catch (embeddedError) {
+                shouldUseDiscordAuth.value = false;
+                accessToken = null;
+                console.warn(
+                    '[Main] Embedded auth unavailable (possibly mobile client limitations). Fallback to unauthenticated mode.',
+                    embeddedError
+                );
             }
 
-            console.log('[Main] Runtime config loaded. Setting up Discord SDK...');
-            await setupDiscordSdk(runtimeDiscordClientId.value);
-            console.log('[Main] Discord SDK setup complete.');
             progress.value = 30;
             console.log('[Main] Fetching user info...');
             await fetchUserInfo();
@@ -744,7 +772,7 @@ onMounted(() => {
                 </div>
             </div>
             <div id="betting-dealer-section" class="dealer-section">
-                <img :src="`/character/${dealerExpression}.webp`" alt="荷官" class="dealer-image">
+                <img :src="characterImageSrc" alt="荷官" class="dealer-image">
                 <div v-if="dealerDialogue" class="dialogue-box">
                     <p>{{ dealerDialogue }}</p>
                 </div>
@@ -757,14 +785,14 @@ onMounted(() => {
                 <div class="game-area" data-debug-size>
                     <h2>月月 (<span>{{ dealerScore }}</span>)</h2>
                     <TransitionGroup name="card" tag="div" class="hand" data-debug-size>
-                        <img v-for="(card, index) in dealerHand" :key="'dealer-' + index + '-' + card" :src="card === 'Hidden' ? '/cards/Background.webp' : `/cards/${card}.webp`" class="card">
+                        <img v-for="(card, index) in dealerHand" :key="'dealer-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
                     </TransitionGroup>
                 </div>
                 <div class="game-area" data-debug-size>
                     <h2>玩家 (<span>{{ playerScore }}</span>)</h2>
                     <TransitionGroup name="card" tag="div" class="hand" data-debug-size>
-                        <img v-for="(card, index) in playerHand" :key="'player-' + index + '-' + card" :src="`/cards/${card}.webp`" class="card">
-                        <img v-if="optimisticCard" key="optimistic" src="/cards/Background.webp" class="card">
+                        <img v-for="(card, index) in playerHand" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
+                        <img v-if="optimisticCard" key="optimistic" :src="withAssetVersion('/cards/Background.webp')" class="card">
                     </TransitionGroup>
                 </div>
                 <div class="messages">{{ messages }}</div>
@@ -775,7 +803,7 @@ onMounted(() => {
                 </div>
             </div>
                 <div id="game-dealer-section" class="dealer-section">
-                <img :src="`/character/${dealerExpression}.webp`" alt="荷官" class="dealer-image">
+                <img :src="characterImageSrc" alt="荷官" class="dealer-image">
                 <div v-if="dealerDialogue" class="dialogue-box">
                     <p>{{ dealerDialogue }}</p>
                 </div>
@@ -789,7 +817,7 @@ onMounted(() => {
                     <span id="end-game-countdown" :style="countdownStyle">{{ countdown }}</span>
                 </div>
                 <div id="end-game-dealer-section" class="dealer-section" data-debug-size>
-                    <img :src="`/character/${dealerExpression}.webp`" alt="荷官" id="end-game-dealer-image" class="dealer-image">
+                    <img :src="characterImageSrc" alt="荷官" id="end-game-dealer-image" class="dealer-image">
                     <div v-if="dealerDialogue" id="end-game-dialogue-box" class="dialogue-box">
                         <p>{{ dealerDialogue }}</p>
                     </div>

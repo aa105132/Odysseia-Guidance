@@ -588,6 +588,36 @@ class GeminiService:
 
         return response_text.rstrip() + "\n" + "\n".join(source_lines)
 
+    @staticmethod
+    def _build_tool_call_signature(tool_name: str, tool_args: Any) -> str:
+        """构建稳定的工具调用签名，用于检测重复调用。"""
+        normalized_args = ""
+        if isinstance(tool_args, str):
+            normalized_args = tool_args.strip()
+        else:
+            try:
+                normalized_args = json.dumps(
+                    tool_args,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                )
+            except Exception:
+                normalized_args = str(tool_args)
+
+        return f"{tool_name}:{normalized_args}"
+
+    @staticmethod
+    def _build_web_search_skip_message(reason: str) -> str:
+        """当检测到 web_search 循环时，返回给模型的强约束提示。"""
+        return (
+            f"[web_search 已跳过] {reason}\n"
+            "请不要再次调用 web_search。"
+            "直接基于当前已返回的搜索结果组织最终回答；"
+            "若信息不足，明确说明缺失点并请用户补充关键词。"
+        )
+
     def _handle_safety_ratings(
         self, response: types.GenerateContentResponse, key: str
     ) -> int:
@@ -1534,6 +1564,9 @@ class GeminiService:
         called_tool_names = []
         thinking_was_used = False
         max_calls = 5
+        max_web_search_calls = 2
+        web_search_call_count = 0
+        executed_web_search_signatures: set[str] = set()
         web_search_source_links: List[tuple] = []
         for i in range(max_calls):
             log_detailed = app_config.DEBUG_CONFIG.get(
@@ -1633,18 +1666,77 @@ class GeminiService:
                 log.info(f"准备执行 {len(function_calls)} 个工具调用...")
 
             tool_result_parts = []
-            tasks = [
-                self.tool_service.execute_tool_call(
-                    tool_call=call,
-                    channel=channel,
-                    user_id=user_id,
-                    log_detailed=log_detailed,
-                    message=discord_message,
-                    user_id_for_settings=user_id_for_settings,
+            prepared_results: List[Any] = []
+            coroutine_indices: List[int] = []
+
+            for call in function_calls:
+                if call.name == "web_search":
+                    raw_call_args = getattr(call, "args", {}) or {}
+                    try:
+                        parsed_call_args = dict(raw_call_args)
+                    except Exception:
+                        parsed_call_args = raw_call_args
+
+                    call_signature = self._build_tool_call_signature(
+                        "web_search", parsed_call_args
+                    )
+
+                    if web_search_call_count >= max_web_search_calls:
+                        log.warning(
+                            "检测到 web_search 超过调用上限，已拦截重复搜索请求。"
+                        )
+                        prepared_results.append(
+                            types.Part.from_function_response(
+                                name="web_search",
+                                response={
+                                    "result": self._build_web_search_skip_message(
+                                        f"本轮对话中 web_search 调用已达到上限 ({max_web_search_calls} 次)。"
+                                    )
+                                },
+                            )
+                        )
+                        continue
+
+                    if call_signature in executed_web_search_signatures:
+                        log.warning(
+                            "检测到重复的 web_search 参数，已拦截本次重复搜索请求。"
+                        )
+                        prepared_results.append(
+                            types.Part.from_function_response(
+                                name="web_search",
+                                response={
+                                    "result": self._build_web_search_skip_message(
+                                        "检测到相同参数的重复 web_search 请求。"
+                                    )
+                                },
+                            )
+                        )
+                        continue
+
+                    executed_web_search_signatures.add(call_signature)
+                    web_search_call_count += 1
+
+                prepared_results.append(
+                    self.tool_service.execute_tool_call(
+                        tool_call=call,
+                        channel=channel,
+                        user_id=user_id,
+                        log_detailed=log_detailed,
+                        message=discord_message,
+                        user_id_for_settings=user_id_for_settings,
+                    )
                 )
-                for call in function_calls
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+                coroutine_indices.append(len(prepared_results) - 1)
+
+            if coroutine_indices:
+                coroutine_results = await asyncio.gather(
+                    *(prepared_results[idx] for idx in coroutine_indices),
+                    return_exceptions=True,
+                )
+                for idx, coroutine_result in zip(coroutine_indices, coroutine_results):
+                    prepared_results[idx] = coroutine_result
+
+            results = prepared_results
 
             for idx, result in enumerate(results):
                 # 获取对应的工具调用名称
@@ -2112,6 +2204,9 @@ class GeminiService:
         
         # 工具调用循环
         max_tool_calls = 5
+        max_web_search_calls = 2
+        web_search_call_count = 0
+        executed_web_search_signatures: set[str] = set()
         called_tool_names = []
         web_search_source_links: List[tuple] = []
         disabled_payload_fields: set[str] = set()
@@ -2210,14 +2305,43 @@ class GeminiService:
                         except json.JSONDecodeError:
                             tool_args = {}
 
-                        # 执行工具
-                        tool_result = await self._execute_openai_tool_call(
-                            tool_name=tool_name,
-                            tool_args=tool_args,
-                            channel=channel,
-                            user_id=user_id,
-                            discord_message=discord_message,
-                        )
+                        # 执行工具（包含 web_search 防循环保护）
+                        if tool_name == "web_search":
+                            call_signature = self._build_tool_call_signature(
+                                tool_name, tool_args
+                            )
+                            if web_search_call_count >= max_web_search_calls:
+                                log.warning(
+                                    "OpenAI 工具循环中 web_search 超过调用上限，已拦截。"
+                                )
+                                tool_result = self._build_web_search_skip_message(
+                                    f"本轮对话中 web_search 调用已达到上限 ({max_web_search_calls} 次)。"
+                                )
+                            elif call_signature in executed_web_search_signatures:
+                                log.warning(
+                                    "OpenAI 工具循环中检测到重复 web_search 参数，已拦截。"
+                                )
+                                tool_result = self._build_web_search_skip_message(
+                                    "检测到相同参数的重复 web_search 请求。"
+                                )
+                            else:
+                                executed_web_search_signatures.add(call_signature)
+                                web_search_call_count += 1
+                                tool_result = await self._execute_openai_tool_call(
+                                    tool_name=tool_name,
+                                    tool_args=tool_args,
+                                    channel=channel,
+                                    user_id=user_id,
+                                    discord_message=discord_message,
+                                )
+                        else:
+                            tool_result = await self._execute_openai_tool_call(
+                                tool_name=tool_name,
+                                tool_args=tool_args,
+                                channel=channel,
+                                user_id=user_id,
+                                discord_message=discord_message,
+                            )
 
                         # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
                         if tool_name == "web_search" and discord_message:
