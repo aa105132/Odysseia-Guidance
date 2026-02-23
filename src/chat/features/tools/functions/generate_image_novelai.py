@@ -542,6 +542,7 @@ async def generate_image_novelai(
     - 若提示词 AI 没返回合格 Danbooru，系统会回退使用你传入的草稿串
     - 若用户只给自然语言，你需先细化并转成一版 Danbooru 草稿再传入
     - 你必须准确传达用户明确要求，不得篡改主体设定、数量、外貌、服饰、动作、场景与构图
+    - 单人女性必须写 `1girl, solo`；单人男性必须写 `1boy, solo`；禁止只写 `girl`/`boy` 代替角色数量与关系标签
     - 只允许在用户未明确的部分补充细节，补充内容必须与用户原意一致
     - 当主体是月月/你自己时，提示词AI必须严格遵循月月固定DNA标签与权重标签，不得改色、改发饰、改耳朵类型或删除标志性特征；瞳色权重标签必须前置，且发簪/耳坠/项链配饰权重（含半月形项链）需保留；月月必须保留 heterochromia
     - 月月耳坠只允许 `small triangular watermelon earrings`（西瓜配色三角形耳坠）；禁止 `moon earrings` / `crescent earrings` / `crescent moon earrings`。月牙元素只属于发簪与项链，不属于耳坠。
@@ -557,7 +558,7 @@ async def generate_image_novelai(
     2. **场景构成 (5~10%)**: nsfw/sfw, 角色数量(1girl, solo), 角色关系(hetero, harem, yuri)
     3. **背景 (10~20%)**: 年代(modern, medieval, fantasy), 环境(bedroom, park, outdoor, onsen, train interior), 时间(night, sunset, golden hour), 氛围(mystical atmosphere), 光影(backlighting, rim lighting, sidelighting, dramatic shadows, moonlight, neon light, spotlight, tyndall effect)
     4. **构图 (10~20%)**: 区域(full body, upper body, cowboy shot), 远近(close-up, mid shot, wide shot), 透视(wide-angle, foreshortening, fisheye), 视角(front view, from behind, from above, from below, from side, pov, male pov), 焦点(face focus, ass focus, breast focus, foot focus, crotch focus), 角度(cinematic angle, dynamic angle, dutch angle), 效果(depth of field, bokeh, motion blur)
-    5. **角色 DNA - 身份**: 性别(girl, boy), 姓名标签(同人角色必须使用 `character_name (work_name)` 英文格式，如 `raiden shogun (genshin impact)`；原创角色必须使用 `original`), 身份(bishoujo, maid, loli, milf, office lady)
+    5. **角色 DNA - 身份**: 角色数量标签优先(1girl/1boy/1other；单人必须配 solo，禁止仅写 girl/boy), 姓名标签(同人角色必须使用 `character_name (work_name)` 英文格式，如 `raiden shogun (genshin impact)`；原创角色必须使用 `original`), 身份(bishoujo, maid, loli, milf, office lady)
     6. **角色 DNA - 外貌**: 发长/发型/发色/瞳色/罩杯(flat chest=A, small breasts=B, medium breasts=C, large breasts=D, huge breasts=E, gigantic breasts=F+)/肤色/修饰(makeup, scar, tan lines, bangs, petite, curvy, narrow waist, wide hips)
     7. **角色 DNA - 服饰**: 核心服饰(上装/下装/内衣/袜子/鞋类/配饰, 含风格/品类/颜色), 材质(plaid, latex, satin, velvet, sheer fabric, lace), 状态(wet clothes, torn clothes, see-through), 穿着状态(nude, open shirt, strap slip, no panties, clothes lift, skirt lift), 裸露部位(pussy, ass, nipples, navel)
     8. **当前动作**: 基础姿势(sitting, standing, lying, kneeling, all fours, squatting), 肢体动作(heart hands, head down, leg lift, v, arms up, peace sign), 核心交互(walking, masturbation, hug, kiss, sex, fellatio), 物理反馈(bouncing breasts, ass ripple, skin indentation, motion lines), 交互接触点(明确动作主体+做什么+放在哪, 如: grabbing own breasts, grabbing another's ass, holding phone)
@@ -675,12 +676,12 @@ async def generate_image_novelai(
     ### 11. 示例（以下是提示词 AI 的输出示例，不是主 AI 手写内容）
     用户说"画一个银发少女在月光下"，提示词 AI 会生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, sfw, 1girl, solo, outdoors, night, moonlight::1.2, starry sky, rim lighting, backlighting, full body, front view, cinematic angle, depth of field, girl, bishoujo, silver hair::1.3, long hair, flowing hair, blue eyes, medium breasts, white skin, dress, white dress, long dress, elegant, standing, wind, hair flowing, looking at viewer, gentle smile, serene, falling leaves, light particles
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, sfw, 1girl, solo, outdoors, night, moonlight::1.2, starry sky, rim lighting, backlighting, full body, front view, cinematic angle, depth of field, bishoujo, silver hair::1.3, long hair, flowing hair, blue eyes, medium breasts, white skin, dress, white dress, long dress, elegant, standing, wind, hair flowing, looking at viewer, gentle smile, serene, falling leaves, light particles
     ```
 
     用户说"画月月在温泉里"，提示词 AI 会生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, green left eye::1.45, blue right eye::1.45, outdoors, night, starry sky, moonlight::1.2, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, silver hair::1.35, high ponytail, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, medium breasts::1.25, white skin, nude, completely nude, partially submerged, wet body, wet hair, shiny skin::1.2, small triangular watermelon earrings, silver crescent moon necklace::1.3, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, falling leaves::0.8
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, green left eye::1.45, blue right eye::1.45, outdoors, night, starry sky, moonlight::1.2, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, bishoujo, silver hair::1.35, high ponytail, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, medium breasts::1.25, white skin, nude, completely nude, partially submerged, wet body, wet hair, shiny skin::1.2, small triangular watermelon earrings, silver crescent moon necklace::1.3, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, falling leaves::0.8
     ```
 
     Args:

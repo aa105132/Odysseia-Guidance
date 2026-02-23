@@ -5,7 +5,6 @@ import copy
 import logging
 from typing import Optional, Dict, List, Callable, Any
 import asyncio
-from difflib import SequenceMatcher
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -437,132 +436,8 @@ class GeminiService:
                 )
         return processed_contents
 
-    @staticmethod
-    def _normalize_text_for_repeat_check(text: str) -> str:
-        """标准化文本，用于相似度比较。"""
-        normalized = str(text or "")
-        # 去掉占位符和标点差异，避免轻微格式变化导致去重失败
-        normalized = re.sub(r"<[^>]+>", "", normalized)
-        normalized = re.sub(r"[^\w\u4e00-\u9fff]+", "", normalized.lower())
-        return normalized.strip()
-
-    async def _get_last_bot_message_content(
-        self, channel: Optional[Any], scan_limit: int = 20
-    ) -> str:
-        """获取当前频道中机器人最近一条文本消息。"""
-        if (
-            not channel
-            or not hasattr(channel, "history")
-            or not self.bot
-            or not getattr(self.bot, "user", None)
-        ):
-            return ""
-
-        bot_user_id = getattr(self.bot.user, "id", None)
-        if bot_user_id is None:
-            return ""
-
-        try:
-            async for msg in channel.history(limit=scan_limit):
-                if not getattr(msg, "author", None):
-                    continue
-                if msg.author.id != bot_user_id:
-                    continue
-                content = str(getattr(msg, "content", "") or "").strip()
-                if content:
-                    return content
-        except Exception as e:
-            log.debug(f"读取上一条机器人消息失败（忽略）：{e}")
-
-        return ""
-
-    @staticmethod
-    def _diversify_repetitive_insult(
-        current_text: str, previous_text: str
-    ) -> str:
-        """当检测到重复辱骂短语时，替换为不重复表达。"""
-        repetitive_phrases = [
-            "你这个大变态",
-            "无可救药的大变态",
-            "大变态",
-            "变态",
-        ]
-        alternatives = [
-            "你能不能收敛一点啊",
-            "别再拿这种话题恶心我了",
-            "同样的话我不想再重复了",
-            "你再这样我就不理你了",
-        ]
-
-        for phrase in repetitive_phrases:
-            if phrase in current_text and phrase in previous_text:
-                replacement = next(
-                    (candidate for candidate in alternatives if candidate not in previous_text),
-                    alternatives[0],
-                )
-                return current_text.replace(phrase, replacement, 1)
-
-        return current_text
-
-    def _dedupe_with_previous_bot_reply(
-        self, current_text: str, previous_text: str
-    ) -> str:
-        """与上一条机器人消息去重，避免连续复读同一句骂词。"""
-        if not current_text or not previous_text:
-            return current_text
-
-        # 先做短语级替换（低风险）
-        diversified = self._diversify_repetitive_insult(current_text, previous_text)
-        if diversified != current_text:
-            return diversified
-
-        normalized_current = self._normalize_text_for_repeat_check(current_text)
-        normalized_previous = self._normalize_text_for_repeat_check(previous_text)
-        if not normalized_current or not normalized_previous:
-            return current_text
-
-        similarity = SequenceMatcher(
-            None, normalized_previous, normalized_current
-        ).ratio()
-
-        insult_markers = ["变态", "恶心", "滚", "闭嘴", "离我远点", "不理你"]
-        has_repetitive_insult = any(
-            marker in current_text and marker in previous_text
-            for marker in insult_markers
-        )
-
-        # 仅在“高相似 + 口气重复偏攻击”时触发，避免误伤正常回答
-        if similarity < 0.86 or not has_repetitive_insult:
-            return current_text
-
-        lines = [line for line in current_text.splitlines() if line.strip()]
-        if not lines:
-            return current_text
-
-        alternatives = [
-            "同样的话我刚刚说过了，自己注意分寸。",
-            "别逼我重复上一句，真的会生气。",
-            "我不想复读骂你了，听懂就收敛点。",
-        ]
-        replacement = next(
-            (candidate for candidate in alternatives if candidate not in previous_text),
-            alternatives[0],
-        )
-
-        first_line = lines[0].strip()
-        if first_line and first_line in previous_text:
-            lines[0] = replacement
-        else:
-            lines.insert(0, replacement)
-
-        return "\n".join(lines)
-
     async def _post_process_response(
-        self,
-        raw_response: str,
-        user_id: int,
-        guild_id: int,
-        channel: Optional[Any] = None,
+        self, raw_response: str, user_id: int, guild_id: int
     ) -> str:
         """对 AI 的原始回复进行清理和处理。"""
         # 1. Clean various reply prefixes and tags
@@ -585,16 +460,6 @@ class GeminiService:
 
         # 4. Replace custom emoji placeholders using the centralized function
         formatted = replace_emojis(formatted)
-
-        # 5. 与机器人上一句做去重，避免连续复读同一句骂词
-        previous_bot_message = await self._get_last_bot_message_content(channel)
-        if previous_bot_message:
-            deduped = self._dedupe_with_previous_bot_reply(
-                formatted, previous_bot_message
-            )
-            if deduped != formatted:
-                log.info("检测到与上一条机器人回复重复，已自动去重改写。")
-            formatted = deduped
 
         return formatted
 
@@ -2285,7 +2150,7 @@ class GeminiService:
                     user_id, guild_id, message if message else "", raw_ai_response
                 )
                 formatted_response = await self._post_process_response(
-                    raw_ai_response, user_id, guild_id, channel
+                    raw_ai_response, user_id, guild_id
                 )
                 if "web_search" in called_tool_names:
                     formatted_response = self._append_message_sources_if_needed(
@@ -2753,7 +2618,7 @@ class GeminiService:
 
                 # 后处理
                 final_response = await self._post_process_response(
-                    raw_response, user_id, guild_id, channel
+                    raw_response, user_id, guild_id
                 )
                 if "web_search" in called_tool_names:
                     final_response = self._append_message_sources_if_needed(
