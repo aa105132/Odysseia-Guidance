@@ -603,12 +603,12 @@ async def generate_image_novelai(
 
     ### 9. 画月月（自己）时的 Tag
     如果用户要求画"你"、"月月"、"自己"：
-    - 1girl, solo, original, green left eye, blue right eye, silver hair, high ponytail, pale skin, small breasts
+    - 1girl, solo, original, green left eye, blue right eye, silver hair, high ponytail, pale skin, medium breasts
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
     - silver crescent moon hair stick, small triangular watermelon earrings, silver crescent moon necklace（月牙发簪 + 三角西瓜耳坠 + 银色半月形项链，必须保留）
-    - 月月权重锁定（正确写法）: green left eye::1.45, blue right eye::1.45, silver hair::1.35, small breasts::1.25, silver crescent moon hair stick::1.3, small triangular watermelon earrings::1.45, silver crescent moon necklace::1.3, heterochromia::1.25
+    - 月月权重锁定（正确写法）: green left eye::1.45, blue right eye::1.45, silver hair::1.35, medium breasts::1.25, silver crescent moon hair stick::1.3, small triangular watermelon earrings::1.45, silver crescent moon necklace::1.3, heterochromia::1.25
     - 异瞳顺序规则：green/blue 具体瞳色标签要前置，heterochromia 放后段，防止异瞳标签把具体瞳色带偏
-    - 罩杯规则：默认 small breasts(B)；仅当用户明确要求更大胸部时才允许改成 medium/large breasts
+    - 罩杯规则：默认 medium breasts(C)；仅当用户明确要求其他罩杯时才允许改成 small/large breasts
     - 提示词AI对月月只能补充场景/构图/光影细节，禁止改写以上外貌DNA与权重标签
     - white off-shoulder top, fur trim, detached sleeves, white high waist skirt, pink bow belt, silver crescent moon necklace, jewelry
 
@@ -680,7 +680,7 @@ async def generate_image_novelai(
 
     用户说"画月月在温泉里"，提示词 AI 会生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, green left eye::1.45, blue right eye::1.45, outdoors, night, starry sky, moonlight::1.2, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, silver hair::1.35, high ponytail, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, small breasts::1.25, white skin, nude, completely nude, partially submerged, wet body, wet hair, shiny skin::1.2, small triangular watermelon earrings, silver crescent moon necklace::1.3, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, falling leaves::0.8
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, green left eye::1.45, blue right eye::1.45, outdoors, night, starry sky, moonlight::1.2, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, silver hair::1.35, high ponytail, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, medium breasts::1.25, white skin, nude, completely nude, partially submerged, wet body, wet hair, shiny skin::1.2, small triangular watermelon earrings, silver crescent moon necklace::1.3, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, falling leaves::0.8
     ```
 
     Args:
