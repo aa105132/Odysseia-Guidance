@@ -76,6 +76,12 @@
                         <i data-lucide="image" class="w-5 h-5"></i>
                         <span>绘图设置</span>
                     </button>
+                    <button @click='currentTab = `comfyui`'
+                            :class='currentTab === `comfyui` ? `bg-purple-600/30 text-purple-300` : `text-slate-300 hover:bg-slate-700/50`'
+                            class='w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all'>
+                        <i data-lucide='workflow' class='w-5 h-5'></i>
+                        <span>ComfyUI 设置</span>
+                    </button>
                     <button @click="currentTab = 'video'"
                             :class="currentTab === 'video' ? 'bg-purple-600/30 text-purple-300' : 'text-slate-300 hover:bg-slate-700/50'"
                             class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all">
@@ -713,9 +719,359 @@
                 </div>
             </div>
             
+            <!-- ComfyUI 设置 -->
+            <div id='comfyui-settings-tab' x-show='currentTab === `comfyui`' x-transition>
+                <h2 class='text-2xl font-bold mb-6'>ComfyUI 设置</h2>
+
+                <div class='bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6'>
+                    <h3 class='text-lg font-semibold mb-4 flex items-center gap-2'>
+                        <i data-lucide='workflow' class='w-5 h-5 text-emerald-400'></i>
+                        ComfyUI 工作流设置
+                    </h3>
+                    <p class='text-sm text-slate-400 mb-4'>支持导入本地工作流 JSON，并配置占位符与默认生图参数。</p>
+
+                    <div class='space-y-4'>
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            <label class='flex items-center justify-between bg-slate-700/30 rounded-lg px-4 py-3'>
+                                <span class='text-sm text-slate-300'>启用 ComfyUI</span>
+                                <input type='checkbox' x-model='comfyuiForm.enabled' class='h-4 w-4 rounded border-slate-500 bg-slate-800 text-emerald-500'>
+                            </label>
+                            <label class='flex items-center justify-between bg-slate-700/30 rounded-lg px-4 py-3'>
+                                <span class='text-sm text-slate-300'>启用 /comfy 命令</span>
+                                <input type='checkbox' x-model='comfyuiForm.enable_slash_command' class='h-4 w-4 rounded border-slate-500 bg-slate-800 text-emerald-500'>
+                            </label>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>ComfyUI 服务地址</label>
+                            <input type='text' x-model='comfyuiForm.server_address' placeholder='http://127.0.0.1:8188'
+                                   class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500'>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>工作流路径（可直接填本地绝对路径）</label>
+                            <input type='text' x-model='comfyuiForm.workflow_path' placeholder='D:\Downloads\workflow.json'
+                                   class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500'>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>导入工作流文件（上传后会写入 workflow_json）</label>
+                            <input type='file' accept='.json,application/json' @change='onComfyuiWorkflowFileChange($event)'
+                                   class='w-full text-sm text-slate-300 file:mr-4 file:px-4 file:py-2 file:rounded-lg file:border-0 file:bg-emerald-600/20 file:text-emerald-300 hover:file:bg-emerald-600/30'>
+                            <p class='text-xs text-slate-500 mt-2' x-show='comfyuiWorkflowFileName'>当前文件：<span x-text='comfyuiWorkflowFileName'></span></p>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>workflow_json（可选，保存时写入 workflow_path）</label>
+                            <textarea x-model='comfyuiForm.workflow_json' rows='5' placeholder='粘贴完整 ComfyUI 工作流 JSON'
+                                      class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500'></textarea>
+                        </div>
+
+                        <div class='grid grid-cols-2 md:grid-cols-4 gap-4'>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>宽度</label>
+                                <input type='number' min='64' step='64' x-model.number='comfyuiForm.default_width' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>高度</label>
+                                <input type='number' min='64' step='64' x-model.number='comfyuiForm.default_height' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>Steps</label>
+                                <input type='number' min='1' x-model.number='comfyuiForm.default_steps' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>CFG</label>
+                                <input type='number' step='0.1' min='0' x-model.number='comfyuiForm.default_cfg' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>Sampler</label>
+                                <input type='text' x-model='comfyuiForm.default_sampler' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>Scheduler</label>
+                                <input type='text' x-model='comfyuiForm.default_scheduler' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>Seed</label>
+                                <input type='number' min='0' x-model.number='comfyuiForm.default_seed' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>月光币成本</label>
+                                <input type='number' min='0' x-model.number='comfyuiForm.generation_cost' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                        </div>
+
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>默认 LoRA</label>
+                                <input type='text' x-model='comfyuiForm.default_lora' placeholder='例如：my_lora.safetensors'
+                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            </div>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>LoRA 强度</label>
+                                <input type='number' min='0' step='0.1' x-model.number='comfyuiForm.default_lora_strength'
+                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            </div>
+                        </div>
+
+                        <div class='border border-slate-700 rounded-lg p-4 space-y-3'>
+                            <h4 class='text-sm font-semibold text-slate-200'>LoRA 下载到 ComfyUI 库</h4>
+                            <p class='text-xs text-slate-400'>需要目标 ComfyUI 已安装 ComfyUI-Manager 插件。</p>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>LoRA 下载链接</label>
+                                <input type='text' x-model='comfyuiForm.lora_download_url' placeholder='https://example.com/lora.safetensors'
+                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div class='grid grid-cols-1 md:grid-cols-2 gap-3'>
+                                <div>
+                                    <label class='block text-xs text-slate-400 mb-1'>保存文件名（可选）</label>
+                                    <input type='text' x-model='comfyuiForm.lora_download_filename' placeholder='my_lora.safetensors'
+                                           class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                </div>
+                                <div>
+                                    <label class='block text-xs text-slate-400 mb-1'>保存目录（可选）</label>
+                                    <input type='text' x-model='comfyuiForm.lora_download_save_path' placeholder='models/loras'
+                                           class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                </div>
+                            </div>
+                            <div>
+                                <button @click='downloadComfyuiLora()'
+                                        :disabled='saving || testing'
+                                        class='bg-emerald-700/70 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm'>
+                                    下载 LoRA 到 ComfyUI
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>输出节点 ID（可选）</label>
+                                <input type='text' x-model='comfyuiForm.image_output_node_id' placeholder='例如：15'
+                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            </div>
+                            <div class='grid grid-cols-2 gap-4'>
+                                <div>
+                                    <label class='block text-sm font-medium text-slate-300 mb-2'>请求超时(s)</label>
+                                    <input type='number' min='1' x-model.number='comfyuiForm.request_timeout_seconds' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                                </div>
+                                <div>
+                                    <label class='block text-sm font-medium text-slate-300 mb-2'>轮询间隔(s)</label>
+                                    <input type='number' min='0.1' step='0.1' x-model.number='comfyuiForm.poll_interval_seconds' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>占位符映射（JSON 对象）</label>
+                            <textarea x-model='comfyuiForm.placeholder_mapping_text' rows='4'
+                                      class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>节点映射（JSON 对象）</label>
+                            <textarea x-model='comfyuiForm.node_mapping_text' rows='4'
+                                      class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
+                        </div>
+
+                        <div class='flex flex-wrap gap-3 pt-2'>
+                            <button @click='saveComfyuiConfig()'
+                                    :disabled='saving'
+                                    class='bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 text-white font-semibold px-5 py-2.5 rounded-lg transition-all flex items-center gap-2'>
+                                <i data-lucide='save' class='w-4 h-4'></i>
+                                <span>保存 ComfyUI 设置</span>
+                            </button>
+                            <button @click='testComfyuiConnection()'
+                                    :disabled='testing'
+                                    class='bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-semibold px-5 py-2.5 rounded-lg transition-all flex items-center gap-2'>
+                                <i data-lucide='wifi' class='w-4 h-4'></i>
+                                <span>测试连接</span>
+                            </button>
+                            <button @click='defaultImageEngine = `comfyui`; saveDefaultImageEngine()'
+                                    class='bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 px-5 py-2.5 rounded-lg transition-all'>
+                                设为默认绘图引擎
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 视频设置 -->
             <div x-show="currentTab === 'video'" x-transition>
                 <h2 class="text-2xl font-bold mb-6">视频设置</h2>
+
+                <!-- ComfyUI 设置 -->
+                <div x-show='false' class='bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6'>
+                    <h3 class='text-lg font-semibold mb-4 flex items-center gap-2'>
+                        <i data-lucide='workflow' class='w-5 h-5 text-emerald-400'></i>
+                        ComfyUI 工作流设置
+                    </h3>
+                    <p class='text-sm text-slate-400 mb-4'>支持导入本地工作流 JSON，并配置占位符与默认生图参数。</p>
+
+                    <div class='space-y-4'>
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            <label class='flex items-center justify-between bg-slate-700/30 rounded-lg px-4 py-3'>
+                                <span class='text-sm text-slate-300'>启用 ComfyUI</span>
+                                <input type='checkbox' x-model='comfyuiForm.enabled' class='h-4 w-4 rounded border-slate-500 bg-slate-800 text-emerald-500'>
+                            </label>
+                            <label class='flex items-center justify-between bg-slate-700/30 rounded-lg px-4 py-3'>
+                                <span class='text-sm text-slate-300'>启用 /comfy 命令</span>
+                                <input type='checkbox' x-model='comfyuiForm.enable_slash_command' class='h-4 w-4 rounded border-slate-500 bg-slate-800 text-emerald-500'>
+                            </label>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>ComfyUI 服务地址</label>
+                            <input type='text' x-model='comfyuiForm.server_address' placeholder='http://127.0.0.1:8188'
+                                   class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500'>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>工作流路径（可直接填本地绝对路径）</label>
+                            <input type='text' x-model='comfyuiForm.workflow_path' placeholder='D:\Downloads\workflow.json'
+                                   class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500'>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>导入工作流文件（上传后会写入 workflow_json）</label>
+                            <input type='file' accept='.json,application/json' @change='onComfyuiWorkflowFileChange($event)'
+                                   class='w-full text-sm text-slate-300 file:mr-4 file:px-4 file:py-2 file:rounded-lg file:border-0 file:bg-emerald-600/20 file:text-emerald-300 hover:file:bg-emerald-600/30'>
+                            <p class='text-xs text-slate-500 mt-2' x-show='comfyuiWorkflowFileName'>当前文件：<span x-text='comfyuiWorkflowFileName'></span></p>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>workflow_json（可选，保存时写入 workflow_path）</label>
+                            <textarea x-model='comfyuiForm.workflow_json' rows='5' placeholder='粘贴完整 ComfyUI 工作流 JSON'
+                                      class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500'></textarea>
+                        </div>
+
+                        <div class='grid grid-cols-2 md:grid-cols-4 gap-4'>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>宽度</label>
+                                <input type='number' min='64' step='64' x-model.number='comfyuiForm.default_width' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>高度</label>
+                                <input type='number' min='64' step='64' x-model.number='comfyuiForm.default_height' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>Steps</label>
+                                <input type='number' min='1' x-model.number='comfyuiForm.default_steps' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>CFG</label>
+                                <input type='number' step='0.1' min='0' x-model.number='comfyuiForm.default_cfg' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>Sampler</label>
+                                <input type='text' x-model='comfyuiForm.default_sampler' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>Scheduler</label>
+                                <input type='text' x-model='comfyuiForm.default_scheduler' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>Seed</label>
+                                <input type='number' min='0' x-model.number='comfyuiForm.default_seed' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>月光币成本</label>
+                                <input type='number' min='0' x-model.number='comfyuiForm.generation_cost' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                        </div>
+
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>默认 LoRA</label>
+                                <input type='text' x-model='comfyuiForm.default_lora' placeholder='例如：my_lora.safetensors'
+                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            </div>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>LoRA 强度</label>
+                                <input type='number' min='0' step='0.1' x-model.number='comfyuiForm.default_lora_strength'
+                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            </div>
+                        </div>
+
+                        <div class='border border-slate-700 rounded-lg p-4 space-y-3'>
+                            <h4 class='text-sm font-semibold text-slate-200'>LoRA 下载到 ComfyUI 库</h4>
+                            <p class='text-xs text-slate-400'>需要目标 ComfyUI 已安装 ComfyUI-Manager 插件。</p>
+                            <div>
+                                <label class='block text-xs text-slate-400 mb-1'>LoRA 下载链接</label>
+                                <input type='text' x-model='comfyuiForm.lora_download_url' placeholder='https://example.com/lora.safetensors'
+                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                            </div>
+                            <div class='grid grid-cols-1 md:grid-cols-2 gap-3'>
+                                <div>
+                                    <label class='block text-xs text-slate-400 mb-1'>保存文件名（可选）</label>
+                                    <input type='text' x-model='comfyuiForm.lora_download_filename' placeholder='my_lora.safetensors'
+                                           class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                </div>
+                                <div>
+                                    <label class='block text-xs text-slate-400 mb-1'>保存目录（可选）</label>
+                                    <input type='text' x-model='comfyuiForm.lora_download_save_path' placeholder='models/loras'
+                                           class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                </div>
+                            </div>
+                            <div>
+                                <button @click='downloadComfyuiLora()'
+                                        :disabled='saving || testing'
+                                        class='bg-emerald-700/70 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm'>
+                                    下载 LoRA 到 ComfyUI
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>输出节点 ID（可选）</label>
+                                <input type='text' x-model='comfyuiForm.image_output_node_id' placeholder='例如：15'
+                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            </div>
+                            <div class='grid grid-cols-2 gap-4'>
+                                <div>
+                                    <label class='block text-sm font-medium text-slate-300 mb-2'>请求超时(s)</label>
+                                    <input type='number' min='1' x-model.number='comfyuiForm.request_timeout_seconds' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                                </div>
+                                <div>
+                                    <label class='block text-sm font-medium text-slate-300 mb-2'>轮询间隔(s)</label>
+                                    <input type='number' min='0.1' step='0.1' x-model.number='comfyuiForm.poll_interval_seconds' class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>占位符映射（JSON 对象）</label>
+                            <textarea x-model='comfyuiForm.placeholder_mapping_text' rows='4'
+                                      class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>节点映射（JSON 对象）</label>
+                            <textarea x-model='comfyuiForm.node_mapping_text' rows='4'
+                                      class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
+                        </div>
+
+                        <div class='flex flex-wrap gap-3 pt-2'>
+                            <button @click='saveComfyuiConfig()'
+                                    :disabled='saving'
+                                    class='bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 text-white font-semibold px-5 py-2.5 rounded-lg transition-all flex items-center gap-2'>
+                                <i data-lucide='save' class='w-4 h-4'></i>
+                                <span>保存 ComfyUI 设置</span>
+                            </button>
+                            <button @click='testComfyuiConnection()'
+                                    :disabled='testing'
+                                    class='bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-semibold px-5 py-2.5 rounded-lg transition-all flex items-center gap-2'>
+                                <i data-lucide='wifi' class='w-4 h-4'></i>
+                                <span>测试连接</span>
+                            </button>
+                            <button @click="defaultImageEngine = 'comfyui'; saveDefaultImageEngine()"
+                                    class='bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 px-5 py-2.5 rounded-lg transition-all'>
+                                设为默认绘图引擎
+                            </button>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- 服务状态 -->
                 <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
@@ -1448,7 +1804,7 @@
                     </div>
                     <div class="mt-3 flex items-center gap-2 text-xs text-slate-500">
                         <i data-lucide="info" class="w-3.5 h-3.5"></i>
-                        <span>当前选择: <span class="font-medium" :class="defaultImageEngine === 'novelai' ? 'text-purple-400' : 'text-blue-400'" x-text="defaultImageEngine === 'novelai' ? 'NovelAI (Danbooru Tag)' : 'Gemini Imagen (自然语言)'"></span></span>
+                        <span>当前选择: <span class="font-medium" :class="defaultImageEngine === 'novelai' ? 'text-purple-400' : (defaultImageEngine === 'comfyui' ? 'text-emerald-400' : 'text-blue-400')" x-text="defaultImageEngine === 'novelai' ? 'NovelAI (Danbooru Tag)' : (defaultImageEngine === 'comfyui' ? 'ComfyUI (工作流)' : 'Gemini Imagen (自然语言)')"></span></span>
                     </div>
                 </div>
 
@@ -3004,6 +3360,33 @@
                 showNovelaiApiToken: false,
                 showNovelaiPromptApiKey: false,
                 defaultImageEngine: 'imagen',
+                comfyuiForm: {
+                    enabled: false,
+                    enable_slash_command: true,
+                    server_address: 'http://127.0.0.1:8188',
+                    workflow_path: '',
+                    workflow_json: '',
+                    image_output_node_id: '',
+                    generation_cost: 5,
+                    default_width: 832,
+                    default_height: 1216,
+                    default_steps: 28,
+                    default_cfg: 5.0,
+                    default_sampler: 'euler',
+                    default_scheduler: 'normal',
+                    default_seed: 12345,
+                    default_lora: '',
+                    default_lora_strength: 1.0,
+                    request_timeout_seconds: 180,
+                    poll_interval_seconds: 1.0,
+                    placeholder_mapping_text: '{}',
+                    node_mapping_text: '{}',
+                    lora_download_url: '',
+                    lora_download_filename: '',
+                    lora_download_save_path: '',
+                },
+                comfyuiConfig: {},
+                comfyuiWorkflowFileName: '',
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
                 
@@ -3302,6 +3685,7 @@
                             }
                         })
                         .catch(e => console.warn('加载默认绘图引擎配置失败:', e));
+                    this.loadComfyuiConfig();
                     // 加载视频配置（使用 .then() 避免在非 async 函数中使用 await）
                     fetch('/api/config/video', { headers: { 'Authorization': `Bearer ${this.secretKey}` } })
                         .then(resp => {
@@ -4325,13 +4709,210 @@
                             body: JSON.stringify({ engine: this.defaultImageEngine })
                         });
                         if (response.ok) {
-                            this.showToast(`默认绘图引擎已切换为 ${this.defaultImageEngine === 'novelai' ? 'NovelAI' : 'Gemini Imagen'}`, 'success');
+                            const engineLabelMap = { imagen: 'Gemini Imagen', novelai: 'NovelAI', comfyui: 'ComfyUI' };
+                            this.showToast(`默认绘图引擎已切换为 ${engineLabelMap[this.defaultImageEngine] || this.defaultImageEngine}`, 'success');
                         } else {
                             this.showToast('保存失败', 'error');
                         }
                     } catch (e) {
                         this.showToast('保存失败', 'error');
                     }
+                },
+
+                async loadComfyuiConfig() {
+                    try {
+                        const response = await fetch('/api/config/comfyui', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (!response.ok) {
+                            return;
+                        }
+
+                        const data = await response.json();
+                        this.comfyuiConfig = data || {};
+
+                        this.comfyuiForm.enabled = data.enabled ?? false;
+                        this.comfyuiForm.enable_slash_command = data.enable_slash_command ?? true;
+                        this.comfyuiForm.server_address = data.server_address || 'http://127.0.0.1:8188';
+                        this.comfyuiForm.workflow_path = data.workflow_path || '';
+                        this.comfyuiForm.image_output_node_id = data.image_output_node_id || '';
+                        this.comfyuiForm.generation_cost = data.generation_cost ?? 5;
+                        this.comfyuiForm.default_width = data.default_width ?? 832;
+                        this.comfyuiForm.default_height = data.default_height ?? 1216;
+                        this.comfyuiForm.default_steps = data.default_steps ?? 28;
+                        this.comfyuiForm.default_cfg = data.default_cfg ?? 5.0;
+                        this.comfyuiForm.default_sampler = data.default_sampler || 'euler';
+                        this.comfyuiForm.default_scheduler = data.default_scheduler || 'normal';
+                        this.comfyuiForm.default_seed = data.default_seed ?? 12345;
+                        this.comfyuiForm.default_lora = data.default_lora || '';
+                        this.comfyuiForm.default_lora_strength = data.default_lora_strength ?? 1.0;
+                        this.comfyuiForm.request_timeout_seconds = data.request_timeout_seconds ?? 180;
+                        this.comfyuiForm.poll_interval_seconds = data.poll_interval_seconds ?? 1.0;
+                        this.comfyuiForm.placeholder_mapping_text = JSON.stringify(data.placeholder_mapping || {}, null, 2);
+                        this.comfyuiForm.node_mapping_text = JSON.stringify(data.node_mapping || {}, null, 2);
+                    } catch (e) {
+                        console.warn('加载 ComfyUI 配置失败:', e);
+                    }
+                },
+
+                async onComfyuiWorkflowFileChange(event) {
+                    try {
+                        const file = event?.target?.files?.[0];
+                        if (!file) {
+                            return;
+                        }
+                        const workflowText = await file.text();
+                        this.comfyuiForm.workflow_json = workflowText;
+                        this.comfyuiWorkflowFileName = file.name || '';
+                        this.showToast(`已加载工作流文件：${this.comfyuiWorkflowFileName}`, 'success');
+                    } catch (e) {
+                        this.showToast('读取工作流文件失败', 'error');
+                    }
+                },
+
+                async testComfyuiConnection() {
+                    this.testing = true;
+                    try {
+                        const response = await fetch('/api/config/test-comfyui', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` },
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            this.showToast(data.message || 'ComfyUI 连接成功', 'success');
+                        } else {
+                            this.showToast(data.error || 'ComfyUI 连接失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('测试 ComfyUI 连接失败', 'error');
+                    }
+                    this.testing = false;
+                },
+
+                async downloadComfyuiLora() {
+                    const url = (this.comfyuiForm.lora_download_url || '').trim();
+                    if (!url) {
+                        this.showToast('请先填写 LoRA 下载链接', 'error');
+                        return;
+                    }
+
+                    this.testing = true;
+                    try {
+                        const response = await fetch('/api/config/comfyui/download-lora', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                url,
+                                filename: (this.comfyuiForm.lora_download_filename || '').trim() || null,
+                                save_path: (this.comfyuiForm.lora_download_save_path || '').trim() || null,
+                            }),
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            const warning = data.queue_start_warning ? `（${data.queue_start_warning}）` : '';
+                            this.showToast(`LoRA 下载任务已提交 ${warning}`.trim(), 'success');
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || 'LoRA 下载失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('LoRA 下载失败', 'error');
+                    }
+                    this.testing = false;
+                },
+
+                async saveComfyuiConfig() {
+                    this.saving = true;
+                    try {
+                        let placeholderMapping = {};
+                        let nodeMapping = {};
+
+                        const placeholderText = (this.comfyuiForm.placeholder_mapping_text || '').trim() || '{}';
+                        const nodeMappingText = (this.comfyuiForm.node_mapping_text || '').trim() || '{}';
+
+                        try {
+                            placeholderMapping = JSON.parse(placeholderText);
+                            if (typeof placeholderMapping !== 'object' || Array.isArray(placeholderMapping) || placeholderMapping === null) {
+                                this.showToast('占位符映射必须是 JSON 对象', 'error');
+                                this.saving = false;
+                                return;
+                            }
+                        } catch (e) {
+                            this.showToast('占位符映射 JSON 格式错误', 'error');
+                            this.saving = false;
+                            return;
+                        }
+
+                        try {
+                            nodeMapping = JSON.parse(nodeMappingText);
+                            if (typeof nodeMapping !== 'object' || Array.isArray(nodeMapping) || nodeMapping === null) {
+                                this.showToast('节点映射必须是 JSON 对象', 'error');
+                                this.saving = false;
+                                return;
+                            }
+                        } catch (e) {
+                            this.showToast('节点映射 JSON 格式错误', 'error');
+                            this.saving = false;
+                            return;
+                        }
+
+                        const payload = {
+                            enabled: this.comfyuiForm.enabled,
+                            enable_slash_command: this.comfyuiForm.enable_slash_command,
+                            server_address: (this.comfyuiForm.server_address || '').trim(),
+                            workflow_path: (this.comfyuiForm.workflow_path || '').trim(),
+                            image_output_node_id: (this.comfyuiForm.image_output_node_id || '').trim(),
+                            generation_cost: parseInt(this.comfyuiForm.generation_cost),
+                            default_width: parseInt(this.comfyuiForm.default_width),
+                            default_height: parseInt(this.comfyuiForm.default_height),
+                            default_steps: parseInt(this.comfyuiForm.default_steps),
+                            default_cfg: parseFloat(this.comfyuiForm.default_cfg),
+                            default_sampler: (this.comfyuiForm.default_sampler || '').trim(),
+                            default_scheduler: (this.comfyuiForm.default_scheduler || '').trim(),
+                            default_seed: parseInt(this.comfyuiForm.default_seed),
+                            default_lora: (this.comfyuiForm.default_lora || '').trim(),
+                            default_lora_strength: parseFloat(this.comfyuiForm.default_lora_strength),
+                            request_timeout_seconds: parseInt(this.comfyuiForm.request_timeout_seconds),
+                            poll_interval_seconds: parseFloat(this.comfyuiForm.poll_interval_seconds),
+                            placeholder_mapping: placeholderMapping,
+                            node_mapping: nodeMapping,
+                        };
+
+                        const workflowJsonText = (this.comfyuiForm.workflow_json || '').trim();
+                        if (workflowJsonText) {
+                            payload.workflow_json = workflowJsonText;
+                        }
+
+                        const response = await fetch('/api/config/comfyui', {
+                            method: 'PUT',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(payload),
+                        });
+
+                        if (response.ok) {
+                            const result = await response.json();
+                            this.showToast('ComfyUI 设置已保存', 'success');
+                            this.comfyuiForm.workflow_json = '';
+                            this.comfyuiWorkflowFileName = '';
+                            if (result.updated?.workflow_path) {
+                                this.comfyuiForm.workflow_path = result.updated.workflow_path;
+                            }
+                            await this.loadComfyuiConfig();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存 ComfyUI 设置失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存 ComfyUI 设置失败', 'error');
+                    }
+                    this.saving = false;
                 },
 
                 async loadNovelaiAdminPresets() {
@@ -5277,3 +5858,5 @@
     </script>
 </body>
 </html>
+
+

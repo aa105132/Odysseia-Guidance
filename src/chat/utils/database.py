@@ -630,6 +630,16 @@ class ChatDatabaseManager:
                 );
             """)
 
+            # --- ComfyUI user profile settings ---
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS comfyui_user_settings (
+                    user_id INTEGER PRIMARY KEY,
+                    workflow_path TEXT NOT NULL DEFAULT '',
+                    default_lora TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            ''')
+
             # --- 图片消息记录表（用于反应举报归属） ---
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS generated_image_messages (
@@ -2247,6 +2257,116 @@ class ChatDatabaseManager:
             return True
         except Exception as e:
             log.error(f"保存 NovelAI 生成参数偏好失败: {e}")
+            return False
+
+    async def get_comfyui_user_settings(self, user_id: int) -> Dict[str, Any]:
+        '''获取用户 ComfyUI 个性化配置（不存在时回退全局默认）。'''
+        default_workflow_path = str(chat_config.COMFYUI_CONFIG.get('WORKFLOW_PATH') or '').strip()
+        default_lora = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_LORA') or '').strip()
+
+        query = '''
+            SELECT workflow_path, default_lora
+            FROM comfyui_user_settings
+            WHERE user_id = ?
+        '''
+        row = await self._execute(
+            self._db_transaction,
+            query,
+            (user_id,),
+            fetch='one',
+        )
+
+        if not row:
+            return {
+                'workflow_path': default_workflow_path,
+                'default_lora': default_lora,
+                '_from_user': False,
+            }
+
+        return {
+            'workflow_path': str(row['workflow_path'] or '').strip(),
+            'default_lora': str(row['default_lora'] or '').strip(),
+            '_from_user': True,
+        }
+
+    async def set_comfyui_user_settings(
+        self,
+        user_id: int,
+        workflow_path: Optional[str] = None,
+        default_lora: Optional[str] = None,
+    ) -> bool:
+        '''保存用户 ComfyUI 个性化配置，支持按字段部分更新。'''
+        if workflow_path is None and default_lora is None:
+            return True
+
+        query_current = '''
+            SELECT workflow_path, default_lora
+            FROM comfyui_user_settings
+            WHERE user_id = ?
+        '''
+        current_row = await self._execute(
+            self._db_transaction,
+            query_current,
+            (user_id,),
+            fetch='one',
+        )
+
+        current_workflow_path = (
+            str(current_row['workflow_path'] or '').strip()
+            if current_row
+            else str(chat_config.COMFYUI_CONFIG.get('WORKFLOW_PATH') or '').strip()
+        )
+        current_default_lora = (
+            str(current_row['default_lora'] or '').strip()
+            if current_row
+            else str(chat_config.COMFYUI_CONFIG.get('DEFAULT_LORA') or '').strip()
+        )
+
+        normalized_workflow_path = (
+            current_workflow_path
+            if workflow_path is None
+            else str(workflow_path or '').strip()
+        )
+        normalized_default_lora = (
+            current_default_lora
+            if default_lora is None
+            else str(default_lora or '').strip()
+        )
+
+        query_upsert = '''
+            INSERT INTO comfyui_user_settings (user_id, workflow_path, default_lora, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                workflow_path = excluded.workflow_path,
+                default_lora = excluded.default_lora,
+                updated_at = CURRENT_TIMESTAMP;
+        '''
+
+        try:
+            await self._execute(
+                self._db_transaction,
+                query_upsert,
+                (user_id, normalized_workflow_path, normalized_default_lora),
+                commit=True,
+            )
+            return True
+        except Exception as e:
+            log.error(f'保存 ComfyUI 用户配置失败: {e}')
+            return False
+
+    async def clear_comfyui_user_settings(self, user_id: int) -> bool:
+        '''清空用户 ComfyUI 个性化配置，回退到全局默认。'''
+        query = 'DELETE FROM comfyui_user_settings WHERE user_id = ?'
+        try:
+            await self._execute(
+                self._db_transaction,
+                query,
+                (user_id,),
+                commit=True,
+            )
+            return True
+        except Exception as e:
+            log.error(f'清空 ComfyUI 用户配置失败: {e}')
             return False
 
     async def delete_novelai_preset(self, user_id: int, name: str) -> bool:

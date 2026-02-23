@@ -1,4 +1,5 @@
 import discord
+import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
 import re
@@ -125,6 +126,103 @@ class ChatSettingsService:
             chat_config.GEMINI_IMAGEN_CONFIG["IMAGE_RESPONSE_FORMAT"] = db_imagen_response_format
             log.info(f"  ✅ Imagen 图片响应格式: {db_imagen_response_format}")
         
+        db_default_image_engine = await self.db_manager.get_global_setting('default_image_engine')
+        if db_default_image_engine:
+            normalized_image_engine = str(db_default_image_engine).strip().lower()
+            if normalized_image_engine in {'imagen', 'novelai', 'comfyui'}:
+                chat_config.DEFAULT_IMAGE_ENGINE = normalized_image_engine
+                log.info(f'  ✅ 默认绘图引擎: {normalized_image_engine}')
+            else:
+                log.warning(f'默认绘图引擎配置无效，已忽略: {db_default_image_engine}')
+
+        # --- ComfyUI 配置 ---
+        db_comfy_enabled = await self.db_manager.get_global_setting('comfyui_enabled')
+        if db_comfy_enabled is not None:
+            chat_config.COMFYUI_CONFIG['ENABLED'] = db_comfy_enabled.lower() == 'true'
+            log.info(f'  ✅ ComfyUI 启用状态: {db_comfy_enabled}')
+
+        db_comfy_slash_enabled = await self.db_manager.get_global_setting('comfyui_enable_slash_command')
+        if db_comfy_slash_enabled is not None:
+            chat_config.COMFYUI_CONFIG['ENABLE_SLASH_COMMAND'] = (
+                db_comfy_slash_enabled.lower() == 'true'
+            )
+            log.info(f'  ✅ ComfyUI 斜杠命令开关: {db_comfy_slash_enabled}')
+
+        db_comfy_server = await self.db_manager.get_global_setting('comfyui_server_address')
+        if db_comfy_server:
+            chat_config.COMFYUI_CONFIG['SERVER_ADDRESS'] = db_comfy_server.strip()
+
+        db_comfy_workflow_path = await self.db_manager.get_global_setting('comfyui_workflow_path')
+        if db_comfy_workflow_path:
+            chat_config.COMFYUI_CONFIG['WORKFLOW_PATH'] = db_comfy_workflow_path.strip()
+
+        db_comfy_output_node = await self.db_manager.get_global_setting('comfyui_image_output_node_id')
+        if db_comfy_output_node is not None:
+            chat_config.COMFYUI_CONFIG['IMAGE_OUTPUT_NODE_ID'] = db_comfy_output_node.strip()
+
+        db_comfy_cost = await self.db_manager.get_global_setting('comfyui_generation_cost')
+        if db_comfy_cost:
+            try:
+                chat_config.COMFYUI_CONFIG['IMAGE_GENERATION_COST'] = int(db_comfy_cost)
+            except (TypeError, ValueError):
+                log.warning(f'ComfyUI 成本解析失败: {db_comfy_cost}')
+
+        numeric_setting_map = [
+            ('comfyui_default_width', 'DEFAULT_WIDTH', int),
+            ('comfyui_default_height', 'DEFAULT_HEIGHT', int),
+            ('comfyui_default_steps', 'DEFAULT_STEPS', int),
+            ('comfyui_default_cfg', 'DEFAULT_CFG', float),
+            ('comfyui_default_seed', 'DEFAULT_SEED', int),
+            ('comfyui_default_lora_strength', 'DEFAULT_LORA_STRENGTH', float),
+            ('comfyui_request_timeout_seconds', 'REQUEST_TIMEOUT_SECONDS', int),
+            ('comfyui_poll_interval_seconds', 'POLL_INTERVAL_SECONDS', float),
+        ]
+
+        for db_key, config_key, caster in numeric_setting_map:
+            raw_value = await self.db_manager.get_global_setting(db_key)
+            if raw_value in (None, ''):
+                continue
+            try:
+                chat_config.COMFYUI_CONFIG[config_key] = caster(raw_value)
+            except (TypeError, ValueError):
+                log.warning(f'ComfyUI 数值配置解析失败: {db_key}={raw_value}')
+
+        string_setting_map = [
+            ('comfyui_default_sampler', 'DEFAULT_SAMPLER'),
+            ('comfyui_default_scheduler', 'DEFAULT_SCHEDULER'),
+            ('comfyui_default_lora', 'DEFAULT_LORA'),
+        ]
+
+        for db_key, config_key in string_setting_map:
+            raw_value = await self.db_manager.get_global_setting(db_key)
+            if raw_value is not None:
+                chat_config.COMFYUI_CONFIG[config_key] = str(raw_value).strip()
+
+        db_comfy_placeholder_mapping = await self.db_manager.get_global_setting('comfyui_placeholder_mapping')
+        if db_comfy_placeholder_mapping:
+            try:
+                parsed_placeholder_mapping = json.loads(db_comfy_placeholder_mapping)
+                if isinstance(parsed_placeholder_mapping, dict):
+                    normalized_placeholder_mapping = {}
+                    for key, value in parsed_placeholder_mapping.items():
+                        key_text = str(key).strip()
+                        value_text = str(value).strip()
+                        if key_text and value_text:
+                            normalized_placeholder_mapping[key_text] = value_text
+                    if normalized_placeholder_mapping:
+                        chat_config.COMFYUI_CONFIG['PLACEHOLDER_MAPPING'] = normalized_placeholder_mapping
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                log.warning(f'ComfyUI 占位符映射解析失败: {error}')
+
+        db_comfy_node_mapping = await self.db_manager.get_global_setting('comfyui_node_mapping')
+        if db_comfy_node_mapping:
+            try:
+                parsed_node_mapping = json.loads(db_comfy_node_mapping)
+                if isinstance(parsed_node_mapping, dict):
+                    chat_config.COMFYUI_CONFIG['NODE_MAPPING'] = parsed_node_mapping
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                log.warning(f'ComfyUI 节点映射解析失败: {error}')
+
         # --- 视频生成配置 ---
         db_video_enabled = await self.db_manager.get_global_setting("video_enabled")
         if db_video_enabled:

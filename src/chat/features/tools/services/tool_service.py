@@ -244,7 +244,7 @@ class ToolService:
                 tool_args["user_id"] = user_id_str
 
             # --- 安全加固：图片生成工具始终绑定当前用户（用于读取用户持久化参数）---
-            image_tools_bind_user = {"generate_image_novelai", "generate_image", "edit_image"}
+            image_tools_bind_user = {'generate_image_novelai', 'generate_image', 'generate_image_comfyui', 'edit_image'}
             if tool_name in image_tools_bind_user and user_id is not None:
                 user_id_str = str(user_id)
                 if tool_args.get("user_id") != user_id_str:

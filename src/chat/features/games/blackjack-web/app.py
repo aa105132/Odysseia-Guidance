@@ -64,6 +64,23 @@ def _resolve_discord_client_id() -> str:
     )
 
 
+def _resolve_discord_bot_token() -> str:
+    """解析 Bot Token，兼容历史变量名。"""
+    return _strip_wrapping_quotes(
+        os.getenv("DISCORD_TOKEN") or os.getenv("BOT_TOKEN")
+    )
+
+
+def _build_activity_launch_url(
+    discord_client_id: str, channel_id: int, guild_id: Optional[int]
+) -> str:
+    guild_path = str(guild_id) if guild_id is not None else "@me"
+    return (
+        f"https://discord.com/channels/{guild_path}/{channel_id}"
+        f"?launch_activity={discord_client_id}"
+    )
+
+
 app = FastAPI()
 log = logging.getLogger(__name__)
 
@@ -558,10 +575,10 @@ async def _send_recruit_message_via_bot(
                 log.warning(f"创建活动邀请失败，将回退为频道活动链接: {e}")
 
         if not launch_url:
-            guild_path = str(effective_guild_id) if effective_guild_id is not None else "@me"
-            launch_url = (
-                f"https://discord.com/channels/{guild_path}/{channel_id}"
-                f"?launch_activity={discord_client_id}"
+            launch_url = _build_activity_launch_url(
+                discord_client_id=discord_client_id,
+                channel_id=channel_id,
+                guild_id=effective_guild_id,
             )
 
         recruit_view = discord.ui.View(timeout=3600)
@@ -589,6 +606,148 @@ async def _send_recruit_message_via_bot(
         }
 
     return await _run_coro_in_bot_loop(bot, _task())
+
+
+async def _send_recruit_message_via_http(
+    *,
+    room_id: str,
+    user_id: int,
+    username: str,
+    discord_client_id: str,
+    channel_id: int,
+    guild_id: Optional[int],
+    bot_token: str,
+) -> Dict[str, str]:
+    launch_url = _build_activity_launch_url(
+        discord_client_id=discord_client_id,
+        channel_id=channel_id,
+        guild_id=guild_id,
+    )
+
+    recruit_text = (
+        f"<@{user_id}> 正在招募队友参与多人 21 点对战。\n"
+        f"房间号：`{room_id}`\n"
+        f"发起人：{username}\n"
+        "点击下方按钮启动活动后可自动进入该房间。"
+    )
+
+    payload = {
+        "content": recruit_text,
+        "allowed_mentions": {"parse": ["users"]},
+        "components": [
+            {
+                "type": 1,
+                "components": [
+                    {
+                        "type": 2,
+                        "style": 5,
+                        "label": f"启动活动并加入房间 {room_id}",
+                        "url": launch_url,
+                    }
+                ],
+            }
+        ],
+    }
+
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            response = await client.post(
+                f"https://discord.com/api/v10/channels/{channel_id}/messages",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code == 401:
+                raise RuntimeError("DISCORD_TOKEN 无效，无法调用 Discord Bot API") from exc
+            if status_code == 403:
+                raise PermissionError("机器人缺少频道权限，无法发送招募消息") from exc
+            if status_code == 404:
+                raise ValueError("目标频道不存在，或机器人未加入该频道") from exc
+            raise RuntimeError(
+                f"Discord API 发送招募消息失败，状态码: {status_code}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError("无法连接 Discord API，请稍后重试") from exc
+
+    data = response.json()
+    response_channel_id = str(data.get("channel_id") or channel_id)
+
+    response_guild_raw = str(data.get("guild_id") or "").strip()
+    response_guild_id: Optional[int] = (
+        int(response_guild_raw) if response_guild_raw.isdigit() else guild_id
+    )
+
+    return {
+        "invite_url": launch_url,
+        "message_id": str(data.get("id")),
+        "channel_id": response_channel_id,
+        "guild_id": str(response_guild_id) if response_guild_id is not None else "dm",
+    }
+
+
+async def _send_recruit_message(
+    *,
+    room_id: str,
+    user_id: int,
+    username: str,
+    discord_client_id: str,
+    channel_id: int,
+    guild_id: Optional[int],
+) -> Dict[str, str]:
+    bot = service_registry.bot
+    bot_ready = bool(bot is not None and bot.is_ready())
+    bot_token = _resolve_discord_bot_token()
+
+    if bot_ready and bot is not None:
+        try:
+            return await _send_recruit_message_via_bot(
+                bot=bot,
+                room_id=room_id,
+                user_id=user_id,
+                username=username,
+                discord_client_id=discord_client_id,
+                channel_id=channel_id,
+                guild_id=guild_id,
+            )
+        except Exception as e:
+            if not bot_token:
+                raise
+            log.warning(
+                "进程内 Bot 发送招募失败，将回退到 HTTP Bot API: %s",
+                e,
+                exc_info=True,
+            )
+
+    if not bot_token:
+        bot_status = service_registry.get_bot_status()
+        raise RuntimeError(
+            "Discord Bot 当前未就绪，且本服务未配置 DISCORD_TOKEN。"
+            f"当前状态: {bot_status.get('status')}"
+        )
+
+    if not bot_ready:
+        bot_status = service_registry.get_bot_status()
+        log.warning(
+            "进程内 Bot 不可用（status=%s），使用 HTTP Bot API 发送招募消息",
+            bot_status.get("status"),
+        )
+
+    return await _send_recruit_message_via_http(
+        room_id=room_id,
+        user_id=user_id,
+        username=username,
+        discord_client_id=discord_client_id,
+        channel_id=channel_id,
+        guild_id=guild_id,
+        bot_token=bot_token,
+    )
 
 
 def _bind_session_room(session_key: str, room_id: str) -> None:
@@ -1069,10 +1228,6 @@ async def multi_recruit_room(
         if normalized_session_key:
             _bind_session_room(normalized_session_key, room_id)
 
-    bot = service_registry.bot
-    if bot is None or not bot.is_ready():
-        raise HTTPException(status_code=503, detail="Discord Bot 当前未就绪，无法发送招募消息")
-
     requested_channel_id = _parse_int_like_id(request.channel_id)
     requested_guild_id = _parse_int_like_id(request.guild_id)
 
@@ -1094,8 +1249,7 @@ async def multi_recruit_room(
         raise HTTPException(status_code=500, detail="服务器缺少有效的 DISCORD_CLIENT_ID 配置")
 
     try:
-        recruit_payload = await _send_recruit_message_via_bot(
-            bot=bot,
+        recruit_payload = await _send_recruit_message(
             room_id=room_id,
             user_id=user_id,
             username=username,
@@ -1105,6 +1259,8 @@ async def multi_recruit_room(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except discord.Forbidden:

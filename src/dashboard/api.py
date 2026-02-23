@@ -193,6 +193,37 @@ class NovelAIConfigUpdate(BaseModel):
     prompt_api_key: Optional[str] = None  # NovelAI 提示词生成专用 API KEY
 
 
+class ComfyUIConfigUpdate(BaseModel):
+    '''ComfyUI 配置更新'''
+    enabled: Optional[bool] = None
+    enable_slash_command: Optional[bool] = None
+    server_address: Optional[str] = None
+    workflow_path: Optional[str] = None
+    workflow_json: Optional[str] = None
+    image_output_node_id: Optional[str] = None
+    generation_cost: Optional[int] = None
+    default_width: Optional[int] = None
+    default_height: Optional[int] = None
+    default_steps: Optional[int] = None
+    default_cfg: Optional[float] = None
+    default_sampler: Optional[str] = None
+    default_scheduler: Optional[str] = None
+    default_seed: Optional[int] = None
+    default_lora: Optional[str] = None
+    default_lora_strength: Optional[float] = None
+    request_timeout_seconds: Optional[int] = None
+    poll_interval_seconds: Optional[float] = None
+    placeholder_mapping: Optional[Dict[str, str]] = None
+    node_mapping: Optional[Dict[str, Any]] = None
+
+
+class ComfyUILoraDownloadRequest(BaseModel):
+    '''ComfyUI LoRA 下载请求'''
+    url: str
+    filename: Optional[str] = None
+    save_path: Optional[str] = None
+
+
 class NovelAIAdminPresetUpsert(BaseModel):
     """管理员画师串预设新增/更新"""
     name: str
@@ -1198,6 +1229,35 @@ def update_env_file(updates: Dict[str, str]):
     # 写入文件
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
+
+
+def _get_command_sync_blacklist() -> List[str]:
+    blacklist = ['启动']
+    comfy_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLED', False))
+    comfy_slash_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLE_SLASH_COMMAND', True))
+
+    if not comfy_enabled or not comfy_slash_enabled:
+        blacklist.append('comfy')
+
+    return blacklist
+
+
+async def _sync_discord_commands_if_possible() -> None:
+    bot_instance = service_registry.bot
+    if bot_instance is None:
+        return
+
+    if not getattr(bot_instance, 'application_id', None):
+        return
+
+    try:
+        from src.chat.utils.command_sync import sync_commands
+
+        blacklist = _get_command_sync_blacklist()
+        await sync_commands(bot_instance.tree, bot_instance, blacklist=blacklist)
+        log.info(f'ComfyUI 配置变更后已同步 Discord 命令，blacklist={blacklist}')
+    except Exception as error:
+        log.warning(f'同步 Discord 命令失败: {error}')
 
 
 def _normalize_thread_ids(thread_ids: Optional[List[str]]) -> List[int]:
@@ -2935,6 +2995,312 @@ async def delete_novelai_preset(preset_id: int, token: str = Depends(verify_toke
         raise HTTPException(500, "删除预设失败")
 
 
+@app.get('/api/config/comfyui')
+async def get_comfyui_config(token: str = Depends(verify_token)):
+    '''获取 ComfyUI 配置'''
+    from src.chat.utils.database import chat_db_manager
+
+    config = chat_config.COMFYUI_CONFIG
+
+    db_enabled = await chat_db_manager.get_global_setting('comfyui_enabled')
+    db_slash_enabled = await chat_db_manager.get_global_setting('comfyui_enable_slash_command')
+    db_server_address = await chat_db_manager.get_global_setting('comfyui_server_address')
+    db_workflow_path = await chat_db_manager.get_global_setting('comfyui_workflow_path')
+    db_output_node_id = await chat_db_manager.get_global_setting('comfyui_image_output_node_id')
+    db_generation_cost = await chat_db_manager.get_global_setting('comfyui_generation_cost')
+    db_default_width = await chat_db_manager.get_global_setting('comfyui_default_width')
+    db_default_height = await chat_db_manager.get_global_setting('comfyui_default_height')
+    db_default_steps = await chat_db_manager.get_global_setting('comfyui_default_steps')
+    db_default_cfg = await chat_db_manager.get_global_setting('comfyui_default_cfg')
+    db_default_sampler = await chat_db_manager.get_global_setting('comfyui_default_sampler')
+    db_default_scheduler = await chat_db_manager.get_global_setting('comfyui_default_scheduler')
+    db_default_seed = await chat_db_manager.get_global_setting('comfyui_default_seed')
+    db_default_lora = await chat_db_manager.get_global_setting('comfyui_default_lora')
+    db_default_lora_strength = await chat_db_manager.get_global_setting('comfyui_default_lora_strength')
+    db_timeout = await chat_db_manager.get_global_setting('comfyui_request_timeout_seconds')
+    db_poll_interval = await chat_db_manager.get_global_setting('comfyui_poll_interval_seconds')
+    db_placeholder_mapping = await chat_db_manager.get_global_setting('comfyui_placeholder_mapping')
+    db_node_mapping = await chat_db_manager.get_global_setting('comfyui_node_mapping')
+
+    enabled = db_enabled == 'true' if db_enabled is not None else bool(config.get('ENABLED', False))
+    enable_slash_command = (
+        db_slash_enabled == 'true'
+        if db_slash_enabled is not None
+        else bool(config.get('ENABLE_SLASH_COMMAND', True))
+    )
+
+    server_address = str(db_server_address or config.get('SERVER_ADDRESS') or '').strip()
+    workflow_path = str(db_workflow_path or config.get('WORKFLOW_PATH') or '').strip()
+    output_node_id = str(db_output_node_id or config.get('IMAGE_OUTPUT_NODE_ID') or '').strip()
+
+    generation_cost = int(db_generation_cost) if db_generation_cost else int(config.get('IMAGE_GENERATION_COST', 5))
+    default_width = int(db_default_width) if db_default_width else int(config.get('DEFAULT_WIDTH', 832))
+    default_height = int(db_default_height) if db_default_height else int(config.get('DEFAULT_HEIGHT', 1216))
+    default_steps = int(db_default_steps) if db_default_steps else int(config.get('DEFAULT_STEPS', 28))
+    default_cfg = float(db_default_cfg) if db_default_cfg else float(config.get('DEFAULT_CFG', 5.0))
+    default_sampler = str(db_default_sampler or config.get('DEFAULT_SAMPLER') or '').strip()
+    default_scheduler = str(db_default_scheduler or config.get('DEFAULT_SCHEDULER') or '').strip()
+    default_seed = int(db_default_seed) if db_default_seed else int(config.get('DEFAULT_SEED', 12345))
+    default_lora = str(db_default_lora or config.get('DEFAULT_LORA') or '').strip()
+    default_lora_strength = (
+        float(db_default_lora_strength)
+        if db_default_lora_strength
+        else float(config.get('DEFAULT_LORA_STRENGTH', 1.0))
+    )
+    request_timeout_seconds = int(db_timeout) if db_timeout else int(config.get('REQUEST_TIMEOUT_SECONDS', 180))
+    poll_interval_seconds = float(db_poll_interval) if db_poll_interval else float(config.get('POLL_INTERVAL_SECONDS', 1.0))
+
+    placeholder_mapping = (
+        _parse_string_map_setting(db_placeholder_mapping)
+        if db_placeholder_mapping is not None
+        else _normalize_string_map(config.get('PLACEHOLDER_MAPPING', {}))
+    )
+    node_mapping = (
+        _parse_json_object_setting(db_node_mapping)
+        if db_node_mapping is not None
+        else _normalize_json_object(config.get('NODE_MAPPING', {}))
+    )
+
+    service_available = False
+    try:
+        from src.chat.features.image_generation.services.comfyui_service import comfyui_service
+        service_available = comfyui_service.is_available()
+    except Exception:
+        pass
+
+    workflow_exists = bool(workflow_path and os.path.exists(workflow_path))
+
+    return {
+        'enabled': enabled,
+        'enable_slash_command': enable_slash_command,
+        'server_address': server_address,
+        'workflow_path': workflow_path,
+        'workflow_exists': workflow_exists,
+        'image_output_node_id': output_node_id,
+        'generation_cost': generation_cost,
+        'default_width': default_width,
+        'default_height': default_height,
+        'default_steps': default_steps,
+        'default_cfg': default_cfg,
+        'default_sampler': default_sampler,
+        'default_scheduler': default_scheduler,
+        'default_seed': default_seed,
+        'default_lora': default_lora,
+        'default_lora_strength': default_lora_strength,
+        'request_timeout_seconds': request_timeout_seconds,
+        'poll_interval_seconds': poll_interval_seconds,
+        'placeholder_mapping': placeholder_mapping,
+        'node_mapping': node_mapping,
+        'service_available': service_available,
+    }
+
+
+@app.put('/api/config/comfyui')
+async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depends(verify_token)):
+    '''更新 ComfyUI 配置'''
+    from src.chat.utils.database import chat_db_manager
+    from src.chat.features.image_generation.services.comfyui_service import (
+        ComfyUIService,
+        comfyui_service,
+    )
+
+    updated: Dict[str, Any] = {}
+    env_updates: Dict[str, Any] = {}
+    runtime_config = chat_config.COMFYUI_CONFIG
+
+    if config.enabled is not None:
+        enabled = bool(config.enabled)
+        enabled_text = 'true' if enabled else 'false'
+        runtime_config['ENABLED'] = enabled
+        os.environ['COMFYUI_ENABLED'] = enabled_text
+        env_updates['COMFYUI_ENABLED'] = enabled_text
+        await chat_db_manager.set_global_setting('comfyui_enabled', enabled_text)
+        updated['enabled'] = enabled
+
+    if config.enable_slash_command is not None:
+        slash_enabled = bool(config.enable_slash_command)
+        slash_enabled_text = 'true' if slash_enabled else 'false'
+        runtime_config['ENABLE_SLASH_COMMAND'] = slash_enabled
+        os.environ['COMFYUI_ENABLE_SLASH_COMMAND'] = slash_enabled_text
+        env_updates['COMFYUI_ENABLE_SLASH_COMMAND'] = slash_enabled_text
+        await chat_db_manager.set_global_setting('comfyui_enable_slash_command', slash_enabled_text)
+        updated['enable_slash_command'] = slash_enabled
+
+    if config.server_address is not None:
+        normalized_server_address = ComfyUIService._normalize_server_address(config.server_address)
+        runtime_config['SERVER_ADDRESS'] = normalized_server_address
+        os.environ['COMFYUI_SERVER_ADDRESS'] = normalized_server_address
+        env_updates['COMFYUI_SERVER_ADDRESS'] = normalized_server_address
+        await chat_db_manager.set_global_setting('comfyui_server_address', normalized_server_address)
+        updated['server_address'] = normalized_server_address
+
+    normalized_workflow_path: Optional[str] = None
+    if config.workflow_path is not None:
+        normalized_workflow_path = ComfyUIService._normalize_workflow_path(config.workflow_path)
+
+    if config.workflow_json is not None:
+        workflow_save_path = normalized_workflow_path
+        if not workflow_save_path:
+            db_workflow_path = await chat_db_manager.get_global_setting('comfyui_workflow_path')
+            workflow_save_path = ComfyUIService._normalize_workflow_path(
+                db_workflow_path or runtime_config.get('WORKFLOW_PATH') or ''
+            )
+
+        if not workflow_save_path:
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            workflow_save_path = os.path.join(project_root, 'data', 'comfyui', 'workflow.json')
+
+        try:
+            saved_path = comfyui_service.save_workflow_text(config.workflow_json, workflow_save_path)
+        except json.JSONDecodeError as error:
+            raise HTTPException(400, f'工作流 JSON 解析失败: {error}')
+        except ValueError as error:
+            raise HTTPException(400, str(error))
+        except Exception as error:
+            raise HTTPException(500, f'保存工作流文件失败: {error}')
+
+        normalized_workflow_path = ComfyUIService._normalize_workflow_path(saved_path)
+        updated['workflow_imported'] = True
+
+    if normalized_workflow_path is not None:
+        if normalized_workflow_path and not os.path.exists(normalized_workflow_path):
+            raise HTTPException(400, f'工作流文件不存在: {normalized_workflow_path}')
+
+        runtime_config['WORKFLOW_PATH'] = normalized_workflow_path
+        os.environ['COMFYUI_WORKFLOW_PATH'] = normalized_workflow_path
+        env_updates['COMFYUI_WORKFLOW_PATH'] = normalized_workflow_path
+        await chat_db_manager.set_global_setting('comfyui_workflow_path', normalized_workflow_path)
+        updated['workflow_path'] = normalized_workflow_path
+
+    if config.image_output_node_id is not None:
+        output_node_id = str(config.image_output_node_id or '').strip()
+        runtime_config['IMAGE_OUTPUT_NODE_ID'] = output_node_id
+        os.environ['COMFYUI_IMAGE_OUTPUT_NODE_ID'] = output_node_id
+        env_updates['COMFYUI_IMAGE_OUTPUT_NODE_ID'] = output_node_id
+        await chat_db_manager.set_global_setting('comfyui_image_output_node_id', output_node_id)
+        updated['image_output_node_id'] = output_node_id
+
+    numeric_config_fields = [
+        ('generation_cost', 'IMAGE_GENERATION_COST', 'COMFYUI_GENERATION_COST', 'comfyui_generation_cost', int, 0),
+        ('default_width', 'DEFAULT_WIDTH', 'COMFYUI_DEFAULT_WIDTH', 'comfyui_default_width', int, 64),
+        ('default_height', 'DEFAULT_HEIGHT', 'COMFYUI_DEFAULT_HEIGHT', 'comfyui_default_height', int, 64),
+        ('default_steps', 'DEFAULT_STEPS', 'COMFYUI_DEFAULT_STEPS', 'comfyui_default_steps', int, 1),
+        ('default_cfg', 'DEFAULT_CFG', 'COMFYUI_DEFAULT_CFG', 'comfyui_default_cfg', float, 0),
+        ('default_seed', 'DEFAULT_SEED', 'COMFYUI_DEFAULT_SEED', 'comfyui_default_seed', int, 0),
+        ('default_lora_strength', 'DEFAULT_LORA_STRENGTH', 'COMFYUI_DEFAULT_LORA_STRENGTH', 'comfyui_default_lora_strength', float, 0),
+        ('request_timeout_seconds', 'REQUEST_TIMEOUT_SECONDS', 'COMFYUI_REQUEST_TIMEOUT_SECONDS', 'comfyui_request_timeout_seconds', int, 1),
+        ('poll_interval_seconds', 'POLL_INTERVAL_SECONDS', 'COMFYUI_POLL_INTERVAL_SECONDS', 'comfyui_poll_interval_seconds', float, 0.1),
+    ]
+
+    for request_key, runtime_key, env_key, db_key, caster, min_value in numeric_config_fields:
+        raw_value = getattr(config, request_key)
+        if raw_value is None:
+            continue
+
+        try:
+            parsed_value = caster(raw_value)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f'无效的数值配置: {request_key}={raw_value}')
+
+        if parsed_value < min_value:
+            raise HTTPException(400, f'{request_key} 不能小于 {min_value}')
+
+        runtime_config[runtime_key] = parsed_value
+        os.environ[env_key] = str(parsed_value)
+        env_updates[env_key] = parsed_value
+        await chat_db_manager.set_global_setting(db_key, str(parsed_value))
+        updated[request_key] = parsed_value
+
+    string_config_fields = [
+        ('default_sampler', 'DEFAULT_SAMPLER', 'COMFYUI_DEFAULT_SAMPLER', 'comfyui_default_sampler'),
+        ('default_scheduler', 'DEFAULT_SCHEDULER', 'COMFYUI_DEFAULT_SCHEDULER', 'comfyui_default_scheduler'),
+        ('default_lora', 'DEFAULT_LORA', 'COMFYUI_DEFAULT_LORA', 'comfyui_default_lora'),
+    ]
+
+    for request_key, runtime_key, env_key, db_key in string_config_fields:
+        raw_value = getattr(config, request_key)
+        if raw_value is None:
+            continue
+
+        parsed_text = str(raw_value or '').strip()
+        runtime_config[runtime_key] = parsed_text
+        os.environ[env_key] = parsed_text
+        env_updates[env_key] = parsed_text
+        await chat_db_manager.set_global_setting(db_key, parsed_text)
+        updated[request_key] = parsed_text
+
+    if config.placeholder_mapping is not None:
+        normalized_placeholder_mapping = _normalize_string_map(config.placeholder_mapping)
+        serialized_placeholder_mapping = json.dumps(normalized_placeholder_mapping, ensure_ascii=False)
+        runtime_config['PLACEHOLDER_MAPPING'] = normalized_placeholder_mapping
+        os.environ['COMFYUI_PLACEHOLDER_MAPPING'] = serialized_placeholder_mapping
+        env_updates['COMFYUI_PLACEHOLDER_MAPPING'] = serialized_placeholder_mapping
+        await chat_db_manager.set_global_setting('comfyui_placeholder_mapping', serialized_placeholder_mapping)
+        updated['placeholder_mapping'] = normalized_placeholder_mapping
+
+    if config.node_mapping is not None:
+        normalized_node_mapping = _normalize_json_object(config.node_mapping)
+        serialized_node_mapping = json.dumps(normalized_node_mapping, ensure_ascii=False)
+        runtime_config['NODE_MAPPING'] = normalized_node_mapping
+        os.environ['COMFYUI_NODE_MAPPING'] = serialized_node_mapping
+        env_updates['COMFYUI_NODE_MAPPING'] = serialized_node_mapping
+        await chat_db_manager.set_global_setting('comfyui_node_mapping', serialized_node_mapping)
+        updated['node_mapping'] = normalized_node_mapping
+
+    if env_updates:
+        update_env_file(env_updates)
+
+    try:
+        comfyui_service.reinitialize()
+        updated['service_reloaded'] = True
+        updated['service_available'] = comfyui_service.is_available()
+    except Exception as error:
+        log.warning(f'热重载 ComfyUI 服务失败: {error}')
+        updated['service_reload_error'] = str(error)
+
+    await _sync_discord_commands_if_possible()
+    updated['command_blacklist'] = _get_command_sync_blacklist()
+
+    return {'success': True, 'updated': updated}
+
+
+@app.post('/api/config/test-comfyui')
+async def test_comfyui_connection(token: str = Depends(verify_token)):
+    '''测试 ComfyUI 连接'''
+    try:
+        from src.chat.features.image_generation.services.comfyui_service import comfyui_service
+        return await comfyui_service.test_connection()
+    except Exception as error:
+        log.error(f'测试 ComfyUI 连接失败: {error}', exc_info=True)
+        return {'success': False, 'error': str(error)}
+
+
+@app.post('/api/config/comfyui/download-lora')
+async def download_comfyui_lora(
+    request: ComfyUILoraDownloadRequest,
+    token: str = Depends(verify_token),
+):
+    '''通过 ComfyUI-Manager 下载 LoRA。'''
+    try:
+        from src.chat.features.image_generation.services.comfyui_service import comfyui_service
+
+        result = await comfyui_service.download_lora_from_url(
+            url=request.url,
+            filename=request.filename,
+            save_path=request.save_path,
+        )
+        if result.get('success'):
+            return result
+
+        error_message = str(result.get('error') or '下载 LoRA 失败')
+        raise HTTPException(status_code=400, detail=error_message)
+    except HTTPException:
+        raise
+    except Exception as error:
+        log.error(f'下载 LoRA 失败: {error}', exc_info=True)
+        raise HTTPException(status_code=500, detail=f'下载 LoRA 失败: {error}')
+
+
 # --- 默认绘图引擎配置 API ---
 
 @app.get("/api/config/default-image-engine")
@@ -2943,20 +3309,23 @@ async def get_default_image_engine(token: str = Depends(verify_token)):
     from src.chat.utils.database import chat_db_manager
 
     db_engine = await chat_db_manager.get_global_setting("default_image_engine")
-    engine = db_engine or chat_config.DEFAULT_IMAGE_ENGINE or "novelai"
+    engine = db_engine or chat_config.DEFAULT_IMAGE_ENGINE or 'novelai'
+    if engine not in ('imagen', 'novelai', 'comfyui'):
+        engine = 'novelai'
 
     return {
         "engine": engine,
         "available_engines": [
             {"value": "imagen", "label": "Gemini Imagen", "description": "使用 Gemini Imagen API 生成图片（自然语言提示词）"},
             {"value": "novelai", "label": "NovelAI", "description": "使用 NovelAI API 生成图片（Danbooru Tag 格式提示词）"},
+            {'value': 'comfyui', 'label': 'ComfyUI', 'description': '使用本地 ComfyUI 工作流生成图片（支持占位符和节点映射）'},
         ]
     }
 
 
 class DefaultImageEngineUpdate(BaseModel):
     """默认绘图引擎更新"""
-    engine: str  # "imagen" 或 "novelai"
+    engine: str  # imagen / novelai / comfyui
 
 
 @app.put("/api/config/default-image-engine")
@@ -2964,8 +3333,8 @@ async def update_default_image_engine(config: DefaultImageEngineUpdate, token: s
     """更新默认绘图引擎配置"""
     from src.chat.utils.database import chat_db_manager
 
-    if config.engine not in ("imagen", "novelai"):
-        raise HTTPException(400, "无效的引擎类型，必须是 'imagen' 或 'novelai'")
+    if config.engine not in ('imagen', 'novelai', 'comfyui'):
+        raise HTTPException(400, "无效的引擎类型，必须是 'imagen'、'novelai' 或 'comfyui'")
 
     await chat_db_manager.set_global_setting("default_image_engine", config.engine)
 

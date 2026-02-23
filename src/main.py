@@ -341,6 +341,16 @@ class GuidanceBot(commands.Bot):
 
         log.info("--- 所有模块加载完毕 ---")
 
+    def _get_command_blacklist(self) -> list[str]:
+        blacklist = ['启动']
+        comfy_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLED', False))
+        comfy_slash_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLE_SLASH_COMMAND', True))
+
+        if not comfy_enabled or not comfy_slash_enabled:
+            blacklist.append('comfy')
+
+        return blacklist
+
     async def on_ready(self):
         """当机器人成功连接到 Discord 时调用"""
         log = logging.getLogger(__name__)
@@ -380,7 +390,9 @@ class GuidanceBot(commands.Bot):
             # 如果没有设置，sync() 会进行全局同步。
             # 使用新的智能同步功能，并将在黑名单中指定的命令排除
             # 这可以防止在批量更新中意外删除由 Discord 活动（Activity）等功能自动创建的入口点命令
-            await sync_commands(self.tree, self, blacklist=["启动"])
+            command_blacklist = self._get_command_blacklist()
+            await sync_commands(self.tree, self, blacklist=command_blacklist)
+            log.info(f'命令同步黑名单: {command_blacklist}')
         except Exception as e:
             log.error(f"同步命令时出错: {e}", exc_info=True)
 

@@ -243,6 +243,55 @@ class PromptService:
             }
         )
 
+        # --- 默认绘图引擎路由覆盖注入（高优先级）---
+        default_image_engine = str(chat_config.DEFAULT_IMAGE_ENGINE or 'novelai').strip().lower()
+        if default_image_engine not in {'imagen', 'novelai', 'comfyui'}:
+            default_image_engine = 'novelai'
+
+        if default_image_engine == 'imagen':
+            default_new_image_tool = 'generate_image / generate_images_batch'
+            route_override_text = (
+                '绘图工具路由覆盖（高优先级）：'
+                '1) 当前默认引擎是 Imagen，画新图优先调用 generate_image / generate_images_batch；'
+                '2) 只有用户明确要求修改原图/图生图时才调用 edit_image；'
+                '3) 用户明确指定 NovelAI 时才调用 generate_image_novelai；'
+                '4) 用户明确指定 ComfyUI 或 comfy 时才调用 generate_image_comfyui。'
+            )
+            route_ack_text = '收到，默认画新图我会优先使用 Imagen。'
+        elif default_image_engine == 'comfyui':
+            default_new_image_tool = 'generate_image_comfyui'
+            route_override_text = (
+                '绘图工具路由覆盖（高优先级）：'
+                '1) 当前默认引擎是 ComfyUI，画新图优先调用 generate_image_comfyui；'
+                '2) 只有用户明确要求修改原图/图生图时才调用 edit_image；'
+                '3) 用户明确指定 NovelAI 时才调用 generate_image_novelai；'
+                '4) 用户明确指定 Imagen 时才调用 generate_image / generate_images_batch。'
+            )
+            route_ack_text = '收到，默认画新图我会优先使用 ComfyUI。'
+        else:
+            default_new_image_tool = 'generate_image_novelai'
+            route_override_text = (
+                '绘图工具路由覆盖（高优先级）：'
+                '1) 当前默认引擎是 NovelAI，画新图优先调用 generate_image_novelai；'
+                '2) 只有用户明确要求修改原图/图生图时才调用 edit_image；'
+                '3) 用户明确指定 Imagen 时才调用 generate_image / generate_images_batch；'
+                '4) 用户明确指定 ComfyUI 或 comfy 时才调用 generate_image_comfyui。'
+            )
+            route_ack_text = '收到，默认画新图我会优先使用 NovelAI。'
+
+        final_conversation.append({'role': 'user', 'parts': [route_override_text]})
+        final_conversation.append({'role': 'model', 'parts': [route_ack_text]})
+
+        if default_image_engine == 'comfyui':
+            comfyui_param_hint = (
+                'ComfyUI 参数传参规则：'
+                '若用户明确给出步数、CFG、分辨率、采样器、调度器、seed、LoRA，请优先透传到 '
+                'generate_image_comfyui 的对应参数；'
+                '若用户未指定则留空，使用 Dashboard 默认值。'
+            )
+            final_conversation.append({'role': 'user', 'parts': [comfyui_param_hint]})
+            final_conversation.append({'role': 'model', 'parts': ['收到，ComfyUI 生图时我会优先透传用户给出的参数。']})
+
         # --- 语音工具路由与音色规则注入（动态）---
         default_voice_type = str(
             chat_config.VOICE_CONFIG.get(
@@ -511,8 +560,8 @@ class PromptService:
                     "\n\n⚠️ 重要：用户回复的消息中包含图片附件（已附在下方用户消息中）。"
                     "你必须先判断用户意图是‘改这张图’还是‘参考这张图风格新画一张’。"
                     "只有用户明确要求修改原图/图生图时才调用 edit_image；"
-                    "如果用户是照这个画风画新内容、参考风格二创、或继续之前 NovelAI 风格，"
-                    "应优先调用 generate_image_novelai。"
+                    "如果用户是照这个画风画新内容、参考风格二创、或继续该风格创作，"
+                    f"应优先调用 {default_new_image_tool}。"
                     "当调用 edit_image 时，你可以根据意图决定参考图策略："
                     "单图精修用 reference_image_mode='single'；"
                     "多图融合/综合参考用 reference_image_mode='multi'；"
@@ -650,7 +699,7 @@ class PromptService:
                         "绘图路由提示：检测到用户当前消息或回复上下文中存在图片。"
                         "涉及画图请求时，请先观察图片内容（角色、画风、构图、色调），"
                         "再判断工具：明确改原图才用 edit_image；"
-                        "参考画风/元素新画一张优先 generate_image_novelai。"
+                        f"参考画风/元素新画一张优先 {default_new_image_tool}。"
                         "若调用 edit_image：按意图设置 reference_image_mode（single/multi/auto），"
                         "并可通过 max_reference_images 控制最多参考图数量。"
                     ],
@@ -659,7 +708,7 @@ class PromptService:
             final_conversation.append(
                 {
                     "role": "model",
-                    "parts": ["收到，我会先看图再决定调用 edit_image 还是 generate_image_novelai。"],
+                    "parts": [f"收到，我会先看图再决定调用 edit_image 还是 {default_new_image_tool}。"],
                 }
             )
 

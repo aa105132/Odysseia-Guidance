@@ -690,33 +690,57 @@ EMBEDDING_CONFIG = {
 }
 
 # --- ComfyUI 图像生成配置 ---
+# 说明：
+# 1) 支持 Dashboard 导入任意 ComfyUI 工作流 JSON（WORKFLOW_PATH）
+# 2) 支持通过占位符替换驱动工作流（PLACEHOLDER_MAPPING）
+# 3) 支持通过节点映射直接写入特定节点输入（NODE_MAPPING，可选）
 COMFYUI_CONFIG = {
-    "ENABLED": _parse_bool_env("COMFYUI_ENABLED", "True"),
-    "SERVER_ADDRESS": os.getenv(
-        "COMFYUI_SERVER_ADDRESS", "https://wp08.unicorn.org.cn:14727/"
+    # 总开关（关闭后：工具不可用，斜杠命令会在同步时被排除）
+    "ENABLED": _parse_bool_env("COMFYUI_ENABLED", "False"),
+    # 是否推送 ComfyUI 斜杠命令到 Discord
+    "ENABLE_SLASH_COMMAND": _parse_bool_env("COMFYUI_ENABLE_SLASH_COMMAND", "True"),
+    # ComfyUI 服务地址，例如：http://127.0.0.1:8188
+    "SERVER_ADDRESS": os.getenv("COMFYUI_SERVER_ADDRESS", "http://127.0.0.1:8188"),
+    # 工作流文件路径（支持绝对路径，如 D:\Downloads\xxx.json）
+    "WORKFLOW_PATH": os.getenv("COMFYUI_WORKFLOW_PATH", ""),
+    # 生成一张图片的月光币成本
+    "IMAGE_GENERATION_COST": _parse_int_env("COMFYUI_GENERATION_COST", 5),
+    # 默认参数（可在 Dashboard 中覆盖）
+    "DEFAULT_WIDTH": _parse_int_env("COMFYUI_DEFAULT_WIDTH", 832),
+    "DEFAULT_HEIGHT": _parse_int_env("COMFYUI_DEFAULT_HEIGHT", 1216),
+    "DEFAULT_STEPS": _parse_int_env("COMFYUI_DEFAULT_STEPS", 28),
+    "DEFAULT_CFG": _parse_float_env("COMFYUI_DEFAULT_CFG", 5.0),
+    "DEFAULT_SAMPLER": os.getenv("COMFYUI_DEFAULT_SAMPLER", "euler"),
+    "DEFAULT_SCHEDULER": os.getenv("COMFYUI_DEFAULT_SCHEDULER", "normal"),
+    "DEFAULT_SEED": _parse_int_env("COMFYUI_DEFAULT_SEED", 12345),
+    "DEFAULT_LORA": os.getenv("COMFYUI_DEFAULT_LORA", ""),
+    "DEFAULT_LORA_STRENGTH": _parse_float_env("COMFYUI_DEFAULT_LORA_STRENGTH", 1.0),
+    # 占位符映射：参数名 -> 占位符文本
+    # 默认同时支持 {{key}} 形式，此处仅用于自定义占位符名
+    "PLACEHOLDER_MAPPING": _parse_str_map_env(
+        "COMFYUI_PLACEHOLDER_MAPPING",
+        {
+            "positive_prompt": "{{positive_prompt}}",
+            "negative_prompt": "{{negative_prompt}}",
+            "width": "{{width}}",
+            "height": "{{height}}",
+            "steps": "{{steps}}",
+            "cfg": "{{cfg}}",
+            "sampler": "{{sampler}}",
+            "scheduler": "{{scheduler}}",
+            "seed": "{{seed}}",
+            "lora": "{{lora}}",
+            "lora_strength": "{{lora_strength}}",
+        },
     ),
-    "WORKFLOW_PATH": "src/chat/features/image_generation/workflows/Aaalice_simple_v9.8.1.json",
-    "IMAGE_GENERATION_COST": 20,  # 生成一张图片的成本
-    # --- 节点 ID 和路径配置 ---
-    # 用于修改工作流中的特定参数。
-    # 格式: "PARAMETER_NAME": ["NODE_ID", "INPUT_FIELD_NAME"]
-    "NODE_MAPPING": {
-        "positive_prompt": ["1832", "positive"],
-        "negative_prompt": [
-            "1834",
-            "positive",
-        ],  # 该自定义节点的负面输入框也叫 'positive'
-        "model_name": ["1409", "ckpt_name"],
-        "vae_name": ["1409", "vae_name"],
-        "width": ["1409", "empty_latent_width"],
-        "height": ["1409", "empty_latent_height"],
-        "steps": ["474", "steps_total"],
-        "cfg": ["474", "cfg"],
-        "sampler_name": ["474", "sampler_name"],
-        "scheduler": ["474", "scheduler"],
-    },
-    # 最终图像输出节点的ID
-    "IMAGE_OUTPUT_NODE_ID": "2341",
+    # 可选：节点映射（参数名 -> [node_id, input_field]）
+    # 用于不方便写占位符时，直接覆盖节点输入值
+    "NODE_MAPPING": _parse_json_object_env("COMFYUI_NODE_MAPPING", {}),
+    # 可选：指定最终输出节点 ID（留空时自动从 history 输出中取第一张图）
+    "IMAGE_OUTPUT_NODE_ID": os.getenv("COMFYUI_IMAGE_OUTPUT_NODE_ID", ""),
+    # 请求超时与轮询间隔
+    "REQUEST_TIMEOUT_SECONDS": _parse_int_env("COMFYUI_REQUEST_TIMEOUT_SECONDS", 180),
+    "POLL_INTERVAL_SECONDS": _parse_float_env("COMFYUI_POLL_INTERVAL_SECONDS", 1.0),
 }
 
 # --- 塔罗牌占卜功能配置 ---
