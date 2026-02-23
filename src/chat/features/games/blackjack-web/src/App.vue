@@ -1072,10 +1072,6 @@ onBeforeUnmount(() => {
                     </TransitionGroup>
                 </div>
 
-                <!-- Messages Text -->
-                <div class="messages" v-if="singleResultText" style="margin: 0; font-weight: bold; font-size: 1.5em; color: #c0a062;">结果: {{singleResultText}}</div>
-                <div class="messages" v-else style="height: 36px; margin: 0;"></div>
-                
                 <!-- Player Area -->
                 <div class="game-area player-area single-game-area" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
                     <h2 style="font-family: 'Playfair Display', serif; font-size: 1.8em; color: #f0e6d2; margin-bottom: 15px; opacity: 0.9; border: none; min-width: auto; padding-bottom: 0;">玩家 (<span>{{ singleGame?.player_score ?? 0 }}</span>)</h2>
@@ -1083,6 +1079,10 @@ onBeforeUnmount(() => {
                         <img v-for="(card, index) in singleGame?.player_hand || []" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card large-card">
                     </TransitionGroup>
                 </div>
+
+                <!-- Messages Text -->
+                <div class="messages single-result-text" v-if="singleResultText">结果: {{singleResultText}}</div>
+                <div class="messages single-result-text placeholder" v-else></div>
 
                 <!-- Controls & Betting -->
                 <div style="margin-top: 10px; display: flex; flex-direction: column; align-items: center; width: 100%; z-index: 20;">
@@ -1259,22 +1259,67 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.single-mode-view .single-game-area {
-  position: static !important;
-}
-.single-mode-view .single-hand {
-  justify-content: center !important;
-  display: flex;
-}
-.single-mode-view .large-card {
-  width: 180px;
-  height: 260px;
-  font-size: 2.5em;
-  margin: 5px;
+.single-mode-view #game-table {
+  display: block;
+  height: 100%;
+  min-height: 75vh;
+  padding: 0;
 }
 
-.single-mode-view .hand .large-card:not(:first-child) {
-  margin-left: -110px;
+.single-mode-view .single-game-area {
+  position: static !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  min-height: unset !important;
+  margin-bottom: 0 !important;
+}
+
+.single-mode-view .single-game-area h2 {
+  grid-column: auto !important;
+  justify-self: auto !important;
+  height: auto !important;
+  padding: 0 !important;
+  margin: 0 0 12px 0 !important;
+  font-size: 1.8em !important;
+  text-align: center !important;
+  justify-content: center !important;
+}
+
+.single-mode-view .single-hand {
+  justify-content: center !important;
+  display: flex !important;
+  align-items: center;
+  flex-wrap: nowrap;
+  min-height: 184px;
+  margin: 0 !important;
+}
+
+.single-mode-view .single-result-text {
+  margin: 0;
+  min-height: 36px;
+  line-height: 36px;
+  font-size: 1.5em;
+  font-weight: bold;
+  color: #c0a062;
+  text-align: center;
+}
+
+.single-mode-view .single-result-text.placeholder {
+  visibility: hidden;
+}
+
+.single-mode-view .large-card {
+  width: 126px;
+  height: 174px;
+  font-size: 2.2em;
+  margin: 0;
+}
+
+.single-mode-view .single-hand .large-card:not(:first-child) {
+  margin-left: -44px;
 }
 
 .single-mode-view .single-btn {
@@ -1284,22 +1329,33 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1024px) {
   .single-mode-view .large-card {
-    width: 160px;
-    height: 232px;
+    width: 108px;
+    height: 150px;
   }
-  .single-mode-view .hand .large-card:not(:first-child) {
-    margin-left: -80px;
+
+  .single-mode-view .single-hand {
+    min-height: 160px;
+  }
+
+  .single-mode-view .single-hand .large-card:not(:first-child) {
+    margin-left: -36px;
   }
 }
 
 @media (max-width: 768px) {
   .single-mode-view .large-card {
-    width: 120px;
-    height: 175px;
+    width: 90px;
+    height: 125px;
   }
-  .single-mode-view .hand .large-card:not(:first-child) {
-    margin-left: -60px;
+
+  .single-mode-view .single-hand {
+    min-height: 136px;
   }
+
+  .single-mode-view .single-hand .large-card:not(:first-child) {
+    margin-left: -30px;
+  }
+
   .single-mode-view .single-btn {
     padding: 10px 20px;
     font-size: 1.1em;
@@ -1308,11 +1364,16 @@ onBeforeUnmount(() => {
 
 @media (max-width: 480px) {
   .single-mode-view .large-card {
-    width: 90px;
-    height: 130px;
+    width: 72px;
+    height: 100px;
   }
-  .single-mode-view .hand .large-card:not(:first-child) {
-    margin-left: -45px;
+
+  .single-mode-view .single-hand {
+    min-height: 108px;
+  }
+
+  .single-mode-view .single-hand .large-card:not(:first-child) {
+    margin-left: -22px;
   }
 }
 
