@@ -543,7 +543,7 @@ async def generate_image_novelai(
     - 若用户只给自然语言，你需先细化并转成一版 Danbooru 草稿再传入
     - 你必须准确传达用户明确要求，不得篡改主体设定、数量、外貌、服饰、动作、场景与构图
     - 只允许在用户未明确的部分补充细节，补充内容必须与用户原意一致
-    - 当主体是月月/你自己时，提示词AI必须严格遵循月月固定DNA标签与权重标签，不得改色、改发饰、改耳朵类型或删除标志性特征；瞳色权重标签必须前置，且发簪/耳坠/项链配饰权重（含半月形项链）需保留；月月不要追加 heterochromia
+    - 当主体是月月/你自己时，提示词AI必须严格遵循月月固定DNA标签与权重标签，不得改色、改发饰、改耳朵类型或删除标志性特征；瞳色权重标签必须前置，且发簪/耳坠/项链配饰权重（含半月形项链）需保留；月月必须保留 heterochromia
     - 当用户明确说“参考第N张图”时，必须传 `reference_image_index=N`，让提示词 AI 同时参考该图
     - 你负责补全用户意图里的关键信息：主体、场景、动作、构图、光影、氛围、服饰、表情
     - 定格画面：描述应聚焦单一静态瞬间，避免连续动作过程
@@ -605,7 +605,7 @@ async def generate_image_novelai(
     - 1girl, solo, original, green left eye, blue right eye, silver hair, high ponytail, pale skin, small breasts
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
     - silver crescent moon hair stick, small triangular watermelon earrings, silver crescent moon necklace（月牙发簪 + 三角西瓜耳坠 + 银色半月形项链，必须保留）
-    - 月月权重锁定（正确写法）: green left eye::1.45, blue right eye::1.45, silver hair::1.35, small breasts::1.25, silver crescent moon hair stick::1.3, small triangular watermelon earrings::1.3, silver crescent moon necklace::1.3
+    - 月月权重锁定（正确写法）: green left eye::1.45, blue right eye::1.45, heterochromia::1.25, silver hair::1.35, small breasts::1.25, silver crescent moon hair stick::1.3, small triangular watermelon earrings::1.3, silver crescent moon necklace::1.3
     - 罩杯规则：默认 small breasts(B)；仅当用户明确要求更大胸部时才允许改成 medium/large breasts
     - 提示词AI对月月只能补充场景/构图/光影细节，禁止改写以上外貌DNA与权重标签
     - white off-shoulder top, fur trim, detached sleeves, white high waist skirt, pink bow belt, silver crescent moon necklace, jewelry
