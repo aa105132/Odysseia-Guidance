@@ -1104,7 +1104,6 @@ onBeforeUnmount(() => {
                                   </div>
                               </div>
                           </div>
-                      </template>
                   </div>
               </div>
           </div>
