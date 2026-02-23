@@ -1062,51 +1062,51 @@ onBeforeUnmount(() => {
               <button :disabled="requestInFlight || !singleGame" @click="forfeitSingleGame">放弃</button>
             </div>
 
-            <div style="display: flex; flex-direction: column; align-items: center; justify-content: space-between; height: 100%; padding: 4vh 0 6vh 0;">
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 30px; height: 100%; padding: 4vh 0 6vh 0;">
                 
                 <!-- Dealer Area -->
-                <div class="game-area" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
-                    <h2 style="font-family: 'Playfair Display', serif; font-size: 1.8em; color: #f0e6d2; margin-bottom: 10px; opacity: 0.9; border: none; min-width: auto; padding-bottom: 0;">月月 (<span>{{ singleGame?.dealer_score ?? 0 }}</span>)</h2>
-                    <TransitionGroup name="card" tag="div" class="hand" style="min-height: unset; margin: 0;">
+                <div class="game-area dealer-area single-game-area" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
+                    <h2 style="font-family: 'Playfair Display', serif; font-size: 1.8em; color: #f0e6d2; margin-bottom: 15px; opacity: 0.9; border: none; min-width: auto; padding-bottom: 0;">月月 (<span>{{ singleGame?.dealer_score ?? 0 }}</span>)</h2>
+                    <TransitionGroup name="card" tag="div" class="hand single-hand" style="min-height: unset; margin: 0;">
                         <img v-for="(card, index) in singleGame?.dealer_hand || []" :key="'dealer-' + index + '-' + card" :src="cardImageSrc(card)" class="card large-card">
                     </TransitionGroup>
                 </div>
 
                 <!-- Messages Text -->
-                <div class="messages" v-if="singleResultText" style="margin: 15px 0; font-weight: bold; font-size: 1.5em; color: #c0a062;">结果: {{singleResultText}}</div>
-                <div class="messages" v-else style="height: 36px; margin: 15px 0;"></div>
+                <div class="messages" v-if="singleResultText" style="margin: 0; font-weight: bold; font-size: 1.5em; color: #c0a062;">结果: {{singleResultText}}</div>
+                <div class="messages" v-else style="height: 36px; margin: 0;"></div>
                 
                 <!-- Player Area -->
-                <div class="game-area" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
-                    <h2 style="font-family: 'Playfair Display', serif; font-size: 1.8em; color: #f0e6d2; margin-bottom: 10px; opacity: 0.9; border: none; min-width: auto; padding-bottom: 0;">玩家 (<span>{{ singleGame?.player_score ?? 0 }}</span>)</h2>
-                    <TransitionGroup name="card" tag="div" class="hand" style="min-height: unset; margin: 0;">
+                <div class="game-area player-area single-game-area" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
+                    <h2 style="font-family: 'Playfair Display', serif; font-size: 1.8em; color: #f0e6d2; margin-bottom: 15px; opacity: 0.9; border: none; min-width: auto; padding-bottom: 0;">玩家 (<span>{{ singleGame?.player_score ?? 0 }}</span>)</h2>
+                    <TransitionGroup name="card" tag="div" class="hand single-hand" style="min-height: unset; margin: 0;">
                         <img v-for="(card, index) in singleGame?.player_hand || []" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card large-card">
                     </TransitionGroup>
                 </div>
 
                 <!-- Controls & Betting -->
-                <div style="margin-top: 30px; display: flex; flex-direction: column; align-items: center; width: 100%; z-index: 20;">
-                    <div id="controls" v-if="canSingleOperate" style="display: flex; gap: 10px;">
-                        <button @click="singleHit" :disabled="requestInFlight">要牌</button>
-                        <button @click="singleStand" :disabled="requestInFlight">停牌</button>
-                        <button @click="singleDouble" :disabled="requestInFlight || !canSingleDouble">双倍下注</button>
+                <div style="margin-top: 10px; display: flex; flex-direction: column; align-items: center; width: 100%; z-index: 20;">
+                    <div id="controls" v-if="canSingleOperate" style="display: flex; gap: 15px;">
+                        <button class="single-btn" @click="singleHit" :disabled="requestInFlight">要牌</button>
+                        <button class="single-btn" @click="singleStand" :disabled="requestInFlight">停牌</button>
+                        <button class="single-btn" @click="singleDouble" :disabled="requestInFlight || !canSingleDouble">双倍下注</button>
                     </div>
 
                     <div v-if="!singleGame || !canSingleOperate" id="betting-area" style="width: 100%; max-width: 800px; display: flex; flex-direction: column; align-items: center;">
                         <div class="balance-text" style="background-color: rgba(0, 0, 0, 0.6); padding: 8px 20px; border-radius: 6px; margin-bottom: 15px; display: inline-block; font-size: 1.2em;">
                             您的余额: <span>{{ profile?.balance ?? 0 }}</span>
-                                  <span v-if="singleGame"> | 刚才下注: <span>{{ singleGame?.bet_amount ?? 0 }}</span></span>
-                              </div>
-                              <div id="betting-controls" style="display: flex; gap: 10px; align-items: center;">
-                                  <div id="manual-bet-container" style="display: flex; gap: 10px;">
-                                      <input v-model.number="singleBetInput" type="number" min="1" placeholder="输入赌注" :disabled="requestInFlight" style="width: 120px;">
-                                      <button :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">再来一局</button>
-                                  </div>
-                              </div>
-                          </div>
-                  </div>
-              </div>
-          </div>
+                            <span v-if="singleGame"> | 刚才下注: <span>{{ singleGame?.bet_amount ?? 0 }}</span></span>
+                        </div>
+                        <div id="betting-controls" style="display: flex; gap: 10px; align-items: center;">
+                            <div id="manual-bet-container" style="display: flex; gap: 15px; align-items: center;">
+                                <input v-model.number="singleBetInput" type="number" min="1" placeholder="输入赌注" :disabled="requestInFlight" style="width: 150px; font-size: 1.2em; padding: 10px;">
+                                <button class="single-btn" :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">再来一局</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
           <div id="game-dealer-section" class="dealer-section">
               <img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" alt="荷官" class="dealer-image">
               <div v-if="dealerSpeech" class="dialogue-box">
@@ -1259,6 +1259,63 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.single-mode-view .single-game-area {
+  position: static !important;
+}
+.single-mode-view .single-hand {
+  justify-content: center !important;
+  display: flex;
+}
+.single-mode-view .large-card {
+  width: 180px;
+  height: 260px;
+  font-size: 2.5em;
+  margin: 5px;
+}
+
+.single-mode-view .hand .large-card:not(:first-child) {
+  margin-left: -110px;
+}
+
+.single-mode-view .single-btn {
+  padding: 12px 30px;
+  font-size: 1.2em;
+}
+
+@media (max-width: 1024px) {
+  .single-mode-view .large-card {
+    width: 160px;
+    height: 232px;
+  }
+  .single-mode-view .hand .large-card:not(:first-child) {
+    margin-left: -80px;
+  }
+}
+
+@media (max-width: 768px) {
+  .single-mode-view .large-card {
+    width: 120px;
+    height: 175px;
+  }
+  .single-mode-view .hand .large-card:not(:first-child) {
+    margin-left: -60px;
+  }
+  .single-mode-view .single-btn {
+    padding: 10px 20px;
+    font-size: 1.1em;
+  }
+}
+
+@media (max-width: 480px) {
+  .single-mode-view .large-card {
+    width: 90px;
+    height: 130px;
+  }
+  .single-mode-view .hand .large-card:not(:first-child) {
+    margin-left: -45px;
+  }
+}
+
 :global(html),
 :global(body),
 :global(#app) {
