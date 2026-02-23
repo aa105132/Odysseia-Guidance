@@ -218,6 +218,29 @@ const canSingleDouble = computed(() => {
   return Number(profile.value?.balance ?? 0) >= Number(singleGame.value.bet_amount);
 });
 
+const singleBetOptions = computed(() => {
+  const balance = Number(profile.value?.balance ?? 0);
+  if (!Number.isFinite(balance) || balance <= 0) {
+    return [] as { key: string; label: string; value: number }[];
+  }
+
+  const options = [
+    { key: "small", label: "小", value: Math.max(10, Math.floor(balance * 0.05)) },
+    { key: "medium", label: "中", value: Math.max(50, Math.floor(balance * 0.15)) },
+    { key: "large", label: "大", value: Math.max(100, Math.floor(balance * 0.3)) },
+    { key: "all_in", label: "梭哈", value: Math.floor(balance) },
+  ];
+
+  const uniqueValues = new Set<number>();
+  return options.filter((option) => {
+    if (option.value <= 0 || option.value > balance || uniqueValues.has(option.value)) {
+      return false;
+    }
+    uniqueValues.add(option.value);
+    return true;
+  });
+});
+
 const singleStateText = computed(() => {
   const game = singleGame.value;
   if (!game) return "请输入下注金额后点击开始对战。";
@@ -627,6 +650,11 @@ function openComingSoon(gameName: string) {
   statusMessage.value = `${gameName} 功能开发中，敬请期待。`;
 }
 
+function applySingleBetOption(amount: number) {
+  if (!Number.isFinite(amount) || amount <= 0) return;
+  singleBetInput.value = amount;
+}
+
 async function enterSingleMode() {
   clearNotices();
   stopRoomPolling();
@@ -996,7 +1024,7 @@ onBeforeUnmount(() => {
           <p>先选游戏，再选模式，和月月开战</p>
         </div>
 
-        <div v-if="profile" class="profile-chip">
+        <div v-if="profile && viewMode !== 'single' && viewMode !== 'table'" class="profile-chip">
           <img class="profile-avatar" :src="playerAvatarSrc({
             user_id: Number(profile.user_id),
             username: profile.username,
@@ -1034,7 +1062,6 @@ onBeforeUnmount(() => {
             <span class="game-desc">待开发</span>
           </button>
         </div>
-        <div class="dealer-dialogue">{{ dealerSpeech }}</div>
       </section>
 
       <section v-else-if="viewMode === 'blackjack_mode_select'" class="panel lobby-panel">
@@ -1052,7 +1079,6 @@ onBeforeUnmount(() => {
         <div class="toolbar-actions">
           <button :disabled="requestInFlight" @click="enterGameHub">返回上一级</button>
         </div>
-        <div class="dealer-dialogue">{{ dealerSpeech }}</div>
       </section>
 
       <section v-else-if="viewMode === 'single'" id="game-view" class="table-wrapper single-mode-view">
@@ -1097,10 +1123,21 @@ onBeforeUnmount(() => {
                             您的余额: <span>{{ profile?.balance ?? 0 }}</span>
                             <span v-if="singleGame"> | 刚才下注: <span>{{ singleGame?.bet_amount ?? 0 }}</span></span>
                         </div>
-                        <div id="betting-controls" style="display: flex; gap: 10px; align-items: center;">
+                        <div id="betting-controls" style="display: flex; flex-direction: column; gap: 10px; align-items: center;">
                             <div id="manual-bet-container" style="display: flex; gap: 15px; align-items: center;">
                                 <input v-model.number="singleBetInput" type="number" min="1" placeholder="输入赌注" :disabled="requestInFlight" style="width: 150px; font-size: 1.2em; padding: 10px;">
                                 <button class="single-btn" :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">再来一局</button>
+                            </div>
+                            <div id="bet-options-container" style="display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap;">
+                                <button
+                                  v-for="option in singleBetOptions"
+                                  :key="`single-${option.key}`"
+                                  class="bet-option-button single-btn"
+                                  :disabled="requestInFlight"
+                                  @click="applySingleBetOption(option.value)"
+                                >
+                                  {{ option.label }} ({{ option.value }})
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1251,6 +1288,20 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </section>
+
+      <div
+        v-if="viewMode === 'game_hub' || viewMode === 'blackjack_mode_select'"
+        class="home-dealer-section dealer-section"
+      >
+        <img
+          :src="withAssetVersion('/character/normal.webp')"
+          alt="看板娘"
+          class="dealer-image"
+        />
+        <div v-if="dealerSpeech" class="dialogue-box">
+          <p>{{ dealerSpeech }}</p>
+        </div>
+      </div>
 
       <div v-if="statusMessage" class="status-message">{{ statusMessage }}</div>
       <div v-if="errorMessage" class="error-message">{{ errorMessage }}</div>
@@ -1544,6 +1595,11 @@ onBeforeUnmount(() => {
   left: 14px;
   right: 14px;
   z-index: 260;
+  pointer-events: none;
+}
+
+.multi-root.table-fullscreen .top-bar .profile-chip {
+  display: none;
 }
 
 .multi-root.table-fullscreen .table-wrapper {
@@ -1711,6 +1767,68 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 1.5;
   color: #ffe7bd;
+}
+
+.home-dealer-section {
+  position: fixed;
+  right: 14px;
+  bottom: 6px;
+  width: 220px;
+  height: 280px;
+  z-index: 220;
+  pointer-events: none;
+}
+
+.home-dealer-section .dealer-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.home-dealer-section .dialogue-box {
+  top: 24px;
+  left: -12px;
+  right: auto;
+  transform: translate(-100%, 0);
+  max-width: 320px;
+}
+
+.home-dealer-section .dialogue-box::before {
+  right: -10px;
+  left: auto;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 5px 0 5px 10px;
+  border-style: solid;
+  border-color: transparent transparent transparent #dcd0c0;
+}
+
+@media (max-width: 900px) {
+  .home-dealer-section {
+    width: 168px;
+    height: 210px;
+    right: 6px;
+    bottom: 4px;
+  }
+
+  .home-dealer-section .dialogue-box {
+    top: -6px;
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -100%);
+    max-width: 220px;
+    padding: 8px 10px;
+  }
+
+  .home-dealer-section .dialogue-box::before {
+    left: 50%;
+    right: auto;
+    top: 100%;
+    transform: translateX(-50%);
+    border-width: 8px 6px 0 6px;
+    border-style: solid;
+    border-color: #dcd0c0 transparent transparent transparent;
+  }
 }
 
 .dealer-dialogue-inline {
