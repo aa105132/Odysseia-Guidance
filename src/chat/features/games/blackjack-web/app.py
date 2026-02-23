@@ -2,7 +2,8 @@ import os
 import httpx
 import logging
 import asyncio
-from typing import List, Optional, Dict, Any
+import discord
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +16,7 @@ from src.chat.features.odysseia_coin.service.coin_service import coin_service
 from src.chat.features.games.config import blackjack_config
 from src.chat.features.games.services.blackjack_service import blackjack_service
 from src.chat.utils.database import chat_db_manager
+from src.dashboard.service_registry import service_registry
 from multiplayer_service import multiplayer_blackjack_service
 
 def _strip_wrapping_quotes(value: Optional[str]) -> str:
@@ -306,6 +308,13 @@ class AutoJoinRoomRequest(BaseModel):
     session_key: str
 
 
+class RecruitRoomRequest(BaseModel):
+    room_id: str
+    session_key: Optional[str] = None
+    channel_id: Optional[str] = None
+    guild_id: Optional[str] = None
+
+
 @app.post("/api/token")
 async def exchange_code_for_token(request: TokenRequest):
     """API: 用Discord返回的code换取access_token"""
@@ -455,6 +464,131 @@ def _normalize_session_key(session_key: str) -> str:
     if len(normalized) > 200:
         normalized = normalized[:200]
     return normalized
+
+
+def _parse_int_like_id(value: Optional[str]) -> Optional[int]:
+    text = str(value or "").strip()
+    if not text or not text.isdigit():
+        return None
+    return int(text)
+
+
+def _extract_channel_context_from_session_key(
+    session_key: Optional[str],
+) -> Tuple[Optional[int], Optional[int]]:
+    raw = str(session_key or "").strip()
+    if not raw.startswith("channel:"):
+        return None, None
+
+    parts = raw.split(":", 2)
+    if len(parts) != 3:
+        return None, None
+
+    guild_raw = parts[1]
+    channel_raw = parts[2]
+    guild_id = int(guild_raw) if guild_raw.isdigit() else None
+    channel_id = int(channel_raw) if channel_raw.isdigit() else None
+    return guild_id, channel_id
+
+
+def _build_channel_session_key(guild_id: Optional[int], channel_id: int) -> str:
+    guild_part = str(guild_id) if guild_id is not None else "dm"
+    return f"channel:{guild_part}:{channel_id}"
+
+
+async def _run_coro_in_bot_loop(
+    bot: discord.Client, coroutine: Any, timeout: float = 15.0
+) -> Any:
+    bot_loop = getattr(bot, "loop", None)
+    if bot_loop is None or bot_loop.is_closed():
+        raise RuntimeError("Discord Bot 事件循环不可用")
+
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if current_loop is bot_loop:
+        return await coroutine
+
+    future = asyncio.run_coroutine_threadsafe(coroutine, bot_loop)
+    wrapped_future = asyncio.wrap_future(future)
+    try:
+        return await asyncio.wait_for(wrapped_future, timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        future.cancel()
+        raise RuntimeError("等待 Discord Bot 响应超时，请稍后重试") from exc
+
+
+async def _send_recruit_message_via_bot(
+    bot: discord.Client,
+    *,
+    room_id: str,
+    user_id: int,
+    username: str,
+    discord_client_id: str,
+    channel_id: int,
+    guild_id: Optional[int],
+) -> Dict[str, str]:
+    async def _task() -> Dict[str, str]:
+        channel = bot.get_channel(channel_id)
+        if channel is None:
+            channel = await bot.fetch_channel(channel_id)
+
+        if not isinstance(channel, discord.abc.Messageable):
+            raise ValueError("目标频道不支持发送消息")
+
+        resolved_guild_id = getattr(getattr(channel, "guild", None), "id", None)
+        effective_guild_id = resolved_guild_id if resolved_guild_id is not None else guild_id
+
+        launch_url: Optional[str] = None
+        create_invite = getattr(channel, "create_invite", None)
+        if callable(create_invite):
+            try:
+                invite = await create_invite(
+                    max_age=3600,
+                    max_uses=0,
+                    unique=True,
+                    target_type=discord.InviteTarget.embedded_application,
+                    target_application=discord.Object(id=int(discord_client_id)),
+                    reason=f"blackjack recruit room={room_id} host={user_id}",
+                )
+                launch_url = invite.url
+            except Exception as e:
+                log.warning(f"创建活动邀请失败，将回退为频道活动链接: {e}")
+
+        if not launch_url:
+            guild_path = str(effective_guild_id) if effective_guild_id is not None else "@me"
+            launch_url = (
+                f"https://discord.com/channels/{guild_path}/{channel_id}"
+                f"?launch_activity={discord_client_id}"
+            )
+
+        recruit_view = discord.ui.View(timeout=3600)
+        recruit_view.add_item(
+            discord.ui.Button(
+                label=f"启动活动并加入房间 {room_id}",
+                style=discord.ButtonStyle.link,
+                url=launch_url,
+            )
+        )
+
+        recruit_text = (
+            f"<@{user_id}> 正在招募队友参与多人 21 点对战。\n"
+            f"房间号：`{room_id}`\n"
+            f"发起人：{username}\n"
+            "点击下方按钮启动活动后可自动进入该房间。"
+        )
+
+        message = await channel.send(recruit_text, view=recruit_view)
+        return {
+            "invite_url": launch_url,
+            "message_id": str(message.id),
+            "channel_id": str(channel_id),
+            "guild_id": str(effective_guild_id) if effective_guild_id is not None else "dm",
+        }
+
+    return await _run_coro_in_bot_loop(bot, _task())
 
 
 def _bind_session_room(session_key: str, room_id: str) -> None:
@@ -908,6 +1042,93 @@ async def multi_join_room(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/multi/room/recruit")
+async def multi_recruit_room(
+    request: RecruitRoomRequest,
+    user: Dict[str, Any] = Depends(get_current_user_profile),
+):
+    room_id = _normalize_room_id(request.room_id)
+    user_id = int(user["user_id"])
+    username = str(user["username"])
+
+    normalized_session_key = ""
+    if request.session_key:
+        normalized_session_key = _normalize_session_key(request.session_key)
+
+    async with room_locks[_room_lock_key(room_id)]:
+        try:
+            room_state = multiplayer_blackjack_service.get_room_state(room_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        if not _find_player_in_room_state(room_state, user_id):
+            raise HTTPException(status_code=403, detail="你不在该房间中，请先加入房间")
+
+        if normalized_session_key:
+            _bind_session_room(normalized_session_key, room_id)
+
+    bot = service_registry.bot
+    if bot is None or not bot.is_ready():
+        raise HTTPException(status_code=503, detail="Discord Bot 当前未就绪，无法发送招募消息")
+
+    requested_channel_id = _parse_int_like_id(request.channel_id)
+    requested_guild_id = _parse_int_like_id(request.guild_id)
+
+    context_key = normalized_session_key or str(room_activity_bindings.get(room_id) or "")
+    session_guild_id, session_channel_id = _extract_channel_context_from_session_key(
+        context_key
+    )
+
+    channel_id = requested_channel_id or session_channel_id
+    guild_id = requested_guild_id if requested_guild_id is not None else session_guild_id
+    if channel_id is None:
+        raise HTTPException(status_code=400, detail="无法识别 Discord 频道，请在活动内发起招募")
+
+    channel_session_key = _build_channel_session_key(guild_id, channel_id)
+    _bind_session_room(channel_session_key, room_id)
+
+    discord_client_id = _resolve_discord_client_id()
+    if not discord_client_id or not discord_client_id.isdigit():
+        raise HTTPException(status_code=500, detail="服务器缺少有效的 DISCORD_CLIENT_ID 配置")
+
+    try:
+        recruit_payload = await _send_recruit_message_via_bot(
+            bot=bot,
+            room_id=room_id,
+            user_id=user_id,
+            username=username,
+            discord_client_id=discord_client_id,
+            channel_id=channel_id,
+            guild_id=guild_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except discord.Forbidden:
+        raise HTTPException(status_code=403, detail="机器人缺少频道权限，无法发送招募消息")
+    except discord.HTTPException as e:
+        raise HTTPException(status_code=502, detail=f"发送招募消息失败: {e}")
+    except Exception as e:
+        log.error(f"发送招募消息异常: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="发送招募消息失败，请稍后重试")
+
+    balance = await _ensure_user_balance(user_id)
+    return JSONResponse(
+        content={
+            "success": True,
+            "room": room_state,
+            "viewer_balance": balance,
+            "room_id": room_id,
+            "channel_id": recruit_payload["channel_id"],
+            "guild_id": recruit_payload["guild_id"],
+            "invite_url": recruit_payload["invite_url"],
+            "message_id": recruit_payload["message_id"],
+            "bound_session_key": channel_session_key,
+        }
+    )
 
 
 @app.post("/api/multi/room/leave")

@@ -68,6 +68,15 @@ type AutoJoinRoomResponse = RoomEnvelope & {
   session_key?: string;
 };
 
+type RecruitRoomResponse = RoomEnvelope & {
+  room_id: string;
+  channel_id: string;
+  guild_id: string;
+  invite_url: string;
+  message_id: string;
+  bound_session_key: string;
+};
+
 type SingleGameState =
   | "player_turn"
   | "dealer_turn"
@@ -111,6 +120,8 @@ const isEmbedded = queryParams.get("frame_id") != null;
 const shouldUseDiscordAuth = ref(isEmbedded);
 const runtimeDiscordClientId = ref("");
 const discordSessionKey = ref("");
+const discordChannelId = ref("");
+const discordGuildId = ref("");
 
 const devUserId = queryParams.get("dev_user_id")?.trim() ?? "";
 const devUsername = queryParams.get("dev_username")?.trim() ?? "";
@@ -543,6 +554,9 @@ async function setupDiscordSdk(resolvedClientId: string): Promise<string> {
   ).trim();
   const guildId = String((discordSdk as { guildId?: string | null }).guildId ?? "").trim();
 
+  discordChannelId.value = channelId;
+  discordGuildId.value = guildId;
+
   const sessionKey = instanceId
     ? `instance:${instanceId}`
     : channelId
@@ -779,6 +793,44 @@ async function createRoom() {
   }
 }
 
+async function recruitTeammates() {
+  if (requestInFlight.value || !roomState.value) return;
+
+  if (!isDiscordMode.value) {
+    errorMessage.value = "仅在 Discord 活动中可使用招募功能";
+    return;
+  }
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<RecruitRoomResponse>("/api/multi/room/recruit", "POST", {
+      room_id: roomState.value.room_id,
+      session_key: discordSessionKey.value || undefined,
+      channel_id: discordChannelId.value || undefined,
+      guild_id: discordGuildId.value || undefined,
+    });
+
+    if (data.bound_session_key) {
+      discordSessionKey.value = data.bound_session_key;
+    }
+    if (data.channel_id) {
+      discordChannelId.value = data.channel_id;
+    }
+    if (data.guild_id) {
+      discordGuildId.value = data.guild_id === "dm" ? "" : data.guild_id;
+    }
+
+    applyRoomEnvelope(data);
+    statusMessage.value = `已发送招募消息（房间号 ${data.room_id}）`;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "发送招募消息失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
 async function joinRoom() {
   if (requestInFlight.value) return;
 
@@ -977,10 +1029,15 @@ async function bootstrap() {
         shouldUseDiscordAuth.value = false;
         accessToken = null;
         discordSessionKey.value = "";
+        discordChannelId.value = "";
+        discordGuildId.value = "";
         console.warn("[Bootstrap] Discord 鉴权失败，降级到本地调试身份模式", embeddedError);
       }
     } else {
       shouldUseDiscordAuth.value = false;
+      discordSessionKey.value = "";
+      discordChannelId.value = "";
+      discordGuildId.value = "";
     }
 
     await loadProfile();
@@ -1156,11 +1213,22 @@ onBeforeUnmount(() => {
         <h3>多人房间大厅</h3>
 
         <template v-if="isDiscordMode">
-          <p class="hint-text">已连接 Discord 活动，点击下方按钮可重新加入当前会话房间。</p>
+          <p class="hint-text">已连接 Discord 活动，可重连当前会话房间，或直接输入房间号加入。</p>
           <div class="lobby-actions">
             <button class="primary-btn" :disabled="requestInFlight" @click="autoJoinCurrentSession(true)">
               连接当前会话
             </button>
+            <div class="join-group">
+              <input
+                v-model="roomInput"
+                maxlength="16"
+                placeholder="输入房间号"
+                :disabled="requestInFlight"
+              />
+              <button class="primary-btn" :disabled="requestInFlight" @click="joinRoom">
+                按房间号加入
+              </button>
+            </div>
             <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">
               返回模式选择
             </button>
@@ -1198,12 +1266,15 @@ onBeforeUnmount(() => {
 
       <section v-else-if="viewMode === 'table' && roomState" id="game-view" class="table-wrapper multi-mode-view">
         <div id="game-table" class="green-table" style="height: auto; min-height: 70vh;">
-          <div class="toolbar-actions" style="position: absolute; top: 10px; left: 10px; z-index: 100;">
+          <div class="toolbar-actions" style="position: absolute; top: 42px; left: 10px; z-index: 100;">
             <button :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
+            <button :disabled="requestInFlight || !isDiscordMode" @click="recruitTeammates">招募队友</button>
             <button :disabled="requestInFlight" @click="leaveRoom">离开房间</button>
           </div>
           <div style="position: absolute; top: 10px; right: 10px; z-index: 100;">
-            <span>状态: {{ roomStateText }}</span> | <span>房主: {{ hostDisplayName }}</span>
+            <span>房间号: {{ roomState.room_id }}</span> |
+            <span>状态: {{ roomStateText }}</span> |
+            <span>房主: {{ hostDisplayName }}</span>
           </div>
 
           <!-- Dealer -->
@@ -1224,10 +1295,15 @@ onBeforeUnmount(() => {
           <!-- Left Player (Seat 0) -->
           <div class="game-area position-left" :class="{'empty-seat-area': !seatPlayerMap[0]}" style="position:absolute; top: 46%; left: 4%; transform: translateY(-50%);">
               <div v-if="seatPlayerMap[0]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[0]?.is_current_turn}">
-                  {{ seatPlayerMap[0]?.username }} ({{ seatPlayerMap[0]?.score ?? 0 }})
-                  <br>下注: {{ seatPlayerMap[0]?.bet_amount ?? 0 }}
-                  <span v-if="seatPlayerMap[0]?.result"><br>{{ getPlayerResultText(seatPlayerMap[0]!) }}</span>
-                  <span v-if="roomState.state === 'waiting'"><br>{{ seatPlayerMap[0]?.is_ready ? '已准备' : '未准备' }}</span>
+                  <img
+                    class="seat-player-avatar"
+                    :src="playerAvatarSrc(seatPlayerMap[0]!)"
+                    :alt="`${seatPlayerMap[0]?.username}头像`"
+                  />
+                  <div class="seat-player-name">{{ seatPlayerMap[0]?.username }} ({{ seatPlayerMap[0]?.score ?? 0 }})</div>
+                  <span>下注: {{ seatPlayerMap[0]?.bet_amount ?? 0 }}</span>
+                  <span v-if="seatPlayerMap[0]?.result">{{ getPlayerResultText(seatPlayerMap[0]!) }}</span>
+                  <span v-if="roomState.state === 'waiting'">{{ seatPlayerMap[0]?.is_ready ? '已准备' : '未准备' }}</span>
               </div>
               <div v-else class="player-info-tag">空位</div>
               <TransitionGroup v-if="seatPlayerMap[0]" name="card" tag="div" class="hand multi-side-hand">
@@ -1237,6 +1313,12 @@ onBeforeUnmount(() => {
 
           <!-- Bottom Player (Seat 1 - usually viewer) -->
           <div class="game-area position-bottom" :class="{'empty-seat-area': !seatPlayerMap[1]}" style="position:absolute; bottom: 18%; left: 50%; transform: translateX(-50%);">
+              <img
+                v-if="seatPlayerMap[1]"
+                class="seat-player-avatar seat-player-avatar-bottom"
+                :src="playerAvatarSrc(seatPlayerMap[1]!)"
+                :alt="`${seatPlayerMap[1]?.username}头像`"
+              />
               <h2><span v-if="seatPlayerMap[1]">{{ seatPlayerMap[1]?.username }}</span><span v-else>空位</span> (<span v-if="seatPlayerMap[1]">{{ seatPlayerMap[1]?.score ?? 0 }}</span><span v-else>0</span>)</h2>
               <TransitionGroup v-if="seatPlayerMap[1]" name="card" tag="div" class="hand multi-hand">
                   <img v-for="(card, idx) in seatPlayerMap[1]?.hand || []" :key="`p1-${idx}-${card}`" :src="cardImageSrc(card)" class="card multi-large-card">
@@ -1260,10 +1342,15 @@ onBeforeUnmount(() => {
           <!-- Right Player (Seat 2) -->
           <div class="game-area position-right" :class="{'empty-seat-area': !seatPlayerMap[2]}" style="position:absolute; top: 46%; right: 4%; transform: translateY(-50%);">
               <div v-if="seatPlayerMap[2]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[2]?.is_current_turn}">
-                  {{ seatPlayerMap[2]?.username }} ({{ seatPlayerMap[2]?.score ?? 0 }})
-                  <br>下注: {{ seatPlayerMap[2]?.bet_amount ?? 0 }}
-                  <span v-if="seatPlayerMap[2]?.result"><br>{{ getPlayerResultText(seatPlayerMap[2]!) }}</span>
-                  <span v-if="roomState.state === 'waiting'"><br>{{ seatPlayerMap[2]?.is_ready ? '已准备' : '未准备' }}</span>
+                  <img
+                    class="seat-player-avatar"
+                    :src="playerAvatarSrc(seatPlayerMap[2]!)"
+                    :alt="`${seatPlayerMap[2]?.username}头像`"
+                  />
+                  <div class="seat-player-name">{{ seatPlayerMap[2]?.username }} ({{ seatPlayerMap[2]?.score ?? 0 }})</div>
+                  <span>下注: {{ seatPlayerMap[2]?.bet_amount ?? 0 }}</span>
+                  <span v-if="seatPlayerMap[2]?.result">{{ getPlayerResultText(seatPlayerMap[2]!) }}</span>
+                  <span v-if="roomState.state === 'waiting'">{{ seatPlayerMap[2]?.is_ready ? '已准备' : '未准备' }}</span>
               </div>
               <div v-else class="player-info-tag">空位</div>
               <TransitionGroup v-if="seatPlayerMap[2]" name="card" tag="div" class="hand multi-side-hand">
@@ -1449,12 +1536,12 @@ onBeforeUnmount(() => {
 
 .multi-mode-view #game-dealer-section {
   position: absolute;
-  top: 3%;
+  top: 1.5%;
   left: 50%;
   right: auto;
   bottom: auto;
-  width: 92px;
-  height: 112px;
+  width: 164px;
+  height: 202px;
   transform: translateX(-50%);
   z-index: 34;
   pointer-events: none;
@@ -1467,23 +1554,23 @@ onBeforeUnmount(() => {
 }
 
 .multi-mode-view #game-dealer-section .dialogue-box {
-  top: -4px;
-  left: 50%;
+  top: 50%;
+  left: calc(100% + 14px);
   right: auto;
-  transform: translate(-50%, -100%);
-  max-width: 180px;
-  padding: 7px 10px;
+  transform: translateY(-50%);
+  max-width: 260px;
+  padding: 8px 12px;
   border-radius: 10px;
 }
 
 .multi-mode-view #game-dealer-section .dialogue-box::before {
-  left: 50%;
+  left: -10px;
   right: auto;
-  top: 100%;
-  transform: translateX(-50%);
-  border-width: 8px 6px 0 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 5px 10px 5px 0;
   border-style: solid;
-  border-color: #dcd0c0 transparent transparent transparent;
+  border-color: transparent #dcd0c0 transparent transparent;
 }
 
 .multi-mode-view #game-dealer-section .dialogue-box p {
@@ -1521,11 +1608,40 @@ onBeforeUnmount(() => {
   margin-top: -112px;
 }
 
+.multi-mode-view .player-info-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.multi-mode-view .seat-player-avatar {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(216, 189, 132, 0.92);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  margin-bottom: 5px;
+}
+
+.multi-mode-view .seat-player-avatar-bottom {
+  width: 58px;
+  height: 58px;
+  margin-bottom: 10px;
+}
+
+.multi-mode-view .seat-player-name {
+  font-weight: 700;
+  line-height: 1.25;
+  margin-bottom: 2px;
+}
+
 @media (max-width: 1200px) {
   .multi-mode-view #game-dealer-section {
-    width: 78px;
-    height: 96px;
-    top: 2.5%;
+    width: 130px;
+    height: 160px;
+    top: 1.8%;
   }
 
   .multi-mode-view .multi-large-card {
@@ -1547,12 +1663,23 @@ onBeforeUnmount(() => {
   }
 
   .multi-mode-view #game-dealer-section .dialogue-box {
-    max-width: 156px;
+    left: calc(100% + 10px);
+    max-width: 200px;
     padding: 6px 8px;
   }
 
   .multi-mode-view #game-dealer-section .dialogue-box p {
     font-size: 11px;
+  }
+
+  .multi-mode-view .seat-player-avatar {
+    width: 44px;
+    height: 44px;
+  }
+
+  .multi-mode-view .seat-player-avatar-bottom {
+    width: 50px;
+    height: 50px;
   }
 }
 
