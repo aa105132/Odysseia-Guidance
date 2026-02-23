@@ -99,18 +99,6 @@ body {
 }
 
 /* --- NEW: Generic Dealer Styles --- */
-/* Betting and Game View Dealers (PC) */
-#betting-dealer-section,
-#game-dealer-section {
-  position: fixed;
-  bottom: 0;
-  right: 20px;
-  width: 300px;
-  height: 360px;
-  z-index: 10;
-  pointer-events: none;
-}
-
 .dealer-section {
   display: flex;
   justify-content: center;
@@ -165,35 +153,23 @@ body {
 
 /* --- View-Specific Dealer Styles --- */
 
-/* Dialogue Box adjustments */
-.dialogue-box {
-  position: absolute;
-  top: 40%;
-  left: -120%; /* Left of the dealer */
-  transform: translateY(-50%);
-  width: max-content;
-  max-width: 200px;
-  z-index: 25;
-}
-.dialogue-box::before {
-  content: '';
-  position: absolute;
-  right: -10px; /* Pointing right */
-  left: auto;
-  top: 50%;
-  transform: translateY(-50%);
-  border-width: 5px 0 5px 10px;
-  border-style: solid;
-  border-color: transparent transparent transparent #dcd0c0;
+/* Betting and Game View Dealers (PC) */
+#betting-dealer-section,
+#game-dealer-section {
+  position: fixed;
+  bottom: 0;
+  right: 20px;
+  width: 300px;
+  height: 360px;
+  z-index: 10;
 }
 
 .game-area {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   align-items: center;
-  min-height: 140px;
-  position: relative;
-  margin-bottom: 10px;
+  /* 移除固定的min-height，让其由内容决定 */
 }
 
 /* --- 诊断模式 --- */
@@ -572,120 +548,51 @@ h2 {
 
   /* PC端布局重构：横向排列标题和卡牌，解决垂直重叠问题 */
   .game-area {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    /* 使用Grid布局实现精确控制 */
+    grid-template-columns: 1fr auto 1fr;
+    /* 左(标题) 中(卡牌) 右(空) */
     align-items: center;
-    position: absolute;
+    /* 垂直居中对齐 */
     min-height: 140px;
-    z-index: 5;
+    /* 稍微减小最小高度 */
+    position: relative;
+    margin-bottom: 10px;
+    /* 给两个游戏区域之间加一点间隔 */
   }
 
   .game-area h2 {
-    margin-bottom: 5px;
+    grid-column: 1 / 2;
+    /* 放在第一列 */
+    margin-bottom: 0;
     border: none !important;
-    text-align: center;
-    font-size: 1.5em;
+    /* 强制移除所有边框 */
+    padding: 0 30px 0 0;
+    /* 改为右侧留出间距，让文字靠近卡牌 */
+    justify-self: end;
+    /* 在网格单元内靠右对齐 */
+    text-align: right;
+    /* 文字靠右对齐 */
+    font-size: 2em;
+    /* 字号加大 */
     display: flex;
     align-items: center;
+    height: 100px;
     white-space: nowrap;
+    /* 防止换行 */
     color: rgba(255, 255, 255, 0.9);
     text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
   }
 
+  /* 调整手牌区域 */
   .hand {
+    grid-column: 2 / 3;
+    /* 放在中间列 */
     margin: 0;
+    min-height: auto;
     justify-content: center;
+    /* 卡牌在自己的格子内居中 */
   }
-}
-
-/* --- Scattered Positions for Green Table --- */
-.green-table {
-  position: relative;
-  width: 100%;
-  height: 70vh;
-  min-height: 500px;
-}
-
-.position-top {
-  position: absolute;
-  top: 0px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
-}
-
-.position-top-cards {
-  position: absolute;
-  top: 15%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 100%;
-}
-
-.position-bottom {
-  position: absolute;
-  bottom: 5%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 100%;
-}
-
-.position-left {
-  position: absolute;
-  top: 50%;
-  left: 5%;
-  transform: translateY(-50%);
-}
-
-.position-right {
-  position: absolute;
-  top: 50%;
-  right: 5%;
-  transform: translateY(-50%);
-}
-
-
-.position-left {
-  position: absolute;
-  top: 50%;
-  left: 5%;
-  transform: translateY(-50%);
-}
-
-.position-right {
-  position: absolute;
-  top: 50%;
-  right: 5%;
-  transform: translateY(-50%);
-}
-
-.multi-controls {
-  position: absolute;
-  bottom: 2%;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
-  width: 100%;
-  display: flex;
-  justify-content: center;
-}
-
-.player-info-tag {
-  background: rgba(0,0,0,0.6);
-  border: 1px solid rgba(212, 175, 55, 0.5);
-  padding: 4px 10px;
-  border-radius: 8px;
-  text-align: center;
-  margin-bottom: 8px;
-}
-
-.turn-active {
-  box-shadow: 0 0 10px rgba(212, 175, 55, 0.8);
-  border-color: rgba(212, 175, 55, 1);
-}
-
-.empty-seat-area {
-  opacity: 0.5;
 }
 
 #betting-view>h1 {
@@ -698,40 +605,37 @@ h2 {
 }
 
 .game-area h2 {
-  grid-column: 1 / 2;
-  margin-bottom: 0;
-  border: none !important;
-  padding: 0 10px 0 0;
-  justify-self: end;
-  text-align: right;
+  margin-bottom: 10px;
   font-size: 1.2em;
-  display: flex;
-  align-items: center;
-  height: 100px;
-  white-space: nowrap;
-  color: rgba(255, 255, 255, 0.9);
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+  opacity: 0.9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  padding-bottom: 5px;
+  display: inline-block;
+  min-width: 150px;
 }
 
 .hand {
-  grid-column: 2 / 3;
-  margin: 0;
-  min-height: auto;
-  justify-content: center;
   display: flex;
+  justify-content: center;
   align-items: center;
+  /* 移除背景、圆角和内边距，使其透明 */
   background-color: transparent;
   border-radius: 0;
+  margin: 0;
+  /* 移除垂直边距 */
   padding: 0;
   flex-wrap: wrap;
+  min-height: 100px;
+  /* 进一步减小最小高度 */
   max-width: 100%;
   box-sizing: border-box;
   position: relative;
+  /* 为动画定位 */
 }
 
 .card {
-  width: 110px;
-  height: 160px;
+  width: 90px;
+  height: 135px;
   background-color: #f4f4f4;
   /* 增加细微的亚麻纹理，提升纸牌质感 */
   background-image: repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.02) 0px, rgba(0, 0, 0, 0.02) 2px, transparent 2px, transparent 4px);

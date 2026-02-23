@@ -617,7 +617,47 @@ class GeminiService:
             "直接基于当前已返回的搜索结果组织最终回答；"
             "若信息不足，明确说明缺失点并请用户补充关键词。"
         )
+    @staticmethod
+    def _is_summary_or_search_tool(tool_name: str) -> bool:
+        normalized = str(tool_name or "").strip().lower()
+        if not normalized or normalized == "generate_voice":
+            return False
 
+        explicit_tools = {
+            "web_search",
+            "summarize_channel",
+            "search_channel_history",
+            "search_forum_threads",
+            "query_tutorial_knowledge_base",
+        }
+        if normalized in explicit_tools:
+            return True
+
+        return ("search" in normalized) or ("summar" in normalized) or ("summary" in normalized)
+
+    @classmethod
+    def _should_block_generate_voice_for_info_context(
+        cls,
+        called_tool_names: Optional[List[str]] = None,
+        current_turn_tool_names: Optional[List[str]] = None,
+    ) -> bool:
+        all_names: List[str] = []
+        if called_tool_names:
+            all_names.extend(str(name).strip() for name in called_tool_names if str(name).strip())
+        if current_turn_tool_names:
+            all_names.extend(
+                str(name).strip() for name in current_turn_tool_names if str(name).strip()
+            )
+
+        return any(cls._is_summary_or_search_tool(name) for name in all_names)
+
+    @staticmethod
+    def _build_voice_skip_message_for_info_context() -> str:
+        return (
+            "[语音调用已跳过] 当前处于搜索/总结场景。"
+            "请不要调用 generate_voice，直接使用文字回复。"
+            "即使用户语气激烈或带辱骂，也保持文字输出。"
+        )
     def _handle_safety_ratings(
         self, response: types.GenerateContentResponse, key: str
     ) -> int:
@@ -1792,6 +1832,24 @@ class GeminiService:
             coroutine_indices: List[int] = []
             web_search_executed_in_current_turn = False
             for call in function_calls:
+                if (
+                    call.name == "generate_voice"
+                    and self._should_block_generate_voice_for_info_context(
+                        called_tool_names=called_tool_names,
+                        current_turn_tool_names=current_turn_tool_names,
+                    )
+                ):
+                    log.info("搜索/总结场景已触发语音保护：跳过 generate_voice 调用。")
+                    prepared_results.append(
+                        types.Part.from_function_response(
+                            name="generate_voice",
+                            response={
+                                "result": self._build_voice_skip_message_for_info_context()
+                            },
+                        )
+                    )
+                    continue
+
                 if call.name == "web_search":
                     raw_call_args = getattr(call, "args", {}) or {}
                     try:
@@ -2094,7 +2152,6 @@ class GeminiService:
                 formatted_response = await self._post_process_response(
                     raw_ai_response, user_id, guild_id
                 )
-                web_search_source_links = []
                 if "web_search" in called_tool_names:
                     formatted_response = self._append_message_sources_if_needed(
                         formatted_response, web_search_source_links
@@ -2443,8 +2500,18 @@ class GeminiService:
 
                         web_search_executed = False
 
+                        if (
+                            tool_name == "generate_voice"
+                            and self._should_block_generate_voice_for_info_context(
+                                called_tool_names=called_tool_names,
+                                current_turn_tool_names=current_turn_tool_names,
+                            )
+                        ):
+                            log.info("搜索/总结场景已触发语音保护：跳过 generate_voice 调用。")
+                            tool_result = self._build_voice_skip_message_for_info_context()
+
                         # 执行工具（包含 web_search 防循环保护）
-                        if tool_name == "web_search":
+                        elif tool_name == "web_search":
                             call_signature = self._build_tool_call_signature(
                                 tool_name, tool_args
                             )
@@ -2553,7 +2620,6 @@ class GeminiService:
                 final_response = await self._post_process_response(
                     raw_response, user_id, guild_id
                 )
-                web_search_source_links = []
                 if "web_search" in called_tool_names:
                     final_response = self._append_message_sources_if_needed(
                         final_response, web_search_source_links

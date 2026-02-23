@@ -1055,70 +1055,65 @@ onBeforeUnmount(() => {
         <div class="dealer-dialogue">{{ dealerSpeech }}</div>
       </section>
 
-      <section v-else-if="viewMode === 'single'" id="game-view" class="table-wrapper">
+      <section v-else-if="viewMode === 'single'" id="game-view" class="table-wrapper single-mode-view">
         <div id="game-table" style="position: relative; width: 100%; height: 100%; min-height: 70vh;">
             <div class="toolbar-actions" style="position: absolute; top: 10px; right: 10px; z-index: 100;">
               <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回</button>
               <button :disabled="requestInFlight || !singleGame" @click="forfeitSingleGame">放弃</button>
             </div>
 
-            <!-- Dealer Cards (Top Center) -->
-            <div class="game-area position-top-cards">
-                <h2>月月 (<span>{{ singleGame?.dealer_score ?? 0 }}</span>)</h2>
-                <TransitionGroup name="card" tag="div" class="hand">
-                    <img v-for="(card, index) in singleGame?.dealer_hand || []" :key="'dealer-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
-                </TransitionGroup>
-            </div>
-            
-            <!-- Player Cards (Bottom Center) -->
-            <div class="game-area position-bottom">
-                <h2>玩家 (<span>{{ singleGame?.player_score ?? 0 }}</span>)</h2>
-                <TransitionGroup name="card" tag="div" class="hand">
-                    <img v-for="(card, index) in singleGame?.player_hand || []" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card">
-                </TransitionGroup>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: space-between; height: 100%; padding: 4vh 0 6vh 0;">
+                
+                <!-- Dealer Area -->
+                <div class="game-area" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
+                    <h2 style="font-family: 'Playfair Display', serif; font-size: 1.8em; color: #f0e6d2; margin-bottom: 10px; opacity: 0.9; border: none; min-width: auto; padding-bottom: 0;">月月 (<span>{{ singleGame?.dealer_score ?? 0 }}</span>)</h2>
+                    <TransitionGroup name="card" tag="div" class="hand" style="min-height: unset; margin: 0;">
+                        <img v-for="(card, index) in singleGame?.dealer_hand || []" :key="'dealer-' + index + '-' + card" :src="cardImageSrc(card)" class="card large-card">
+                    </TransitionGroup>
+                </div>
 
-                <!-- Messages & Controls underneath player cards -->
-                <div style="margin-top: 15px; display: flex; flex-direction: column; align-items: center; width: 100%;">
-                    <div class="messages" v-if="singleResultText" style="margin-bottom: 10px;">结果: {{singleResultText}}</div>
-                    <div class="messages" v-else style="height: 24px; margin-bottom: 10px;"></div>
-                    
-                    <div id="controls">
-                        <template v-if="canSingleOperate">
-                            <button @click="singleHit" :disabled="requestInFlight">要牌</button>
-                            <button @click="singleStand" :disabled="requestInFlight">停牌</button>
-                            <button @click="singleDouble" :disabled="requestInFlight || !canSingleDouble">双倍下注</button>
-                        </template>
+                <!-- Messages Text -->
+                <div class="messages" v-if="singleResultText" style="margin: 15px 0; font-weight: bold; font-size: 1.5em; color: #c0a062;">结果: {{singleResultText}}</div>
+                <div class="messages" v-else style="height: 36px; margin: 15px 0;"></div>
+                
+                <!-- Player Area -->
+                <div class="game-area" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
+                    <h2 style="font-family: 'Playfair Display', serif; font-size: 1.8em; color: #f0e6d2; margin-bottom: 10px; opacity: 0.9; border: none; min-width: auto; padding-bottom: 0;">玩家 (<span>{{ singleGame?.player_score ?? 0 }}</span>)</h2>
+                    <TransitionGroup name="card" tag="div" class="hand" style="min-height: unset; margin: 0;">
+                        <img v-for="(card, index) in singleGame?.player_hand || []" :key="'player-' + index + '-' + card" :src="cardImageSrc(card)" class="card large-card">
+                    </TransitionGroup>
+                </div>
+
+                <!-- Controls & Betting -->
+                <div style="margin-top: 30px; display: flex; flex-direction: column; align-items: center; width: 100%; z-index: 20;">
+                    <div id="controls" v-if="canSingleOperate" style="display: flex; gap: 10px;">
+                        <button @click="singleHit" :disabled="requestInFlight">要牌</button>
+                        <button @click="singleStand" :disabled="requestInFlight">停牌</button>
+                        <button @click="singleDouble" :disabled="requestInFlight || !canSingleDouble">双倍下注</button>
                     </div>
 
-                    <div v-if="!singleGame || !canSingleOperate" id="betting-area" style="width: 100%; max-width: 800px; z-index: 10;">
-                        <div class="balance-text">
-                            你的余额: <span>{{ profile?.balance ?? 0 }}</span>
-                            <span v-if="singleGame"> | 刚才下注: <span>{{ singleGame?.bet_amount ?? 0 }}</span></span>
-                        </div>
-                        <div id="betting-controls">
-                            <div id="manual-bet-container">
-                                <input v-model.number="singleBetInput" type="number" min="1" placeholder="输入赌注" :disabled="requestInFlight">
-                                <button :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">{{ singleGame ? "再来一局" : "下注" }}</button>
-                            </div>
-                            <div id="bet-options-container" v-if="!singleGame || !canSingleOperate">
-                                <button class="bet-option-button" @click="singleBetInput = Math.max(10, Math.floor((profile?.balance || 0) * 0.05))" :disabled="requestInFlight">小 ({{Math.max(10, Math.floor((profile?.balance || 0) * 0.05))}})</button>
-                                <button class="bet-option-button" @click="singleBetInput = Math.max(50, Math.floor((profile?.balance || 0) * 0.15))" :disabled="requestInFlight">中 ({{Math.max(50, Math.floor((profile?.balance || 0) * 0.15))}})</button>
-                                <button class="bet-option-button" @click="singleBetInput = Math.max(100, Math.floor((profile?.balance || 0) * 0.30))" :disabled="requestInFlight">大 ({{Math.max(100, Math.floor((profile?.balance || 0) * 0.30))}})</button>
-                                <button class="bet-option-button" @click="singleBetInput = profile?.balance || 0" :disabled="requestInFlight">梭哈 ({{profile?.balance || 0}})</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Original Dealer Section (Bottom Right Fixed) -->
-            <div id="game-dealer-section" class="dealer-section">
-                <img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" class="dealer-image" alt="荷官" />
-                <div v-if="dealerSpeech" class="dialogue-box">
-                    <p>{{ dealerSpeech }}</p>
-                </div>
-            </div>
-        </div>
+                    <div v-if="!singleGame || !canSingleOperate" id="betting-area" style="width: 100%; max-width: 800px; display: flex; flex-direction: column; align-items: center;">
+                        <div class="balance-text" style="background-color: rgba(0, 0, 0, 0.6); padding: 8px 20px; border-radius: 6px; margin-bottom: 15px; display: inline-block; font-size: 1.2em;">
+                            您的余额: <span>{{ profile?.balance ?? 0 }}</span>
+                                  <span v-if="singleGame"> | 刚才下注: <span>{{ singleGame?.bet_amount ?? 0 }}</span></span>
+                              </div>
+                              <div id="betting-controls" style="display: flex; gap: 10px; align-items: center;">
+                                  <div id="manual-bet-container" style="display: flex; gap: 10px;">
+                                      <input v-model.number="singleBetInput" type="number" min="1" placeholder="输入赌注" :disabled="requestInFlight" style="width: 120px;">
+                                      <button :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">再来一局</button>
+                                  </div>
+                              </div>
+                          </div>
+                      </template>
+                  </div>
+              </div>
+          </div>
+          <div id="game-dealer-section" class="dealer-section">
+              <img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" alt="荷官" class="dealer-image">
+              <div v-if="dealerSpeech" class="dialogue-box">
+                  <p>{{ dealerSpeech }}</p>
+              </div>
+          </div>
       </section>
 
       <section v-else-if="viewMode === 'lobby'" class="panel lobby-panel">
