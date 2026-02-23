@@ -983,7 +983,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="multi-root">
+  <div :class="['multi-root', { 'table-fullscreen': viewMode === 'single' || viewMode === 'table' }]">
     <div v-if="viewMode === 'loading'" class="panel loading-panel">
       <h2>月月游戏中心</h2>
       <p>{{ loadingText }}</p>
@@ -1159,7 +1159,7 @@ onBeforeUnmount(() => {
         <div class="dealer-dialogue">{{ dealerSpeech }}</div>
       </section>
 
-      <section v-else-if="viewMode === 'table' && roomState" id="game-view" class="table-wrapper">
+      <section v-else-if="viewMode === 'table' && roomState" id="game-view" class="table-wrapper multi-mode-view">
         <div id="game-table" class="green-table" style="height: auto; min-height: 70vh;">
           <div class="toolbar-actions" style="position: absolute; top: 10px; left: 10px; z-index: 100;">
             <button :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
@@ -1176,16 +1176,16 @@ onBeforeUnmount(() => {
                   <p>{{ dealerSpeech }}</p>
               </div>
           </div>
-          <div class="game-area position-top-cards" style="position:absolute; top: 5%; left: 50%; transform: translateX(-50%);">
+          <div class="game-area position-top-cards" style="position:absolute; top: 17%; left: 50%; transform: translateX(-50%); z-index: 22;">
               <h2>月月 (<span>{{ dealer?.score ?? 0 }}</span>)</h2>
-              <TransitionGroup name="card" tag="div" class="hand">
-                  <img v-for="(card, idx) in dealer?.hand || []" :key="`dealer-${idx}-${card}`" :src="cardImageSrc(card)" class="card">
+              <TransitionGroup name="card" tag="div" class="hand multi-hand">
+                  <img v-for="(card, idx) in dealer?.hand || []" :key="`dealer-${idx}-${card}`" :src="cardImageSrc(card)" class="card multi-large-card">
               </TransitionGroup>
           </div>
 
           <!-- Players distributed left, bottom, right -->
           <!-- Left Player (Seat 0) -->
-          <div class="game-area position-left" :class="{'empty-seat-area': !seatPlayerMap[0]}" style="position:absolute; top: 40%; left: 5%; transform: translateY(-50%);">
+          <div class="game-area position-left" :class="{'empty-seat-area': !seatPlayerMap[0]}" style="position:absolute; top: 46%; left: 4%; transform: translateY(-50%);">
               <div v-if="seatPlayerMap[0]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[0]?.is_current_turn}">
                   {{ seatPlayerMap[0]?.username }} ({{ seatPlayerMap[0]?.score ?? 0 }})
                   <br>下注: {{ seatPlayerMap[0]?.bet_amount ?? 0 }}
@@ -1193,16 +1193,16 @@ onBeforeUnmount(() => {
                   <span v-if="roomState.state === 'waiting'"><br>{{ seatPlayerMap[0]?.is_ready ? '已准备' : '未准备' }}</span>
               </div>
               <div v-else class="player-info-tag">空位</div>
-              <TransitionGroup v-if="seatPlayerMap[0]" name="card" tag="div" class="hand" style="flex-direction: column; min-height: unset;">
-                  <img v-for="(card, idx) in seatPlayerMap[0]?.hand || []" :key="`p0-${idx}-${card}`" :src="cardImageSrc(card)" class="card" style="margin-top: -80px; margin-left: 0;">
+              <TransitionGroup v-if="seatPlayerMap[0]" name="card" tag="div" class="hand multi-side-hand">
+                  <img v-for="(card, idx) in seatPlayerMap[0]?.hand || []" :key="`p0-${idx}-${card}`" :src="cardImageSrc(card)" class="card multi-large-card multi-side-card">
               </TransitionGroup>
           </div>
 
           <!-- Bottom Player (Seat 1 - usually viewer) -->
-          <div class="game-area position-bottom" :class="{'empty-seat-area': !seatPlayerMap[1]}" style="position:absolute; bottom: 15%; left: 50%; transform: translateX(-50%);">
+          <div class="game-area position-bottom" :class="{'empty-seat-area': !seatPlayerMap[1]}" style="position:absolute; bottom: 18%; left: 50%; transform: translateX(-50%);">
               <h2><span v-if="seatPlayerMap[1]">{{ seatPlayerMap[1]?.username }}</span><span v-else>空位</span> (<span v-if="seatPlayerMap[1]">{{ seatPlayerMap[1]?.score ?? 0 }}</span><span v-else>0</span>)</h2>
-              <TransitionGroup v-if="seatPlayerMap[1]" name="card" tag="div" class="hand">
-                  <img v-for="(card, idx) in seatPlayerMap[1]?.hand || []" :key="`p1-${idx}-${card}`" :src="cardImageSrc(card)" class="card">
+              <TransitionGroup v-if="seatPlayerMap[1]" name="card" tag="div" class="hand multi-hand">
+                  <img v-for="(card, idx) in seatPlayerMap[1]?.hand || []" :key="`p1-${idx}-${card}`" :src="cardImageSrc(card)" class="card multi-large-card">
               </TransitionGroup>
               <div v-if="seatPlayerMap[1]" class="balance-text" :class="{'turn-active': seatPlayerMap[1]?.is_current_turn}" style="font-size: 1.2em; padding: 5px 20px; margin: 10px 0;">
                   <span v-if="Number(seatPlayerMap[1]?.user_id) === viewerUserId">余额：{{ profile?.balance ?? 0 }} | </span>下注: {{ seatPlayerMap[1]?.bet_amount ?? 0 }}
@@ -1221,7 +1221,7 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- Right Player (Seat 2) -->
-          <div class="game-area position-right" :class="{'empty-seat-area': !seatPlayerMap[2]}" style="position:absolute; top: 40%; right: 5%; transform: translateY(-50%);">
+          <div class="game-area position-right" :class="{'empty-seat-area': !seatPlayerMap[2]}" style="position:absolute; top: 46%; right: 4%; transform: translateY(-50%);">
               <div v-if="seatPlayerMap[2]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[2]?.is_current_turn}">
                   {{ seatPlayerMap[2]?.username }} ({{ seatPlayerMap[2]?.score ?? 0 }})
                   <br>下注: {{ seatPlayerMap[2]?.bet_amount ?? 0 }}
@@ -1229,8 +1229,8 @@ onBeforeUnmount(() => {
                   <span v-if="roomState.state === 'waiting'"><br>{{ seatPlayerMap[2]?.is_ready ? '已准备' : '未准备' }}</span>
               </div>
               <div v-else class="player-info-tag">空位</div>
-              <TransitionGroup v-if="seatPlayerMap[2]" name="card" tag="div" class="hand" style="flex-direction: column; min-height: unset;">
-                  <img v-for="(card, idx) in seatPlayerMap[2]?.hand || []" :key="`p2-${idx}-${card}`" :src="cardImageSrc(card)" class="card" style="margin-top: -80px; margin-left: 0;">
+              <TransitionGroup v-if="seatPlayerMap[2]" name="card" tag="div" class="hand multi-side-hand">
+                  <img v-for="(card, idx) in seatPlayerMap[2]?.hand || []" :key="`p2-${idx}-${card}`" :src="cardImageSrc(card)" class="card multi-large-card multi-side-card">
               </TransitionGroup>
           </div>
           
@@ -1377,6 +1377,134 @@ onBeforeUnmount(() => {
   }
 }
 
+.single-mode-view #game-dealer-section .dialogue-box {
+  top: 16px;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -100%);
+  width: max-content;
+  max-width: 280px;
+}
+
+.single-mode-view #game-dealer-section .dialogue-box::before {
+  left: 50%;
+  right: auto;
+  top: 100%;
+  transform: translateX(-50%);
+  border-width: 10px 8px 0 8px;
+  border-style: solid;
+  border-color: #dcd0c0 transparent transparent transparent;
+}
+
+.multi-mode-view #game-dealer-section {
+  position: absolute;
+  top: 3%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  width: 92px;
+  height: 112px;
+  transform: translateX(-50%);
+  z-index: 34;
+  pointer-events: none;
+}
+
+.multi-mode-view #game-dealer-section .dealer-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.multi-mode-view #game-dealer-section .dialogue-box {
+  top: -4px;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -100%);
+  max-width: 180px;
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+
+.multi-mode-view #game-dealer-section .dialogue-box::before {
+  left: 50%;
+  right: auto;
+  top: 100%;
+  transform: translateX(-50%);
+  border-width: 8px 6px 0 6px;
+  border-style: solid;
+  border-color: #dcd0c0 transparent transparent transparent;
+}
+
+.multi-mode-view #game-dealer-section .dialogue-box p {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.multi-mode-view .multi-large-card {
+  width: 126px;
+  height: 174px;
+  border-radius: 10px;
+  margin: 0;
+}
+
+.multi-mode-view .multi-hand {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  min-height: 184px;
+}
+
+.multi-mode-view .multi-hand .multi-large-card:not(:first-child) {
+  margin-left: -44px;
+}
+
+.multi-mode-view .multi-side-hand {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 184px;
+}
+
+.multi-mode-view .multi-side-hand .multi-side-card + .multi-side-card {
+  margin-top: -112px;
+}
+
+@media (max-width: 1200px) {
+  .multi-mode-view #game-dealer-section {
+    width: 78px;
+    height: 96px;
+    top: 2.5%;
+  }
+
+  .multi-mode-view .multi-large-card {
+    width: 108px;
+    height: 150px;
+  }
+
+  .multi-mode-view .multi-hand,
+  .multi-mode-view .multi-side-hand {
+    min-height: 160px;
+  }
+
+  .multi-mode-view .multi-hand .multi-large-card:not(:first-child) {
+    margin-left: -36px;
+  }
+
+  .multi-mode-view .multi-side-hand .multi-side-card + .multi-side-card {
+    margin-top: -96px;
+  }
+
+  .multi-mode-view #game-dealer-section .dialogue-box {
+    max-width: 156px;
+    padding: 6px 8px;
+  }
+
+  .multi-mode-view #game-dealer-section .dialogue-box p {
+    font-size: 11px;
+  }
+}
+
 :global(html),
 :global(body),
 :global(#app) {
@@ -1385,6 +1513,13 @@ onBeforeUnmount(() => {
 
 :global(body) {
   overflow: auto !important;
+  background-color: #2f5f47 !important;
+  background-image:
+    radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.08) 0%, rgba(0, 0, 0, 0.32) 80%),
+    radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(180deg, #3a7055 0%, #244a36 100%) !important;
+  background-size: 100% 100%, 3px 3px, 100% 100% !important;
+  background-attachment: fixed;
 }
 
 .multi-root {
@@ -1395,6 +1530,50 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.multi-root.table-fullscreen {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.multi-root.table-fullscreen .top-bar {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 260;
+}
+
+.multi-root.table-fullscreen .table-wrapper {
+  margin: 0;
+  min-height: 100vh;
+  gap: 0;
+}
+
+.multi-root.table-fullscreen #game-table {
+  width: 100vw !important;
+  max-width: none !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  min-height: 100vh !important;
+  min-height: 100dvh !important;
+  margin: 0 !important;
+  align-self: stretch !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.multi-root.table-fullscreen #game-table::before,
+.multi-root.table-fullscreen #game-table::after {
+  display: none !important;
+}
+
+.multi-root.table-fullscreen .single-mode-view #game-table,
+.multi-root.table-fullscreen .multi-mode-view #game-table {
+  padding-top: 108px !important;
 }
 
 .top-bar {
