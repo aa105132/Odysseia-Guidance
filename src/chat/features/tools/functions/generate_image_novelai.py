@@ -9,7 +9,7 @@ NovelAI 图片生成工具
 遵循 NAI 预设规则:
 - Tag 必须是 Danbooru 格式的英文单词/词语，逗号分隔
 - 单图 Tag 数量 ≤ 90 个（建议 75~90）
-- 使用权重语法: n::Tag:: (n>1 增强, n<1 减弱)
+- 使用权重语法: 推荐 (tag:weight)；若使用 :: 语法必须写成 n::tag::（带数字）
 - 支持角色 DNA 系统确保角色一致性
 - 同人角色强制使用 `character_name (work_name)` 英文身份标签（如 `raiden shogun (genshin impact)`）
 - 支持 Character Prompt + Character UC 分离
@@ -541,7 +541,7 @@ async def generate_image_novelai(
     - 若用户只给自然语言，你需先细化并转成一版 Danbooru 草稿再传入
     - 你必须准确传达用户明确要求，不得篡改主体设定、数量、外貌、服饰、动作、场景与构图
     - 只允许在用户未明确的部分补充细节，补充内容必须与用户原意一致
-    - 当主体是月月/你自己时，提示词AI必须严格遵循月月固定DNA标签+权重标签，不得改色、改发饰、改耳朵类型或删除标志性特征；尤其瞳色必须保持 `green left eye + blue right eye` 且禁止左右眼对调
+    - 当主体是月月/你自己时，提示词AI必须严格遵循月月固定DNA标签与权重标签，不得改色、改发饰、改耳朵类型或删除标志性特征；瞳色权重标签必须前置
     - 当用户明确说“参考第N张图”时，必须传 `reference_image_index=N`，让提示词 AI 同时参考该图
     - 你负责补全用户意图里的关键信息：主体、场景、动作、构图、光影、氛围、服饰、表情
     - 定格画面：描述应聚焦单一静态瞬间，避免连续动作过程
@@ -571,8 +571,8 @@ async def generate_image_novelai(
     - 上课无聊 -> classroom, sitting, chin rest, looking away, yawning
 
     ### 4. 权重调整（重要）
-    - 增强核心元素: `1.2::Tag::` 或 `1.3::Tag::`
-    - 减弱次要元素: `0.8::Tag::` 或 `0.7::Tag::`
+    - 增强核心元素（推荐）: `(tag:1.2)` 或 `(tag:1.3)`；`::` 语法仅可写成 `1.2::tag::`（必须带数字）
+    - 减弱次要元素（推荐）: `(tag:0.8)` 或 `(tag:0.7)`；也可用 `0.8::tag::`
     - 增强 3~8 次，减弱 2~4 次
     - 增强优先级: 同人角色姓名(含作品名) > 核心动作 > 服饰 > 特效 > 表情
 
@@ -600,12 +600,12 @@ async def generate_image_novelai(
 
     ### 9. 画月月（自己）时的 Tag
     如果用户要求画"你"、"月月"、"自己"：
-    - 1girl, solo, original, silver hair, high ponytail, heterochromia, green left eye, blue right eye, pale skin
+    - 1girl, solo, original, heterochromia, green left eye, blue right eye, silver hair, high ponytail, pale skin, small breasts
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
     - silver crescent moon hair stick, small triangular watermelon earrings（月牙发簪 + 三角西瓜耳坠，必须保留）
-    - 关键外貌权重（强制追加）：1.35::silver hair::, 1.4::heterochromia::, 1.5::green left eye::, 1.5::blue right eye::, 1.3::silver crescent moon hair stick::, 1.3::small triangular watermelon earrings::
-    - 瞳色规则：必须是 green left eye + blue right eye，不允许输出 blue left eye / green right eye，也不允许降级为 green eyes / blue eyes
-    - 提示词AI对月月只能补充场景/构图/光影细节，禁止改写以上外貌DNA标签与瞳色权重标签
+    - 月月权重锁定（正确写法）: (heterochromia:1.35), (green left eye:1.45), (blue right eye:1.45), (silver hair:1.35), (small breasts:1.25), (silver crescent moon hair stick:1.3), (small triangular watermelon earrings:1.3)
+    - 罩杯规则：默认 small breasts(B)；仅当用户明确要求更大胸部时才允许改成 medium/large breasts
+    - 提示词AI对月月只能补充场景/构图/光影细节，禁止改写以上外貌DNA与权重标签
     - white off-shoulder top, fur trim, detached sleeves, white high waist skirt, pink bow belt, silver necklace, jewelry
 
     ### 10. 参考标签库
@@ -676,7 +676,7 @@ async def generate_image_novelai(
 
     用户说"画月月在温泉里"，提示词 AI 会生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, 1.3::silver hair::, high ponytail, 1.3::heterochromia::, green left eye, blue right eye, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, medium breasts, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, small triangular watermelon earrings, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, (heterochromia:1.35), (green left eye:1.45), (blue right eye:1.45), outdoors, night, starry sky, (moonlight:1.2), rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, (silver hair:1.35), high ponytail, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, (small breasts:1.25), white skin, nude, completely nude, partially submerged, wet body, wet hair, (shiny skin:1.2), small triangular watermelon earrings, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, (falling leaves:0.8)
     ```
 
     Args:
