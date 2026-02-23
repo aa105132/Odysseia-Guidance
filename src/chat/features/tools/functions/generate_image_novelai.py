@@ -318,7 +318,7 @@ def _split_prompt_tokens(prompt: str) -> List[str]:
 def _strip_artist_tokens(prompt: str, artist_strings: List[Optional[str]]) -> str:
     """
     从 prompt 中剥离画师串里的标签（不限于前缀，进行全量剥离）。
-    用于“切换画师串重生”时，避免旧画师串残留。
+    用于“切换画师串/重新生成”时，避免旧画师串残留。
     """
     tokens = _split_prompt_tokens(prompt)
     if not tokens:
@@ -429,6 +429,18 @@ def _build_prompt_summary_for_embed(
     if len(compact_prompt) > 980:
         return compact_prompt[:977] + "..."
     return compact_prompt
+
+
+def _build_artist_summary_for_embed(artist_string: Optional[str]) -> str:
+    """构建画师串展示文本，避免字段过长导致 embed 发送失败。"""
+    normalized_artist = str(artist_string or "").strip()
+    if not normalized_artist:
+        return "（无画师串）"
+
+    compact_artist = re.sub(r"\s+", " ", normalized_artist).strip()
+    if len(compact_artist) > 980:
+        return compact_artist[:977] + "..."
+    return compact_artist
 
 
 
@@ -1377,6 +1389,11 @@ async def generate_image_novelai(
                         name="参数",
                         value=f"{result.width}x{result.height} | {steps}步 | CFG {scale}",
                         inline=True,
+                    )
+                    embed.add_field(
+                        name="画师串（实际生效）",
+                        value=_build_artist_summary_for_embed(effective_artist_string),
+                        inline=False,
                     )
                     embed.add_field(
                         name="主体外貌（AI原文）",
@@ -2357,7 +2374,7 @@ class NovelAIResultView(discord.ui.View):
             except Exception:
                 pass
 
-    @discord.ui.button(label="切换画师串重生", style=discord.ButtonStyle.secondary, emoji="🎨", row=1)
+    @discord.ui.button(label="切换画师串", style=discord.ButtonStyle.secondary, emoji="🎨", row=1)
     async def switch_artist_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """快捷切换用户/管理员画师串并重新生成。"""
         if self._user_id and str(interaction.user.id) != str(self._user_id):
@@ -2564,6 +2581,11 @@ async def _regenerate_novelai(
         name="参数",
         value=f"{result.width}x{result.height} | {steps}步 | CFG {scale}",
         inline=True,
+    )
+    embed.add_field(
+        name="画师串（实际生效）",
+        value=_build_artist_summary_for_embed(effective_artist_string),
+        inline=False,
     )
     embed.add_field(
         name="主体外貌（AI原文）",
