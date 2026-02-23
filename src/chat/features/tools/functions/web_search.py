@@ -37,11 +37,13 @@ Rules:
 4. If you find conflicting information, mention different perspectives.
 5. Use markdown formatting for better readability.
 6. Respond in the same language as the user's query.
+7. Sources are optional by default; only include them when the user explicitly asks for sources/citations or key claims need verifiable backing.
 
 Output format:
 - Provide the main answer content directly.
-- At the end, list your sources in a "Sources" section using this format:
+- When needed, list your sources in a "Sources" section using this format:
   [Source Title](URL)
+- Default behavior: do not append a Sources section unless explicitly needed.
 """
 
 FETCH_SYSTEM_PROMPT = """You are a professional web content extractor.
@@ -556,8 +558,9 @@ def _format_search_result(
     parts.append("")
     parts.append(
         "[请基于以上搜索结果回答用户。"
-        "在最终回复末尾附上消息源小节，"
-        "使用 Markdown 链接格式如 [标题](URL)，禁止编造链接。]"
+        "消息源小节是可选项，默认不追加；"
+        "仅当用户明确要求出处/链接，或关键结论需要可核验依据时，再附上消息源；"
+        "若附加消息源，使用 Markdown 链接格式如 [标题](URL)，禁止编造链接。]"
     )
 
     return "\n".join(parts)

@@ -2094,6 +2094,7 @@ class GeminiService:
                 formatted_response = await self._post_process_response(
                     raw_ai_response, user_id, guild_id
                 )
+                web_search_source_links = []
                 if "web_search" in called_tool_names:
                     formatted_response = self._append_message_sources_if_needed(
                         formatted_response, web_search_source_links
@@ -2552,6 +2553,7 @@ class GeminiService:
                 final_response = await self._post_process_response(
                     raw_response, user_id, guild_id
                 )
+                web_search_source_links = []
                 if "web_search" in called_tool_names:
                     final_response = self._append_message_sources_if_needed(
                         final_response, web_search_source_links
