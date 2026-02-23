@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 
 """
 NovelAI 图片生成工具
@@ -429,6 +429,131 @@ def _build_prompt_summary_for_embed(
     return compact_prompt
 
 
+
+YUEYUE_REQUIRED_TAGS: List[str] = [
+    "1girl",
+    "solo",
+    "original",
+    "silver hair",
+    "high ponytail",
+    "heterochromia",
+    "green left eye",
+    "blue right eye",
+    "pale skin",
+    "fox ears",
+    "white fox ears",
+    "pink inner ear",
+    "fox tail",
+    "silver white tail",
+    "fluffy tail",
+    "silver crescent moon hair stick",
+    "small triangular watermelon earrings",
+]
+
+YUEYUE_CONFLICT_TAGS: set[str] = {
+    "black hair",
+    "blonde hair",
+    "brown hair",
+    "red hair",
+    "blue hair",
+    "pink hair",
+    "purple hair",
+    "green hair",
+    "orange hair",
+    "white hair",
+    "grey hair",
+    "gray hair",
+    "blue eyes",
+    "green eyes",
+    "red eyes",
+    "brown eyes",
+    "purple eyes",
+    "yellow eyes",
+    "black eyes",
+    "blue grey eyes",
+    "rabbit ears",
+    "rabbit ear hairband",
+    "fake animal ears",
+    "cat ears",
+    "dog ears",
+    "bear ears",
+    "elf ears",
+    "headband",
+    "hairband",
+    "crescent hair ornament",
+}
+
+YUEYUE_TRIGGER_KEYWORDS = (
+    "月月",
+    "画你",
+    "你自己",
+    "你本人",
+    "yueyue",
+)
+
+
+def _is_yueyue_draw_request(main_prompt_draft: str, final_prompt: str) -> bool:
+    """判断当前是否是“画月月本人”的请求。"""
+    draft_lower = str(main_prompt_draft or "").lower()
+    final_lower = str(final_prompt or "").lower()
+    merged_text = f"{draft_lower}\n{final_lower}"
+
+    if any(keyword in merged_text for keyword in YUEYUE_TRIGGER_KEYWORDS):
+        return True
+
+    normalized_tokens = {
+        _normalize_tag_for_match(token)
+        for token in _split_prompt_tokens(final_prompt)
+    }
+
+    unique_markers = {
+        "small triangular watermelon earrings",
+        "triangular watermelon earrings",
+        "silver crescent moon hair stick",
+        "crescent moon hair stick",
+    }
+    if normalized_tokens & unique_markers:
+        return True
+
+    has_core_combo = {
+        "silver hair",
+        "high ponytail",
+        "fox ears",
+        "heterochromia",
+    }.issubset(normalized_tokens)
+    return has_core_combo
+
+
+def _enforce_yueyue_identity_tags(prompt: str) -> str:
+    """强制月月外貌 DNA 标签一致，移除冲突标签并补齐必需标签。"""
+    tokens = _split_prompt_tokens(prompt)
+    if not tokens:
+        return ", ".join(YUEYUE_REQUIRED_TAGS)
+
+    filtered_tokens: List[str] = []
+    removed_conflicts: List[str] = []
+
+    for token in tokens:
+        normalized = _normalize_tag_for_match(token)
+        if normalized in YUEYUE_CONFLICT_TAGS:
+            removed_conflicts.append(token)
+            continue
+        filtered_tokens.append(token)
+
+    merged_prompt = ", ".join(filtered_tokens)
+    for required_tag in YUEYUE_REQUIRED_TAGS:
+        if not _prompt_contains_tag(merged_prompt, required_tag):
+            filtered_tokens.append(required_tag)
+            merged_prompt = ", ".join(filtered_tokens)
+
+    if removed_conflicts:
+        log.info(
+            "检测到月月绘图请求，已移除冲突标签: "
+            f"{', '.join(removed_conflicts[:8])}"
+        )
+
+    return clamp_danbooru_tags(", ".join(filtered_tokens), max_tags=90)
+
 def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
     """基于图片提示词和用户补充描述构建视频提示词。"""
     base_prompt = (image_prompt or "").strip()
@@ -540,6 +665,7 @@ async def generate_image_novelai(
     - 若用户只给自然语言，你需先细化并转成一版 Danbooru 草稿再传入
     - 你必须准确传达用户明确要求，不得篡改主体设定、数量、外貌、服饰、动作、场景与构图
     - 只允许在用户未明确的部分补充细节，补充内容必须与用户原意一致
+    - 当主体是月月/你自己时，提示词AI必须严格遵循月月固定DNA标签，不得改色、改发饰、改耳朵类型或删除标志性特征
     - 当用户明确说“参考第N张图”时，必须传 `reference_image_index=N`，让提示词 AI 同时参考该图
     - 你负责补全用户意图里的关键信息：主体、场景、动作、构图、光影、氛围、服饰、表情
     - 定格画面：描述应聚焦单一静态瞬间，避免连续动作过程
@@ -598,9 +724,10 @@ async def generate_image_novelai(
 
     ### 9. 画月月（自己）时的 Tag
     如果用户要求画"你"、"月月"、"自己"：
-    - 1girl, solo, silver hair, high ponytail, crescent hair ornament, blue grey eyes
+    - 1girl, solo, original, silver hair, high ponytail, heterochromia, green left eye, blue right eye, pale skin
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
-    - small triangular watermelon earrings（小巧的三角形西瓜耳坠）
+    - silver crescent moon hair stick, small triangular watermelon earrings（月牙发簪 + 三角西瓜耳坠，必须保留）
+    - 提示词AI对月月只能补充场景/构图/光影细节，禁止改写以上外貌DNA标签
     - white off-shoulder top, fur trim, detached sleeves, white high waist skirt, pink bow belt, silver necklace, jewelry
 
     ### 10. 参考标签库
@@ -671,7 +798,7 @@ async def generate_image_novelai(
 
     用户说"画月月在温泉里"，提示词 AI 会生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, 1.3::silver hair::, high ponytail, crescent hair ornament, blue grey eyes, fox ears, white fox ears, fox tail, silver white tail, fluffy tail, medium breasts, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, small triangular watermelon earrings, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, girl, bishoujo, 1.3::silver hair::, high ponytail, 1.3::heterochromia::, green left eye, blue right eye, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, medium breasts, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, small triangular watermelon earrings, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
     ```
 
     Args:
@@ -1247,6 +1374,9 @@ async def generate_image_novelai(
     elif normalized_character_name and not normalized_work_name:
         log.warning("收到 character_name 但缺少 work_name，已跳过身份标签自动补充")
 
+    if _is_yueyue_draw_request(main_prompt_draft, final_prompt):
+        final_prompt = _enforce_yueyue_identity_tags(final_prompt)
+        log.info("检测到画月月请求，已强制应用月月固定外貌标签。")
     log.info(f"调用 NovelAI 图片生成工具，Tag: {final_prompt[:100]}..., 尺寸: {width}x{height}")
 
     # 添加"正在生成"反应
@@ -2739,3 +2869,5 @@ async def _regenerate_with_imagen(
     log.info(
         f"已切换到 Imagen 生成图片, resolution={resolution}, rating={content_rating}, model={imagen_model_name}"
     )
+
+
