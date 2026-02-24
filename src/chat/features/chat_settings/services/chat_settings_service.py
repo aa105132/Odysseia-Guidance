@@ -174,6 +174,7 @@ class ChatSettingsService:
             ('comfyui_default_cfg', 'DEFAULT_CFG', float),
             ('comfyui_default_seed', 'DEFAULT_SEED', int),
             ('comfyui_default_lora_strength', 'DEFAULT_LORA_STRENGTH', float),
+            ('comfyui_lora_download_max_mb', 'LORA_DOWNLOAD_MAX_MB', int),
             ('comfyui_request_timeout_seconds', 'REQUEST_TIMEOUT_SECONDS', int),
             ('comfyui_poll_interval_seconds', 'POLL_INTERVAL_SECONDS', float),
         ]
@@ -193,6 +194,7 @@ class ChatSettingsService:
             ('comfyui_default_vae_name', 'DEFAULT_VAE_NAME'),
             ('comfyui_default_clip_name', 'DEFAULT_CLIP_NAME'),
             ('comfyui_default_lora', 'DEFAULT_LORA'),
+            ('comfyui_shared_lora_dir', 'SHARED_LORA_DIR'),
         ]
 
         for db_key, config_key in string_setting_map:

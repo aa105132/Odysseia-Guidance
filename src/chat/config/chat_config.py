@@ -718,6 +718,10 @@ COMFYUI_CONFIG = {
     "DEFAULT_CLIP_NAME": os.getenv("COMFYUI_DEFAULT_CLIP_NAME", ""),
     "DEFAULT_LORA": os.getenv("COMFYUI_DEFAULT_LORA", ""),
     "DEFAULT_LORA_STRENGTH": _parse_float_env("COMFYUI_DEFAULT_LORA_STRENGTH", 1.0),
+    # 白名单下载失败时，回退保存到共享 LoRA 目录（需与 ComfyUI models/loras 映射到同一路径）
+    "SHARED_LORA_DIR": os.getenv("COMFYUI_SHARED_LORA_DIR", ""),
+    # 回退直链下载 LoRA 文件大小上限（MB）
+    "LORA_DOWNLOAD_MAX_MB": _parse_int_env("COMFYUI_LORA_DOWNLOAD_MAX_MB", 100),
     "MAX_USER_LORA_UPLOADS": _parse_int_env("COMFYUI_MAX_USER_LORA_UPLOADS", 5),
     "FIXED_POSITIVE_PROMPT": os.getenv("COMFYUI_FIXED_POSITIVE_PROMPT", ""),
     "FIXED_NEGATIVE_PROMPT": os.getenv("COMFYUI_FIXED_NEGATIVE_PROMPT", ""),

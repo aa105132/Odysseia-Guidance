@@ -1150,8 +1150,10 @@ class ComfyUIPanelView(discord.ui.View):
                         )
                         return
 
-                    inferred_name = comfyui_service._extract_filename_from_download_url(url)
-                    uploaded_tokens.append(_sanitize_filename(inferred_name, 'downloaded_lora.safetensors'))
+                    saved_filename = str(download_result.get('saved_filename') or '').strip()
+                    if not saved_filename:
+                        saved_filename = comfyui_service._extract_filename_from_download_url(url)
+                    uploaded_tokens.append(_sanitize_filename(saved_filename, 'downloaded_lora.safetensors'))
                 else:
                     delete_targets = self._parse_delete_lora_targets(message.content)
                     if delete_targets:
@@ -1705,8 +1707,10 @@ class ComfyUICog(commands.Cog):
                         await interaction.response.send_message(f'导入 LoRA 失败：{error_message}', ephemeral=True)
                         return
 
-                    inferred_name = comfyui_service._extract_filename_from_download_url(normalized_lora_url)
-                    downloaded_lora = _sanitize_filename(inferred_name, 'downloaded_lora.safetensors')
+                    saved_filename = str(download_result.get('saved_filename') or '').strip()
+                    if not saved_filename:
+                        saved_filename = comfyui_service._extract_filename_from_download_url(normalized_lora_url)
+                    downloaded_lora = _sanitize_filename(saved_filename, 'downloaded_lora.safetensors')
                     imported_lora_tokens.append(downloaded_lora)
                     current_lora_text = self._append_lora_item(current_lora_text, downloaded_lora)
 

@@ -295,6 +295,22 @@ def test_build_runtime_params_supports_default_vae_and_clip(tmp_path):
         chat_config.COMFYUI_CONFIG['DEFAULT_CLIP_NAME'] = original_default_clip_name
 
 
+def test_sanitize_lora_filename_forces_safetensors_suffix():
+    assert ComfyUIService._sanitize_lora_filename('abc.bin') == 'abc.safetensors'
+    assert ComfyUIService._sanitize_lora_filename('x y z') == 'x_y_z.safetensors'
+
+
+def test_resolve_lora_download_limit_bytes_reads_config():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+    original_limit = chat_config.COMFYUI_CONFIG.get('LORA_DOWNLOAD_MAX_MB')
+
+    try:
+        chat_config.COMFYUI_CONFIG['LORA_DOWNLOAD_MAX_MB'] = 12
+        assert service._resolve_lora_download_limit_bytes() == 12 * 1024 * 1024
+    finally:
+        chat_config.COMFYUI_CONFIG['LORA_DOWNLOAD_MAX_MB'] = original_limit
+
+
 def test_normalize_safetensors_names_only_keeps_safetensors_and_dedupes():
     names = ComfyUIService._normalize_safetensors_names(
         [

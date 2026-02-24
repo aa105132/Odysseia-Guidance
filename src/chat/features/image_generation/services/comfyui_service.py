@@ -907,6 +907,121 @@ class ComfyUIService:
             'base': normalized_base or 'none',
         }
 
+    @staticmethod
+    def _sanitize_lora_filename(raw_name: str, fallback_name: str = 'downloaded_lora.safetensors') -> str:
+        base_name = Path(str(raw_name or '').strip()).name
+        if not base_name:
+            base_name = fallback_name
+
+        safe_name = re.sub(r'[^0-9A-Za-z._\-]+', '_', base_name)
+        safe_name = safe_name.strip('._') or fallback_name
+        stem = Path(safe_name).stem or 'downloaded_lora'
+        return f'{stem}.safetensors'
+
+    def _resolve_shared_lora_dir(self) -> Optional[Path]:
+        directory_text = str(app_config.COMFYUI_CONFIG.get('SHARED_LORA_DIR') or '').strip()
+        if not directory_text:
+            return None
+
+        try:
+            shared_dir = Path(directory_text)
+            shared_dir.mkdir(parents=True, exist_ok=True)
+            return shared_dir
+        except Exception as error:
+            log.warning(f'创建共享 LoRA 目录失败: {directory_text}, error={error}')
+            return None
+
+    @staticmethod
+    def _build_unique_target_path(base_dir: Path, filename: str) -> Path:
+        candidate = base_dir / filename
+        if not candidate.exists():
+            return candidate
+
+        stem = candidate.stem
+        suffix = candidate.suffix
+        for index in range(1, 10000):
+            temp_candidate = base_dir / f'{stem}_{index}{suffix}'
+            if not temp_candidate.exists():
+                return temp_candidate
+
+        return base_dir / f'{stem}_{uuid.uuid4().hex[:8]}{suffix}'
+
+    def _resolve_lora_download_limit_bytes(self) -> int:
+        max_mb = self._coerce_int(app_config.COMFYUI_CONFIG.get('LORA_DOWNLOAD_MAX_MB'), 100)
+        if max_mb <= 0:
+            max_mb = 100
+        return max_mb * 1024 * 1024
+
+    async def _download_lora_to_shared_dir(
+        self,
+        url: str,
+        filename: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        shared_dir = self._resolve_shared_lora_dir()
+        if shared_dir is None:
+            return {
+                'success': False,
+                'error': '未配置共享 LoRA 目录（COMFYUI_SHARED_LORA_DIR），无法启用回退下载。',
+            }
+
+        safe_filename = self._sanitize_lora_filename(
+            str(filename or '').strip() or self._extract_filename_from_download_url(url),
+        )
+        final_path = self._build_unique_target_path(shared_dir, safe_filename)
+        temp_path = final_path.with_suffix(f'{final_path.suffix}.part')
+
+        max_bytes = self._resolve_lora_download_limit_bytes()
+        timeout_seconds = self._coerce_int(
+            app_config.COMFYUI_CONFIG.get('REQUEST_TIMEOUT_SECONDS'),
+            180,
+        )
+        client_timeout = aiohttp.ClientTimeout(total=max(timeout_seconds, 30))
+
+        written_bytes = 0
+        try:
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                async with session.get(url) as response:
+                    if response.status < 200 or response.status >= 300:
+                        body_text = await response.text()
+                        return {
+                            'success': False,
+                            'error': f'回退下载失败，HTTP {response.status}: {body_text[:300]}',
+                        }
+
+                    content_length = self._coerce_int(response.headers.get('Content-Length'), -1)
+                    if content_length > max_bytes:
+                        return {
+                            'success': False,
+                            'error': f'回退下载失败：文件超过大小限制（>{max_bytes // (1024 * 1024)}MB）。',
+                        }
+
+                    with temp_path.open('wb') as output_file:
+                        async for chunk in response.content.iter_chunked(1024 * 512):
+                            if not chunk:
+                                continue
+                            written_bytes += len(chunk)
+                            if written_bytes > max_bytes:
+                                raise ValueError(f'回退下载失败：文件超过大小限制（>{max_bytes // (1024 * 1024)}MB）。')
+                            output_file.write(chunk)
+
+            temp_path.replace(final_path)
+            return {
+                'success': True,
+                'saved_filename': final_path.name,
+                'saved_path': str(final_path),
+                'bytes': written_bytes,
+            }
+        except Exception as error:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception:
+                pass
+            return {
+                'success': False,
+                'error': str(error),
+            }
+
     async def download_lora_from_url(
         self,
         url: str,
@@ -1003,10 +1118,25 @@ class ComfyUIService:
                     if response.status < 200 or response.status >= 300:
                         detail_text = str(install_result or '').strip()
                         if 'Invalid model install request' in detail_text:
+                            fallback_result = await self._download_lora_to_shared_dir(
+                                url=normalized_url,
+                                filename=inferred_filename,
+                            )
+                            if fallback_result.get('success'):
+                                return {
+                                    'success': True,
+                                    'message': 'LoRA 不在白名单，已回退为共享目录直链下载。',
+                                    'fallback_mode': 'shared_lora_dir',
+                                    'saved_filename': str(fallback_result.get('saved_filename') or ''),
+                                    'saved_path': str(fallback_result.get('saved_path') or ''),
+                                    'whitelist_matched': False,
+                                }
+
+                            fallback_error = str(fallback_result.get('error') or '').strip()
                             detail_text = (
-                                '当前 ComfyUI-Manager 仅允许安装 model-list 白名单中的模型，'
-                                '该 LoRA 链接不在白名单。请改用上传 LoRA，'
-                                '或先在 ComfyUI-Manager 的 model-list 中注册该模型。'
+                                '当前 ComfyUI-Manager 仅允许安装 model-list 白名单中的模型；'
+                                f'共享目录回退也失败：{fallback_error or "未知错误"}。'
+                                '请在 Bot 端配置 COMFYUI_SHARED_LORA_DIR，或将该模型加入白名单。'
                             )
                         return {
                             'success': False,
@@ -1038,6 +1168,7 @@ class ComfyUIService:
                     'queue_start_result': queue_start_result,
                     'queue_start_warning': queue_start_warning,
                     'whitelist_matched': matched_whitelist_item is not None,
+                    'saved_filename': str(payload.get('filename') or ''),
                 }
         except Exception as error:
             log.error(f'下载 LoRA 到 ComfyUI 失败: {error}', exc_info=True)
