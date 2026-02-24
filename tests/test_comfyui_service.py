@@ -240,3 +240,10 @@ def test_build_lora_install_payload_supports_explicit_filename_and_save_path():
     assert payload['save_path'] == 'models/loras'
     assert payload['base'] == 'none'
 
+
+def test_normalize_download_url_for_match_ignores_case_and_query():
+    normalized = ComfyUIService._normalize_download_url_for_match(
+        'HTTPS://Example.com/models/a.safetensors?token=abc#frag'
+    )
+    assert normalized == 'https://example.com/models/a.safetensors'
+

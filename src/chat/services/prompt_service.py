@@ -79,6 +79,28 @@ class PromptService:
         # 否则，回退到默认配置
         return PROMPT_CONFIG.get("default", {}).get(prompt_name)
 
+    @staticmethod
+    def _format_choice_preview(items: Optional[List[str]], limit: int = 60) -> str:
+        normalized_items: List[str] = []
+        seen = set()
+        for raw_item in items or []:
+            item_text = str(raw_item or '').strip()
+            if not item_text:
+                continue
+            key = item_text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized_items.append(item_text)
+
+        if not normalized_items:
+            return '（当前未获取到）'
+
+        preview = '、'.join(f'「{item}」' for item in normalized_items[:limit])
+        if len(normalized_items) > limit:
+            preview = f'{preview}……（其余 {len(normalized_items) - limit} 项省略）'
+        return preview
+
     def get_prompt(self, prompt_name: str, **kwargs) -> Optional[str]:
         """
         获取一个格式化后的提示词。
@@ -166,6 +188,7 @@ class PromptService:
         channel: Optional[Any] = None,  # 新增 channel 参数
         user_id: Optional[int] = None,  # 新增 user_id 参数用于用户识别
         novelai_preset_context: Optional[Dict[str, List[str]]] = None,
+        comfyui_choice_context: Optional[Dict[str, List[str]]] = None,
     ) -> List[Dict[str, Any]]:
         """
         构建用于AI聊天的分层对话历史。
@@ -291,6 +314,53 @@ class PromptService:
             )
             final_conversation.append({'role': 'user', 'parts': [comfyui_param_hint]})
             final_conversation.append({'role': 'model', 'parts': ['收到，ComfyUI 生图时我会优先透传用户给出的参数。']})
+
+            available_model_names = [
+                str(name).strip()
+                for name in ((comfyui_choice_context or {}).get('available_model_names') or [])
+                if str(name).strip()
+            ]
+            available_lora_names = [
+                str(name).strip()
+                for name in ((comfyui_choice_context or {}).get('available_lora_names') or [])
+                if str(name).strip()
+            ]
+
+            real_human_model_candidates = [
+                model_name
+                for model_name in available_model_names
+                if any(keyword in model_name.lower() for keyword in ('zimage', 'qwen'))
+            ]
+
+            comfyui_model_lora_hint_lines = [
+                'ComfyUI 底模与 LoRA 选择规则：',
+                '1) 仅可从可用列表中选择 model_name / lora，禁止编造不存在的名称；',
+                '2) 当用户要画真人、写实肖像、现实人物时，优先选择名称包含 zimage 或 qwen 的底模；',
+                '3) 若最终选择的底模名称包含 zimage 或 qwen（大小写不敏感），prompt/negative_prompt 使用中文自然语言描述；',
+                '4) 其他底模保持 SD tag 风格（英文标签、逗号分隔）；',
+                '5) 用户明确指定底模或 LoRA 时，优先遵从用户指定。',
+            ]
+
+            if real_human_model_candidates:
+                comfyui_model_lora_hint_lines.append(
+                    '真人优先候选底模：'
+                    + self._format_choice_preview(real_human_model_candidates, limit=30)
+                )
+
+            comfyui_model_lora_hint_lines.append(
+                '可用底模列表：' + self._format_choice_preview(available_model_names, limit=80)
+            )
+            comfyui_model_lora_hint_lines.append(
+                '可用 LoRA 列表：' + self._format_choice_preview(available_lora_names, limit=80)
+            )
+
+            final_conversation.append({'role': 'user', 'parts': ['\n'.join(comfyui_model_lora_hint_lines)]})
+            final_conversation.append(
+                {
+                    'role': 'model',
+                    'parts': ['收到，我会基于可用底模/LoRA列表选型，真人优先 zimage/qwen，并按底模类型切换提示词写法。'],
+                }
+            )
 
         # --- 语音工具路由与音色规则注入（动态）---
         default_voice_type = str(

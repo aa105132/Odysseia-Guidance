@@ -732,25 +732,43 @@ class ComfyUIService:
                 return ''
 
     @staticmethod
+    def _normalize_download_url_for_match(raw_url: str) -> str:
+        url_text = str(raw_url or '').strip()
+        if not url_text:
+            return ''
+
+        parsed = urlparse(url_text)
+        scheme = str(parsed.scheme or '').lower()
+        netloc = str(parsed.netloc or '').lower()
+        path = str(parsed.path or '').strip()
+        if not scheme or not netloc:
+            return url_text.rstrip('/').lower()
+        return f'{scheme}://{netloc}{path.rstrip('/')}'
+
+    @staticmethod
     def _build_lora_install_payload(
         url: str,
         filename: Optional[str] = None,
         save_path: Optional[str] = None,
+        base: Optional[str] = None,
+        model_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         normalized_url = str(url or '').strip()
         normalized_filename = str(filename or '').strip()
         normalized_save_path = str(save_path or '').strip()
+        normalized_base = str(base or '').strip()
+        normalized_model_type = str(model_type or '').strip()
 
         inferred_filename = Path(urlparse(normalized_url).path).name if normalized_url else ''
         if not normalized_filename:
             normalized_filename = inferred_filename or 'downloaded_lora.safetensors'
 
         return {
-            'type': 'loras',
+            'type': normalized_model_type or 'loras',
             'url': normalized_url,
             'filename': normalized_filename,
             'save_path': normalized_save_path or 'default',
-            'base': 'none',
+            'base': normalized_base or 'none',
         }
 
     async def download_lora_from_url(
@@ -769,22 +787,67 @@ class ComfyUIService:
         if not self.server_address:
             return {'success': False, 'error': 'ComfyUI SERVER_ADDRESS 未配置'}
 
-        payload = self._build_lora_install_payload(
-            url=normalized_url,
-            filename=filename,
-            save_path=save_path,
-        )
-
         timeout_seconds = self._coerce_int(
             app_config.COMFYUI_CONFIG.get('REQUEST_TIMEOUT_SECONDS'),
             180,
         )
         client_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         install_url = f'{self.server_address}/manager/queue/install_model'
+        model_list_url = f'{self.server_address}/externalmodel/getlist'
         start_url = f'{self.server_address}/manager/queue/start'
+
+        normalized_target_url = self._normalize_download_url_for_match(normalized_url)
 
         try:
             async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                matched_whitelist_item: Optional[Dict[str, Any]] = None
+
+                for mode in ('cache', 'local'):
+                    try:
+                        async with session.get(model_list_url, params={'mode': mode}) as model_response:
+                            if model_response.status < 200 or model_response.status >= 300:
+                                continue
+                            model_payload = await self._read_response_payload(model_response)
+                    except Exception:
+                        continue
+
+                    if not isinstance(model_payload, dict):
+                        continue
+
+                    models = model_payload.get('models')
+                    if not isinstance(models, list):
+                        continue
+
+                    for item in models:
+                        if not isinstance(item, dict):
+                            continue
+
+                        item_url = str(item.get('url') or '').strip()
+                        if not item_url:
+                            continue
+
+                        if self._normalize_download_url_for_match(item_url) == normalized_target_url:
+                            matched_whitelist_item = item
+                            break
+
+                    if matched_whitelist_item is not None:
+                        break
+
+                if matched_whitelist_item is not None:
+                    payload = self._build_lora_install_payload(
+                        url=str(matched_whitelist_item.get('url') or normalized_url),
+                        filename=str(matched_whitelist_item.get('filename') or filename or '').strip(),
+                        save_path=str(matched_whitelist_item.get('save_path') or save_path or '').strip(),
+                        base=str(matched_whitelist_item.get('base') or '').strip(),
+                        model_type=str(matched_whitelist_item.get('type') or 'loras').strip(),
+                    )
+                else:
+                    payload = self._build_lora_install_payload(
+                        url=normalized_url,
+                        filename=filename,
+                        save_path=save_path,
+                    )
+
                 async with session.post(install_url, json=payload) as response:
                     install_result = await self._read_response_payload(response)
                     if response.status < 200 or response.status >= 300:
@@ -801,6 +864,7 @@ class ComfyUIService:
                             'status': response.status,
                             'response': install_result,
                             'payload': payload,
+                            'whitelist_matched': matched_whitelist_item is not None,
                         }
 
                 queue_start_result: Any = None
@@ -823,6 +887,7 @@ class ComfyUIService:
                     'queue_start_status': queue_start_status,
                     'queue_start_result': queue_start_result,
                     'queue_start_warning': queue_start_warning,
+                    'whitelist_matched': matched_whitelist_item is not None,
                 }
         except Exception as error:
             log.error(f'下载 LoRA 到 ComfyUI 失败: {error}', exc_info=True)

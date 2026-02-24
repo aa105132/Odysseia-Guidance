@@ -1605,6 +1605,91 @@ class GeminiService:
             "admin_preset_names": admin_preset_names,
         }
 
+    async def _load_comfyui_choice_context(self, user_id: int) -> Dict[str, List[str]]:
+        """加载 ComfyUI 可用底模/LoRA 列表（API + 用户上传）用于提示词注入。"""
+        comfy_enabled = bool(app_config.COMFYUI_CONFIG.get("ENABLED", False))
+        if not comfy_enabled:
+            return {}
+
+        def _dedupe(items: List[str], limit: int) -> List[str]:
+            names: List[str] = []
+            seen = set()
+            for raw_name in items:
+                name = str(raw_name or "").strip()
+                if not name:
+                    continue
+                key = name.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                names.append(name)
+                if len(names) >= limit:
+                    break
+            return names
+
+        api_model_names: List[str] = []
+        api_lora_names: List[str] = []
+
+        try:
+            from src.chat.features.image_generation.services.comfyui_service import (
+                comfyui_service,
+            )
+
+            if comfyui_service.is_server_ready():
+                try:
+                    api_model_names = await comfyui_service.get_available_model_names()
+                except Exception as error:
+                    log.warning(f"读取 ComfyUI 底模列表失败: {error}")
+
+                try:
+                    api_lora_names = await comfyui_service.get_available_lora_names()
+                except Exception as error:
+                    log.warning(f"读取 ComfyUI LoRA 列表失败: {error}")
+        except Exception as error:
+            log.warning(f"加载 ComfyUI 服务失败，跳过底模/LoRA 列表注入: {error}")
+
+        user_uploaded_loras: List[str] = []
+        user_lora_dir = os.path.join("data", "comfyui", "users", str(user_id), "loras")
+        lora_extensions = {
+            ".safetensors",
+            ".ckpt",
+            ".pt",
+            ".bin",
+            ".pth",
+            ".gguf",
+        }
+        try:
+            if os.path.isdir(user_lora_dir):
+                for filename in os.listdir(user_lora_dir):
+                    file_path = os.path.join(user_lora_dir, filename)
+                    if not os.path.isfile(file_path):
+                        continue
+                    _, ext = os.path.splitext(filename)
+                    if ext.lower() in lora_extensions:
+                        user_uploaded_loras.append(filename)
+        except Exception as error:
+            log.warning(f"读取用户 LoRA 上传目录失败: user_id={user_id}, error={error}")
+
+        default_model_name = str(app_config.COMFYUI_CONFIG.get("DEFAULT_MODEL_NAME") or "").strip()
+        default_lora_name = str(app_config.COMFYUI_CONFIG.get("DEFAULT_LORA") or "").strip()
+
+        merged_model_names = _dedupe(
+            [default_model_name, *api_model_names],
+            limit=120,
+        )
+        merged_lora_names = _dedupe(
+            [default_lora_name, *api_lora_names, *user_uploaded_loras],
+            limit=160,
+        )
+
+        if not merged_model_names and not merged_lora_names:
+            return {}
+
+        return {
+            "available_model_names": merged_model_names,
+            "available_lora_names": merged_lora_names,
+        }
+
     async def _execute_generation_cycle(
         self,
         user_id: int,
@@ -1638,6 +1723,7 @@ class GeminiService:
 
         # 1. 构建完整的对话提示
         novelai_preset_context = await self._load_novelai_preset_context(user_id)
+        comfyui_choice_context = await self._load_comfyui_choice_context(user_id)
         final_conversation = prompt_service.build_chat_prompt(
             user_name=user_name,
             message=message,
@@ -1654,6 +1740,7 @@ class GeminiService:
             channel=channel,  # 传递 channel 对象
             user_id=user_id,  # 传递用户ID用于识别和主人验证
             novelai_preset_context=novelai_preset_context,
+            comfyui_choice_context=comfyui_choice_context,
         )
 
         # 3. 准备 API 调用参数 (重构)
@@ -2346,6 +2433,7 @@ class GeminiService:
         
         # 构建完整的对话提示
         novelai_preset_context = await self._load_novelai_preset_context(user_id)
+        comfyui_choice_context = await self._load_comfyui_choice_context(user_id)
         final_conversation = prompt_service.build_chat_prompt(
             user_name=user_name,
             message=message,
@@ -2362,6 +2450,7 @@ class GeminiService:
             channel=channel,
             user_id=user_id,
             novelai_preset_context=novelai_preset_context,
+            comfyui_choice_context=comfyui_choice_context,
         )
         
         # 转换为 OpenAI 格式的 messages
