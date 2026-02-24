@@ -1140,12 +1140,12 @@ onBeforeUnmount(() => {
 
       <section v-else-if="viewMode === 'single'" id="game-view" class="table-wrapper single-mode-view">
         <div id="game-table" style="position: relative; width: 100%; height: 100%; min-height: 70vh;">
-            <div class="toolbar-actions" style="position: absolute; top: 10px; right: 10px; z-index: 100;">
+            <div class="toolbar-actions single-toolbar" style="position: absolute; top: 10px; right: 10px; z-index: 100;">
               <button :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回</button>
               <button :disabled="requestInFlight || !singleGame" @click="forfeitSingleGame">放弃</button>
             </div>
 
-            <div style="display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 30px; height: 100%; padding: 4vh 0 6vh 0;">
+            <div class="single-board-content" style="display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 30px; height: 100%; padding: 4vh 0 6vh 0;">
                 
                 <!-- Dealer Area -->
                 <div class="game-area dealer-area single-game-area" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
@@ -1168,7 +1168,7 @@ onBeforeUnmount(() => {
                 <div class="messages single-result-text placeholder" v-else></div>
 
                 <!-- Controls & Betting -->
-                <div style="margin-top: 10px; display: flex; flex-direction: column; align-items: center; width: 100%; z-index: 20;">
+                <div class="single-action-zone" style="margin-top: 10px; display: flex; flex-direction: column; align-items: center; width: 100%; z-index: 20;">
                     <div id="controls" v-if="canSingleOperate" style="display: flex; gap: 15px;">
                         <button class="single-btn" @click="singleHit" :disabled="requestInFlight">要牌</button>
                         <button class="single-btn" @click="singleStand" :disabled="requestInFlight">停牌</button>
@@ -1266,12 +1266,12 @@ onBeforeUnmount(() => {
 
       <section v-else-if="viewMode === 'table' && roomState" id="game-view" class="table-wrapper multi-mode-view">
         <div id="game-table" class="green-table" style="height: auto; min-height: 70vh;">
-          <div class="toolbar-actions" style="position: absolute; top: 42px; left: 10px; z-index: 100;">
+          <div class="toolbar-actions multi-toolbar-left" style="position: absolute; top: 42px; left: 10px; z-index: 100;">
             <button :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
             <button :disabled="requestInFlight || !isDiscordMode" @click="recruitTeammates">招募队友</button>
             <button :disabled="requestInFlight" @click="leaveRoom">离开房间</button>
           </div>
-          <div style="position: absolute; top: 10px; right: 10px; z-index: 100;">
+          <div class="multi-toolbar-right" style="position: absolute; top: 10px; right: 10px; z-index: 100;">
             <span>房间号: {{ roomState.room_id }}</span> |
             <span>状态: {{ roomStateText }}</span> |
             <span>房主: {{ hostDisplayName }}</span>
@@ -1284,7 +1284,7 @@ onBeforeUnmount(() => {
                   <p>{{ dealerSpeech }}</p>
               </div>
           </div>
-          <div class="game-area position-top-cards" style="position:absolute; top: 17%; left: 50%; transform: translateX(-50%); z-index: 22;">
+          <div class="game-area position-top-cards table-dealer-cards" style="position:absolute; top: 17%; left: 50%; transform: translateX(-50%); z-index: 22;">
               <h2>月月 (<span>{{ dealer?.score ?? 0 }}</span>)</h2>
               <TransitionGroup name="card" tag="div" class="hand multi-hand">
                   <img v-for="(card, idx) in dealer?.hand || []" :key="`dealer-${idx}-${card}`" :src="cardImageSrc(card)" class="card multi-large-card">
@@ -1293,7 +1293,7 @@ onBeforeUnmount(() => {
 
           <!-- Players distributed left, bottom, right -->
           <!-- Left Player (Seat 0) -->
-          <div class="game-area position-left" :class="{'empty-seat-area': !seatPlayerMap[0]}" style="position:absolute; top: 46%; left: 4%; transform: translateY(-50%);">
+          <div class="game-area position-left seat-area seat-left-area" :class="{'empty-seat-area': !seatPlayerMap[0]}" style="position:absolute; top: 46%; left: 4%; transform: translateY(-50%);">
               <div v-if="seatPlayerMap[0]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[0]?.is_current_turn}">
                   <img
                     class="seat-player-avatar"
@@ -1312,7 +1312,7 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- Bottom Player (Seat 1 - usually viewer) -->
-          <div class="game-area position-bottom" :class="{'empty-seat-area': !seatPlayerMap[1]}" style="position:absolute; bottom: 18%; left: 50%; transform: translateX(-50%);">
+          <div class="game-area position-bottom seat-area seat-bottom-area" :class="{'empty-seat-area': !seatPlayerMap[1]}" style="position:absolute; bottom: 18%; left: 50%; transform: translateX(-50%);">
               <img
                 v-if="seatPlayerMap[1]"
                 class="seat-player-avatar seat-player-avatar-bottom"
@@ -1330,7 +1330,7 @@ onBeforeUnmount(() => {
               </div>
           </div>
           
-          <div v-if="roomState.state === 'waiting' && !viewerPlayer?.is_ready && viewerPlayer" class="multi-controls" style="bottom: 8%;">
+          <div v-if="roomState.state === 'waiting' && !viewerPlayer?.is_ready && viewerPlayer" class="multi-controls quick-bet-controls" style="bottom: 8%;">
               <div id="bet-options-container">
                   <button class="bet-option-button" @click="betInput = Math.max(10, Math.floor((profile?.balance || 0) * 0.05))" :disabled="requestInFlight">小</button>
                   <button class="bet-option-button" @click="betInput = Math.max(50, Math.floor((profile?.balance || 0) * 0.15))" :disabled="requestInFlight">中</button>
@@ -1340,7 +1340,7 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- Right Player (Seat 2) -->
-          <div class="game-area position-right" :class="{'empty-seat-area': !seatPlayerMap[2]}" style="position:absolute; top: 46%; right: 4%; transform: translateY(-50%);">
+          <div class="game-area position-right seat-area seat-right-area" :class="{'empty-seat-area': !seatPlayerMap[2]}" style="position:absolute; top: 46%; right: 4%; transform: translateY(-50%);">
               <div v-if="seatPlayerMap[2]" class="player-info-tag" :class="{'turn-active': seatPlayerMap[2]?.is_current_turn}">
                   <img
                     class="seat-player-avatar"
@@ -1359,15 +1359,15 @@ onBeforeUnmount(() => {
           </div>
           
           <!-- Shared Multi Controls -->
-          <div class="multi-controls">
-            <div id="controls" style="background: rgba(0,0,0,0.5); padding: 10px; border-radius: 10px;">
-                <div v-if="roomState.state === 'waiting'" style="display: flex; gap: 5px; align-items: center; flex-wrap: wrap;">
+          <div class="multi-controls main-action-controls">
+            <div id="controls" class="multi-controls-panel" style="background: rgba(0,0,0,0.5); padding: 10px; border-radius: 10px;">
+                <div v-if="roomState.state === 'waiting'" class="multi-waiting-controls" style="display: flex; gap: 5px; align-items: center; flex-wrap: wrap;">
                     <input v-model.number="betInput" type="number" min="1" placeholder="输入下注" :disabled="requestInFlight || !canSetBet" style="width: 80px;" />
                     <button :disabled="requestInFlight || !canSetBet" @click="setBet">下注</button>
                     <button :disabled="requestInFlight || !canToggleReady" @click="toggleReady">{{ readyButtonText }}</button>
                     <button v-if="isHost" :disabled="requestInFlight || !canStartRound" @click="startRound">开始本局</button>
                 </div>
-                <div v-if="roomState.state === 'playing'" style="display: flex; gap: 5px;">
+                <div v-if="roomState.state === 'playing'" class="multi-playing-controls" style="display: flex; gap: 5px;">
                     <button :disabled="requestInFlight || !isMyTurn" @click="hit">要牌</button>
                     <button :disabled="requestInFlight || !isMyTurn" @click="stand">停牌</button>
                 </div>
@@ -1680,6 +1680,310 @@ onBeforeUnmount(() => {
   .multi-mode-view .seat-player-avatar-bottom {
     width: 50px;
     height: 50px;
+  }
+}
+
+@media (max-width: 900px) {
+  .multi-root.table-fullscreen {
+    overflow: auto;
+  }
+
+  .multi-root.table-fullscreen .top-bar {
+    display: none;
+  }
+
+  .multi-root.table-fullscreen .single-mode-view #game-table,
+  .multi-root.table-fullscreen .multi-mode-view #game-table {
+    padding-top: 56px !important;
+    padding-bottom: 186px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+
+  .single-mode-view .single-toolbar {
+    top: 8px !important;
+    left: 8px !important;
+    right: 8px !important;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .single-mode-view .single-board-content {
+    height: auto !important;
+    min-height: 100% !important;
+    justify-content: flex-start !important;
+    gap: 14px !important;
+    padding: 56px 0 0 0 !important;
+  }
+
+  .single-mode-view .single-action-zone {
+    margin-top: 0 !important;
+    width: 100%;
+    padding: 0 8px;
+    box-sizing: border-box;
+    z-index: 90 !important;
+  }
+
+  .single-mode-view #controls {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px !important;
+  }
+
+  .single-mode-view #game-dealer-section {
+    position: fixed !important;
+    right: 6px !important;
+    bottom: 6px !important;
+    left: auto !important;
+    top: auto !important;
+    width: 118px !important;
+    height: 152px !important;
+    z-index: 240 !important;
+    pointer-events: none;
+  }
+
+  .single-mode-view #game-dealer-section .dialogue-box {
+    top: -6px !important;
+    left: 50% !important;
+    right: auto !important;
+    transform: translate(-50%, -100%) !important;
+    max-width: min(72vw, 240px) !important;
+    padding: 8px 10px !important;
+  }
+
+  .single-mode-view #game-dealer-section .dialogue-box::before {
+    left: 50% !important;
+    right: auto !important;
+    top: 100% !important;
+    transform: translateX(-50%) !important;
+    border-width: 8px 6px 0 6px !important;
+    border-style: solid !important;
+    border-color: #dcd0c0 transparent transparent transparent !important;
+  }
+
+  .multi-mode-view .multi-toolbar-left {
+    top: 8px !important;
+    left: 8px !important;
+    right: 8px !important;
+    justify-content: flex-start;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .multi-mode-view .multi-toolbar-right {
+    position: absolute !important;
+    top: 48px !important;
+    left: 8px !important;
+    right: 8px !important;
+    z-index: 100 !important;
+    text-align: left;
+    font-size: 12px;
+    line-height: 1.3;
+    white-space: normal;
+    background: rgba(0, 0, 0, 0.42);
+    padding: 4px 8px;
+    border-radius: 8px;
+  }
+
+  .multi-mode-view #game-dealer-section {
+    position: fixed !important;
+    right: 6px !important;
+    bottom: 6px !important;
+    left: auto !important;
+    top: auto !important;
+    transform: none !important;
+    width: 112px !important;
+    height: 142px !important;
+    z-index: 240 !important;
+    pointer-events: none;
+  }
+
+  .multi-mode-view #game-dealer-section .dialogue-box {
+    top: -6px !important;
+    left: 50% !important;
+    right: auto !important;
+    transform: translate(-50%, -100%) !important;
+    max-width: min(70vw, 230px) !important;
+    padding: 8px 10px !important;
+  }
+
+  .multi-mode-view #game-dealer-section .dialogue-box::before {
+    left: 50% !important;
+    right: auto !important;
+    top: 100% !important;
+    transform: translateX(-50%) !important;
+    border-width: 8px 6px 0 6px !important;
+    border-style: solid !important;
+    border-color: #dcd0c0 transparent transparent transparent !important;
+  }
+
+  .multi-mode-view .table-dealer-cards {
+    top: 26% !important;
+  }
+
+  .multi-mode-view .seat-left-area {
+    top: 56% !important;
+    left: 2% !important;
+  }
+
+  .multi-mode-view .seat-right-area {
+    top: 56% !important;
+    right: 2% !important;
+  }
+
+  .multi-mode-view .seat-bottom-area {
+    bottom: 31% !important;
+    width: 96% !important;
+  }
+
+  .multi-mode-view .quick-bet-controls {
+    bottom: 132px !important;
+    width: 100%;
+    padding: 0 6px;
+    box-sizing: border-box;
+  }
+
+  .multi-mode-view .main-action-controls {
+    bottom: 72px !important;
+    width: 100%;
+    padding: 0 6px;
+    box-sizing: border-box;
+  }
+
+  .multi-mode-view .multi-controls-panel {
+    width: 100%;
+    max-width: 100%;
+    padding: 8px !important;
+    box-sizing: border-box;
+  }
+
+  .multi-mode-view .multi-waiting-controls,
+  .multi-mode-view .multi-playing-controls {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .multi-mode-view .multi-large-card {
+    width: 78px !important;
+    height: 108px !important;
+  }
+
+  .multi-mode-view .multi-hand,
+  .multi-mode-view .multi-side-hand {
+    min-height: 118px !important;
+  }
+
+  .multi-mode-view .multi-hand .multi-large-card:not(:first-child) {
+    margin-left: -26px !important;
+  }
+
+  .multi-mode-view .multi-side-hand .multi-side-card + .multi-side-card {
+    margin-top: -66px !important;
+  }
+
+  .multi-mode-view .player-info-tag {
+    padding: 3px 6px;
+    font-size: 11px;
+    margin-bottom: 6px;
+  }
+
+  .multi-mode-view .seat-player-avatar {
+    width: 34px;
+    height: 34px;
+    margin-bottom: 4px;
+  }
+
+  .multi-mode-view .seat-player-avatar-bottom {
+    width: 40px;
+    height: 40px;
+    margin-bottom: 6px;
+  }
+}
+
+@media (max-width: 560px) {
+  .single-mode-view .single-game-area h2 {
+    font-size: 1.35em !important;
+    margin-bottom: 8px !important;
+  }
+
+  .single-mode-view .single-result-text {
+    font-size: 1.15em;
+    min-height: 28px;
+    line-height: 28px;
+  }
+
+  .single-mode-view .large-card {
+    width: 64px !important;
+    height: 90px !important;
+  }
+
+  .single-mode-view .single-hand {
+    min-height: 96px !important;
+  }
+
+  .single-mode-view .single-hand .large-card:not(:first-child) {
+    margin-left: -20px !important;
+  }
+
+  .single-mode-view .single-btn {
+    padding: 8px 12px !important;
+    font-size: 1em !important;
+  }
+
+  .single-mode-view #game-dealer-section {
+    width: 96px !important;
+    height: 126px !important;
+  }
+
+  .single-mode-view #game-dealer-section .dialogue-box {
+    max-width: min(78vw, 220px) !important;
+    padding: 7px 9px !important;
+  }
+
+  .multi-mode-view .multi-toolbar-right {
+    top: 74px !important;
+    font-size: 11px;
+  }
+
+  .multi-mode-view .table-dealer-cards {
+    top: 29% !important;
+  }
+
+  .multi-mode-view .seat-left-area,
+  .multi-mode-view .seat-right-area {
+    top: 58% !important;
+  }
+
+  .multi-mode-view .seat-bottom-area {
+    bottom: 34% !important;
+  }
+
+  .multi-mode-view .multi-large-card {
+    width: 68px !important;
+    height: 94px !important;
+  }
+
+  .multi-mode-view .multi-hand,
+  .multi-mode-view .multi-side-hand {
+    min-height: 104px !important;
+  }
+
+  .multi-mode-view .multi-hand .multi-large-card:not(:first-child) {
+    margin-left: -22px !important;
+  }
+
+  .multi-mode-view .multi-side-hand .multi-side-card + .multi-side-card {
+    margin-top: -56px !important;
+  }
+
+  .multi-mode-view .quick-bet-controls {
+    bottom: 124px !important;
+  }
+
+  .multi-mode-view .main-action-controls {
+    bottom: 64px !important;
   }
 }
 
