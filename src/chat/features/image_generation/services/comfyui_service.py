@@ -371,6 +371,18 @@ class ComfyUIService:
 
         return merged_names
 
+    async def get_available_vae_names(self) -> list[str]:
+        names = await self._fetch_safetensors_from_model_folder('vae')
+        if names:
+            return names
+        return await self._get_available_choice_names(('vae_name',))
+
+    async def get_available_clip_names(self) -> list[str]:
+        names = await self._fetch_safetensors_from_model_folder('clip')
+        if names:
+            return names
+        return await self._get_available_choice_names(('clip_name',))
+
     async def get_available_lora_names(self) -> list[str]:
         return await self._fetch_safetensors_from_model_folder('loras')
 
@@ -594,6 +606,105 @@ class ComfyUIService:
         workflow = self._replace_placeholders_recursive(workflow, token_values, params)
         return workflow
 
+    @staticmethod
+    def _workflow_contains_any_token(workflow_template: Dict[str, Any], tokens: tuple[str, ...]) -> bool:
+        if not workflow_template or not tokens:
+            return False
+
+        try:
+            workflow_text = json.dumps(workflow_template, ensure_ascii=False).lower()
+        except Exception:
+            return False
+
+        for token in tokens:
+            token_text = str(token or '').strip().lower()
+            if token_text and token_text in workflow_text:
+                return True
+        return False
+
+    @staticmethod
+    def _pick_best_name_candidate(candidates: list[str], hints: list[str]) -> str:
+        normalized_candidates = [str(item or '').strip() for item in candidates if str(item or '').strip()]
+        if not normalized_candidates:
+            return ''
+
+        keyword_hints: list[str] = []
+        for hint in hints:
+            hint_text = str(hint or '').strip().lower()
+            if not hint_text:
+                continue
+
+            hint_stem = Path(hint_text).stem
+            parts = [part for part in re.split(r'[\\/_.\-\s]+', hint_stem) if len(part) >= 3]
+            keyword_hints.extend(parts)
+
+            for key in ('qwen', 'wan', 'sdxl', 'flux'):
+                if key in hint_text:
+                    keyword_hints.insert(0, key)
+
+        deduped_hints: list[str] = []
+        seen_hints = set()
+        for hint in keyword_hints:
+            hint_key = hint.lower()
+            if hint_key in seen_hints:
+                continue
+            seen_hints.add(hint_key)
+            deduped_hints.append(hint)
+
+        lowered_candidates = [(name, name.lower()) for name in normalized_candidates]
+        for hint in deduped_hints:
+            for candidate_name, candidate_lower in lowered_candidates:
+                if hint in candidate_lower:
+                    return candidate_name
+
+        return normalized_candidates[0]
+
+    async def _fill_missing_runtime_names(
+        self,
+        params: Dict[str, Any],
+        workflow_template: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        selected_template = workflow_template if workflow_template is not None else self.workflow_template
+        if not isinstance(selected_template, dict) or not selected_template:
+            return params
+
+        model_name = str(params.get('model_name') or '').strip()
+        if not model_name and self._workflow_contains_any_token(
+            selected_template,
+            ('%model_name%', '%ckpt_name%', '%model%', '{{model_name}}'),
+        ):
+            available_models = await self.get_available_model_names()
+            auto_model_name = self._pick_best_name_candidate(available_models, [])
+            if auto_model_name:
+                params['model_name'] = auto_model_name
+                model_name = auto_model_name
+                log.info(f'ComfyUI 自动填充 model_name: {auto_model_name}')
+
+        clip_name = str(params.get('clip_name') or '').strip()
+        if not clip_name and self._workflow_contains_any_token(
+            selected_template,
+            ('%clip_name%', '%clip%', '{{clip_name}}'),
+        ):
+            available_clips = await self.get_available_clip_names()
+            auto_clip_name = self._pick_best_name_candidate(available_clips, [model_name])
+            if auto_clip_name:
+                params['clip_name'] = auto_clip_name
+                clip_name = auto_clip_name
+                log.info(f'ComfyUI 自动填充 clip_name: {auto_clip_name}')
+
+        vae_name = str(params.get('vae_name') or '').strip()
+        if not vae_name and self._workflow_contains_any_token(
+            selected_template,
+            ('%vae_name%', '%vae%', '{{vae_name}}'),
+        ):
+            available_vaes = await self.get_available_vae_names()
+            auto_vae_name = self._pick_best_name_candidate(available_vaes, [clip_name, model_name])
+            if auto_vae_name:
+                params['vae_name'] = auto_vae_name
+                log.info(f'ComfyUI 自动填充 vae_name: {auto_vae_name}')
+
+        return params
+
     async def generate_image(
         self,
         prompt: Optional[str] = None,
@@ -649,6 +760,10 @@ class ComfyUIService:
             runtime_kwargs['clip_name'] = clip_name
 
             params = self._build_runtime_params(**runtime_kwargs)
+            params = await self._fill_missing_runtime_names(
+                params,
+                workflow_template=workflow_template_override,
+            )
             workflow_payload = self._prepare_workflow(
                 params,
                 workflow_template=workflow_template_override,

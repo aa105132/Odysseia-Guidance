@@ -667,6 +667,134 @@ class ComfySamplingPresetSelect(discord.ui.Select):
         )
 
 
+class ComfyVaeSelect(discord.ui.Select):
+    def __init__(self, params_view: 'ComfyParamsConfigView'):
+        self.params_view = params_view
+        self.panel_view = params_view.panel_view
+        super().__init__(
+            placeholder='选择 VAE（下拉）',
+            min_values=1,
+            max_values=1,
+            options=[discord.SelectOption(label='加载中...', value='__loading__')],
+            row=0,
+        )
+        self.refresh_options()
+
+    def refresh_options(self) -> None:
+        options, value_map = self.panel_view.build_vae_select_options()
+        self.panel_view.vae_value_map = value_map
+        self.options = options
+        self.disabled = len(options) == 1 and options[0].value == '__none__'
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+        if selected == '__none__':
+            await interaction.response.send_message('当前未发现可选 VAE，可在参数设置中手动输入。', ephemeral=True)
+            return
+
+        if selected == '__default__':
+            self.panel_view.selected_vae_name = ''
+        else:
+            target_name = self.panel_view.vae_value_map.get(selected)
+            if not target_name:
+                await interaction.response.send_message('切换 VAE 失败：目标不存在。', ephemeral=True)
+                return
+            self.panel_view.selected_vae_name = target_name
+
+        await self.panel_view.persist_user_settings(vae_name=self.panel_view.selected_vae_name)
+        self.params_view.refresh_selects()
+        await interaction.response.edit_message(
+            embed=self.params_view.build_embed(),
+            view=self.params_view,
+        )
+        await self.panel_view.refresh_panel_message()
+
+
+class ComfyClipSelect(discord.ui.Select):
+    def __init__(self, params_view: 'ComfyParamsConfigView'):
+        self.params_view = params_view
+        self.panel_view = params_view.panel_view
+        super().__init__(
+            placeholder='选择 CLIP（下拉）',
+            min_values=1,
+            max_values=1,
+            options=[discord.SelectOption(label='加载中...', value='__loading__')],
+            row=1,
+        )
+        self.refresh_options()
+
+    def refresh_options(self) -> None:
+        options, value_map = self.panel_view.build_clip_select_options()
+        self.panel_view.clip_value_map = value_map
+        self.options = options
+        self.disabled = len(options) == 1 and options[0].value == '__none__'
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+        if selected == '__none__':
+            await interaction.response.send_message('当前未发现可选 CLIP，可在参数设置中手动输入。', ephemeral=True)
+            return
+
+        if selected == '__default__':
+            self.panel_view.selected_clip_name = ''
+        else:
+            target_name = self.panel_view.clip_value_map.get(selected)
+            if not target_name:
+                await interaction.response.send_message('切换 CLIP 失败：目标不存在。', ephemeral=True)
+                return
+            self.panel_view.selected_clip_name = target_name
+
+        await self.panel_view.persist_user_settings(clip_name=self.panel_view.selected_clip_name)
+        self.params_view.refresh_selects()
+        await interaction.response.edit_message(
+            embed=self.params_view.build_embed(),
+            view=self.params_view,
+        )
+        await self.panel_view.refresh_panel_message()
+
+
+class ComfyParamsConfigView(discord.ui.View):
+    def __init__(self, panel_view: 'ComfyUIPanelView'):
+        super().__init__(timeout=600)
+        self.panel_view = panel_view
+        self.vae_select = ComfyVaeSelect(self)
+        self.clip_select = ComfyClipSelect(self)
+        self.add_item(self.vae_select)
+        self.add_item(self.clip_select)
+
+    def refresh_selects(self) -> None:
+        self.vae_select.refresh_options()
+        self.clip_select.refresh_options()
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title='⚙️ ComfyUI 参数子面板',
+            description='这里可下拉选择 VAE / CLIP；数值参数仍可用按钮弹窗修改。',
+            color=0x2B2D31,
+        )
+        embed.add_field(
+            name='当前 VAE',
+            value=str(self.panel_view.selected_vae_name or '').strip() or '工作流默认',
+            inline=True,
+        )
+        embed.add_field(
+            name='当前 CLIP',
+            value=str(self.panel_view.selected_clip_name or '').strip() or '工作流默认',
+            inline=True,
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.panel_view.user_id:
+            await interaction.response.send_message('这个参数子面板属于他人的 /comfy 会话。', ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label='编辑尺寸/步数/CFG/Seed', style=discord.ButtonStyle.secondary, emoji='🛠️', row=2)
+    async def btn_open_numeric_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ComfyParamsModal(self.panel_view))
+
+
 class ComfyUIPanelView(discord.ui.View):
     def __init__(
         self,
@@ -678,6 +806,8 @@ class ComfyUIPanelView(discord.ui.View):
         user_fixed_negative_prompt: str = '',
         initial_model_name: str = '',
         available_models: Optional[list[str]] = None,
+        available_vaes: Optional[list[str]] = None,
+        available_clips: Optional[list[str]] = None,
     ):
         super().__init__(timeout=900)
         self.cog = cog
@@ -686,6 +816,8 @@ class ComfyUIPanelView(discord.ui.View):
         self.workflow_value_map: Dict[str, str] = {}
         self.lora_value_map: Dict[str, str] = {}
         self.model_value_map: Dict[str, str] = {}
+        self.vae_value_map: Dict[str, str] = {}
+        self.clip_value_map: Dict[str, str] = {}
 
         self.workflow_dir, self.lora_dir = self._ensure_user_asset_dirs()
         self.global_workflow_path = str(chat_config.COMFYUI_CONFIG.get('WORKFLOW_PATH') or '').strip()
@@ -712,10 +844,20 @@ class ComfyUIPanelView(discord.ui.View):
         self.selected_vae_name = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_VAE_NAME') or '').strip()
         self.selected_clip_name = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_CLIP_NAME') or '').strip()
         self.available_models = self._normalize_model_names(available_models or [])
+        self.available_vaes = self._normalize_model_names(available_vaes or [])
+        self.available_clips = self._normalize_model_names(available_clips or [])
         if self.selected_model_name:
             selected_key = self.selected_model_name.lower()
             if selected_key not in {name.lower() for name in self.available_models}:
                 self.available_models.insert(0, self.selected_model_name)
+        if self.selected_vae_name:
+            selected_vae_key = self.selected_vae_name.lower()
+            if selected_vae_key not in {name.lower() for name in self.available_vaes}:
+                self.available_vaes.insert(0, self.selected_vae_name)
+        if self.selected_clip_name:
+            selected_clip_key = self.selected_clip_name.lower()
+            if selected_clip_key not in {name.lower() for name in self.available_clips}:
+                self.available_clips.insert(0, self.selected_clip_name)
 
         self.workflow_path = self.user_workflow_path or self.global_workflow_path
 
@@ -897,6 +1039,76 @@ class ComfyUIPanelView(discord.ui.View):
 
         if len(options) == 1 and not deduped_names:
             options = [discord.SelectOption(label='未发现可选底模', value='__none__', default=True)]
+
+        if not any(option.default for option in options):
+            options[0].default = True
+
+        return options, value_map
+
+    def build_vae_select_options(self) -> tuple[list[discord.SelectOption], Dict[str, str]]:
+        current_vae_name = str(self.selected_vae_name or '').strip()
+        candidate_vae_names = list(self.available_vaes)
+        if current_vae_name and current_vae_name.lower() not in {name.lower() for name in candidate_vae_names}:
+            candidate_vae_names.insert(0, current_vae_name)
+
+        deduped_names = self._normalize_model_names(candidate_vae_names)
+        value_map: Dict[str, str] = {}
+        options: list[discord.SelectOption] = [
+            discord.SelectOption(
+                label='使用工作流默认 VAE',
+                value='__default__',
+                default=not current_vae_name,
+            )
+        ]
+
+        for index, vae_name in enumerate(deduped_names[:24]):
+            option_value = f'vae_{index}'
+            value_map[option_value] = vae_name
+            options.append(
+                discord.SelectOption(
+                    label=vae_name[:100],
+                    value=option_value,
+                    default=current_vae_name.lower() == vae_name.lower(),
+                )
+            )
+
+        if len(options) == 1 and not deduped_names:
+            options = [discord.SelectOption(label='未发现可选 VAE', value='__none__', default=True)]
+
+        if not any(option.default for option in options):
+            options[0].default = True
+
+        return options, value_map
+
+    def build_clip_select_options(self) -> tuple[list[discord.SelectOption], Dict[str, str]]:
+        current_clip_name = str(self.selected_clip_name or '').strip()
+        candidate_clip_names = list(self.available_clips)
+        if current_clip_name and current_clip_name.lower() not in {name.lower() for name in candidate_clip_names}:
+            candidate_clip_names.insert(0, current_clip_name)
+
+        deduped_names = self._normalize_model_names(candidate_clip_names)
+        value_map: Dict[str, str] = {}
+        options: list[discord.SelectOption] = [
+            discord.SelectOption(
+                label='使用工作流默认 CLIP',
+                value='__default__',
+                default=not current_clip_name,
+            )
+        ]
+
+        for index, clip_name in enumerate(deduped_names[:24]):
+            option_value = f'clip_{index}'
+            value_map[option_value] = clip_name
+            options.append(
+                discord.SelectOption(
+                    label=clip_name[:100],
+                    value=option_value,
+                    default=current_clip_name.lower() == clip_name.lower(),
+                )
+            )
+
+        if len(options) == 1 and not deduped_names:
+            options = [discord.SelectOption(label='未发现可选 CLIP', value='__none__', default=True)]
 
         if not any(option.default for option in options):
             options[0].default = True
@@ -1132,7 +1344,12 @@ class ComfyUIPanelView(discord.ui.View):
 
     @discord.ui.button(label='参数设置', style=discord.ButtonStyle.secondary, emoji='⚙️', row=0)
     async def btn_params(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ComfyParamsModal(self))
+        params_view = ComfyParamsConfigView(self)
+        await interaction.response.send_message(
+            embed=params_view.build_embed(),
+            view=params_view,
+            ephemeral=True,
+        )
 
     @discord.ui.button(label='上传工作流', style=discord.ButtonStyle.secondary, emoji='📂', row=0)
     async def btn_upload_workflow(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1856,10 +2073,29 @@ class ComfyUICog(commands.Cog):
             user_settings['_from_user'] = True
 
         available_models: list[str] = []
-        try:
-            available_models = await comfyui_service.get_available_model_names()
-        except Exception as error:
-            log.warning(f'读取 ComfyUI 底模列表失败: {error}')
+        available_vaes: list[str] = []
+        available_clips: list[str] = []
+        model_result, vae_result, clip_result = await asyncio.gather(
+            comfyui_service.get_available_model_names(),
+            comfyui_service.get_available_vae_names(),
+            comfyui_service.get_available_clip_names(),
+            return_exceptions=True,
+        )
+
+        if isinstance(model_result, Exception):
+            log.warning(f'读取 ComfyUI 底模列表失败: {model_result}')
+        else:
+            available_models = model_result
+
+        if isinstance(vae_result, Exception):
+            log.warning(f'读取 ComfyUI VAE 列表失败: {vae_result}')
+        else:
+            available_vaes = vae_result
+
+        if isinstance(clip_result, Exception):
+            log.warning(f'读取 ComfyUI CLIP 列表失败: {clip_result}')
+        else:
+            available_clips = clip_result
 
         has_user_settings = bool(user_settings.get('_from_user'))
         panel_user_workflow_path = str(user_settings.get('workflow_path') or '').strip() if has_user_settings else ''
@@ -1880,6 +2116,8 @@ class ComfyUICog(commands.Cog):
             user_fixed_negative_prompt=panel_user_fixed_negative_prompt,
             initial_model_name=str(user_settings.get('model_name') or '').strip(),
             available_models=available_models,
+            available_vaes=available_vaes,
+            available_clips=available_clips,
         )
 
         panel.prompt = str(user_settings.get('prompt_text') or '').strip()
