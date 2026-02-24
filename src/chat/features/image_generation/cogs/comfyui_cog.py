@@ -315,6 +315,13 @@ class ComfyPromptModal(discord.ui.Modal, title='ComfyUI 提示词设置'):
         max_length=1200,
         style=discord.TextStyle.paragraph,
     )
+    lora_text_input = discord.ui.TextInput(
+        label='LoRA 文本（可选）',
+        placeholder='支持 nameA:0.8|<wlr:nameB:0.7>|nameC',
+        required=False,
+        max_length=800,
+        style=discord.TextStyle.paragraph,
+    )
 
     def __init__(self, panel_view: 'ComfyUIPanelView'):
         super().__init__()
@@ -323,22 +330,26 @@ class ComfyPromptModal(discord.ui.Modal, title='ComfyUI 提示词设置'):
         self.negative_input.default = panel_view.negative_prompt
         self.fixed_positive_input.default = panel_view.user_fixed_positive_prompt
         self.fixed_negative_input.default = panel_view.user_fixed_negative_prompt
+        self.lora_text_input.default = panel_view.lora_text
 
     async def on_submit(self, interaction: discord.Interaction):
         self.panel_view.prompt = str(self.prompt_input.value or '').strip()
         self.panel_view.negative_prompt = str(self.negative_input.value or '').strip()
         self.panel_view.user_fixed_positive_prompt = str(self.fixed_positive_input.value or '').strip()
         self.panel_view.user_fixed_negative_prompt = str(self.fixed_negative_input.value or '').strip()
+        self.panel_view.lora_text = str(self.lora_text_input.value or '').strip()
+        self.panel_view.user_default_lora = self.panel_view.lora_text
 
         save_ok = await self.panel_view.persist_user_settings(
+            default_lora=self.panel_view.user_default_lora,
             fixed_positive_prompt=self.panel_view.user_fixed_positive_prompt,
             fixed_negative_prompt=self.panel_view.user_fixed_negative_prompt,
         )
 
         if save_ok:
-            await interaction.response.send_message('已更新提示词，并保存个人固定提示词。', ephemeral=True)
+            await interaction.response.send_message('已更新提示词、LoRA 文本，并保存个人固定提示词。', ephemeral=True)
         else:
-            await interaction.response.send_message('已更新提示词，但保存个人固定提示词失败。', ephemeral=True)
+            await interaction.response.send_message('已更新提示词和 LoRA 文本，但保存个人默认配置失败。', ephemeral=True)
         await self.panel_view.refresh_panel_message()
 
 
@@ -364,6 +375,20 @@ class ComfyParamsModal(discord.ui.Modal, title='ComfyUI 参数设置'):
         max_length=30,
         style=discord.TextStyle.short,
     )
+    vae_input = discord.ui.TextInput(
+        label='VAE 名称（可选）',
+        placeholder='例如 ae.safetensors',
+        required=False,
+        max_length=160,
+        style=discord.TextStyle.short,
+    )
+    clip_input = discord.ui.TextInput(
+        label='CLIP 名称（可选）',
+        placeholder='例如 qwen_3_4b.safetensors',
+        required=False,
+        max_length=160,
+        style=discord.TextStyle.short,
+    )
 
     def __init__(self, panel_view: 'ComfyUIPanelView'):
         super().__init__()
@@ -371,6 +396,8 @@ class ComfyParamsModal(discord.ui.Modal, title='ComfyUI 参数设置'):
         self.resolution_input.default = f'{panel_view.width}x{panel_view.height}'
         self.steps_cfg_input.default = f'{panel_view.steps},{panel_view.cfg}'
         self.seed_input.default = '' if panel_view.seed is None else str(panel_view.seed)
+        self.vae_input.default = panel_view.selected_vae_name
+        self.clip_input.default = panel_view.selected_clip_name
 
     async def on_submit(self, interaction: discord.Interaction):
         resolution = str(self.resolution_input.value or '').strip().lower().replace('×', 'x').replace(',', 'x')
@@ -397,6 +424,8 @@ class ComfyParamsModal(discord.ui.Modal, title='ComfyUI 参数设置'):
 
         seed_text = str(self.seed_input.value or '').strip()
         self.panel_view.seed = _coerce_int(seed_text, None) if seed_text else None
+        self.panel_view.selected_vae_name = str(self.vae_input.value or '').strip()
+        self.panel_view.selected_clip_name = str(self.clip_input.value or '').strip()
 
         await interaction.response.send_message('已更新参数设置。', ephemeral=True)
         await self.panel_view.refresh_panel_message()
@@ -656,6 +685,8 @@ class ComfyUIPanelView(discord.ui.View):
         self.selected_scheduler = default_scheduler if default_scheduler in SCHEDULER_PRESETS else SCHEDULER_PRESETS[0]
         config_default_model_name = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_MODEL_NAME') or '').strip()
         self.selected_model_name = str(initial_model_name or '').strip() or config_default_model_name
+        self.selected_vae_name = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_VAE_NAME') or '').strip()
+        self.selected_clip_name = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_CLIP_NAME') or '').strip()
         self.available_models = self._normalize_model_names(available_models or [])
         if self.selected_model_name:
             selected_key = self.selected_model_name.lower()
@@ -963,6 +994,90 @@ class ComfyUIPanelView(discord.ui.View):
         current.append(token_text)
         self.lora_text = '|'.join(current)
 
+    @staticmethod
+    def _parse_delete_lora_targets(raw_text: str) -> list[str]:
+        text = str(raw_text or '').strip()
+        if not text:
+            return []
+
+        match = re.match(r'^(?:删除|delete|remove|del)\s*[:：]?\s*(.+)$', text, flags=re.IGNORECASE)
+        if not match:
+            return []
+
+        body = str(match.group(1) or '').strip().replace('\n', '|').replace('，', ',').replace('；', ';')
+        if not body:
+            return []
+
+        return [Path(segment.strip()).name for segment in re.split(r'[|,;]+', body) if segment.strip()]
+
+    def _delete_uploaded_lora_files(self, target_names: list[str]) -> tuple[list[str], list[str]]:
+        deleted: list[str] = []
+        missing: list[str] = []
+
+        files = [
+            item
+            for item in self.lora_dir.iterdir()
+            if item.is_file() and item.suffix.lower() in LORA_FILE_EXTENSIONS
+        ]
+        by_name = {item.name.lower(): item for item in files}
+
+        for raw_name in target_names:
+            safe_name = Path(str(raw_name or '').strip()).name
+            if not safe_name:
+                continue
+
+            matched_file = by_name.get(safe_name.lower())
+            if matched_file is None and '.' not in safe_name:
+                stem = safe_name.lower()
+                candidates = [item for item in files if item.stem.lower() == stem]
+                if len(candidates) == 1:
+                    matched_file = candidates[0]
+
+            if matched_file is None:
+                missing.append(safe_name)
+                continue
+
+            try:
+                matched_file.unlink()
+                deleted.append(matched_file.name)
+                by_name.pop(matched_file.name.lower(), None)
+                files = [item for item in files if item.name.lower() != matched_file.name.lower()]
+            except Exception:
+                missing.append(safe_name)
+
+        return deleted, missing
+
+    def _remove_lora_tokens_for_deleted_files(self, deleted_names: list[str]) -> None:
+        if not deleted_names:
+            return
+
+        removed_name_set = {name.lower() for name in deleted_names}
+        removed_stem_set = {Path(name).stem.lower() for name in deleted_names}
+        current_tokens = self._split_raw_lora_items(self.lora_text)
+        remained_tokens: list[str] = []
+
+        for token in current_tokens:
+            token_text = str(token or '').strip()
+            if not token_text:
+                continue
+
+            token_lower = token_text.lower()
+            remove_this = token_lower in removed_name_set or token_lower in removed_stem_set
+
+            if not remove_this:
+                match = re.match(r'^<(?:lora|wlr):([^:>]+):[^>]+>$', token_text, flags=re.IGNORECASE)
+                if match:
+                    lora_name = Path(str(match.group(1) or '').strip()).name
+                    lora_name_lower = lora_name.lower()
+                    lora_stem_lower = Path(lora_name).stem.lower()
+                    if lora_name_lower in removed_name_set or lora_stem_lower in removed_stem_set:
+                        remove_this = True
+
+            if not remove_this:
+                remained_tokens.append(token_text)
+
+        self.lora_text = '|'.join(remained_tokens)
+
     @discord.ui.button(label='设置提示词', style=discord.ButtonStyle.secondary, emoji='📝', row=0)
     async def btn_prompt(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ComfyPromptModal(self))
@@ -1006,7 +1121,8 @@ class ComfyUIPanelView(discord.ui.View):
     @discord.ui.button(label='上传 LoRA', style=discord.ButtonStyle.secondary, emoji='🧩', row=0)
     async def btn_upload_lora(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
-            '请在 120 秒内发送 LoRA 附件，或发送 LoRA 下载链接，或直接发送 LoRA 文本（如 name:0.8|<wlr:xx:0.7>）。',
+            '请在 120 秒内发送 LoRA 附件，或发送 LoRA 下载链接。\n'
+            '如需删除已上传 LoRA，请发送：删除 文件名（支持多个，用 | 分隔）。',
             ephemeral=True,
         )
 
@@ -1034,15 +1150,40 @@ class ComfyUIPanelView(discord.ui.View):
                         )
                         return
 
-                    url_path = urlparse(url).path
-                    inferred_name = Path(url_path).name if url_path else ''
+                    inferred_name = comfyui_service._extract_filename_from_download_url(url)
                     uploaded_tokens.append(_sanitize_filename(inferred_name, 'downloaded_lora.safetensors'))
                 else:
-                    raw_tokens = self._split_raw_lora_items(message.content)
-                    if not raw_tokens:
-                        await interaction.followup.send('未检测到附件、有效链接或 LoRA 文本。', ephemeral=True)
+                    delete_targets = self._parse_delete_lora_targets(message.content)
+                    if delete_targets:
+                        deleted_names, missing_names = self._delete_uploaded_lora_files(delete_targets)
+                        if not deleted_names:
+                            missing_preview = '、'.join(f'`{name}`' for name in missing_names[:10])
+                            await interaction.followup.send(
+                                f'未删除任何 LoRA。未找到：{missing_preview or "（空）"}',
+                                ephemeral=True,
+                            )
+                            return
+
+                        self._remove_lora_tokens_for_deleted_files(deleted_names)
+                        self.user_default_lora = self.lora_text
+                        await self.persist_user_settings(default_lora=self.user_default_lora)
+
+                        deleted_preview = '、'.join(f'`{name}`' for name in deleted_names[:10])
+                        message_text = f'已删除 LoRA：{deleted_preview}'
+                        if missing_names:
+                            missing_preview = '、'.join(f'`{name}`' for name in missing_names[:10])
+                            message_text += f'；未找到：{missing_preview}'
+
+                        await interaction.followup.send(message_text, ephemeral=True)
+                        await self.refresh_panel_message()
                         return
-                    uploaded_tokens.extend(raw_tokens)
+
+                    await interaction.followup.send(
+                        '未检测到附件或有效链接。上传入口不再接收普通 LoRA 文本；'
+                        '请使用 LoRA 下拉选择，或点「设置提示词」填写 LoRA 文本。',
+                        ephemeral=True,
+                    )
+                    return
 
             for token in uploaded_tokens:
                 self._append_lora_token(token)
@@ -1072,6 +1213,8 @@ class ComfyUIPanelView(discord.ui.View):
             'sampler': self.selected_sampler,
             'scheduler': self.selected_scheduler,
             'model_name': self.selected_model_name,
+            'vae_name': self.selected_vae_name,
+            'clip_name': self.selected_clip_name,
             'lora': self.lora_text,
             'lora_strength': _coerce_float(chat_config.COMFYUI_CONFIG.get('DEFAULT_LORA_STRENGTH'), 1.0),
             'workflow_path': self.workflow_path,
@@ -1123,6 +1266,8 @@ class ComfyUICog(commands.Cog):
         lora_preview = view.lora_text[:150] + ('...' if len(view.lora_text) > 150 else '') if view.lora_text else '不使用'
         seed_display = str(view.seed) if view.seed is not None else '随机'
         model_display = str(view.selected_model_name or '').strip() or '工作流默认'
+        vae_display = str(view.selected_vae_name or '').strip() or '工作流默认'
+        clip_display = str(view.selected_clip_name or '').strip() or '工作流默认'
 
         user_fixed_positive_preview = (
             view.user_fixed_positive_prompt[:120] + ('...' if len(view.user_fixed_positive_prompt) > 120 else '')
@@ -1142,6 +1287,8 @@ class ComfyUICog(commands.Cog):
         embed.add_field(name='🧩 当前工作流', value=workflow_name, inline=True)
         embed.add_field(name='🧱 当前底模', value=model_display[:100], inline=True)
         embed.add_field(name='🎨 当前 LoRA', value=lora_preview, inline=True)
+        embed.add_field(name='🧬 当前 VAE', value=vae_display[:100], inline=True)
+        embed.add_field(name='🔤 当前 CLIP', value=clip_display[:100], inline=True)
         embed.add_field(name='📐 分辨率', value=f'{view.width}x{view.height}', inline=True)
         embed.add_field(name='🔢 步数', value=str(view.steps), inline=True)
         embed.add_field(name='📊 CFG', value=str(view.cfg), inline=True)
@@ -1150,7 +1297,8 @@ class ComfyUICog(commands.Cog):
         embed.add_field(name='🧭 调度器', value=view.selected_scheduler, inline=True)
         embed.add_field(
             name='💡 上传与切换说明',
-            value='点「上传工作流 / 上传 LoRA」后，在频道发送附件（或 LoRA 下载链接）即可自动导入并切换。',
+            value='点「上传工作流 / 上传 LoRA」后，在频道发送附件（或 LoRA 下载链接）即可自动导入并切换；'
+                  '删除 LoRA 请发送“删除 文件名”。',
             inline=False,
         )
 
@@ -1394,6 +1542,8 @@ class ComfyUICog(commands.Cog):
                 sampler=str(payload.get('sampler') or '').strip() or None,
                 scheduler=str(payload.get('scheduler') or '').strip() or None,
                 model_name=str(payload.get('model_name') or '').strip() or None,
+                vae_name=str(payload.get('vae_name') or '').strip() or None,
+                clip_name=str(payload.get('clip_name') or '').strip() or None,
                 seed=seed,
                 lora=service_lora_override,
                 lora_strength=None,
@@ -1424,6 +1574,8 @@ class ComfyUICog(commands.Cog):
         width_value = payload.get('width')
         height_value = payload.get('height')
         model_value = str(payload.get('model_name') or '').strip()
+        vae_value = str(payload.get('vae_name') or '').strip()
+        clip_value = str(payload.get('clip_name') or '').strip()
 
         if steps_value:
             footer_parts.append(f'steps={steps_value}')
@@ -1433,6 +1585,10 @@ class ComfyUICog(commands.Cog):
             footer_parts.append(f'{width_value}x{height_value}')
         if model_value:
             footer_parts.append(f'model={model_value}')
+        if vae_value:
+            footer_parts.append(f'vae={vae_value}')
+        if clip_value:
+            footer_parts.append(f'clip={clip_value}')
         if seed is not None:
             if random_seed:
                 footer_parts.append(f'seed=随机({seed})')
@@ -1477,6 +1633,8 @@ class ComfyUICog(commands.Cog):
         fixed_positive_prompt='可选：设置并保存你的个人固定正面提示词',
         fixed_negative_prompt='可选：设置并保存你的个人固定负面提示词',
         model_name='可选：直接指定本次面板默认底模（用于 %MODEL_NAME%）',
+        vae_name='可选：直接指定本次面板默认 VAE（用于 %vae% / %vae_name%）',
+        clip_name='可选：直接指定本次面板默认 CLIP（用于 %clip% / %clip_name%）',
     )
     async def comfy(
         self,
@@ -1489,6 +1647,8 @@ class ComfyUICog(commands.Cog):
         fixed_positive_prompt: Optional[str] = None,
         fixed_negative_prompt: Optional[str] = None,
         model_name: Optional[str] = None,
+        vae_name: Optional[str] = None,
+        clip_name: Optional[str] = None,
     ):
         comfy_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLED', False))
         slash_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLE_SLASH_COMMAND', True))
@@ -1545,8 +1705,7 @@ class ComfyUICog(commands.Cog):
                         await interaction.response.send_message(f'导入 LoRA 失败：{error_message}', ephemeral=True)
                         return
 
-                    url_path = urlparse(normalized_lora_url).path
-                    inferred_name = Path(url_path).name if url_path else ''
+                    inferred_name = comfyui_service._extract_filename_from_download_url(normalized_lora_url)
                     downloaded_lora = _sanitize_filename(inferred_name, 'downloaded_lora.safetensors')
                     imported_lora_tokens.append(downloaded_lora)
                     current_lora_text = self._append_lora_item(current_lora_text, downloaded_lora)
@@ -1614,6 +1773,8 @@ class ComfyUICog(commands.Cog):
         from_user = bool(user_settings.get('_from_user'))
 
         selected_model_name = str(model_name or '').strip()
+        selected_vae_name = str(vae_name or '').strip()
+        selected_clip_name = str(clip_name or '').strip()
         available_models: list[str] = []
         try:
             available_models = await comfyui_service.get_available_model_names()
@@ -1641,7 +1802,11 @@ class ComfyUICog(commands.Cog):
 
         if selected_model_name:
             panel.selected_model_name = selected_model_name
-            panel.refresh_selects()
+        if selected_vae_name:
+            panel.selected_vae_name = selected_vae_name
+        if selected_clip_name:
+            panel.selected_clip_name = selected_clip_name
+        panel.refresh_selects()
 
         embed = self.build_panel_embed(panel)
         await interaction.response.send_message(embed=embed, view=panel, ephemeral=True)
@@ -1709,6 +1874,10 @@ class ComfyUICog(commands.Cog):
 
         if selected_model_name:
             notice_parts.append(f'已预设底模：`{selected_model_name}`')
+        if selected_vae_name:
+            notice_parts.append(f'已预设 VAE：`{selected_vae_name}`')
+        if selected_clip_name:
+            notice_parts.append(f'已预设 CLIP：`{selected_clip_name}`')
 
         if notice_parts:
             await interaction.followup.send('\n'.join(notice_parts), ephemeral=True)

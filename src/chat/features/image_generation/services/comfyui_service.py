@@ -9,7 +9,7 @@ import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import aiohttp
 
@@ -159,6 +159,47 @@ class ComfyUIService:
 
         return self._load_workflow_template_from_path(self.workflow_path)
 
+    @staticmethod
+    def _looks_like_comfy_workflow(payload: Any) -> bool:
+        if not isinstance(payload, dict) or not payload:
+            return False
+
+        for node in payload.values():
+            if isinstance(node, dict) and ('class_type' in node or 'inputs' in node):
+                return True
+        return False
+
+    @classmethod
+    def _normalize_workflow_payload(cls, payload: Any) -> Dict[str, Any]:
+        current_payload: Any = payload
+
+        for _ in range(3):
+            if isinstance(current_payload, str):
+                text = current_payload.strip()
+                if not text:
+                    break
+                current_payload = json.loads(text)
+                continue
+
+            if isinstance(current_payload, dict):
+                if cls._looks_like_comfy_workflow(current_payload):
+                    return current_payload
+
+                if len(current_payload) == 1:
+                    nested_value = next(iter(current_payload.values()))
+                    if isinstance(nested_value, (str, dict)):
+                        current_payload = nested_value
+                        continue
+                break
+
+            break
+
+        if not isinstance(current_payload, dict):
+            raise ValueError('工作流 JSON 必须是对象（object）')
+        if not cls._looks_like_comfy_workflow(current_payload):
+            raise ValueError('工作流 JSON 未识别到有效节点结构（需包含 class_type/inputs）')
+        return current_payload
+
     def _load_workflow_template_from_path(self, workflow_path_text: str) -> Optional[Dict[str, Any]]:
         normalized_path = self._normalize_workflow_path(workflow_path_text)
         if not normalized_path:
@@ -169,9 +210,7 @@ class ComfyUIService:
             with workflow_path.open('r', encoding='utf-8') as file:
                 workflow_data = json.load(file)
 
-            if not isinstance(workflow_data, dict):
-                log.error(f'ComfyUI 工作流格式无效，需为 JSON 对象: {normalized_path}')
-                return None
+            workflow_data = self._normalize_workflow_payload(workflow_data)
 
             log.info(f'已加载 ComfyUI 工作流: {normalized_path}')
             return workflow_data
@@ -188,8 +227,7 @@ class ComfyUIService:
     @staticmethod
     def save_workflow_text(workflow_text: str, target_path: str) -> str:
         parsed = json.loads(workflow_text)
-        if not isinstance(parsed, dict):
-            raise ValueError('工作流 JSON 必须是对象（object）')
+        parsed = ComfyUIService._normalize_workflow_payload(parsed)
 
         save_path = Path(target_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,7 +278,8 @@ class ComfyUIService:
                 self._coerce_float(config.get('DEFAULT_LORA_STRENGTH'), 1.0),
             ),
             'model_name': str(kwargs.get('model_name') or config.get('DEFAULT_MODEL_NAME') or '').strip(),
-            'vae_name': str(kwargs.get('vae_name') or '').strip(),
+            'vae_name': str(kwargs.get('vae_name') or config.get('DEFAULT_VAE_NAME') or '').strip(),
+            'clip_name': str(kwargs.get('clip_name') or config.get('DEFAULT_CLIP_NAME') or '').strip(),
         }
 
         for key, value in kwargs.items():
@@ -296,7 +335,8 @@ class ComfyUIService:
             'lora': ['%lora%'],
             'lora_strength': ['%lora_strength%'],
             'model_name': ['%MODEL_NAME%', '%model_name%', '%CKPT_NAME%', '%ckpt_name%', '%MODEL%', '%model%'],
-            'vae_name': ['%VAE_NAME%', '%vae_name%'],
+            'vae_name': ['%VAE_NAME%', '%vae_name%', '%vae%'],
+            'clip_name': ['%CLIP_NAME%', '%clip_name%', '%clip%'],
         }
 
         for key_text, tokens in common_aliases.items():
@@ -570,6 +610,7 @@ class ComfyUIService:
         lora_strength: Optional[float] = None,
         model_name: Optional[str] = None,
         vae_name: Optional[str] = None,
+        clip_name: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[bytes]:
         try:
@@ -605,6 +646,7 @@ class ComfyUIService:
             runtime_kwargs['lora_strength'] = lora_strength
             runtime_kwargs['model_name'] = model_name
             runtime_kwargs['vae_name'] = vae_name
+            runtime_kwargs['clip_name'] = clip_name
 
             params = self._build_runtime_params(**runtime_kwargs)
             workflow_payload = self._prepare_workflow(
@@ -812,6 +854,34 @@ class ComfyUIService:
         return f"{scheme}://{netloc}{path.rstrip('/')}"
 
     @staticmethod
+    def _extract_filename_from_download_url(raw_url: str) -> str:
+        url_text = str(raw_url or '').strip()
+        if not url_text:
+            return ''
+
+        parsed = urlparse(url_text)
+        query = parse_qs(parsed.query)
+        for key, values in query.items():
+            if str(key or '').strip().lower() != 'response-content-disposition':
+                continue
+
+            for value in values:
+                decoded = unquote(str(value or '').strip())
+                if not decoded:
+                    continue
+                match = re.search(
+                    r"filename\*?=(?:UTF-8''|utf-8''|)?\"?([^\";]+)",
+                    decoded,
+                    flags=re.IGNORECASE,
+                )
+                if match:
+                    filename = Path(match.group(1).strip()).name
+                    if filename:
+                        return filename
+
+        return Path(str(parsed.path or '').strip()).name
+
+    @staticmethod
     def _build_lora_install_payload(
         url: str,
         filename: Optional[str] = None,
@@ -863,10 +933,12 @@ class ComfyUIService:
         start_url = f'{self.server_address}/manager/queue/start'
 
         normalized_target_url = self._normalize_download_url_for_match(normalized_url)
+        inferred_filename = str(filename or self._extract_filename_from_download_url(normalized_url)).strip()
 
         try:
             async with aiohttp.ClientSession(timeout=client_timeout) as session:
                 matched_whitelist_item: Optional[Dict[str, Any]] = None
+                matched_by_filename_item: Optional[Dict[str, Any]] = None
 
                 for mode in ('cache', 'local'):
                     try:
@@ -889,20 +961,32 @@ class ComfyUIService:
                             continue
 
                         item_url = str(item.get('url') or '').strip()
-                        if not item_url:
-                            continue
+                        item_filename = str(item.get('filename') or '').strip()
+                        item_type = str(item.get('type') or '').strip().lower()
 
-                        if self._normalize_download_url_for_match(item_url) == normalized_target_url:
+                        if item_url and self._normalize_download_url_for_match(item_url) == normalized_target_url:
                             matched_whitelist_item = item
                             break
+
+                        if (
+                            matched_by_filename_item is None
+                            and inferred_filename
+                            and item_filename
+                            and item_filename.lower() == inferred_filename.lower()
+                            and ('lora' in item_type or item_type in {'', 'loras'})
+                        ):
+                            matched_by_filename_item = item
 
                     if matched_whitelist_item is not None:
                         break
 
+                if matched_whitelist_item is None and matched_by_filename_item is not None:
+                    matched_whitelist_item = matched_by_filename_item
+
                 if matched_whitelist_item is not None:
                     payload = self._build_lora_install_payload(
-                        url=str(matched_whitelist_item.get('url') or normalized_url),
-                        filename=str(matched_whitelist_item.get('filename') or filename or '').strip(),
+                        url=normalized_url,
+                        filename=str(matched_whitelist_item.get('filename') or inferred_filename or '').strip(),
                         save_path=str(matched_whitelist_item.get('save_path') or save_path or '').strip(),
                         base=str(matched_whitelist_item.get('base') or '').strip(),
                         model_type=str(matched_whitelist_item.get('type') or 'loras').strip(),
@@ -910,7 +994,7 @@ class ComfyUIService:
                 else:
                     payload = self._build_lora_install_payload(
                         url=normalized_url,
-                        filename=filename,
+                        filename=inferred_filename,
                         save_path=save_path,
                     )
 

@@ -714,6 +714,8 @@ COMFYUI_CONFIG = {
     "DEFAULT_SCHEDULER": os.getenv("COMFYUI_DEFAULT_SCHEDULER", "normal"),
     "DEFAULT_SEED": _parse_int_env("COMFYUI_DEFAULT_SEED", 12345),
     "DEFAULT_MODEL_NAME": os.getenv("COMFYUI_DEFAULT_MODEL_NAME", ""),
+    "DEFAULT_VAE_NAME": os.getenv("COMFYUI_DEFAULT_VAE_NAME", ""),
+    "DEFAULT_CLIP_NAME": os.getenv("COMFYUI_DEFAULT_CLIP_NAME", ""),
     "DEFAULT_LORA": os.getenv("COMFYUI_DEFAULT_LORA", ""),
     "DEFAULT_LORA_STRENGTH": _parse_float_env("COMFYUI_DEFAULT_LORA_STRENGTH", 1.0),
     "MAX_USER_LORA_UPLOADS": _parse_int_env("COMFYUI_MAX_USER_LORA_UPLOADS", 5),
@@ -737,6 +739,7 @@ COMFYUI_CONFIG = {
             "lora_strength": "{{lora_strength}}",
             "model_name": "{{model_name}}",
             "vae_name": "{{vae_name}}",
+            "clip_name": "{{clip_name}}",
         },
     ),
     # 可选：节点映射（参数名 -> [node_id, input_field]）

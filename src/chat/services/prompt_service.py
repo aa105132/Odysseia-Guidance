@@ -308,7 +308,7 @@ class PromptService:
         if default_image_engine == 'comfyui':
             comfyui_param_hint = (
                 'ComfyUI 参数传参规则：'
-                '若用户明确给出步数、CFG、分辨率、采样器、调度器、seed、LoRA，请优先透传到 '
+                '若用户明确给出步数、CFG、分辨率、采样器、调度器、seed、LoRA、底模、VAE、CLIP，请优先透传到 '
                 'generate_image_comfyui 的对应参数；'
                 '若用户未指定则留空，使用 Dashboard 默认值。'
             )

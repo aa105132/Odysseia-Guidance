@@ -23,6 +23,19 @@ def test_save_workflow_text_writes_json_file(tmp_path):
     assert loaded['1']['inputs']['text'] == 'hello'
 
 
+def test_save_workflow_text_supports_wrapped_z_json_string(tmp_path):
+    inner_workflow = {'1': {'inputs': {'text': 'wrapped'}, 'class_type': 'CLIPTextEncode'}}
+    wrapped_workflow_text = json.dumps({'z': json.dumps(inner_workflow, ensure_ascii=False)}, ensure_ascii=False)
+    target_path = tmp_path / 'workflow_wrapped.json'
+
+    saved_path = ComfyUIService.save_workflow_text(wrapped_workflow_text, str(target_path))
+
+    assert saved_path == str(target_path)
+    loaded = json.loads(target_path.read_text(encoding='utf-8'))
+    assert loaded['1']['class_type'] == 'CLIPTextEncode'
+    assert loaded['1']['inputs']['text'] == 'wrapped'
+
+
 def test_prepare_workflow_applies_node_mapping_and_placeholders(tmp_path):
     workflow_template = {
         '1': {'inputs': {'text': '{{positive_prompt}}'}},
@@ -246,6 +259,40 @@ def test_normalize_download_url_for_match_ignores_case_and_query():
         'HTTPS://Example.com/models/a.safetensors?token=abc#frag'
     )
     assert normalized == 'https://example.com/models/a.safetensors'
+
+
+def test_extract_filename_from_download_url_prefers_content_disposition():
+    url = (
+        'https://example.com/model/123/random_name.bin?'
+        'response-content-disposition=attachment%3B%20filename%3D"final_name.safetensors"'
+    )
+    filename = ComfyUIService._extract_filename_from_download_url(url)
+    assert filename == 'final_name.safetensors'
+
+
+def test_build_runtime_params_supports_default_vae_and_clip(tmp_path):
+    workflow_path = tmp_path / 'workflow_template.json'
+    workflow_path.write_text(json.dumps({'1': {'inputs': {'text': '{{positive_prompt}}'}}}, ensure_ascii=False), encoding='utf-8')
+
+    original_default_vae_name = chat_config.COMFYUI_CONFIG.get('DEFAULT_VAE_NAME')
+    original_default_clip_name = chat_config.COMFYUI_CONFIG.get('DEFAULT_CLIP_NAME')
+
+    try:
+        chat_config.COMFYUI_CONFIG['DEFAULT_VAE_NAME'] = 'ae_default.safetensors'
+        chat_config.COMFYUI_CONFIG['DEFAULT_CLIP_NAME'] = 'clip_default.safetensors'
+
+        service = ComfyUIService(
+            server_address='127.0.0.1:8188',
+            workflow_path=str(workflow_path),
+        )
+
+        params = service._build_runtime_params(prompt='city skyline')
+
+        assert params['vae_name'] == 'ae_default.safetensors'
+        assert params['clip_name'] == 'clip_default.safetensors'
+    finally:
+        chat_config.COMFYUI_CONFIG['DEFAULT_VAE_NAME'] = original_default_vae_name
+        chat_config.COMFYUI_CONFIG['DEFAULT_CLIP_NAME'] = original_default_clip_name
 
 
 def test_normalize_safetensors_names_only_keeps_safetensors_and_dedupes():

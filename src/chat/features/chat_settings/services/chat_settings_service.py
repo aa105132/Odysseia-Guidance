@@ -190,6 +190,8 @@ class ChatSettingsService:
         string_setting_map = [
             ('comfyui_default_sampler', 'DEFAULT_SAMPLER'),
             ('comfyui_default_scheduler', 'DEFAULT_SCHEDULER'),
+            ('comfyui_default_vae_name', 'DEFAULT_VAE_NAME'),
+            ('comfyui_default_clip_name', 'DEFAULT_CLIP_NAME'),
             ('comfyui_default_lora', 'DEFAULT_LORA'),
         ]
 
