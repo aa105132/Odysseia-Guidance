@@ -310,10 +310,20 @@ class PromptService:
                 'ComfyUI 参数传参规则：'
                 '若用户明确给出步数、CFG、分辨率、采样器、调度器、seed、LoRA、底模、VAE、CLIP，请优先透传到 '
                 'generate_image_comfyui 的对应参数；'
+                '若用户未明确指定，你也可以根据画面目标主动设定 steps/cfg/seed/分辨率等；'
                 '若用户未指定则留空，优先使用该用户在 /comfy 面板保存的个人默认；没有个人默认时再用 Dashboard 默认。'
             )
             final_conversation.append({'role': 'user', 'parts': [comfyui_param_hint]})
             final_conversation.append({'role': 'model', 'parts': ['收到，ComfyUI 生图时我会优先透传用户给出的参数。']})
+
+            comfyui_placeholder_hint = (
+                'ComfyUI 工作流占位符透传规则：'
+                '除标准参数外，你可以按占位符键名直接传额外参数（如 strength、denoise、batch_size 等），'
+                '工具会透传到工作流占位符替换层；'
+                '仅可传 JSON 基本类型（字符串/数字/布尔/数组/对象），禁止传无关上下文对象。'
+            )
+            final_conversation.append({'role': 'user', 'parts': [comfyui_placeholder_hint]})
+            final_conversation.append({'role': 'model', 'parts': ['收到，我会在需要时主动传递额外工作流参数并保持类型正确。']})
 
             available_model_names = [
                 str(name).strip()
@@ -351,6 +361,16 @@ class PromptService:
                 '5) 用户明确指定底模或 LoRA 时，优先遵从用户指定。',
             ]
 
+            comfyui_natural_language_protocol = (
+                '当底模为 zimage/qwen 时，中文自然语言提示词必须遵守以下协议：\n'
+                'A) 使用中文分段结构，建议按“风格、构图、外貌、发型、服装、姿势、神情、光影、背景”组织；\n'
+                'B) 句法要求：主谓宾直述，禁止成语和被动语态；\n'
+                'C) 人物约束：面色写“自然/正常”，避免“脸红/微醺”等词，避免“丰满/英俊/清秀”等主观词；\n'
+                'D) 动作约束：手部动作符合人体工学，单手单物，不写不可能姿势；\n'
+                'E) 如出现私密部位暴露，prompt 前缀添加 nsfw；\n'
+                'F) 该场景下禁止返回 SD tag 串（如 masterpiece, best quality, 1girl 这种逗号标签串）。'
+            )
+
             if real_human_model_candidates:
                 comfyui_model_lora_hint_lines.append(
                     '真人优先候选底模：'
@@ -375,6 +395,13 @@ class PromptService:
                 {
                     'role': 'model',
                     'parts': ['收到，我会基于可用底模/LoRA列表选型，真人优先 zimage/qwen，并按底模类型切换提示词写法。'],
+                }
+            )
+            final_conversation.append({'role': 'user', 'parts': [comfyui_natural_language_protocol]})
+            final_conversation.append(
+                {
+                    'role': 'model',
+                    'parts': ['收到，zimage/qwen 模型我会按中文结构化自然语言协议写提示词，不再使用 SD tag 串。'],
                 }
             )
 

@@ -103,6 +103,29 @@ async def generate_image_comfyui(
         if str(name).strip()
     )
 
+    reserved_context_keys = {
+        'bot',
+        'channel',
+        'guild',
+        'guild_id',
+        'thread_id',
+        'message',
+        'request_user',
+        'user_id',
+        'author_id',
+        'current_turn_tool_names',
+        'log_detailed',
+    }
+    passthrough_runtime_kwargs = {}
+    for key, value in kwargs.items():
+        key_text = str(key or '').strip()
+        if not key_text or key_text in reserved_context_keys:
+            continue
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool, list, dict)):
+            passthrough_runtime_kwargs[key_text] = value
+
     parsed_user_id: Optional[int] = None
     if user_id is not None:
         try:
@@ -218,7 +241,7 @@ async def generate_image_comfyui(
             'hint': (
                 '当前底模属于真人自然语言模型（zimage/qwen），'
                 '但本次 prompt 看起来是 SD tag 风格。'
-                '请改为中文自然语言描述（完整句子）后再调用 generate_image_comfyui。'
+                '请改为中文自然语言描述（建议按“风格/构图/外貌/发型/服装/姿势/神情/光影/背景”分段）后再调用 generate_image_comfyui。'
             ),
         }
 
@@ -267,6 +290,7 @@ async def generate_image_comfyui(
             workflow_path=effective_workflow_path or None,
             user_fixed_positive_prompt=effective_user_fixed_positive_prompt,
             user_fixed_negative_prompt=effective_user_fixed_negative_prompt,
+            **passthrough_runtime_kwargs,
         )
 
         await remove_reaction(GENERATING_EMOJI)
