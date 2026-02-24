@@ -106,8 +106,34 @@ async def generate_image_comfyui(
             'hint': 'ComfyUI 服务不可用。请提示用户检查服务地址和开关状态。',
         }
 
+    def _to_int(value: object) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def _to_float(value: object) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            return float(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
     effective_workflow_path = str(workflow_path or '').strip()
     effective_lora = str(lora or '').strip() if lora is not None else None
+    effective_width = width
+    effective_height = height
+    effective_steps = steps
+    effective_cfg = cfg
+    effective_sampler = str(sampler or '').strip() if sampler is not None else None
+    effective_scheduler = str(scheduler or '').strip() if scheduler is not None else None
+    effective_seed = seed
+    effective_model_name = str(model_name or '').strip() if model_name is not None else None
+    effective_vae_name = str(vae_name or '').strip() if vae_name is not None else None
+    effective_clip_name = str(clip_name or '').strip() if clip_name is not None else None
     effective_user_fixed_positive_prompt = ''
     effective_user_fixed_negative_prompt = ''
 
@@ -120,6 +146,26 @@ async def generate_image_comfyui(
                 effective_workflow_path = str(user_settings.get('workflow_path') or '').strip()
             if effective_lora is None:
                 effective_lora = str(user_settings.get('default_lora') or '').strip()
+            if effective_width is None:
+                effective_width = _to_int(user_settings.get('width'))
+            if effective_height is None:
+                effective_height = _to_int(user_settings.get('height'))
+            if effective_steps is None:
+                effective_steps = _to_int(user_settings.get('steps'))
+            if effective_cfg is None:
+                effective_cfg = _to_float(user_settings.get('cfg'))
+            if effective_sampler is None:
+                effective_sampler = str(user_settings.get('sampler') or '').strip() or None
+            if effective_scheduler is None:
+                effective_scheduler = str(user_settings.get('scheduler') or '').strip() or None
+            if effective_seed is None:
+                effective_seed = _to_int(user_settings.get('seed'))
+            if effective_model_name is None:
+                effective_model_name = str(user_settings.get('model_name') or '').strip() or None
+            if effective_vae_name is None:
+                effective_vae_name = str(user_settings.get('vae_name') or '').strip() or None
+            if effective_clip_name is None:
+                effective_clip_name = str(user_settings.get('clip_name') or '').strip() or None
             effective_user_fixed_positive_prompt = str(user_settings.get('fixed_positive_prompt') or '').strip()
             effective_user_fixed_negative_prompt = str(user_settings.get('fixed_negative_prompt') or '').strip()
         except Exception as error:
@@ -162,18 +208,18 @@ async def generate_image_comfyui(
         image_bytes = await comfyui_service.generate_image(
             prompt=prompt,
             negative_prompt=negative_prompt,
-            width=width,
-            height=height,
-            steps=steps,
-            cfg=cfg,
-            sampler=sampler,
-            scheduler=scheduler,
-            seed=seed,
+            width=effective_width,
+            height=effective_height,
+            steps=effective_steps,
+            cfg=effective_cfg,
+            sampler=effective_sampler,
+            scheduler=effective_scheduler,
+            seed=effective_seed,
             lora=effective_lora,
             lora_strength=lora_strength,
-            model_name=model_name,
-            vae_name=vae_name,
-            clip_name=clip_name,
+            model_name=effective_model_name,
+            vae_name=effective_vae_name,
+            clip_name=effective_clip_name,
             workflow_path=effective_workflow_path or None,
             user_fixed_positive_prompt=effective_user_fixed_positive_prompt,
             user_fixed_negative_prompt=effective_user_fixed_negative_prompt,
@@ -215,7 +261,7 @@ async def generate_image_comfyui(
                     embed.add_field(name='\u200b', value=replace_emojis(success_message)[:1024], inline=False)
 
                 footer_parts = [f'引擎: ComfyUI', f'消耗: {image_cost}']
-                model_text = str(model_name or '').strip()
+                model_text = str(effective_model_name or '').strip()
                 if model_text:
                     footer_parts.append(f'底模: {model_text}')
                 if new_balance is not None:

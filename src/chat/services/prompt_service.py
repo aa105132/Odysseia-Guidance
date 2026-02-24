@@ -310,7 +310,7 @@ class PromptService:
                 'ComfyUI 参数传参规则：'
                 '若用户明确给出步数、CFG、分辨率、采样器、调度器、seed、LoRA、底模、VAE、CLIP，请优先透传到 '
                 'generate_image_comfyui 的对应参数；'
-                '若用户未指定则留空，使用 Dashboard 默认值。'
+                '若用户未指定则留空，优先使用该用户在 /comfy 面板保存的个人默认；没有个人默认时再用 Dashboard 默认。'
             )
             final_conversation.append({'role': 'user', 'parts': [comfyui_param_hint]})
             final_conversation.append({'role': 'model', 'parts': ['收到，ComfyUI 生图时我会优先透传用户给出的参数。']})
@@ -318,6 +318,16 @@ class PromptService:
             available_model_names = [
                 str(name).strip()
                 for name in ((comfyui_choice_context or {}).get('available_model_names') or [])
+                if str(name).strip()
+            ]
+            available_vae_names = [
+                str(name).strip()
+                for name in ((comfyui_choice_context or {}).get('available_vae_names') or [])
+                if str(name).strip()
+            ]
+            available_clip_names = [
+                str(name).strip()
+                for name in ((comfyui_choice_context or {}).get('available_clip_names') or [])
                 if str(name).strip()
             ]
             available_lora_names = [
@@ -334,7 +344,7 @@ class PromptService:
 
             comfyui_model_lora_hint_lines = [
                 'ComfyUI 底模与 LoRA 选择规则：',
-                '1) 仅可从可用列表中选择 model_name / lora，禁止编造不存在的名称；',
+                '1) 仅可从可用列表中选择 model_name / vae_name / clip_name / lora，禁止编造不存在的名称；',
                 '2) 当用户要画真人、写实肖像、现实人物时，优先选择名称包含 zimage 或 qwen 的底模；',
                 '3) 若最终选择的底模名称包含 zimage 或 qwen（大小写不敏感），prompt/negative_prompt 使用中文自然语言描述；',
                 '4) 其他底模保持 SD tag 风格（英文标签、逗号分隔）；',
@@ -349,6 +359,12 @@ class PromptService:
 
             comfyui_model_lora_hint_lines.append(
                 '可用底模列表：' + self._format_choice_preview(available_model_names, limit=80)
+            )
+            comfyui_model_lora_hint_lines.append(
+                '可用 VAE 列表：' + self._format_choice_preview(available_vae_names, limit=80)
+            )
+            comfyui_model_lora_hint_lines.append(
+                '可用 CLIP 列表：' + self._format_choice_preview(available_clip_names, limit=80)
             )
             comfyui_model_lora_hint_lines.append(
                 '可用 LoRA 列表：' + self._format_choice_preview(available_lora_names, limit=80)

@@ -1606,7 +1606,7 @@ class GeminiService:
         }
 
     async def _load_comfyui_choice_context(self, user_id: int) -> Dict[str, List[str]]:
-        """加载 ComfyUI 可用底模/LoRA 列表用于提示词注入。"""
+        """加载 ComfyUI 可用底模/VAE/CLIP/LoRA 列表用于提示词注入。"""
         comfy_enabled = bool(app_config.COMFYUI_CONFIG.get("ENABLED", False))
         if not comfy_enabled:
             return {}
@@ -1628,6 +1628,8 @@ class GeminiService:
             return names
 
         api_model_names: List[str] = []
+        api_vae_names: List[str] = []
+        api_clip_names: List[str] = []
         api_lora_names: List[str] = []
 
         try:
@@ -1642,6 +1644,16 @@ class GeminiService:
                     log.warning(f"读取 ComfyUI 底模列表失败: {error}")
 
                 try:
+                    api_vae_names = await comfyui_service.get_available_vae_names()
+                except Exception as error:
+                    log.warning(f"读取 ComfyUI VAE 列表失败: {error}")
+
+                try:
+                    api_clip_names = await comfyui_service.get_available_clip_names()
+                except Exception as error:
+                    log.warning(f"读取 ComfyUI CLIP 列表失败: {error}")
+
+                try:
                     api_lora_names = await comfyui_service.get_available_lora_names()
                 except Exception as error:
                     log.warning(f"读取 ComfyUI LoRA 列表失败: {error}")
@@ -1649,13 +1661,17 @@ class GeminiService:
             log.warning(f"加载 ComfyUI 服务失败，跳过底模/LoRA 列表注入: {error}")
 
         merged_model_names = _dedupe(api_model_names, limit=120)
+        merged_vae_names = _dedupe(api_vae_names, limit=120)
+        merged_clip_names = _dedupe(api_clip_names, limit=120)
         merged_lora_names = _dedupe(api_lora_names, limit=160)
 
-        if not merged_model_names and not merged_lora_names:
+        if not merged_model_names and not merged_vae_names and not merged_clip_names and not merged_lora_names:
             return {}
 
         return {
             "available_model_names": merged_model_names,
+            "available_vae_names": merged_vae_names,
+            "available_clip_names": merged_clip_names,
             "available_lora_names": merged_lora_names,
         }
 
