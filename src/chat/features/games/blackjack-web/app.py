@@ -546,6 +546,7 @@ async def _send_recruit_message_via_bot(
     discord_client_id: str,
     channel_id: int,
     guild_id: Optional[int],
+    bot_token: str,
 ) -> Dict[str, str]:
     async def _task() -> Dict[str, str]:
         channel = bot.get_channel(channel_id)
@@ -572,14 +573,19 @@ async def _send_recruit_message_via_bot(
                 )
                 launch_url = invite.url
             except Exception as e:
-                log.warning(f"创建活动邀请失败，将回退为频道活动链接: {e}")
+                log.warning("discord.py 创建活动邀请失败，将尝试 HTTP API 兜底: %s", e)
+
+        if not launch_url and bot_token:
+            launch_url = await _create_activity_invite_via_http(
+                channel_id=channel_id,
+                discord_client_id=discord_client_id,
+                bot_token=bot_token,
+                room_id=room_id,
+                user_id=user_id,
+            )
 
         if not launch_url:
-            launch_url = _build_activity_launch_url(
-                discord_client_id=discord_client_id,
-                channel_id=channel_id,
-                guild_id=effective_guild_id,
-            )
+            raise RuntimeError("无法创建活动邀请链接，请检查机器人是否具备创建邀请与活动权限")
 
         recruit_view = discord.ui.View(timeout=3600)
         recruit_view.add_item(
@@ -608,6 +614,59 @@ async def _send_recruit_message_via_bot(
     return await _run_coro_in_bot_loop(bot, _task())
 
 
+async def _create_activity_invite_via_http(
+    *,
+    channel_id: int,
+    discord_client_id: str,
+    bot_token: str,
+    room_id: str,
+    user_id: int,
+) -> Optional[str]:
+    payload = {
+        "max_age": 3600,
+        "max_uses": 0,
+        "temporary": False,
+        "unique": True,
+        "target_type": 2,  # embedded_application
+        "target_application_id": str(discord_client_id),
+    }
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            response = await client.post(
+                f"https://discord.com/api/v10/channels/{channel_id}/invites",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code == 401:
+                raise RuntimeError("DISCORD_TOKEN 无效，无法创建活动邀请") from exc
+            if status_code == 403:
+                raise PermissionError("机器人缺少创建邀请或发起活动权限，无法生成活动链接") from exc
+            if status_code == 404:
+                raise ValueError("目标频道不存在，无法生成活动链接") from exc
+            raise RuntimeError(f"Discord API 创建活动邀请失败，状态码: {status_code}") from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError("无法连接 Discord API，创建活动邀请失败") from exc
+
+    data = response.json() if response.content else {}
+    invite_url = str(data.get("url") or "").strip()
+    if invite_url:
+        return invite_url
+
+    invite_code = str(data.get("code") or "").strip()
+    if invite_code:
+        return f"https://discord.gg/{invite_code}"
+
+    raise RuntimeError("创建活动邀请成功但未返回有效链接")
+
+
 async def _send_recruit_message_via_http(
     *,
     room_id: str,
@@ -618,10 +677,12 @@ async def _send_recruit_message_via_http(
     guild_id: Optional[int],
     bot_token: str,
 ) -> Dict[str, str]:
-    launch_url = _build_activity_launch_url(
-        discord_client_id=discord_client_id,
+    launch_url = await _create_activity_invite_via_http(
         channel_id=channel_id,
-        guild_id=guild_id,
+        discord_client_id=discord_client_id,
+        bot_token=bot_token,
+        room_id=room_id,
+        user_id=user_id,
     )
 
     recruit_text = (
@@ -715,6 +776,7 @@ async def _send_recruit_message(
                 discord_client_id=discord_client_id,
                 channel_id=channel_id,
                 guild_id=guild_id,
+                bot_token=bot_token,
             )
         except Exception as e:
             if not bot_token:

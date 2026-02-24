@@ -183,8 +183,13 @@ const isHost = computed(() => {
 
 const isMyTurn = computed(() => Boolean(viewerPlayer.value?.is_current_turn));
 
+const isRoomBettingStage = computed(() => {
+  const stage = roomState.value?.state;
+  return stage === "waiting" || stage === "finished";
+});
+
 const canSetBet = computed(() => {
-  return roomState.value?.state === "waiting" && Boolean(viewerPlayer.value);
+  return isRoomBettingStage.value && Boolean(viewerPlayer.value);
 });
 
 const canToggleReady = computed(() => {
@@ -945,6 +950,25 @@ async function setReady(ready: boolean) {
   }
 }
 
+async function continueReady() {
+  if (requestInFlight.value || !roomState.value) return;
+
+  requestInFlight.value = true;
+  clearNotices();
+
+  try {
+    const data = await apiCall<RoomEnvelope>("/api/multi/room/continue-ready", "POST", {
+      room_id: roomState.value.room_id,
+    });
+    applyRoomEnvelope(data);
+    statusMessage.value = "已沿用上一局下注并准备";
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "继续准备失败";
+  } finally {
+    requestInFlight.value = false;
+  }
+}
+
 async function startRound() {
   if (requestInFlight.value || !roomState.value) return;
 
@@ -1330,7 +1354,7 @@ onBeforeUnmount(() => {
               </div>
           </div>
           
-          <div v-if="roomState.state === 'waiting' && !viewerPlayer?.is_ready && viewerPlayer" class="multi-controls quick-bet-controls" style="bottom: 8%;">
+          <div v-if="isRoomBettingStage && !viewerPlayer?.is_ready && viewerPlayer" class="multi-controls quick-bet-controls" style="bottom: 8%;">
               <div id="bet-options-container">
                   <button class="bet-option-button" @click="betInput = Math.max(10, Math.floor((profile?.balance || 0) * 0.05))" :disabled="requestInFlight">小</button>
                   <button class="bet-option-button" @click="betInput = Math.max(50, Math.floor((profile?.balance || 0) * 0.15))" :disabled="requestInFlight">中</button>
@@ -1361,10 +1385,11 @@ onBeforeUnmount(() => {
           <!-- Shared Multi Controls -->
           <div class="multi-controls main-action-controls">
             <div id="controls" class="multi-controls-panel" style="background: rgba(0,0,0,0.5); padding: 10px; border-radius: 10px;">
-                <div v-if="roomState.state === 'waiting'" class="multi-waiting-controls" style="display: flex; gap: 5px; align-items: center; flex-wrap: wrap;">
+                <div v-if="isRoomBettingStage" class="multi-waiting-controls" style="display: flex; gap: 5px; align-items: center; flex-wrap: wrap;">
                     <input v-model.number="betInput" type="number" min="1" placeholder="输入下注" :disabled="requestInFlight || !canSetBet" style="width: 80px;" />
                     <button :disabled="requestInFlight || !canSetBet" @click="setBet">下注</button>
                     <button :disabled="requestInFlight || !canToggleReady" @click="toggleReady">{{ readyButtonText }}</button>
+                    <button v-if="roomState.state === 'finished'" :disabled="requestInFlight" @click="continueReady">沿用上局并准备</button>
                     <button v-if="isHost" :disabled="requestInFlight || !canStartRound" @click="startRound">开始本局</button>
                 </div>
                 <div v-if="roomState.state === 'playing'" class="multi-playing-controls" style="display: flex; gap: 5px;">
@@ -1745,22 +1770,23 @@ onBeforeUnmount(() => {
   }
 
   .single-mode-view #game-dealer-section .dialogue-box {
-    top: -6px !important;
-    left: 50% !important;
-    right: auto !important;
-    transform: translate(-50%, -100%) !important;
-    max-width: min(72vw, 240px) !important;
+    top: 45% !important;
+    left: auto !important;
+    right: calc(100% + 8px) !important;
+    transform: translateY(-50%) !important;
+    max-width: min(68vw, 240px) !important;
     padding: 8px 10px !important;
+    z-index: 260 !important;
   }
 
   .single-mode-view #game-dealer-section .dialogue-box::before {
-    left: 50% !important;
+    left: 100% !important;
     right: auto !important;
-    top: 100% !important;
-    transform: translateX(-50%) !important;
-    border-width: 8px 6px 0 6px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    border-width: 6px 0 6px 8px !important;
     border-style: solid !important;
-    border-color: #dcd0c0 transparent transparent transparent !important;
+    border-color: transparent transparent transparent #dcd0c0 !important;
   }
 
   .multi-mode-view .multi-toolbar-left {
@@ -1801,22 +1827,23 @@ onBeforeUnmount(() => {
   }
 
   .multi-mode-view #game-dealer-section .dialogue-box {
-    top: -6px !important;
-    left: 50% !important;
-    right: auto !important;
-    transform: translate(-50%, -100%) !important;
-    max-width: min(70vw, 230px) !important;
+    top: 45% !important;
+    left: auto !important;
+    right: calc(100% + 8px) !important;
+    transform: translateY(-50%) !important;
+    max-width: min(68vw, 230px) !important;
     padding: 8px 10px !important;
+    z-index: 260 !important;
   }
 
   .multi-mode-view #game-dealer-section .dialogue-box::before {
-    left: 50% !important;
+    left: 100% !important;
     right: auto !important;
-    top: 100% !important;
-    transform: translateX(-50%) !important;
-    border-width: 8px 6px 0 6px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    border-width: 6px 0 6px 8px !important;
     border-style: solid !important;
-    border-color: #dcd0c0 transparent transparent transparent !important;
+    border-color: transparent transparent transparent #dcd0c0 !important;
   }
 
   .multi-mode-view .table-dealer-cards {

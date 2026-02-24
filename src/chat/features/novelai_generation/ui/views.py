@@ -283,7 +283,7 @@ def _build_prompt_preview_pages(
     return pages or ["（无可展示内容）"]
 
 
-def _build_prompt_summary_for_embed(
+async def _build_prompt_summary_for_embed(
     prompt: Optional[str],
     negative_prompt: Optional[str],
     artist_string: Optional[str],
@@ -301,9 +301,34 @@ def _build_prompt_summary_for_embed(
     if not compact_prompt:
         return "（AI未提供主体外貌标签）"
 
-    if len(compact_prompt) > 980:
-        return compact_prompt[:977] + "..."
-    return compact_prompt
+    converted_prompt = ""
+    try:
+        converted_prompt = await _convert_tag_prompt_to_imagen_prompt(
+            compact_prompt,
+            force_rewrite=True,
+        )
+    except Exception as e:
+        log.warning(f"Failed to build Chinese appearance summary: {e}")
+
+    compact_converted = re.sub(r"\s+", " ", str(converted_prompt or "")).strip()
+    if (not compact_converted) or _is_probably_tag_prompt(compact_converted):
+        compact_converted = "\uff08AI\u672a\u80fd\u751f\u6210\u4e2d\u6587\u4e3b\u4f53\u5916\u8c8c\u63cf\u8ff0\uff09"
+
+    if len(compact_converted) > 980:
+        return compact_converted[:977] + "..."
+    return compact_converted
+
+
+def _build_artist_name_for_embed(preset_name: Optional[str], artist_string: Optional[str]) -> str:
+    normalized_preset_name = str(preset_name or '').strip()
+    if normalized_preset_name:
+        return normalized_preset_name
+
+    normalized_artist = str(artist_string or '').strip()
+    if normalized_artist:
+        return '\u7cfb\u7edf\u9ed8\u8ba4/\u81ea\u5b9a\u4e49\u753b\u5e08\u4e32'
+
+    return '\uff08\u65e0\u753b\u5e08\u4e32\uff09'
 
 
 def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
@@ -692,6 +717,18 @@ class NovelAIDrawPanel(discord.ui.View):
             # 负面提示词
             negative = self.session.negative_prompt if self.session.negative_prompt else None
 
+            current_artist_string: Optional[str] = None
+            if self.session.artist_prefix_mode == 'preset':
+                current_artist_string = str(self.session.preset_artist_string or '').strip() or None
+            elif self.session.artist_prefix_mode != 'none':
+                current_artist_string = str(NOVELAI_CONFIG.get('DEFAULT_ARTIST_STRING', '') or '').strip() or None
+
+            appearance_summary = await _build_prompt_summary_for_embed(
+                prompt=final_prompt,
+                negative_prompt=negative,
+                artist_string=current_artist_string,
+            )
+
             result = await novelai_service.generate_image(
                 prompt=final_prompt,
                 negative_prompt=negative,
@@ -724,12 +761,6 @@ class NovelAIDrawPanel(discord.ui.View):
                 )
 
             # 构建结果 Embed（不显示提示词，通过按钮查看）
-            current_artist_string: Optional[str] = None
-            if self.session.artist_prefix_mode == "preset":
-                current_artist_string = str(self.session.preset_artist_string or "").strip() or None
-            elif self.session.artist_prefix_mode != "none":
-                current_artist_string = str(NOVELAI_CONFIG.get("DEFAULT_ARTIST_STRING", "") or "").strip() or None
-
             embed = discord.Embed(title="🎨 NovelAI 图像生成", color=0x2B2D31)
             embed.set_author(
                 name=interaction.user.display_name,
@@ -737,8 +768,11 @@ class NovelAIDrawPanel(discord.ui.View):
             )
             # 生成信息（紧凑排列）
             model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
-            if self.session.preset_name:
-                embed.add_field(name="预设", value=self.session.preset_name, inline=True)
+            embed.add_field(
+                name='画师串',
+                value=_build_artist_name_for_embed(self.session.preset_name, current_artist_string),
+                inline=True,
+            )
             embed.add_field(name="种子", value=str(result.seed), inline=True)
             embed.add_field(
                 name="参数",
@@ -746,12 +780,8 @@ class NovelAIDrawPanel(discord.ui.View):
                 inline=True,
             )
             embed.add_field(
-                name="主体外貌（AI原文）",
-                value=_build_prompt_summary_for_embed(
-                    prompt=final_prompt,
-                    negative_prompt=self.session.negative_prompt or None,
-                    artist_string=current_artist_string,
-                ),
+                name="主体外貌",
+                value=appearance_summary,
                 inline=False,
             )
             if self.session.mode == "ai_describe" and self.session.scene_prompt:
@@ -1839,6 +1869,12 @@ async def _slash_regenerate_novelai(
             )
             return
 
+    appearance_summary = await _build_prompt_summary_for_embed(
+        prompt=final_prompt,
+        negative_prompt=negative_prompt,
+        artist_string=effective_artist_string,
+    )
+
     # 生成图片（新种子）
     result = await novelai_service.generate_image(
         prompt=final_prompt,
@@ -1875,8 +1911,11 @@ async def _slash_regenerate_novelai(
     )
     # 生成信息（紧凑排列）
     model_name = result.model or NOVELAI_CONFIG.get("MODEL", "unknown")
-    if preset_name:
-        embed.add_field(name="预设", value=preset_name, inline=True)
+    embed.add_field(
+        name='画师串',
+        value=_build_artist_name_for_embed(preset_name, effective_artist_string),
+        inline=True,
+    )
     embed.add_field(name="种子", value=str(result.seed), inline=True)
     embed.add_field(
         name="参数",
@@ -1884,12 +1923,8 @@ async def _slash_regenerate_novelai(
         inline=True,
     )
     embed.add_field(
-        name="主体外貌（AI原文）",
-        value=_build_prompt_summary_for_embed(
-            prompt=final_prompt,
-            negative_prompt=negative_prompt,
-            artist_string=effective_artist_string,
-        ),
+        name="主体外貌",
+        value=appearance_summary,
         inline=False,
     )
     new_balance = await coin_service.get_balance(billing_user_id)
