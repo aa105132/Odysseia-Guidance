@@ -623,10 +623,27 @@ class ComfyUIService:
         return False
 
     @staticmethod
-    def _pick_best_name_candidate(candidates: list[str], hints: list[str]) -> str:
+    def _pick_best_name_candidate(
+        candidates: list[str],
+        hints: list[str],
+        preferred_keywords: Optional[list[str]] = None,
+        avoid_keywords: Optional[list[str]] = None,
+    ) -> str:
         normalized_candidates = [str(item or '').strip() for item in candidates if str(item or '').strip()]
         if not normalized_candidates:
             return ''
+
+        lowered_candidates = [(name, name.lower()) for name in normalized_candidates]
+
+        avoid_list = [str(keyword or '').strip().lower() for keyword in (avoid_keywords or []) if str(keyword or '').strip()]
+        if avoid_list:
+            filtered_candidates = [
+                item
+                for item in lowered_candidates
+                if not any(avoid_word in item[1] for avoid_word in avoid_list)
+            ]
+            if filtered_candidates:
+                lowered_candidates = filtered_candidates
 
         keyword_hints: list[str] = []
         for hint in hints:
@@ -651,13 +668,19 @@ class ComfyUIService:
             seen_hints.add(hint_key)
             deduped_hints.append(hint)
 
-        lowered_candidates = [(name, name.lower()) for name in normalized_candidates]
+        preferred_list = [str(keyword or '').strip().lower() for keyword in (preferred_keywords or []) if str(keyword or '').strip()]
+        if preferred_list:
+            for preferred in preferred_list:
+                for candidate_name, candidate_lower in lowered_candidates:
+                    if preferred in candidate_lower:
+                        return candidate_name
+
         for hint in deduped_hints:
             for candidate_name, candidate_lower in lowered_candidates:
                 if hint in candidate_lower:
                     return candidate_name
 
-        return normalized_candidates[0]
+        return lowered_candidates[0][0]
 
     async def _fill_missing_runtime_names(
         self,
@@ -667,6 +690,11 @@ class ComfyUIService:
         selected_template = workflow_template if workflow_template is not None else self.workflow_template
         if not isinstance(selected_template, dict) or not selected_template:
             return params
+
+        try:
+            workflow_text = json.dumps(selected_template, ensure_ascii=False).lower()
+        except Exception:
+            workflow_text = ''
 
         model_name = str(params.get('model_name') or '').strip()
         if not model_name and self._workflow_contains_any_token(
@@ -686,7 +714,16 @@ class ComfyUIService:
             ('%clip_name%', '%clip%', '{{clip_name}}'),
         ):
             available_clips = await self.get_available_clip_names()
-            auto_clip_name = self._pick_best_name_candidate(available_clips, [model_name])
+            clip_preferred_keywords: list[str] = []
+            combined_hint_text = f'{model_name} {workflow_text}'.lower()
+            if 'qwen' in combined_hint_text:
+                clip_preferred_keywords.append('qwen')
+
+            auto_clip_name = self._pick_best_name_candidate(
+                available_clips,
+                [model_name, workflow_text],
+                preferred_keywords=clip_preferred_keywords,
+            )
             if auto_clip_name:
                 params['clip_name'] = auto_clip_name
                 clip_name = auto_clip_name
@@ -698,7 +735,32 @@ class ComfyUIService:
             ('%vae_name%', '%vae%', '{{vae_name}}'),
         ):
             available_vaes = await self.get_available_vae_names()
-            auto_vae_name = self._pick_best_name_candidate(available_vaes, [clip_name, model_name])
+
+            vae_preferred_keywords: list[str] = []
+            vae_avoid_keywords: list[str] = []
+            combined_hint_text = f'{clip_name} {model_name} {workflow_text}'.lower()
+
+            if 'qwen' in combined_hint_text:
+                vae_preferred_keywords.append('qwen')
+            if 'sdxl' in combined_hint_text:
+                vae_preferred_keywords.append('sdxl')
+            if 'ae' in combined_hint_text:
+                vae_preferred_keywords.append('ae')
+
+            is_image_latent_workflow = (
+                'emptylatentimage' in workflow_text
+                and 'emptylatentvideo' not in workflow_text
+                and 'video' not in workflow_text
+            )
+            if is_image_latent_workflow:
+                vae_avoid_keywords.extend(['wan', 'video'])
+
+            auto_vae_name = self._pick_best_name_candidate(
+                available_vaes,
+                [clip_name, model_name, workflow_text],
+                preferred_keywords=vae_preferred_keywords,
+                avoid_keywords=vae_avoid_keywords,
+            )
             if auto_vae_name:
                 params['vae_name'] = auto_vae_name
                 log.info(f'ComfyUI 自动填充 vae_name: {auto_vae_name}')

@@ -344,3 +344,20 @@ def test_normalize_safetensors_names_only_keeps_safetensors_and_dedupes():
         'nested/model_x.safetensors',
     ]
 
+
+def test_pick_best_name_candidate_supports_preferred_and_avoid_keywords():
+    candidates = [
+        'Wan2\\wan_2.1_vae.safetensors',
+        'qwen\\qwen_image_vae.safetensors',
+        'sdxlVAE_sdxlVAE.safetensors',
+    ]
+
+    selected = ComfyUIService._pick_best_name_candidate(
+        candidates,
+        hints=['zimage_v1.safetensors'],
+        preferred_keywords=['qwen'],
+        avoid_keywords=['wan'],
+    )
+
+    assert selected == 'qwen\\qwen_image_vae.safetensors'
+
