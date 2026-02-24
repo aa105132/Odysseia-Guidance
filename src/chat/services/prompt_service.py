@@ -824,14 +824,20 @@ class PromptService:
                         storyboard_image = self._build_gif_storyboard_image(frames)
                         current_user_parts.append(storyboard_image)
                         current_user_parts.append(
-                            "[上图为GIF时间序列拼图，F1→Fn代表时间从头到尾；下方是逐帧关键帧原图]"
+                            "[上图为GIF时间序列拼图，F1→Fn代表时间从头到尾，请基于该单张拼图分析动作变化]"
                         )
                     except Exception as storyboard_error:
                         log.warning(
                             f"GIF 时间序列拼图生成失败，将仅使用关键帧: {storyboard_error}"
                         )
-
-                current_user_parts.extend(frames)
+                        # 回退策略：至少给模型一张图，避免 GIF 信息完全丢失
+                        current_user_parts.append(frames[0])
+                        current_user_parts.append(
+                            "[GIF 拼图失败，已回退为首帧参考图]"
+                        )
+                else:
+                    # 静态图保留单图输入
+                    current_user_parts.append(frames[0])
             except Exception as e:
                 log.error(f"Pillow 无法打开附件图片。错误: {e}。")
 
@@ -1033,13 +1039,15 @@ class PromptService:
 
                 try:
                     parts.append(self._build_gif_storyboard_image(frames))
-                    parts.append("上图为GIF时间序列拼图（F1→Fn），下方为逐帧关键帧。")
+                    parts.append("上图为GIF时间序列拼图（F1→Fn），请直接基于该单张拼图分析。")
                 except Exception as storyboard_error:
                     log.warning(
                         f"工具图像上下文的 GIF 拼图生成失败，将仅使用关键帧: {storyboard_error}"
                     )
-
-            parts.extend(frames)
+                    parts.append(frames[0])
+                    parts.append("GIF 拼图失败，已回退为首帧参考图。")
+            else:
+                parts.append(frames[0])
 
             return {"role": "user", "parts": parts}
         except Exception as e:

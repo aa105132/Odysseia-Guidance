@@ -85,8 +85,8 @@ def test_create_image_context_turn_contains_gif_frames():
     text_parts = [part for part in turn["parts"] if isinstance(part, str)]
     image_parts = [part for part in turn["parts"] if isinstance(part, Image.Image)]
 
-    assert any("关键帧" in text for text in text_parts)
-    assert len(image_parts) > 1
+    assert any("拼图" in text for text in text_parts)
+    assert len(image_parts) == 1
 
 
 def test_build_chat_prompt_auto_injects_gif_storyboard_and_notice():
@@ -122,4 +122,4 @@ def test_build_chat_prompt_auto_injects_gif_storyboard_and_notice():
 
     assert any("用户发送了一张GIF动图" in text for text in text_parts)
     assert any("时间序列拼图" in text for text in text_parts)
-    assert len(image_parts) >= 2
+    assert len(image_parts) == 1
