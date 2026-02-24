@@ -1606,7 +1606,7 @@ class GeminiService:
         }
 
     async def _load_comfyui_choice_context(self, user_id: int) -> Dict[str, List[str]]:
-        """加载 ComfyUI 可用底模/LoRA 列表（API + 用户上传）用于提示词注入。"""
+        """加载 ComfyUI 可用底模/LoRA 列表用于提示词注入。"""
         comfy_enabled = bool(app_config.COMFYUI_CONFIG.get("ENABLED", False))
         if not comfy_enabled:
             return {}
@@ -1648,39 +1648,8 @@ class GeminiService:
         except Exception as error:
             log.warning(f"加载 ComfyUI 服务失败，跳过底模/LoRA 列表注入: {error}")
 
-        user_uploaded_loras: List[str] = []
-        user_lora_dir = os.path.join("data", "comfyui", "users", str(user_id), "loras")
-        lora_extensions = {
-            ".safetensors",
-            ".ckpt",
-            ".pt",
-            ".bin",
-            ".pth",
-            ".gguf",
-        }
-        try:
-            if os.path.isdir(user_lora_dir):
-                for filename in os.listdir(user_lora_dir):
-                    file_path = os.path.join(user_lora_dir, filename)
-                    if not os.path.isfile(file_path):
-                        continue
-                    _, ext = os.path.splitext(filename)
-                    if ext.lower() in lora_extensions:
-                        user_uploaded_loras.append(filename)
-        except Exception as error:
-            log.warning(f"读取用户 LoRA 上传目录失败: user_id={user_id}, error={error}")
-
-        default_model_name = str(app_config.COMFYUI_CONFIG.get("DEFAULT_MODEL_NAME") or "").strip()
-        default_lora_name = str(app_config.COMFYUI_CONFIG.get("DEFAULT_LORA") or "").strip()
-
-        merged_model_names = _dedupe(
-            [default_model_name, *api_model_names],
-            limit=120,
-        )
-        merged_lora_names = _dedupe(
-            [default_lora_name, *api_lora_names, *user_uploaded_loras],
-            limit=160,
-        )
+        merged_model_names = _dedupe(api_model_names, limit=120)
+        merged_lora_names = _dedupe(api_lora_names, limit=160)
 
         if not merged_model_names and not merged_lora_names:
             return {}

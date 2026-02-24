@@ -247,3 +247,23 @@ def test_normalize_download_url_for_match_ignores_case_and_query():
     )
     assert normalized == 'https://example.com/models/a.safetensors'
 
+
+def test_normalize_safetensors_names_only_keeps_safetensors_and_dedupes():
+    names = ComfyUIService._normalize_safetensors_names(
+        [
+            'A.safetensors',
+            'b.ckpt',
+            'a.safetensors',
+            'nested/model_x.safetensors',
+            '',
+            None,
+            'C.SAFETENSORS',
+        ]
+    )
+
+    assert names == [
+        'A.safetensors',
+        'C.SAFETENSORS',
+        'nested/model_x.safetensors',
+    ]
+

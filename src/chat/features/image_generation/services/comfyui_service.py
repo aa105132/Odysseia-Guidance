@@ -309,10 +309,76 @@ class ComfyUIService:
         return token_values
 
     async def get_available_model_names(self) -> list[str]:
-        return await self._get_available_choice_names(('ckpt_name', 'model_name'))
+        folder_names = ('checkpoints', 'diffusion_models', 'unet')
+        folder_results = await asyncio.gather(
+            *(self._fetch_safetensors_from_model_folder(folder_name) for folder_name in folder_names),
+            return_exceptions=True,
+        )
+
+        merged_names: list[str] = []
+        seen = set()
+        for folder_name, result in zip(folder_names, folder_results):
+            if isinstance(result, Exception):
+                log.warning(f'读取 ComfyUI 模型目录失败: folder={folder_name}, error={result}')
+                continue
+
+            for name in result:
+                key = name.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged_names.append(name)
+
+        return merged_names
 
     async def get_available_lora_names(self) -> list[str]:
-        return await self._get_available_choice_names(('lora_name',))
+        return await self._fetch_safetensors_from_model_folder('loras')
+
+    async def _fetch_safetensors_from_model_folder(self, folder_name: str) -> list[str]:
+        if not self.server_address:
+            return []
+
+        normalized_folder = str(folder_name or '').strip()
+        if not normalized_folder:
+            return []
+
+        timeout_seconds = self._coerce_int(
+            app_config.COMFYUI_CONFIG.get('REQUEST_TIMEOUT_SECONDS'),
+            180,
+        )
+        client_timeout = aiohttp.ClientTimeout(total=min(timeout_seconds, 30))
+        model_folder_url = f'{self.server_address}/models/{normalized_folder}'
+
+        try:
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                async with session.get(model_folder_url) as response:
+                    if response.status < 200 or response.status >= 300:
+                        return []
+                    payload = await self._read_response_payload(response)
+        except Exception as error:
+            log.warning(f'读取 ComfyUI 模型目录异常: folder={normalized_folder}, error={error}')
+            return []
+
+        return self._normalize_safetensors_names(payload)
+
+    @staticmethod
+    def _normalize_safetensors_names(payload: Any) -> list[str]:
+        if not isinstance(payload, list):
+            return []
+
+        names: list[str] = []
+        seen = set()
+        for item in payload:
+            item_text = str(item or '').strip()
+            if not item_text or not item_text.lower().endswith('.safetensors'):
+                continue
+            key = item_text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            names.append(item_text)
+
+        return sorted(names, key=lambda value: value.lower())
 
     async def _fetch_object_info(self) -> Dict[str, Any]:
         if not self.server_address:
