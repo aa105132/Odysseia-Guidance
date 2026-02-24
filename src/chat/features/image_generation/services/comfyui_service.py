@@ -89,6 +89,19 @@ class ComfyUIService:
             return default
 
     @staticmethod
+    def _normalize_sampler_name(raw_sampler: Any) -> str:
+        sampler_text = str(raw_sampler or '').strip().lower()
+        alias_map = {
+            'euler_a': 'euler_ancestral',
+            'euler ancestral': 'euler_ancestral',
+        }
+        return alias_map.get(sampler_text, sampler_text)
+
+    @staticmethod
+    def _normalize_scheduler_name(raw_scheduler: Any) -> str:
+        return str(raw_scheduler or '').strip().lower()
+
+    @staticmethod
     def _merge_fixed_prompt(base_prompt: Any, fixed_prompt: Any) -> str:
         base_text = str(base_prompt or '').strip()
         fixed_text = str(fixed_prompt or '').strip()
@@ -274,8 +287,8 @@ class ComfyUIService:
             'height': self._coerce_int(kwargs.get('height'), self._coerce_int(config.get('DEFAULT_HEIGHT'), 1216)),
             'steps': self._coerce_int(kwargs.get('steps'), self._coerce_int(config.get('DEFAULT_STEPS'), 28)),
             'cfg': self._coerce_float(kwargs.get('cfg'), self._coerce_float(config.get('DEFAULT_CFG'), 5.0)),
-            'sampler': str(kwargs.get('sampler') or config.get('DEFAULT_SAMPLER') or '').strip(),
-            'scheduler': str(kwargs.get('scheduler') or config.get('DEFAULT_SCHEDULER') or '').strip(),
+            'sampler': self._normalize_sampler_name(kwargs.get('sampler') or config.get('DEFAULT_SAMPLER') or ''),
+            'scheduler': self._normalize_scheduler_name(kwargs.get('scheduler') or config.get('DEFAULT_SCHEDULER') or ''),
             'seed': seed_value,
             'lora': str(lora_value or '').strip(),
             'lora_strength': self._coerce_float(
@@ -516,6 +529,9 @@ class ComfyUIService:
         params: Dict[str, Any],
     ) -> Any:
         stripped_text = text.strip()
+
+        if stripped_text in token_values:
+            return token_values[stripped_text]
 
         if stripped_text == text and stripped_text in token_values:
             return token_values[stripped_text]

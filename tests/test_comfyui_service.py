@@ -404,3 +404,29 @@ def test_fill_missing_runtime_names_fallbacks_when_model_name_not_available(tmp_
 
     assert updated['model_name'] in {'Rebalance_v1.safetensors', 'z_image_turbo_bf16.safetensors'}
 
+
+def test_build_runtime_params_normalizes_sampler_alias_and_trims_spaces(tmp_path):
+    workflow_path = tmp_path / 'workflow_template.json'
+    workflow_path.write_text(json.dumps({'1': {'inputs': {'sampler_name': '%sampler_name%'}}}, ensure_ascii=False), encoding='utf-8')
+
+    service = ComfyUIService(
+        server_address='127.0.0.1:8188',
+        workflow_path=str(workflow_path),
+    )
+
+    params = service._build_runtime_params(prompt='test prompt', sampler=' euler_a ')
+
+    assert params['sampler'] == 'euler_ancestral'
+
+
+def test_replace_placeholders_in_string_trims_token_whitespace():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+
+    result = service._replace_placeholders_in_string(
+        ' %sampler_name% ',
+        {'%sampler_name%': 'euler_ancestral'},
+        {},
+    )
+
+    assert result == 'euler_ancestral'
+

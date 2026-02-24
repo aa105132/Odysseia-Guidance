@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 SAMPLER_PRESETS = [
     'euler',
-    'euler_a',
+    'euler_ancestral',
     'heun',
     'dpmpp_2m',
     'dpmpp_2m_sde',
@@ -44,7 +44,7 @@ SCHEDULER_PRESETS = [
 
 SAMPLER_SCHEDULER_PRESETS = [
     ('euler', 'normal', 'Euler · Normal'),
-    ('euler_a', 'normal', 'Euler A · Normal'),
+    ('euler_ancestral', 'normal', 'Euler A · Normal'),
     ('heun', 'normal', 'Heun · Normal'),
     ('dpmpp_2m', 'karras', 'DPM++ 2M · Karras'),
     ('dpmpp_2m_sde', 'karras', 'DPM++ 2M SDE · Karras'),
