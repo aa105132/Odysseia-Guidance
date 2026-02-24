@@ -553,13 +553,14 @@ async def generate_image_novelai(
     character_name: Optional[str] = None,
     work_name: Optional[str] = None,
     reference_image_index: Optional[int] = None,
+    use_prompt_model: Optional[bool] = None,
     **kwargs
 ) -> dict:
     """
     使用 NovelAI 引擎生成图片。当默认绘图引擎为 "novelai" 时，所有画图请求都必须使用此工具，不要使用 generate_image。
 
-    **重要：对话主 AI 需要先写一版 Danbooru 草稿串，工具会再调用提示词 AI 生成一版优化串。**
-    **若提示词 AI 没返回合格 Danbooru，会自动回退使用主 AI 草稿串。**
+    **默认启用提示词 AI 双串策略（主 AI 草稿串 + 提示词 AI 优化串）。**
+    **可通过 `use_prompt_model=False` 关闭；关闭后对话 AI 直接按规则给出最终 Tag，工具不再额外生成草稿/优化串。**
 
     ## 画师串自动拼接说明（重要）
     系统会自动在你的 prompt 前面拼接画师串前缀，优先级如下：
@@ -577,6 +578,7 @@ async def generate_image_novelai(
     - prompt 优先写成 Danbooru 草稿串（英文标签、逗号分隔，可不完美）
     - 工具会基于你的草稿，再调用提示词 AI 生成一版优化 Danbooru
     - 若提示词 AI 没返回合格 Danbooru，系统会回退使用你传入的草稿串
+    - 当 `use_prompt_model=False` 时，不再生成草稿/优化串；你必须直接按规则给最终 Danbooru 标签
     - 若用户只给自然语言，你需先细化并转成一版 Danbooru 草稿再传入
     - 你必须准确传达用户明确要求，不得篡改主体设定、数量、外貌、服饰、动作、场景与构图
     - 单人女性必须写 `1girl, solo`；单人男性必须写 `1boy, solo`；禁止只写 `girl`/`boy` 代替角色数量与关系标签
@@ -792,6 +794,12 @@ async def generate_image_novelai(
                 工具会从当前消息图片中选择对应序号，并把该图传给提示词 AI，
                 以提升标签生成精度。
 
+        use_prompt_model: 是否启用提示词生成模型（可选）。
+                - True：启用双串策略（主 AI 草稿 + 提示词 AI 优化），这是默认行为。
+                - False：跳过提示词 AI。对话 AI 需直接按规则输出最终 Tag。
+                - None：按配置项 `NOVELAI_CONFIG.USE_PROMPT_MODEL_IN_CHAT_TOOL`，
+                        若未配置则默认为 True。
+
     Returns:
         成功后图片和你的回复会一起发送给用户。
         **你不需要也不应该再发送任何额外消息（包括提示词）。**
@@ -998,80 +1006,100 @@ async def generate_image_novelai(
             "hint": "你没有提供可用的绘图草稿。请先补充 Danbooru 草稿标签串。"
         }
 
-    prompt_reference_images: Optional[List[Dict[str, Any]]] = None
-    if reference_image_index is not None:
-        try:
-            normalized_reference_index = max(1, int(reference_image_index))
-        except (TypeError, ValueError):
-            normalized_reference_index = 1
-
-        prepared_candidates: List[Dict[str, Any]] = []
-        prepared_images_raw = kwargs.get("_prepared_reference_images")
-        prepared_single_raw = kwargs.get("_prepared_reference_image")
-
-        if isinstance(prepared_images_raw, list):
-            for item in prepared_images_raw:
-                if isinstance(item, dict) and (item.get("data") or item.get("bytes")):
-                    prepared_candidates.append(item)
-
-        if (not prepared_candidates) and isinstance(prepared_single_raw, dict):
-            if prepared_single_raw.get("data") or prepared_single_raw.get("bytes"):
-                prepared_candidates.append(prepared_single_raw)
-
-        if prepared_candidates:
-            if normalized_reference_index > len(prepared_candidates):
-                log.warning(
-                    f"reference_image_index={normalized_reference_index} 超出预准备参考图数量 {len(prepared_candidates)}，已回退到最后一张。"
-                )
-                normalized_reference_index = len(prepared_candidates)
-
-            selected = prepared_candidates[normalized_reference_index - 1]
-            prompt_reference_images = [selected]
-            log.info(
-                f"提示词AI已使用预准备参考图: index={normalized_reference_index}/{len(prepared_candidates)}"
-            )
-        else:
-            prompt_reference_images = await _collect_prompt_reference_images(
-                message=message,
-                reference_image_index=normalized_reference_index,
-            )
-
-            if not prompt_reference_images:
-                log.warning(
-                    "已收到 reference_image_index，但当前消息中未提取到可用参考图，提示词AI将仅使用文本草稿。"
-                )
-
-    rewritten_prompt = await _convert_imagen_prompt_to_novelai_prompt(
-        main_prompt_draft,
-        force_rewrite=True,
-        reference_images=prompt_reference_images,
-    )
-    normalized_rewritten_prompt = str(rewritten_prompt or "").strip().strip('"').strip("'")
     normalized_main_prompt = main_prompt_draft.strip().strip('"').strip("'")
+    if not normalized_main_prompt:
+        return {
+            "generation_failed": True,
+            "reason": "prompt_draft_empty",
+            "hint": "对话 AI 提供的提示词为空，请按规则提供可用的 Danbooru 标签串。"
+        }
 
-    if normalized_rewritten_prompt and _is_probably_tag_prompt(normalized_rewritten_prompt):
-        # 优先使用提示词 AI 的优化串
-        prompt = normalized_rewritten_prompt
-        log.info("双串策略：已采用提示词 AI 生成的优化 Danbooru 标签串。")
+    use_prompt_model_raw = use_prompt_model
+    if use_prompt_model_raw is None:
+        use_prompt_model_raw = NOVELAI_CONFIG.get("USE_PROMPT_MODEL_IN_CHAT_TOOL", True)
+
+    if isinstance(use_prompt_model_raw, str):
+        use_prompt_model_enabled = use_prompt_model_raw.strip().lower() not in {
+            "0", "false", "off", "no", "n"
+        }
     else:
-        # 回退：提示词 AI 未产出合格 Danbooru 时，使用主 AI 草稿串
-        if normalized_rewritten_prompt:
-            log.warning("提示词 AI 返回内容疑似不是 Danbooru 标签，已回退使用主 AI 草稿串。")
+        use_prompt_model_enabled = bool(use_prompt_model_raw)
+
+    prompt = normalized_main_prompt
+    if use_prompt_model_enabled:
+        prompt_reference_images: Optional[List[Dict[str, Any]]] = None
+        if reference_image_index is not None:
+            try:
+                normalized_reference_index = max(1, int(reference_image_index))
+            except (TypeError, ValueError):
+                normalized_reference_index = 1
+
+            prepared_candidates: List[Dict[str, Any]] = []
+            prepared_images_raw = kwargs.get("_prepared_reference_images")
+            prepared_single_raw = kwargs.get("_prepared_reference_image")
+
+            if isinstance(prepared_images_raw, list):
+                for item in prepared_images_raw:
+                    if isinstance(item, dict) and (item.get("data") or item.get("bytes")):
+                        prepared_candidates.append(item)
+
+            if (not prepared_candidates) and isinstance(prepared_single_raw, dict):
+                if prepared_single_raw.get("data") or prepared_single_raw.get("bytes"):
+                    prepared_candidates.append(prepared_single_raw)
+
+            if prepared_candidates:
+                if normalized_reference_index > len(prepared_candidates):
+                    log.warning(
+                        f"reference_image_index={normalized_reference_index} 超出预准备参考图数量 {len(prepared_candidates)}，已回退到最后一张。"
+                    )
+                    normalized_reference_index = len(prepared_candidates)
+
+                selected = prepared_candidates[normalized_reference_index - 1]
+                prompt_reference_images = [selected]
+                log.info(
+                    f"提示词AI已使用预准备参考图: index={normalized_reference_index}/{len(prepared_candidates)}"
+                )
+            else:
+                prompt_reference_images = await _collect_prompt_reference_images(
+                    message=message,
+                    reference_image_index=normalized_reference_index,
+                )
+
+                if not prompt_reference_images:
+                    log.warning(
+                        "已收到 reference_image_index，但当前消息中未提取到可用参考图，提示词AI将仅使用文本草稿。"
+                    )
+
+        rewritten_prompt = await _convert_imagen_prompt_to_novelai_prompt(
+            main_prompt_draft,
+            force_rewrite=True,
+            reference_images=prompt_reference_images,
+        )
+        normalized_rewritten_prompt = str(rewritten_prompt or "").strip().strip('"').strip("'")
+
+        if normalized_rewritten_prompt and _is_probably_tag_prompt(normalized_rewritten_prompt):
+            prompt = normalized_rewritten_prompt
+            log.info("双串策略：已采用提示词 AI 生成的优化 Danbooru 标签串。")
         else:
-            log.warning("提示词 AI 返回空内容，已回退使用主 AI 草稿串。")
+            if normalized_rewritten_prompt:
+                log.warning("提示词 AI 返回内容疑似不是 Danbooru 标签，已回退使用主 AI 草稿串。")
+            else:
+                log.warning("提示词 AI 返回空内容，已回退使用主 AI 草稿串。")
 
-        if not normalized_main_prompt:
-            return {
-                "generation_failed": True,
-                "reason": "prompt_rewrite_empty",
-                "hint": "提示词 AI 与主提示词都不可用，请稍后重试。"
-            }
+            prompt = normalized_main_prompt
+            if _is_probably_tag_prompt(prompt):
+                log.info("双串策略回退：使用主 AI 草稿 Danbooru 标签串继续生成。")
+            else:
+                log.warning("回退草稿串疑似不是 Danbooru 标签串，已继续尝试生成。建议主 AI 输出 Danbooru 草稿。")
+    else:
+        if reference_image_index is not None:
+            log.info("提示词生成模型已关闭：reference_image_index 将被忽略。")
 
-        prompt = normalized_main_prompt
+        prompt = clamp_danbooru_tags(normalized_main_prompt, max_tags=90)
         if _is_probably_tag_prompt(prompt):
-            log.info("双串策略回退：使用主 AI 草稿 Danbooru 标签串继续生成。")
+            log.info("提示词生成模型已关闭：直接按规则使用对话 AI 的最终 Tag 生成。")
         else:
-            log.warning("回退草稿串疑似不是 Danbooru 标签串，已继续尝试生成。建议主 AI 输出 Danbooru 草稿。")
+            log.warning("提示词生成模型已关闭：当前提示词疑似非 Danbooru 标签，已直接尝试生成。")
 
     # 画师串应用策略：
     # skip_artist_prefix=True 时跳过所有画师串拼接
