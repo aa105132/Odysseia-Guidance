@@ -3289,7 +3289,7 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
         ('default_height', 'DEFAULT_HEIGHT', 'COMFYUI_DEFAULT_HEIGHT', 'comfyui_default_height', int, 64),
         ('default_steps', 'DEFAULT_STEPS', 'COMFYUI_DEFAULT_STEPS', 'comfyui_default_steps', int, 1),
         ('default_cfg', 'DEFAULT_CFG', 'COMFYUI_DEFAULT_CFG', 'comfyui_default_cfg', float, 0),
-        ('default_seed', 'DEFAULT_SEED', 'COMFYUI_DEFAULT_SEED', 'comfyui_default_seed', int, 0),
+        ('default_seed', 'DEFAULT_SEED', 'COMFYUI_DEFAULT_SEED', 'comfyui_default_seed', int, -1),
         ('default_lora_strength', 'DEFAULT_LORA_STRENGTH', 'COMFYUI_DEFAULT_LORA_STRENGTH', 'comfyui_default_lora_strength', float, 0),
         ('max_user_lora_uploads', 'MAX_USER_LORA_UPLOADS', 'COMFYUI_MAX_USER_LORA_UPLOADS', 'comfyui_max_user_lora_uploads', int, 1),
         ('request_timeout_seconds', 'REQUEST_TIMEOUT_SECONDS', 'COMFYUI_REQUEST_TIMEOUT_SECONDS', 'comfyui_request_timeout_seconds', int, 1),
