@@ -818,7 +818,7 @@ def clamp_danbooru_tags(raw_text: str, max_tags: int = 90) -> str:
             continue
 
         # 清理列表序号等噪声
-        token = re.sub(r"^[\-\d\.\)\s]+", "", token).strip().strip("[]")
+        token = re.sub(r"^\s*(?:(?:[-*•]\s+)|(?:\d+[\.)]\s+))+", "", token).strip().strip("[]")
         if not token:
             continue
 
