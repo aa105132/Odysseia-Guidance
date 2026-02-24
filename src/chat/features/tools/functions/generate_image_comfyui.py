@@ -3,7 +3,7 @@
 import io
 import logging
 import re
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import discord
 
@@ -17,6 +17,323 @@ log = logging.getLogger(__name__)
 GENERATING_EMOJI = '🎨'
 SUCCESS_EMOJI = '✅'
 FAILED_EMOJI = '❌'
+
+
+def _infer_imagen_aspect_ratio(width: Optional[int], height: Optional[int]) -> str:
+    if not width or not height or width <= 0 or height <= 0:
+        return '3:4'
+
+    ratio = width / height
+    candidates = {
+        '1:1': 1.0,
+        '3:4': 3 / 4,
+        '4:3': 4 / 3,
+        '9:16': 9 / 16,
+        '16:9': 16 / 9,
+    }
+    return min(candidates.keys(), key=lambda key: abs(candidates[key] - ratio))
+
+
+def _infer_imagen_resolution(width: Optional[int], height: Optional[int]) -> str:
+    max_side = max(width or 0, height or 0)
+    if max_side >= 2048:
+        return '4k'
+    if max_side >= 1400:
+        return '2k'
+    return 'default'
+
+
+def _infer_content_rating(prompt: str, negative_prompt: Optional[str] = None) -> str:
+    text = f'{prompt}\n{negative_prompt or ""}'.lower()
+    nsfw_keywords = [
+        'nsfw',
+        'nude',
+        'naked',
+        '性感',
+        '裸',
+        '乳',
+        '屁股',
+        '内衣',
+        '泳衣',
+        '比基尼',
+    ]
+    return 'nsfw' if any(keyword in text for keyword in nsfw_keywords) else 'sfw'
+
+
+class ComfyEditPromptModal(discord.ui.Modal, title='修改提示词重新生成'):
+    prompt_input = discord.ui.TextInput(
+        label='提示词',
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=3000,
+    )
+    negative_input = discord.ui.TextInput(
+        label='负面提示词（可选）',
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=2000,
+    )
+
+    def __init__(self, view: 'ComfyResultView'):
+        super().__init__()
+        self._view = view
+        self.prompt_input.default = str(view.original_params.get('prompt') or '')[:3000]
+        self.negative_input.default = str(view.original_params.get('negative_prompt') or '')[:2000]
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+        new_prompt = str(self.prompt_input.value or '').strip()
+        new_negative = str(self.negative_input.value or '').strip() or None
+        if not new_prompt:
+            await interaction.followup.send('提示词不能为空。', ephemeral=True)
+            return
+        await self._view.regenerate_comfy(
+            interaction,
+            prompt=new_prompt,
+            negative_prompt=new_negative,
+            preview_message='正在根据新提示词重新生成（ComfyUI）...',
+            success_message='已按新提示词重新生成。',
+        )
+
+
+class ComfyAIRewriteModal(discord.ui.Modal, title='AI 重写提示词'):
+    description_input = discord.ui.TextInput(
+        label='描述你想要的变化',
+        style=discord.TextStyle.paragraph,
+        placeholder='例如：改成夜景、增加逆光、人物更靠近镜头；留空则自动优化当前提示词',
+        required=False,
+        max_length=1000,
+    )
+
+    def __init__(self, view: 'ComfyResultView'):
+        super().__init__()
+        self._view = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+        description = str(self.description_input.value or '').strip()
+        await self._view.ai_rewrite_and_regenerate(interaction, description)
+
+
+class ComfyResultView(discord.ui.View):
+    def __init__(
+        self,
+        original_params: Dict[str, Any],
+        user_id: Optional[int],
+        timeout: float = 600,
+    ):
+        super().__init__(timeout=timeout)
+        self.original_params = original_params
+        self.user_id = user_id
+        self.message: Optional[discord.Message] = None
+
+    def _is_allowed(self, interaction: discord.Interaction) -> bool:
+        if self.user_id is None:
+            return True
+        if int(interaction.user.id) == int(self.user_id):
+            return True
+        return bool(interaction.user.guild_permissions.administrator)
+
+    async def _check_permission(self, interaction: discord.Interaction) -> bool:
+        if self._is_allowed(interaction):
+            return True
+        await interaction.response.send_message('只有原始请求者（或管理员）才能操作。', ephemeral=True)
+        return False
+
+    async def regenerate_comfy(
+        self,
+        interaction: discord.Interaction,
+        prompt: str,
+        negative_prompt: Optional[str],
+        preview_message: str,
+        success_message: str,
+    ) -> None:
+        params = dict(self.original_params)
+        params['prompt'] = prompt
+        params['negative_prompt'] = negative_prompt
+        params['preview_message'] = preview_message
+        params['success_message'] = success_message
+        params['channel'] = interaction.channel
+        params['user_id'] = str(interaction.user.id)
+        params['request_user'] = interaction.user
+        params['message'] = None
+        params['current_turn_tool_names'] = []
+
+        result = await generate_image_comfyui(**params)
+        if isinstance(result, dict) and result.get('generation_failed'):
+            await interaction.followup.send(str(result.get('hint') or '重新生成失败。'), ephemeral=True)
+
+    async def switch_to_novelai(
+        self,
+        interaction: discord.Interaction,
+        prompt: str,
+        negative_prompt: Optional[str],
+    ) -> None:
+        from src.chat.features.tools.functions.generate_image_novelai import generate_image_novelai
+
+        result = await generate_image_novelai(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=self.original_params.get('width'),
+            height=self.original_params.get('height'),
+            steps=self.original_params.get('steps'),
+            scale=self.original_params.get('cfg'),
+            sampler=None,
+            preview_message='正在切换到 NovelAI 重新生成...',
+            success_message='已切换到 NovelAI 重新生成。',
+            channel=interaction.channel,
+            user_id=str(interaction.user.id),
+            request_user=interaction.user,
+            message=None,
+            current_turn_tool_names=[],
+        )
+        if isinstance(result, dict) and result.get('generation_failed'):
+            await interaction.followup.send(str(result.get('hint') or '切换到 NovelAI 失败。'), ephemeral=True)
+
+    async def switch_to_imagen(
+        self,
+        interaction: discord.Interaction,
+        prompt: str,
+        negative_prompt: Optional[str],
+    ) -> None:
+        from src.chat.features.tools.functions.generate_image import generate_image
+
+        width = self.original_params.get('width')
+        height = self.original_params.get('height')
+
+        result = await generate_image(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            aspect_ratio=_infer_imagen_aspect_ratio(width, height),
+            number_of_images=1,
+            resolution=_infer_imagen_resolution(width, height),
+            content_rating=_infer_content_rating(prompt, negative_prompt),
+            preview_message='正在切换到 Imagen 重新生成...',
+            success_message='已切换到 Imagen 重新生成。',
+            channel=interaction.channel,
+            user_id=str(interaction.user.id),
+            request_user=interaction.user,
+            message=None,
+            current_turn_tool_names=[],
+        )
+        if isinstance(result, dict) and result.get('generation_failed'):
+            await interaction.followup.send(str(result.get('hint') or '切换到 Imagen 失败。'), ephemeral=True)
+
+    async def ai_rewrite_and_regenerate(self, interaction: discord.Interaction, description: str) -> None:
+        from src.chat.services.gemini_service import gemini_service
+
+        base_prompt = str(self.original_params.get('prompt') or '').strip()
+        if not base_prompt:
+            await interaction.followup.send('当前提示词为空，无法 AI 重写。', ephemeral=True)
+            return
+
+        change_text = description or '在不改变用户核心意图前提下优化细节、构图与光影。'
+        model_name = str(self.original_params.get('model_name') or '').strip()
+
+        if _is_natural_language_model(model_name):
+            rewrite_instruction = (
+                '你是中文视觉提示词优化助手。请将当前提示词按用户要求改写为中文自然语言提示词。\n'
+                '要求：\n'
+                '1) 只输出最终提示词，不要解释。\n'
+                '2) 使用中文完整句，建议按“风格/构图/外貌/发型/服装/姿势/神情/光影/背景”组织。\n'
+                '3) 保留用户核心意图，不得乱改主体设定。\n'
+                f'当前提示词：{base_prompt}\n'
+                f'用户要求：{change_text}'
+            )
+        else:
+            rewrite_instruction = (
+                '你是 Danbooru 提示词优化助手。请将当前提示词按用户要求改写为英文逗号分隔标签。\n'
+                '要求：\n'
+                '1) 只输出最终标签串，不要解释。\n'
+                '2) 保留用户核心意图与主体设定。\n'
+                '3) 标签顺序建议：质量词 -> 主体 -> 外观 -> 服装 -> 动作 -> 场景 -> 光影。\n'
+                f'当前提示词：{base_prompt}\n'
+                f'用户要求：{change_text}'
+            )
+
+        rewritten_prompt = await gemini_service.generate_simple_response(
+            prompt=' ',
+            generation_config={
+                'temperature': 0.45,
+                'max_output_tokens': 1800,
+            },
+            messages=[
+                {
+                    'role': 'user',
+                    'content': rewrite_instruction,
+                }
+            ],
+        )
+
+        new_prompt = str(rewritten_prompt or '').strip().strip('"').strip("'")
+        if not new_prompt:
+            await interaction.followup.send('AI 重写失败，请稍后再试。', ephemeral=True)
+            return
+
+        await self.regenerate_comfy(
+            interaction,
+            prompt=new_prompt,
+            negative_prompt=str(self.original_params.get('negative_prompt') or '').strip() or None,
+            preview_message='正在使用 AI 重写提示词重新生成（ComfyUI）...',
+            success_message='已根据 AI 重写提示词重新生成。',
+        )
+
+    @discord.ui.button(label='重新生成', style=discord.ButtonStyle.primary, emoji='🔄', row=0)
+    async def btn_regenerate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_permission(interaction):
+            return
+        await interaction.response.defer(thinking=True)
+        await self.regenerate_comfy(
+            interaction,
+            prompt=str(self.original_params.get('prompt') or '').strip(),
+            negative_prompt=str(self.original_params.get('negative_prompt') or '').strip() or None,
+            preview_message='正在重新生成（ComfyUI）...',
+            success_message='已重新生成。',
+        )
+
+    @discord.ui.button(label='修改提示词', style=discord.ButtonStyle.secondary, emoji='✏️', row=0)
+    async def btn_edit_prompt(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_permission(interaction):
+            return
+        await interaction.response.send_modal(ComfyEditPromptModal(self))
+
+    @discord.ui.button(label='切换到 NovelAI', style=discord.ButtonStyle.success, row=0)
+    async def btn_switch_novelai(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_permission(interaction):
+            return
+        await interaction.response.defer(thinking=True)
+        await self.switch_to_novelai(
+            interaction,
+            prompt=str(self.original_params.get('prompt') or '').strip(),
+            negative_prompt=str(self.original_params.get('negative_prompt') or '').strip() or None,
+        )
+
+    @discord.ui.button(label='切换到 Imagen', style=discord.ButtonStyle.success, row=0)
+    async def btn_switch_imagen(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_permission(interaction):
+            return
+        await interaction.response.defer(thinking=True)
+        await self.switch_to_imagen(
+            interaction,
+            prompt=str(self.original_params.get('prompt') or '').strip(),
+            negative_prompt=str(self.original_params.get('negative_prompt') or '').strip() or None,
+        )
+
+    @discord.ui.button(label='AI 重写', style=discord.ButtonStyle.secondary, emoji='🤖', row=0)
+    async def btn_ai_rewrite(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_permission(interaction):
+            return
+        await interaction.response.send_modal(ComfyAIRewriteModal(self))
+
+    async def on_timeout(self):
+        for item in self.children:
+            if isinstance(item, (discord.ui.Button, discord.ui.Select)):
+                item.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
 
 
 def _is_natural_language_model(model_name: Optional[str]) -> bool:
@@ -352,10 +669,38 @@ async def generate_image_comfyui(
                     footer_parts.append(f'余额: {new_balance}')
                 embed.set_footer(text=' | '.join(footer_parts))
 
+                result_view: Optional[ComfyResultView] = None
+                if parsed_user_id is not None:
+                    result_view = ComfyResultView(
+                        original_params={
+                            'prompt': prompt,
+                            'negative_prompt': negative_prompt,
+                            'width': effective_width,
+                            'height': effective_height,
+                            'steps': effective_steps,
+                            'cfg': effective_cfg,
+                            'sampler': effective_sampler,
+                            'scheduler': effective_scheduler,
+                            'seed': effective_seed,
+                            'lora': effective_lora,
+                            'lora_strength': lora_strength,
+                            'model_name': effective_model_name,
+                            'vae_name': effective_vae_name,
+                            'clip_name': effective_clip_name,
+                            'workflow_path': effective_workflow_path or None,
+                            'success_message': success_message,
+                            **passthrough_runtime_kwargs,
+                        },
+                        user_id=parsed_user_id,
+                    )
+
                 sent_message = await channel.send(
                     embed=embed,
                     file=discord.File(io.BytesIO(image_bytes), filename='generated_comfyui_image.png', spoiler=True),
+                    view=result_view,
                 )
+                if result_view is not None:
+                    result_view.message = sent_message
 
                 if parsed_user_id is not None and sent_message:
                     await chat_db_manager.register_generated_image_message(
