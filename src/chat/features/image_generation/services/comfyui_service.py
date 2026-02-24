@@ -86,6 +86,23 @@ class ComfyUIService:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _merge_fixed_prompt(base_prompt: Any, fixed_prompt: Any) -> str:
+        base_text = str(base_prompt or '').strip()
+        fixed_text = str(fixed_prompt or '').strip()
+        if not fixed_text:
+            return base_text
+        if not base_text:
+            return fixed_text
+
+        base_lower = base_text.lower()
+        fixed_lower = fixed_text.lower()
+        if fixed_lower in base_lower:
+            return base_text
+        if base_lower in fixed_lower:
+            return fixed_text
+        return f'{fixed_text}, {base_text}'
+
     def _refresh_endpoints(self) -> None:
         if not self.server_address:
             self.prompt_url = ''
@@ -195,9 +212,15 @@ class ComfyUIService:
         else:
             lora_value = config.get('DEFAULT_LORA')
 
+        fixed_positive_prompt = str(config.get('FIXED_POSITIVE_PROMPT') or '').strip()
+        fixed_negative_prompt = str(config.get('FIXED_NEGATIVE_PROMPT') or '').strip()
+
+        merged_positive_prompt = self._merge_fixed_prompt(positive_prompt, fixed_positive_prompt)
+        merged_negative_prompt = self._merge_fixed_prompt(kwargs.get('negative_prompt'), fixed_negative_prompt)
+
         params: Dict[str, Any] = {
-            'positive_prompt': str(positive_prompt or '').strip(),
-            'negative_prompt': str(kwargs.get('negative_prompt') or '').strip(),
+            'positive_prompt': merged_positive_prompt,
+            'negative_prompt': merged_negative_prompt,
             'width': self._coerce_int(kwargs.get('width'), self._coerce_int(config.get('DEFAULT_WIDTH'), 832)),
             'height': self._coerce_int(kwargs.get('height'), self._coerce_int(config.get('DEFAULT_HEIGHT'), 1216)),
             'steps': self._coerce_int(kwargs.get('steps'), self._coerce_int(config.get('DEFAULT_STEPS'), 28)),
@@ -210,7 +233,7 @@ class ComfyUIService:
                 kwargs.get('lora_strength'),
                 self._coerce_float(config.get('DEFAULT_LORA_STRENGTH'), 1.0),
             ),
-            'model_name': str(kwargs.get('model_name') or '').strip(),
+            'model_name': str(kwargs.get('model_name') or config.get('DEFAULT_MODEL_NAME') or '').strip(),
             'vae_name': str(kwargs.get('vae_name') or '').strip(),
         }
 
@@ -280,8 +303,14 @@ class ComfyUIService:
         return token_values
 
     async def get_available_model_names(self) -> list[str]:
+        return await self._get_available_choice_names(('ckpt_name', 'model_name'))
+
+    async def get_available_lora_names(self) -> list[str]:
+        return await self._get_available_choice_names(('lora_name',))
+
+    async def _fetch_object_info(self) -> Dict[str, Any]:
         if not self.server_address:
-            return []
+            return {}
 
         timeout_seconds = self._coerce_int(
             app_config.COMFYUI_CONFIG.get('REQUEST_TIMEOUT_SECONDS'),
@@ -294,23 +323,30 @@ class ComfyUIService:
             async with aiohttp.ClientSession(timeout=client_timeout) as session:
                 async with session.get(object_info_url) as response:
                     if response.status < 200 or response.status >= 300:
-                        return []
+                        return {}
                     payload = await self._read_response_payload(response)
         except Exception as error:
-            log.warning(f'获取 ComfyUI 底模列表失败: {error}')
-            return []
+            log.warning(f'获取 ComfyUI object_info 失败: {error}')
+            return {}
 
         if not isinstance(payload, dict):
+            return {}
+
+        return payload
+
+    async def _get_available_choice_names(self, field_names: tuple[str, ...]) -> list[str]:
+        payload = await self._fetch_object_info()
+        if not payload:
             return []
 
-        model_names: list[str] = []
+        names: list[str] = []
         seen = set()
 
         def collect_names_from_input_map(input_map: Any) -> None:
             if not isinstance(input_map, dict):
                 return
 
-            for field_name in ('ckpt_name', 'model_name'):
+            for field_name in field_names:
                 field_obj = input_map.get(field_name)
                 if not isinstance(field_obj, (list, tuple)) or not field_obj:
                     continue
@@ -323,11 +359,13 @@ class ComfyUIService:
                     item_text = str(item or '').strip()
                     if not item_text:
                         continue
+                    if item_text.lower() in {'none', '无', 'null'}:
+                        continue
                     item_key = item_text.lower()
                     if item_key in seen:
                         continue
                     seen.add(item_key)
-                    model_names.append(item_text)
+                    names.append(item_text)
 
         for _, node_info in payload.items():
             if not isinstance(node_info, dict):
@@ -340,7 +378,7 @@ class ComfyUIService:
             collect_names_from_input_map(input_obj.get('required'))
             collect_names_from_input_map(input_obj.get('optional'))
 
-        return model_names
+        return names
 
     def _replace_placeholders_in_string(
         self,

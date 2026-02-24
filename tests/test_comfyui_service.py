@@ -75,3 +75,35 @@ def test_prepare_workflow_applies_node_mapping_and_placeholders(tmp_path):
     finally:
         chat_config.COMFYUI_CONFIG['PLACEHOLDER_MAPPING'] = original_placeholder_mapping
         chat_config.COMFYUI_CONFIG['NODE_MAPPING'] = original_node_mapping
+
+
+def test_build_runtime_params_merges_fixed_prompts_and_default_model(tmp_path):
+    workflow_path = tmp_path / 'workflow_template.json'
+    workflow_path.write_text(json.dumps({'1': {'inputs': {'text': '{{positive_prompt}}'}}}, ensure_ascii=False), encoding='utf-8')
+
+    original_fixed_positive = chat_config.COMFYUI_CONFIG.get('FIXED_POSITIVE_PROMPT')
+    original_fixed_negative = chat_config.COMFYUI_CONFIG.get('FIXED_NEGATIVE_PROMPT')
+    original_default_model_name = chat_config.COMFYUI_CONFIG.get('DEFAULT_MODEL_NAME')
+
+    try:
+        chat_config.COMFYUI_CONFIG['FIXED_POSITIVE_PROMPT'] = 'masterpiece, best quality'
+        chat_config.COMFYUI_CONFIG['FIXED_NEGATIVE_PROMPT'] = 'lowres, bad anatomy'
+        chat_config.COMFYUI_CONFIG['DEFAULT_MODEL_NAME'] = 'global_default_model.safetensors'
+
+        service = ComfyUIService(
+            server_address='127.0.0.1:8188',
+            workflow_path=str(workflow_path),
+        )
+
+        params = service._build_runtime_params(
+            prompt='1girl, sunset',
+            negative_prompt='blur',
+        )
+
+        assert params['positive_prompt'] == 'masterpiece, best quality, 1girl, sunset'
+        assert params['negative_prompt'] == 'lowres, bad anatomy, blur'
+        assert params['model_name'] == 'global_default_model.safetensors'
+    finally:
+        chat_config.COMFYUI_CONFIG['FIXED_POSITIVE_PROMPT'] = original_fixed_positive
+        chat_config.COMFYUI_CONFIG['FIXED_NEGATIVE_PROMPT'] = original_fixed_negative
+        chat_config.COMFYUI_CONFIG['DEFAULT_MODEL_NAME'] = original_default_model_name

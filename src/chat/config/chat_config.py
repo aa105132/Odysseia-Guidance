@@ -713,8 +713,11 @@ COMFYUI_CONFIG = {
     "DEFAULT_SAMPLER": os.getenv("COMFYUI_DEFAULT_SAMPLER", "euler"),
     "DEFAULT_SCHEDULER": os.getenv("COMFYUI_DEFAULT_SCHEDULER", "normal"),
     "DEFAULT_SEED": _parse_int_env("COMFYUI_DEFAULT_SEED", 12345),
+    "DEFAULT_MODEL_NAME": os.getenv("COMFYUI_DEFAULT_MODEL_NAME", ""),
     "DEFAULT_LORA": os.getenv("COMFYUI_DEFAULT_LORA", ""),
     "DEFAULT_LORA_STRENGTH": _parse_float_env("COMFYUI_DEFAULT_LORA_STRENGTH", 1.0),
+    "FIXED_POSITIVE_PROMPT": os.getenv("COMFYUI_FIXED_POSITIVE_PROMPT", ""),
+    "FIXED_NEGATIVE_PROMPT": os.getenv("COMFYUI_FIXED_NEGATIVE_PROMPT", ""),
     # 占位符映射：参数名 -> 占位符文本
     # 默认同时支持 {{key}} 形式，此处仅用于自定义占位符名
     "PLACEHOLDER_MAPPING": _parse_str_map_env(
@@ -731,6 +734,8 @@ COMFYUI_CONFIG = {
             "seed": "{{seed}}",
             "lora": "{{lora}}",
             "lora_strength": "{{lora_strength}}",
+            "model_name": "{{model_name}}",
+            "vae_name": "{{vae_name}}",
         },
     ),
     # 可选：节点映射（参数名 -> [node_id, input_field]）

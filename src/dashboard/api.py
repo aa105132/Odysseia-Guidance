@@ -209,8 +209,11 @@ class ComfyUIConfigUpdate(BaseModel):
     default_sampler: Optional[str] = None
     default_scheduler: Optional[str] = None
     default_seed: Optional[int] = None
+    default_model_name: Optional[str] = None
     default_lora: Optional[str] = None
     default_lora_strength: Optional[float] = None
+    fixed_positive_prompt: Optional[str] = None
+    fixed_negative_prompt: Optional[str] = None
     request_timeout_seconds: Optional[int] = None
     poll_interval_seconds: Optional[float] = None
     placeholder_mapping: Optional[Dict[str, str]] = None
@@ -3015,8 +3018,11 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
     db_default_sampler = await chat_db_manager.get_global_setting('comfyui_default_sampler')
     db_default_scheduler = await chat_db_manager.get_global_setting('comfyui_default_scheduler')
     db_default_seed = await chat_db_manager.get_global_setting('comfyui_default_seed')
+    db_default_model_name = await chat_db_manager.get_global_setting('comfyui_default_model_name')
     db_default_lora = await chat_db_manager.get_global_setting('comfyui_default_lora')
     db_default_lora_strength = await chat_db_manager.get_global_setting('comfyui_default_lora_strength')
+    db_fixed_positive_prompt = await chat_db_manager.get_global_setting('comfyui_fixed_positive_prompt')
+    db_fixed_negative_prompt = await chat_db_manager.get_global_setting('comfyui_fixed_negative_prompt')
     db_timeout = await chat_db_manager.get_global_setting('comfyui_request_timeout_seconds')
     db_poll_interval = await chat_db_manager.get_global_setting('comfyui_poll_interval_seconds')
     db_placeholder_mapping = await chat_db_manager.get_global_setting('comfyui_placeholder_mapping')
@@ -3041,12 +3047,15 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
     default_sampler = str(db_default_sampler or config.get('DEFAULT_SAMPLER') or '').strip()
     default_scheduler = str(db_default_scheduler or config.get('DEFAULT_SCHEDULER') or '').strip()
     default_seed = int(db_default_seed) if db_default_seed else int(config.get('DEFAULT_SEED', 12345))
+    default_model_name = str(db_default_model_name or config.get('DEFAULT_MODEL_NAME') or '').strip()
     default_lora = str(db_default_lora or config.get('DEFAULT_LORA') or '').strip()
     default_lora_strength = (
         float(db_default_lora_strength)
         if db_default_lora_strength
         else float(config.get('DEFAULT_LORA_STRENGTH', 1.0))
     )
+    fixed_positive_prompt = str(db_fixed_positive_prompt or config.get('FIXED_POSITIVE_PROMPT') or '').strip()
+    fixed_negative_prompt = str(db_fixed_negative_prompt or config.get('FIXED_NEGATIVE_PROMPT') or '').strip()
     request_timeout_seconds = int(db_timeout) if db_timeout else int(config.get('REQUEST_TIMEOUT_SECONDS', 180))
     poll_interval_seconds = float(db_poll_interval) if db_poll_interval else float(config.get('POLL_INTERVAL_SECONDS', 1.0))
 
@@ -3062,13 +3071,55 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
     )
 
     service_available = False
+    available_model_names: List[str] = []
+    available_lora_names: List[str] = []
     try:
         from src.chat.features.image_generation.services.comfyui_service import comfyui_service
         service_available = comfyui_service.is_available()
+        available_model_names = await comfyui_service.get_available_model_names()
+        available_lora_names = await comfyui_service.get_available_lora_names()
     except Exception:
         pass
 
     workflow_exists = bool(workflow_path and os.path.exists(workflow_path))
+
+    available_workflow_paths: List[str] = []
+    seen_workflow_paths: set[str] = set()
+
+    def add_workflow_path(path_text: Optional[str]) -> None:
+        normalized_path = str(path_text or '').strip()
+        if not normalized_path:
+            return
+        normalized_path = os.path.normpath(normalized_path)
+        path_key = normalized_path.lower()
+        if path_key in seen_workflow_paths:
+            return
+        if not os.path.isfile(normalized_path):
+            return
+        if not normalized_path.lower().endswith('.json'):
+            return
+        seen_workflow_paths.add(path_key)
+        available_workflow_paths.append(normalized_path)
+
+    add_workflow_path(workflow_path)
+    add_workflow_path(config.get('WORKFLOW_PATH'))
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    candidate_workflow_dirs = [
+        os.path.join(project_root, 'data', 'comfyui'),
+        os.path.join(project_root, 'data', 'comfyui', 'workflows'),
+    ]
+
+    for directory in candidate_workflow_dirs:
+        if not os.path.isdir(directory):
+            continue
+        try:
+            for filename in sorted(os.listdir(directory)):
+                if not filename.lower().endswith('.json'):
+                    continue
+                add_workflow_path(os.path.join(directory, filename))
+        except Exception:
+            continue
 
     return {
         'enabled': enabled,
@@ -3076,6 +3127,7 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
         'server_address': server_address,
         'workflow_path': workflow_path,
         'workflow_exists': workflow_exists,
+        'available_workflow_paths': available_workflow_paths,
         'image_output_node_id': output_node_id,
         'generation_cost': generation_cost,
         'default_width': default_width,
@@ -3085,13 +3137,18 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
         'default_sampler': default_sampler,
         'default_scheduler': default_scheduler,
         'default_seed': default_seed,
+        'default_model_name': default_model_name,
         'default_lora': default_lora,
         'default_lora_strength': default_lora_strength,
+        'fixed_positive_prompt': fixed_positive_prompt,
+        'fixed_negative_prompt': fixed_negative_prompt,
         'request_timeout_seconds': request_timeout_seconds,
         'poll_interval_seconds': poll_interval_seconds,
         'placeholder_mapping': placeholder_mapping,
         'node_mapping': node_mapping,
         'service_available': service_available,
+        'available_model_names': available_model_names,
+        'available_lora_names': available_lora_names,
     }
 
 
@@ -3214,7 +3271,10 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
     string_config_fields = [
         ('default_sampler', 'DEFAULT_SAMPLER', 'COMFYUI_DEFAULT_SAMPLER', 'comfyui_default_sampler'),
         ('default_scheduler', 'DEFAULT_SCHEDULER', 'COMFYUI_DEFAULT_SCHEDULER', 'comfyui_default_scheduler'),
+        ('default_model_name', 'DEFAULT_MODEL_NAME', 'COMFYUI_DEFAULT_MODEL_NAME', 'comfyui_default_model_name'),
         ('default_lora', 'DEFAULT_LORA', 'COMFYUI_DEFAULT_LORA', 'comfyui_default_lora'),
+        ('fixed_positive_prompt', 'FIXED_POSITIVE_PROMPT', 'COMFYUI_FIXED_POSITIVE_PROMPT', 'comfyui_fixed_positive_prompt'),
+        ('fixed_negative_prompt', 'FIXED_NEGATIVE_PROMPT', 'COMFYUI_FIXED_NEGATIVE_PROMPT', 'comfyui_fixed_negative_prompt'),
     ]
 
     for request_key, runtime_key, env_key, db_key in string_config_fields:
@@ -3254,6 +3314,8 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
         comfyui_service.reinitialize()
         updated['service_reloaded'] = True
         updated['service_available'] = comfyui_service.is_available()
+        updated['available_model_names'] = await comfyui_service.get_available_model_names()
+        updated['available_lora_names'] = await comfyui_service.get_available_lora_names()
     except Exception as error:
         log.warning(f'热重载 ComfyUI 服务失败: {error}')
         updated['service_reload_error'] = str(error)
@@ -3269,7 +3331,14 @@ async def test_comfyui_connection(token: str = Depends(verify_token)):
     '''测试 ComfyUI 连接'''
     try:
         from src.chat.features.image_generation.services.comfyui_service import comfyui_service
-        return await comfyui_service.test_connection()
+        result = await comfyui_service.test_connection()
+        if result.get('success'):
+            try:
+                result['available_model_names'] = await comfyui_service.get_available_model_names()
+                result['available_lora_names'] = await comfyui_service.get_available_lora_names()
+            except Exception as error:
+                result['assets_error'] = str(error)
+        return result
     except Exception as error:
         log.error(f'测试 ComfyUI 连接失败: {error}', exc_info=True)
         return {'success': False, 'error': str(error)}

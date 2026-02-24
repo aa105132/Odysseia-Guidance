@@ -748,6 +748,26 @@
                                    class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500'>
                         </div>
 
+                        <div class='grid grid-cols-1 md:grid-cols-3 gap-3'>
+                            <div class='md:col-span-2'>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>默认工作流快捷选择（已发现文件）</label>
+                                <select x-model='comfyuiForm.selected_workflow_path'
+                                        class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                                    <option value=''>请选择工作流文件</option>
+                                    <template x-for='workflowPath in comfyuiAvailableWorkflowPaths' :key='`wf-${workflowPath}`'>
+                                        <option :value='workflowPath' x-text='workflowPath'></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class='flex items-end'>
+                                <button @click='applyComfyuiWorkflowPathFromSelect()'
+                                        type='button'
+                                        class='w-full bg-slate-700 hover:bg-slate-600 text-white px-4 py-3 rounded-lg'>
+                                    设为默认工作流
+                                </button>
+                            </div>
+                        </div>
+
                         <div>
                             <label class='block text-sm font-medium text-slate-300 mb-2'>工作流路径（可直接填本地绝对路径）</label>
                             <input type='text' x-model='comfyuiForm.workflow_path' placeholder='D:\Downloads\workflow.json'
@@ -804,14 +824,72 @@
 
                         <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
                             <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>默认底模（Checkpoint）</label>
+                                <select x-model='comfyuiForm.default_model_name'
+                                        class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                                    <option value=''>工作流默认（不覆盖）</option>
+                                    <template x-for='modelName in comfyuiAvailableModelNames' :key='`model-${modelName}`'>
+                                        <option :value='modelName' x-text='modelName'></option>
+                                    </template>
+                                </select>
+                                <p class='text-xs text-slate-500 mt-1'>可选项来自 ComfyUI API（/object_info）。</p>
+                            </div>
+                            <div>
                                 <label class='block text-sm font-medium text-slate-300 mb-2'>默认 LoRA</label>
                                 <input type='text' x-model='comfyuiForm.default_lora' placeholder='例如：my_lora.safetensors'
                                        class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
                             </div>
+                        </div>
+
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
                             <div>
                                 <label class='block text-sm font-medium text-slate-300 mb-2'>LoRA 强度</label>
                                 <input type='number' min='0' step='0.1' x-model.number='comfyuiForm.default_lora_strength'
                                        class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            </div>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>LoRA 快速选择（API 列表）</label>
+                                <div class='grid grid-cols-1 md:grid-cols-3 gap-2'>
+                                    <select x-model='comfyuiForm.quick_lora_name'
+                                            class='md:col-span-2 w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                        <option value=''>请选择 LoRA</option>
+                                        <template x-for='loraName in comfyuiAvailableLoraNames' :key='`lora-${loraName}`'>
+                                            <option :value='loraName' x-text='loraName'></option>
+                                        </template>
+                                    </select>
+                                    <input type='number' min='0' step='0.1' x-model.number='comfyuiForm.quick_lora_strength'
+                                           class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                </div>
+                                <div class='flex flex-wrap gap-2 mt-2'>
+                                    <button @click='setComfyuiDefaultLoraFromQuick()'
+                                            type='button'
+                                            class='bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg text-xs'>
+                                        设为默认 LoRA
+                                    </button>
+                                    <button @click="appendComfyuiQuickLoraToFixedPrompt('positive')"
+                                            type='button'
+                                            class='bg-emerald-700/70 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs'>
+                                        追加到固定正面
+                                    </button>
+                                    <button @click="appendComfyuiQuickLoraToFixedPrompt('negative')"
+                                            type='button'
+                                            class='bg-purple-700/70 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs'>
+                                        追加到固定负面
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>固定正面提示词</label>
+                                <textarea x-model='comfyuiForm.fixed_positive_prompt' rows='3' placeholder='每次生成都会自动拼接在正面提示词前面'
+                                          class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'></textarea>
+                            </div>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>固定负面提示词</label>
+                                <textarea x-model='comfyuiForm.fixed_negative_prompt' rows='3' placeholder='每次生成都会自动拼接在负面提示词前面'
+                                          class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'></textarea>
                             </div>
                         </div>
 
@@ -926,6 +1004,26 @@
                                    class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500'>
                         </div>
 
+                        <div class='grid grid-cols-1 md:grid-cols-3 gap-3'>
+                            <div class='md:col-span-2'>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>默认工作流快捷选择（已发现文件）</label>
+                                <select x-model='comfyuiForm.selected_workflow_path'
+                                        class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                                    <option value=''>请选择工作流文件</option>
+                                    <template x-for='workflowPath in comfyuiAvailableWorkflowPaths' :key='`wf-${workflowPath}`'>
+                                        <option :value='workflowPath' x-text='workflowPath'></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class='flex items-end'>
+                                <button @click='applyComfyuiWorkflowPathFromSelect()'
+                                        type='button'
+                                        class='w-full bg-slate-700 hover:bg-slate-600 text-white px-4 py-3 rounded-lg'>
+                                    设为默认工作流
+                                </button>
+                            </div>
+                        </div>
+
                         <div>
                             <label class='block text-sm font-medium text-slate-300 mb-2'>工作流路径（可直接填本地绝对路径）</label>
                             <input type='text' x-model='comfyuiForm.workflow_path' placeholder='D:\Downloads\workflow.json'
@@ -982,14 +1080,72 @@
 
                         <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
                             <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>默认底模（Checkpoint）</label>
+                                <select x-model='comfyuiForm.default_model_name'
+                                        class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                                    <option value=''>工作流默认（不覆盖）</option>
+                                    <template x-for='modelName in comfyuiAvailableModelNames' :key='`model-${modelName}`'>
+                                        <option :value='modelName' x-text='modelName'></option>
+                                    </template>
+                                </select>
+                                <p class='text-xs text-slate-500 mt-1'>可选项来自 ComfyUI API（/object_info）。</p>
+                            </div>
+                            <div>
                                 <label class='block text-sm font-medium text-slate-300 mb-2'>默认 LoRA</label>
                                 <input type='text' x-model='comfyuiForm.default_lora' placeholder='例如：my_lora.safetensors'
                                        class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
                             </div>
+                        </div>
+
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
                             <div>
                                 <label class='block text-sm font-medium text-slate-300 mb-2'>LoRA 强度</label>
                                 <input type='number' min='0' step='0.1' x-model.number='comfyuiForm.default_lora_strength'
                                        class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            </div>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>LoRA 快速选择（API 列表）</label>
+                                <div class='grid grid-cols-1 md:grid-cols-3 gap-2'>
+                                    <select x-model='comfyuiForm.quick_lora_name'
+                                            class='md:col-span-2 w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                        <option value=''>请选择 LoRA</option>
+                                        <template x-for='loraName in comfyuiAvailableLoraNames' :key='`lora-${loraName}`'>
+                                            <option :value='loraName' x-text='loraName'></option>
+                                        </template>
+                                    </select>
+                                    <input type='number' min='0' step='0.1' x-model.number='comfyuiForm.quick_lora_strength'
+                                           class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                </div>
+                                <div class='flex flex-wrap gap-2 mt-2'>
+                                    <button @click='setComfyuiDefaultLoraFromQuick()'
+                                            type='button'
+                                            class='bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg text-xs'>
+                                        设为默认 LoRA
+                                    </button>
+                                    <button @click="appendComfyuiQuickLoraToFixedPrompt('positive')"
+                                            type='button'
+                                            class='bg-emerald-700/70 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs'>
+                                        追加到固定正面
+                                    </button>
+                                    <button @click="appendComfyuiQuickLoraToFixedPrompt('negative')"
+                                            type='button'
+                                            class='bg-purple-700/70 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs'>
+                                        追加到固定负面
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>固定正面提示词</label>
+                                <textarea x-model='comfyuiForm.fixed_positive_prompt' rows='3' placeholder='每次生成都会自动拼接在正面提示词前面'
+                                          class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'></textarea>
+                            </div>
+                            <div>
+                                <label class='block text-sm font-medium text-slate-300 mb-2'>固定负面提示词</label>
+                                <textarea x-model='comfyuiForm.fixed_negative_prompt' rows='3' placeholder='每次生成都会自动拼接在负面提示词前面'
+                                          class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'></textarea>
                             </div>
                         </div>
 
@@ -3365,6 +3521,7 @@
                     enable_slash_command: true,
                     server_address: 'http://127.0.0.1:8188',
                     workflow_path: '',
+                    selected_workflow_path: '',
                     workflow_json: '',
                     image_output_node_id: '',
                     generation_cost: 5,
@@ -3375,8 +3532,11 @@
                     default_sampler: 'euler',
                     default_scheduler: 'normal',
                     default_seed: 12345,
+                    default_model_name: '',
                     default_lora: '',
                     default_lora_strength: 1.0,
+                    fixed_positive_prompt: '',
+                    fixed_negative_prompt: '',
                     request_timeout_seconds: 180,
                     poll_interval_seconds: 1.0,
                     placeholder_mapping_text: '{}',
@@ -3384,9 +3544,14 @@
                     lora_download_url: '',
                     lora_download_filename: '',
                     lora_download_save_path: '',
+                    quick_lora_name: '',
+                    quick_lora_strength: 0.8,
                 },
                 comfyuiConfig: {},
                 comfyuiWorkflowFileName: '',
+                comfyuiAvailableWorkflowPaths: [],
+                comfyuiAvailableModelNames: [],
+                comfyuiAvailableLoraNames: [],
                 embeddingForm: { enabled: true, provider: 'gemini', api_url: '', api_key: '', model: 'gemini-embedding-001', custom_model: '', dimensions: 768 },
                 embeddingConfig: {},
                 
@@ -4735,6 +4900,10 @@
                         this.comfyuiForm.enable_slash_command = data.enable_slash_command ?? true;
                         this.comfyuiForm.server_address = data.server_address || 'http://127.0.0.1:8188';
                         this.comfyuiForm.workflow_path = data.workflow_path || '';
+                        this.comfyuiAvailableWorkflowPaths = Array.isArray(data.available_workflow_paths) ? data.available_workflow_paths : [];
+                        this.comfyuiForm.selected_workflow_path = this.comfyuiAvailableWorkflowPaths.includes(this.comfyuiForm.workflow_path)
+                            ? this.comfyuiForm.workflow_path
+                            : '';
                         this.comfyuiForm.image_output_node_id = data.image_output_node_id || '';
                         this.comfyuiForm.generation_cost = data.generation_cost ?? 5;
                         this.comfyuiForm.default_width = data.default_width ?? 832;
@@ -4744,10 +4913,18 @@
                         this.comfyuiForm.default_sampler = data.default_sampler || 'euler';
                         this.comfyuiForm.default_scheduler = data.default_scheduler || 'normal';
                         this.comfyuiForm.default_seed = data.default_seed ?? 12345;
+                        this.comfyuiForm.default_model_name = data.default_model_name || '';
                         this.comfyuiForm.default_lora = data.default_lora || '';
                         this.comfyuiForm.default_lora_strength = data.default_lora_strength ?? 1.0;
+                        this.comfyuiForm.fixed_positive_prompt = data.fixed_positive_prompt || '';
+                        this.comfyuiForm.fixed_negative_prompt = data.fixed_negative_prompt || '';
                         this.comfyuiForm.request_timeout_seconds = data.request_timeout_seconds ?? 180;
                         this.comfyuiForm.poll_interval_seconds = data.poll_interval_seconds ?? 1.0;
+                        this.comfyuiAvailableModelNames = Array.isArray(data.available_model_names) ? data.available_model_names : [];
+                        this.comfyuiAvailableLoraNames = Array.isArray(data.available_lora_names) ? data.available_lora_names : [];
+                        if (!this.comfyuiForm.quick_lora_name && this.comfyuiAvailableLoraNames.length > 0) {
+                            this.comfyuiForm.quick_lora_name = this.comfyuiAvailableLoraNames[0];
+                        }
                         this.comfyuiForm.placeholder_mapping_text = JSON.stringify(data.placeholder_mapping || {}, null, 2);
                         this.comfyuiForm.node_mapping_text = JSON.stringify(data.node_mapping || {}, null, 2);
                     } catch (e) {
@@ -4779,6 +4956,11 @@
                         });
                         const data = await response.json();
                         if (data.success) {
+                            this.comfyuiAvailableModelNames = Array.isArray(data.available_model_names) ? data.available_model_names : this.comfyuiAvailableModelNames;
+                            this.comfyuiAvailableLoraNames = Array.isArray(data.available_lora_names) ? data.available_lora_names : this.comfyuiAvailableLoraNames;
+                            if (!this.comfyuiForm.quick_lora_name && this.comfyuiAvailableLoraNames.length > 0) {
+                                this.comfyuiForm.quick_lora_name = this.comfyuiAvailableLoraNames[0];
+                            }
                             this.showToast(data.message || 'ComfyUI 连接成功', 'success');
                         } else {
                             this.showToast(data.error || 'ComfyUI 连接失败', 'error');
@@ -4815,6 +4997,7 @@
                             const data = await response.json();
                             const warning = data.queue_start_warning ? `（${data.queue_start_warning}）` : '';
                             this.showToast(`LoRA 下载任务已提交 ${warning}`.trim(), 'success');
+                            await this.loadComfyuiConfig();
                         } else {
                             const data = await response.json();
                             this.showToast(data.detail || 'LoRA 下载失败', 'error');
@@ -4823,6 +5006,61 @@
                         this.showToast('LoRA 下载失败', 'error');
                     }
                     this.testing = false;
+                },
+
+                applyComfyuiWorkflowPathFromSelect() {
+                    const selectedPath = (this.comfyuiForm.selected_workflow_path || '').trim();
+                    if (!selectedPath) {
+                        this.showToast('请先选择工作流路径', 'error');
+                        return;
+                    }
+                    this.comfyuiForm.workflow_path = selectedPath;
+                    this.showToast('已填入默认工作流路径', 'success');
+                },
+
+                getComfyuiQuickLoraToken() {
+                    const loraName = (this.comfyuiForm.quick_lora_name || '').trim();
+                    if (!loraName) {
+                        return '';
+                    }
+
+                    const strength = Number(this.comfyuiForm.quick_lora_strength);
+                    const normalizedStrength = Number.isFinite(strength) ? Math.max(0, strength) : 0.8;
+                    return `<lora:${loraName}:${normalizedStrength.toFixed(2)}>`;
+                },
+
+                setComfyuiDefaultLoraFromQuick() {
+                    const loraName = (this.comfyuiForm.quick_lora_name || '').trim();
+                    if (!loraName) {
+                        this.showToast('请先选择 LoRA', 'error');
+                        return;
+                    }
+                    this.comfyuiForm.default_lora = loraName;
+                    this.showToast('已填入默认 LoRA', 'success');
+                },
+
+                appendComfyuiQuickLoraToFixedPrompt(target) {
+                    const token = this.getComfyuiQuickLoraToken();
+                    if (!token) {
+                        this.showToast('请先选择 LoRA', 'error');
+                        return;
+                    }
+
+                    const isNegative = String(target || '').toLowerCase() === 'negative';
+                    const fieldName = isNegative ? 'fixed_negative_prompt' : 'fixed_positive_prompt';
+                    const currentText = (this.comfyuiForm[fieldName] || '').trim();
+                    const lowerCurrentText = currentText.toLowerCase();
+
+                    if (!currentText) {
+                        this.comfyuiForm[fieldName] = token;
+                    } else if (!lowerCurrentText.includes(token.toLowerCase())) {
+                        this.comfyuiForm[fieldName] = `${currentText}, ${token}`;
+                    }
+
+                    this.showToast(
+                        isNegative ? '已追加 LoRA 到固定负面提示词' : '已追加 LoRA 到固定正面提示词',
+                        'success'
+                    );
                 },
 
                 async saveComfyuiConfig() {
@@ -4874,8 +5112,11 @@
                             default_sampler: (this.comfyuiForm.default_sampler || '').trim(),
                             default_scheduler: (this.comfyuiForm.default_scheduler || '').trim(),
                             default_seed: parseInt(this.comfyuiForm.default_seed),
+                            default_model_name: (this.comfyuiForm.default_model_name || '').trim(),
                             default_lora: (this.comfyuiForm.default_lora || '').trim(),
                             default_lora_strength: parseFloat(this.comfyuiForm.default_lora_strength),
+                            fixed_positive_prompt: (this.comfyuiForm.fixed_positive_prompt || '').trim(),
+                            fixed_negative_prompt: (this.comfyuiForm.fixed_negative_prompt || '').trim(),
                             request_timeout_seconds: parseInt(this.comfyuiForm.request_timeout_seconds),
                             poll_interval_seconds: parseFloat(this.comfyuiForm.poll_interval_seconds),
                             placeholder_mapping: placeholderMapping,
