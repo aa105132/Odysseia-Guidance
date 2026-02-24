@@ -283,13 +283,13 @@ class ComfyUIService:
             'width': ['%width%'],
             'height': ['%height%'],
             'steps': ['%steps%'],
-            'cfg': ['%cfg%'],
-            'sampler': ['%sampler%'],
-            'scheduler': ['%scheduler%'],
+            'cfg': ['%cfg%', '%cfg_scale%', '%CFG%', '%CFG_SCALE%'],
+            'sampler': ['%sampler%', '%sampler_name%', '%SAMPLER%', '%SAMPLER_NAME%'],
+            'scheduler': ['%scheduler%', '%scheduler_name%', '%SCHEDULER%', '%SCHEDULER_NAME%'],
             'seed': ['%seed%'],
             'lora': ['%lora%'],
             'lora_strength': ['%lora_strength%'],
-            'model_name': ['%MODEL_NAME%', '%model_name%'],
+            'model_name': ['%MODEL_NAME%', '%model_name%', '%CKPT_NAME%', '%ckpt_name%', '%MODEL%', '%model%'],
             'vae_name': ['%VAE_NAME%', '%vae_name%'],
         }
 

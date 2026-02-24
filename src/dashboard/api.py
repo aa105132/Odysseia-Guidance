@@ -3067,11 +3067,17 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
     request_timeout_seconds = int(db_timeout) if db_timeout else int(config.get('REQUEST_TIMEOUT_SECONDS', 180))
     poll_interval_seconds = float(db_poll_interval) if db_poll_interval else float(config.get('POLL_INTERVAL_SECONDS', 1.0))
 
+    default_placeholder_mapping = _normalize_string_map(config.get('PLACEHOLDER_MAPPING', {}))
     placeholder_mapping = (
         _parse_string_map_setting(db_placeholder_mapping)
         if db_placeholder_mapping is not None
-        else _normalize_string_map(config.get('PLACEHOLDER_MAPPING', {}))
+        else dict(default_placeholder_mapping)
     )
+    if default_placeholder_mapping:
+        merged_placeholder_mapping = dict(default_placeholder_mapping)
+        merged_placeholder_mapping.update(placeholder_mapping)
+        placeholder_mapping = merged_placeholder_mapping
+
     node_mapping = (
         _parse_json_object_setting(db_node_mapping)
         if db_node_mapping is not None

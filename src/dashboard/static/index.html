@@ -948,13 +948,27 @@
                         </div>
 
                         <div>
-                            <label class='block text-sm font-medium text-slate-300 mb-2'>占位符映射（JSON 对象）</label>
+                            <div class='flex items-center justify-between mb-2'>
+                                <label class='block text-sm font-medium text-slate-300'>占位符映射（JSON 对象）</label>
+                                <button @click='resetComfyuiPlaceholderMapping()'
+                                        type='button'
+                                        class='text-xs px-2.5 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700/60'>
+                                    恢复默认
+                                </button>
+                            </div>
                             <textarea x-model='comfyuiForm.placeholder_mapping_text' rows='4'
                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
                         </div>
 
                         <div>
-                            <label class='block text-sm font-medium text-slate-300 mb-2'>节点映射（JSON 对象）</label>
+                            <div class='flex items-center justify-between mb-2'>
+                                <label class='block text-sm font-medium text-slate-300'>节点映射（JSON 对象）</label>
+                                <button @click='resetComfyuiNodeMapping()'
+                                        type='button'
+                                        class='text-xs px-2.5 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700/60'>
+                                    恢复默认
+                                </button>
+                            </div>
                             <textarea x-model='comfyuiForm.node_mapping_text' rows='4'
                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
                         </div>
@@ -1211,13 +1225,27 @@
                         </div>
 
                         <div>
-                            <label class='block text-sm font-medium text-slate-300 mb-2'>占位符映射（JSON 对象）</label>
+                            <div class='flex items-center justify-between mb-2'>
+                                <label class='block text-sm font-medium text-slate-300'>占位符映射（JSON 对象）</label>
+                                <button @click='resetComfyuiPlaceholderMapping()'
+                                        type='button'
+                                        class='text-xs px-2.5 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700/60'>
+                                    恢复默认
+                                </button>
+                            </div>
                             <textarea x-model='comfyuiForm.placeholder_mapping_text' rows='4'
                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
                         </div>
 
                         <div>
-                            <label class='block text-sm font-medium text-slate-300 mb-2'>节点映射（JSON 对象）</label>
+                            <div class='flex items-center justify-between mb-2'>
+                                <label class='block text-sm font-medium text-slate-300'>节点映射（JSON 对象）</label>
+                                <button @click='resetComfyuiNodeMapping()'
+                                        type='button'
+                                        class='text-xs px-2.5 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700/60'>
+                                    恢复默认
+                                </button>
+                            </div>
                             <textarea x-model='comfyuiForm.node_mapping_text' rows='4'
                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
                         </div>
@@ -4899,6 +4927,61 @@
                     }
                 },
 
+                getDefaultComfyuiPlaceholderMapping() {
+                    return {
+                        positive_prompt: '{{positive_prompt}}',
+                        negative_prompt: '{{negative_prompt}}',
+                        width: '{{width}}',
+                        height: '{{height}}',
+                        steps: '{{steps}}',
+                        cfg: '{{cfg}}',
+                        sampler: '{{sampler}}',
+                        scheduler: '{{scheduler}}',
+                        seed: '{{seed}}',
+                        lora: '{{lora}}',
+                        lora_strength: '{{lora_strength}}',
+                        model_name: '{{model_name}}',
+                        vae_name: '{{vae_name}}',
+                    };
+                },
+
+                getDefaultComfyuiNodeMapping() {
+                    return {};
+                },
+
+                normalizeComfyuiPlaceholderMappingForDisplay(rawMapping) {
+                    const defaults = this.getDefaultComfyuiPlaceholderMapping();
+                    if (!rawMapping || typeof rawMapping !== 'object' || Array.isArray(rawMapping)) {
+                        return defaults;
+                    }
+                    return { ...defaults, ...rawMapping };
+                },
+
+                normalizeComfyuiNodeMappingForDisplay(rawMapping) {
+                    if (!rawMapping || typeof rawMapping !== 'object' || Array.isArray(rawMapping)) {
+                        return this.getDefaultComfyuiNodeMapping();
+                    }
+                    return rawMapping;
+                },
+
+                resetComfyuiPlaceholderMapping() {
+                    this.comfyuiForm.placeholder_mapping_text = JSON.stringify(
+                        this.getDefaultComfyuiPlaceholderMapping(),
+                        null,
+                        2
+                    );
+                    this.showToast('占位符映射已恢复默认，请记得保存', 'success');
+                },
+
+                resetComfyuiNodeMapping() {
+                    this.comfyuiForm.node_mapping_text = JSON.stringify(
+                        this.getDefaultComfyuiNodeMapping(),
+                        null,
+                        2
+                    );
+                    this.showToast('节点映射已恢复默认，请记得保存', 'success');
+                },
+
                 async loadComfyuiConfig() {
                     try {
                         const response = await fetch('/api/config/comfyui', {
@@ -4952,8 +5035,8 @@
                         if (!this.comfyuiForm.quick_lora_name && this.comfyuiAvailableLoraNames.length > 0) {
                             this.comfyuiForm.quick_lora_name = this.comfyuiAvailableLoraNames[0];
                         }
-                        this.comfyuiForm.placeholder_mapping_text = JSON.stringify(data.placeholder_mapping || {}, null, 2);
-                        this.comfyuiForm.node_mapping_text = JSON.stringify(data.node_mapping || {}, null, 2);
+                        this.comfyuiForm.placeholder_mapping_text = JSON.stringify(this.normalizeComfyuiPlaceholderMappingForDisplay(data.placeholder_mapping), null, 2);
+                        this.comfyuiForm.node_mapping_text = JSON.stringify(this.normalizeComfyuiNodeMappingForDisplay(data.node_mapping), null, 2);
                     } catch (e) {
                         console.warn('加载 ComfyUI 配置失败:', e);
                     }

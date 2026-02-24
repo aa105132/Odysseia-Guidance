@@ -77,6 +77,54 @@ def test_prepare_workflow_applies_node_mapping_and_placeholders(tmp_path):
         chat_config.COMFYUI_CONFIG['NODE_MAPPING'] = original_node_mapping
 
 
+
+
+def test_prepare_workflow_supports_percent_style_alias_placeholders(tmp_path):
+    workflow_template = {
+        '1': {
+            'inputs': {
+                'cfg': '%cfg_scale%',
+                'sampler_name': '%sampler_name%',
+                'scheduler': '%scheduler_name%',
+                'ckpt_name': '%ckpt_name%',
+            }
+        }
+    }
+    workflow_path = tmp_path / 'workflow_alias_template.json'
+    workflow_path.write_text(
+        json.dumps(workflow_template, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    original_placeholder_mapping = chat_config.COMFYUI_CONFIG.get('PLACEHOLDER_MAPPING')
+    original_node_mapping = chat_config.COMFYUI_CONFIG.get('NODE_MAPPING')
+
+    try:
+        chat_config.COMFYUI_CONFIG['PLACEHOLDER_MAPPING'] = {}
+        chat_config.COMFYUI_CONFIG['NODE_MAPPING'] = {}
+
+        service = ComfyUIService(
+            server_address='127.0.0.1:8188',
+            workflow_path=str(workflow_path),
+        )
+        params = service._build_runtime_params(
+            prompt='机械姬',
+            cfg=7.2,
+            sampler='dpmpp_2m',
+            scheduler='karras',
+            model_name='my_model_v3.safetensors',
+        )
+
+        prepared_workflow = service._prepare_workflow(params)
+
+        assert prepared_workflow['1']['inputs']['cfg'] == 7.2
+        assert prepared_workflow['1']['inputs']['sampler_name'] == 'dpmpp_2m'
+        assert prepared_workflow['1']['inputs']['scheduler'] == 'karras'
+        assert prepared_workflow['1']['inputs']['ckpt_name'] == 'my_model_v3.safetensors'
+    finally:
+        chat_config.COMFYUI_CONFIG['PLACEHOLDER_MAPPING'] = original_placeholder_mapping
+        chat_config.COMFYUI_CONFIG['NODE_MAPPING'] = original_node_mapping
+
 def test_build_runtime_params_merges_fixed_prompts_and_default_model(tmp_path):
     workflow_path = tmp_path / 'workflow_template.json'
     workflow_path.write_text(json.dumps({'1': {'inputs': {'text': '{{positive_prompt}}'}}}, ensure_ascii=False), encoding='utf-8')
