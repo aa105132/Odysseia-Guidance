@@ -801,6 +801,70 @@ class ComfyUIService:
                 'error': f'下载 LoRA 时发生异常: {error}',
             }
 
+
+    async def install_custom_node_from_url(self, git_url: str) -> Dict[str, Any]:
+        normalized_url = self._sanitize_invisible_chars(git_url)
+        if not normalized_url:
+            return {'success': False, 'error': '插件节点链接不能为空'}
+
+        if not (normalized_url.startswith('http://') or normalized_url.startswith('https://')):
+            return {'success': False, 'error': '插件节点链接必须以 http:// 或 https:// 开头'}
+
+        if not self.server_address:
+            return {'success': False, 'error': 'ComfyUI SERVER_ADDRESS 未配置'}
+
+        timeout_seconds = self._coerce_int(
+            app_config.COMFYUI_CONFIG.get('REQUEST_TIMEOUT_SECONDS'),
+            180,
+        )
+        client_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        install_url = f'{self.server_address}/customnode/install/git_url'
+        queue_start_url = f'{self.server_address}/manager/queue/start'
+
+        try:
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                async with session.post(
+                    install_url,
+                    data=normalized_url.encode('utf-8'),
+                    headers={'Content-Type': 'text/plain; charset=utf-8'},
+                ) as response:
+                    install_result = await self._read_response_payload(response)
+                    if response.status < 200 or response.status >= 300:
+                        return {
+                            'success': False,
+                            'error': '调用 ComfyUI-Manager 安装插件节点失败，请确认已安装 Manager 插件。',
+                            'status': response.status,
+                            'response': install_result,
+                        }
+
+                queue_start_result: Any = None
+                queue_start_status: Optional[int] = None
+                queue_start_warning: Optional[str] = None
+
+                try:
+                    async with session.get(queue_start_url) as start_response:
+                        queue_start_status = start_response.status
+                        queue_start_result = await self._read_response_payload(start_response)
+                        if start_response.status < 200 or start_response.status >= 300:
+                            queue_start_warning = '插件安装任务已提交，但启动队列失败，请检查 ComfyUI-Manager 队列状态。'
+                except Exception as error:
+                    queue_start_warning = f'插件安装任务已提交，但启动队列请求异常: {error}'
+
+                return {
+                    'success': True,
+                    'message': '插件节点安装任务已提交到 ComfyUI-Manager。',
+                    'install_result': install_result,
+                    'queue_start_status': queue_start_status,
+                    'queue_start_result': queue_start_result,
+                    'queue_start_warning': queue_start_warning,
+                }
+        except Exception as error:
+            log.error(f'安装 ComfyUI 插件节点失败: {error}', exc_info=True)
+            return {
+                'success': False,
+                'error': f'安装插件节点时发生异常: {error}',
+            }
+
     async def test_connection(self) -> Dict[str, Any]:
         if not self.server_address:
             return {'success': False, 'error': 'ComfyUI SERVER_ADDRESS 未配置'}

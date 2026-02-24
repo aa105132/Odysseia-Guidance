@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -155,3 +156,30 @@ def test_build_runtime_params_merges_fixed_prompts_and_default_model(tmp_path):
         chat_config.COMFYUI_CONFIG['FIXED_POSITIVE_PROMPT'] = original_fixed_positive
         chat_config.COMFYUI_CONFIG['FIXED_NEGATIVE_PROMPT'] = original_fixed_negative
         chat_config.COMFYUI_CONFIG['DEFAULT_MODEL_NAME'] = original_default_model_name
+
+
+def test_install_custom_node_from_url_rejects_empty_url():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+
+    result = asyncio.run(service.install_custom_node_from_url(''))
+
+    assert result.get('success') is False
+    assert '不能为空' in str(result.get('error') or '')
+
+
+def test_install_custom_node_from_url_rejects_non_http_url():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+
+    result = asyncio.run(service.install_custom_node_from_url('ftp://example.com/repo.git'))
+
+    assert result.get('success') is False
+    assert 'http://' in str(result.get('error') or '')
+
+
+def test_install_custom_node_from_url_requires_server_address():
+    service = ComfyUIService(server_address='', workflow_path='')
+
+    result = asyncio.run(service.install_custom_node_from_url('https://github.com/comfyanonymous/ComfyUI-Manager'))
+
+    assert result.get('success') is False
+    assert 'SERVER_ADDRESS' in str(result.get('error') or '')

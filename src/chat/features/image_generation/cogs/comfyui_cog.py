@@ -1387,12 +1387,13 @@ class ComfyUICog(commands.Cog):
 
         await interaction.followup.send('生成完成，图片已发送到当前频道。', ephemeral=True)
 
-    @app_commands.command(name='comfy', description='ComfyUI 绘图面板（支持上传/切换工作流与 LoRA）')
+    @app_commands.command(name='comfy', description='ComfyUI 绘图面板（支持工作流/LoRA/插件节点导入）')
     @app_commands.describe(
         workflow_file='可选：直接上传 ComfyUI 工作流 JSON 文件',
         workflow_json='可选：直接粘贴工作流 JSON 文本（长 JSON 建议用文件）',
         lora_file='可选：直接上传 LoRA 文件（支持 safetensors/ckpt/pt/pth/bin）',
         lora_url='可选：填写 LoRA 下载链接（提交到 ComfyUI-Manager）',
+        custom_node_url='可选：填写插件节点 Git 链接（自动提交到 ComfyUI-Manager）',
         model_name='可选：直接指定本次面板默认底模（用于 %MODEL_NAME%）',
     )
     async def comfy(
@@ -1402,6 +1403,7 @@ class ComfyUICog(commands.Cog):
         workflow_json: Optional[str] = None,
         lora_file: Optional[discord.Attachment] = None,
         lora_url: Optional[str] = None,
+        custom_node_url: Optional[str] = None,
         model_name: Optional[str] = None,
     ):
         comfy_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLED', False))
@@ -1421,6 +1423,8 @@ class ComfyUICog(commands.Cog):
         user_settings = await self._get_user_comfy_settings(user_id)
         imported_workflow_name: Optional[str] = None
         imported_lora_tokens: list[str] = []
+        installed_custom_nodes: list[str] = []
+        custom_node_warnings: list[str] = []
         workflow_path_update: Optional[str] = None
         default_lora_update: Optional[str] = None
 
@@ -1464,6 +1468,29 @@ class ComfyUICog(commands.Cog):
                 default_lora_update = current_lora_text
             except Exception as error:
                 await interaction.response.send_message(f'导入 LoRA 失败：{error}', ephemeral=True)
+                return
+
+        normalized_custom_node_url = str(custom_node_url or '').strip()
+        if normalized_custom_node_url:
+            try:
+                install_result = await comfyui_service.install_custom_node_from_url(normalized_custom_node_url)
+                if not install_result.get('success'):
+                    error_message = str(install_result.get('error') or '未知错误')
+                    await interaction.response.send_message(f'安装插件节点失败：{error_message}', ephemeral=True)
+                    return
+
+                repo_path = urlparse(normalized_custom_node_url).path
+                inferred_repo = Path(repo_path).name if repo_path else ''
+                if inferred_repo.lower().endswith('.git'):
+                    inferred_repo = inferred_repo[:-4]
+                display_name = _sanitize_filename(inferred_repo, 'custom_node')
+                installed_custom_nodes.append(display_name)
+
+                queue_warning = str(install_result.get('queue_start_warning') or '').strip()
+                if queue_warning:
+                    custom_node_warnings.append(queue_warning)
+            except Exception as error:
+                await interaction.response.send_message(f'安装插件节点失败：{error}', ephemeral=True)
                 return
 
         if workflow_path_update is not None or default_lora_update is not None:
@@ -1539,6 +1566,30 @@ class ComfyUICog(commands.Cog):
                     joined_lora = '、'.join(f'`{name}`' for name in deduped_tokens[:5])
                     suffix = '' if len(deduped_tokens) <= 5 else f' 等 {len(deduped_tokens)} 个'
                     notice_parts.append(f'已导入 LoRA：{joined_lora}{suffix}')
+
+        if installed_custom_nodes:
+            deduped_nodes: list[str] = []
+            seen_nodes = set()
+            for node_name in installed_custom_nodes:
+                node_text = str(node_name or '').strip()
+                if not node_text:
+                    continue
+                node_key = node_text.lower()
+                if node_key in seen_nodes:
+                    continue
+                seen_nodes.add(node_key)
+                deduped_nodes.append(node_text)
+
+            if deduped_nodes:
+                if len(deduped_nodes) == 1:
+                    notice_parts.append(f'已提交插件节点安装：`{deduped_nodes[0]}`')
+                else:
+                    joined_nodes = '、'.join(f'`{name}`' for name in deduped_nodes[:5])
+                    suffix = '' if len(deduped_nodes) <= 5 else f' 等 {len(deduped_nodes)} 个'
+                    notice_parts.append(f'已提交插件节点安装：{joined_nodes}{suffix}')
+
+        if custom_node_warnings:
+            notice_parts.append(f'⚠️ 插件安装提示：{custom_node_warnings[-1]}')
 
         if selected_model_name:
             notice_parts.append(f'已预设底模：`{selected_model_name}`')
