@@ -638,6 +638,18 @@ class ChatDatabaseManager:
                     default_lora TEXT NOT NULL DEFAULT '',
                     fixed_positive_prompt TEXT NOT NULL DEFAULT '',
                     fixed_negative_prompt TEXT NOT NULL DEFAULT '',
+                    prompt_text TEXT NOT NULL DEFAULT '',
+                    negative_prompt_text TEXT NOT NULL DEFAULT '',
+                    width INTEGER NOT NULL DEFAULT 832,
+                    height INTEGER NOT NULL DEFAULT 1216,
+                    steps INTEGER NOT NULL DEFAULT 28,
+                    cfg REAL NOT NULL DEFAULT 5.0,
+                    seed INTEGER NOT NULL DEFAULT 12345,
+                    sampler TEXT NOT NULL DEFAULT 'euler',
+                    scheduler TEXT NOT NULL DEFAULT 'normal',
+                    model_name TEXT NOT NULL DEFAULT '',
+                    vae_name TEXT NOT NULL DEFAULT '',
+                    clip_name TEXT NOT NULL DEFAULT '',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             ''')
@@ -650,6 +662,42 @@ class ChatDatabaseManager:
             if 'fixed_negative_prompt' not in comfyui_user_columns:
                 cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN fixed_negative_prompt TEXT NOT NULL DEFAULT '';")
                 log.info('已向 comfyui_user_settings 表添加 fixed_negative_prompt 列。')
+            if 'prompt_text' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN prompt_text TEXT NOT NULL DEFAULT '';")
+                log.info('已向 comfyui_user_settings 表添加 prompt_text 列。')
+            if 'negative_prompt_text' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN negative_prompt_text TEXT NOT NULL DEFAULT '';")
+                log.info('已向 comfyui_user_settings 表添加 negative_prompt_text 列。')
+            if 'width' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN width INTEGER NOT NULL DEFAULT 832;")
+                log.info('已向 comfyui_user_settings 表添加 width 列。')
+            if 'height' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN height INTEGER NOT NULL DEFAULT 1216;")
+                log.info('已向 comfyui_user_settings 表添加 height 列。')
+            if 'steps' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN steps INTEGER NOT NULL DEFAULT 28;")
+                log.info('已向 comfyui_user_settings 表添加 steps 列。')
+            if 'cfg' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN cfg REAL NOT NULL DEFAULT 5.0;")
+                log.info('已向 comfyui_user_settings 表添加 cfg 列。')
+            if 'seed' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN seed INTEGER NOT NULL DEFAULT 12345;")
+                log.info('已向 comfyui_user_settings 表添加 seed 列。')
+            if 'sampler' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN sampler TEXT NOT NULL DEFAULT 'euler';")
+                log.info('已向 comfyui_user_settings 表添加 sampler 列。')
+            if 'scheduler' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN scheduler TEXT NOT NULL DEFAULT 'normal';")
+                log.info('已向 comfyui_user_settings 表添加 scheduler 列。')
+            if 'model_name' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN model_name TEXT NOT NULL DEFAULT '';")
+                log.info('已向 comfyui_user_settings 表添加 model_name 列。')
+            if 'vae_name' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN vae_name TEXT NOT NULL DEFAULT '';")
+                log.info('已向 comfyui_user_settings 表添加 vae_name 列。')
+            if 'clip_name' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN clip_name TEXT NOT NULL DEFAULT '';")
+                log.info('已向 comfyui_user_settings 表添加 clip_name 列。')
 
             # --- 图片消息记录表（用于反应举报归属） ---
             cursor.execute("""
@@ -2274,9 +2322,22 @@ class ChatDatabaseManager:
         '''获取用户 ComfyUI 个性化配置（不存在时回退全局默认）。'''
         default_workflow_path = str(chat_config.COMFYUI_CONFIG.get('WORKFLOW_PATH') or '').strip()
         default_lora = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_LORA') or '').strip()
+        default_width = int(chat_config.COMFYUI_CONFIG.get('DEFAULT_WIDTH') or 832)
+        default_height = int(chat_config.COMFYUI_CONFIG.get('DEFAULT_HEIGHT') or 1216)
+        default_steps = int(chat_config.COMFYUI_CONFIG.get('DEFAULT_STEPS') or 28)
+        default_cfg = float(chat_config.COMFYUI_CONFIG.get('DEFAULT_CFG') or 5.0)
+        default_seed = int(chat_config.COMFYUI_CONFIG.get('DEFAULT_SEED') or 12345)
+        default_sampler = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SAMPLER') or 'euler').strip() or 'euler'
+        default_scheduler = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SCHEDULER') or 'normal').strip() or 'normal'
+        default_model_name = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_MODEL_NAME') or '').strip()
+        default_vae_name = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_VAE_NAME') or '').strip()
+        default_clip_name = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_CLIP_NAME') or '').strip()
 
         query = '''
-            SELECT workflow_path, default_lora, fixed_positive_prompt, fixed_negative_prompt
+            SELECT workflow_path, default_lora, fixed_positive_prompt, fixed_negative_prompt,
+                   prompt_text, negative_prompt_text,
+                   width, height, steps, cfg, seed,
+                   sampler, scheduler, model_name, vae_name, clip_name
             FROM comfyui_user_settings
             WHERE user_id = ?
         '''
@@ -2293,6 +2354,18 @@ class ChatDatabaseManager:
                 'default_lora': default_lora,
                 'fixed_positive_prompt': '',
                 'fixed_negative_prompt': '',
+                'prompt_text': '',
+                'negative_prompt_text': '',
+                'width': default_width,
+                'height': default_height,
+                'steps': default_steps,
+                'cfg': default_cfg,
+                'seed': default_seed,
+                'sampler': default_sampler,
+                'scheduler': default_scheduler,
+                'model_name': default_model_name,
+                'vae_name': default_vae_name,
+                'clip_name': default_clip_name,
                 '_from_user': False,
             }
 
@@ -2301,6 +2374,18 @@ class ChatDatabaseManager:
             'default_lora': str(row['default_lora'] or '').strip(),
             'fixed_positive_prompt': str(row['fixed_positive_prompt'] or '').strip(),
             'fixed_negative_prompt': str(row['fixed_negative_prompt'] or '').strip(),
+            'prompt_text': str(row['prompt_text'] or '').strip(),
+            'negative_prompt_text': str(row['negative_prompt_text'] or '').strip(),
+            'width': int(row['width'] if row['width'] is not None else default_width),
+            'height': int(row['height'] if row['height'] is not None else default_height),
+            'steps': int(row['steps'] if row['steps'] is not None else default_steps),
+            'cfg': float(row['cfg'] if row['cfg'] is not None else default_cfg),
+            'seed': int(row['seed'] if row['seed'] is not None else default_seed),
+            'sampler': str(row['sampler'] or default_sampler).strip() or default_sampler,
+            'scheduler': str(row['scheduler'] or default_scheduler).strip() or default_scheduler,
+            'model_name': str(row['model_name'] or default_model_name).strip(),
+            'vae_name': str(row['vae_name'] or default_vae_name).strip(),
+            'clip_name': str(row['clip_name'] or default_clip_name).strip(),
             '_from_user': True,
         }
 
@@ -2311,6 +2396,18 @@ class ChatDatabaseManager:
         default_lora: Optional[str] = None,
         fixed_positive_prompt: Optional[str] = None,
         fixed_negative_prompt: Optional[str] = None,
+        prompt_text: Optional[str] = None,
+        negative_prompt_text: Optional[str] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        steps: Optional[int] = None,
+        cfg: Optional[float] = None,
+        seed: Optional[int] = None,
+        sampler: Optional[str] = None,
+        scheduler: Optional[str] = None,
+        model_name: Optional[str] = None,
+        vae_name: Optional[str] = None,
+        clip_name: Optional[str] = None,
     ) -> bool:
         '''保存用户 ComfyUI 个性化配置，支持按字段部分更新。'''
         if (
@@ -2318,11 +2415,26 @@ class ChatDatabaseManager:
             and default_lora is None
             and fixed_positive_prompt is None
             and fixed_negative_prompt is None
+            and prompt_text is None
+            and negative_prompt_text is None
+            and width is None
+            and height is None
+            and steps is None
+            and cfg is None
+            and seed is None
+            and sampler is None
+            and scheduler is None
+            and model_name is None
+            and vae_name is None
+            and clip_name is None
         ):
             return True
 
         query_current = '''
-            SELECT workflow_path, default_lora, fixed_positive_prompt, fixed_negative_prompt
+            SELECT workflow_path, default_lora, fixed_positive_prompt, fixed_negative_prompt,
+                   prompt_text, negative_prompt_text,
+                   width, height, steps, cfg, seed,
+                   sampler, scheduler, model_name, vae_name, clip_name
             FROM comfyui_user_settings
             WHERE user_id = ?
         '''
@@ -2353,6 +2465,66 @@ class ChatDatabaseManager:
             if current_row
             else ''
         )
+        current_prompt_text = (
+            str(current_row['prompt_text'] or '').strip()
+            if current_row
+            else ''
+        )
+        current_negative_prompt_text = (
+            str(current_row['negative_prompt_text'] or '').strip()
+            if current_row
+            else ''
+        )
+        current_width = (
+            int(current_row['width'])
+            if current_row and current_row['width'] is not None
+            else int(chat_config.COMFYUI_CONFIG.get('DEFAULT_WIDTH') or 832)
+        )
+        current_height = (
+            int(current_row['height'])
+            if current_row and current_row['height'] is not None
+            else int(chat_config.COMFYUI_CONFIG.get('DEFAULT_HEIGHT') or 1216)
+        )
+        current_steps = (
+            int(current_row['steps'])
+            if current_row and current_row['steps'] is not None
+            else int(chat_config.COMFYUI_CONFIG.get('DEFAULT_STEPS') or 28)
+        )
+        current_cfg = (
+            float(current_row['cfg'])
+            if current_row and current_row['cfg'] is not None
+            else float(chat_config.COMFYUI_CONFIG.get('DEFAULT_CFG') or 5.0)
+        )
+        current_seed = (
+            int(current_row['seed'])
+            if current_row and current_row['seed'] is not None
+            else int(chat_config.COMFYUI_CONFIG.get('DEFAULT_SEED') or 12345)
+        )
+        current_sampler = (
+            str(current_row['sampler'] or '').strip()
+            if current_row
+            else str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SAMPLER') or 'euler').strip()
+        )
+        current_scheduler = (
+            str(current_row['scheduler'] or '').strip()
+            if current_row
+            else str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SCHEDULER') or 'normal').strip()
+        )
+        current_model_name = (
+            str(current_row['model_name'] or '').strip()
+            if current_row
+            else str(chat_config.COMFYUI_CONFIG.get('DEFAULT_MODEL_NAME') or '').strip()
+        )
+        current_vae_name = (
+            str(current_row['vae_name'] or '').strip()
+            if current_row
+            else str(chat_config.COMFYUI_CONFIG.get('DEFAULT_VAE_NAME') or '').strip()
+        )
+        current_clip_name = (
+            str(current_row['clip_name'] or '').strip()
+            if current_row
+            else str(chat_config.COMFYUI_CONFIG.get('DEFAULT_CLIP_NAME') or '').strip()
+        )
 
         normalized_workflow_path = (
             current_workflow_path
@@ -2374,6 +2546,36 @@ class ChatDatabaseManager:
             if fixed_negative_prompt is None
             else str(fixed_negative_prompt or '').strip()
         )
+        normalized_prompt_text = (
+            current_prompt_text
+            if prompt_text is None
+            else str(prompt_text or '').strip()
+        )
+        normalized_negative_prompt_text = (
+            current_negative_prompt_text
+            if negative_prompt_text is None
+            else str(negative_prompt_text or '').strip()
+        )
+        normalized_width = current_width if width is None else int(width)
+        normalized_height = current_height if height is None else int(height)
+        normalized_steps = current_steps if steps is None else int(steps)
+        normalized_cfg = current_cfg if cfg is None else float(cfg)
+        normalized_seed = current_seed if seed is None else int(seed)
+        normalized_sampler = (
+            current_sampler if sampler is None else str(sampler or '').strip()
+        )
+        normalized_scheduler = (
+            current_scheduler if scheduler is None else str(scheduler or '').strip()
+        )
+        normalized_model_name = (
+            current_model_name if model_name is None else str(model_name or '').strip()
+        )
+        normalized_vae_name = (
+            current_vae_name if vae_name is None else str(vae_name or '').strip()
+        )
+        normalized_clip_name = (
+            current_clip_name if clip_name is None else str(clip_name or '').strip()
+        )
 
         query_upsert = '''
             INSERT INTO comfyui_user_settings (
@@ -2382,14 +2584,38 @@ class ChatDatabaseManager:
                 default_lora,
                 fixed_positive_prompt,
                 fixed_negative_prompt,
+                prompt_text,
+                negative_prompt_text,
+                width,
+                height,
+                steps,
+                cfg,
+                seed,
+                sampler,
+                scheduler,
+                model_name,
+                vae_name,
+                clip_name,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
                 workflow_path = excluded.workflow_path,
                 default_lora = excluded.default_lora,
                 fixed_positive_prompt = excluded.fixed_positive_prompt,
                 fixed_negative_prompt = excluded.fixed_negative_prompt,
+                prompt_text = excluded.prompt_text,
+                negative_prompt_text = excluded.negative_prompt_text,
+                width = excluded.width,
+                height = excluded.height,
+                steps = excluded.steps,
+                cfg = excluded.cfg,
+                seed = excluded.seed,
+                sampler = excluded.sampler,
+                scheduler = excluded.scheduler,
+                model_name = excluded.model_name,
+                vae_name = excluded.vae_name,
+                clip_name = excluded.clip_name,
                 updated_at = CURRENT_TIMESTAMP;
         '''
 
@@ -2403,6 +2629,18 @@ class ChatDatabaseManager:
                     normalized_default_lora,
                     normalized_fixed_positive_prompt,
                     normalized_fixed_negative_prompt,
+                    normalized_prompt_text,
+                    normalized_negative_prompt_text,
+                    normalized_width,
+                    normalized_height,
+                    normalized_steps,
+                    normalized_cfg,
+                    normalized_seed,
+                    normalized_sampler,
+                    normalized_scheduler,
+                    normalized_model_name,
+                    normalized_vae_name,
+                    normalized_clip_name,
                 ),
                 commit=True,
             )

@@ -235,11 +235,13 @@ def test_build_lora_install_payload_includes_required_keys_with_defaults():
         save_path=None,
     )
 
-    assert payload['type'] == 'loras'
+    assert payload['type'] == 'lora'
     assert payload['url'] == 'https://example.com/models/my_lora.safetensors'
     assert payload['filename'] == 'my_lora.safetensors'
     assert payload['save_path'] == 'default'
-    assert payload['base'] == 'none'
+    assert payload['base'] == 'lora'
+    assert payload['name'] == 'my lora'
+    assert payload['ui_id'] == 'odysseia-bot'
 
 
 def test_build_lora_install_payload_supports_explicit_filename_and_save_path():
@@ -251,7 +253,19 @@ def test_build_lora_install_payload_supports_explicit_filename_and_save_path():
 
     assert payload['filename'] == 'custom_name.safetensors'
     assert payload['save_path'] == 'models/loras'
-    assert payload['base'] == 'none'
+    assert payload['base'] == 'lora'
+
+
+def test_build_lora_install_payload_normalizes_legacy_type_and_base_values():
+    payload = ComfyUIService._build_lora_install_payload(
+        url='https://example.com/models/abc.safetensors',
+        filename='abc.safetensors',
+        model_type='loras',
+        base='none',
+    )
+
+    assert payload['type'] == 'lora'
+    assert payload['base'] == 'lora'
 
 
 def test_normalize_download_url_for_match_ignores_case_and_query():

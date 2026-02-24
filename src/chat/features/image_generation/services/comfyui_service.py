@@ -888,23 +888,36 @@ class ComfyUIService:
         save_path: Optional[str] = None,
         base: Optional[str] = None,
         model_type: Optional[str] = None,
+        ui_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         normalized_url = str(url or '').strip()
         normalized_filename = str(filename or '').strip()
         normalized_save_path = str(save_path or '').strip()
-        normalized_base = str(base or '').strip()
-        normalized_model_type = str(model_type or '').strip()
+        normalized_base = str(base or '').strip().lower()
+        normalized_model_type = str(model_type or '').strip().lower()
 
         inferred_filename = Path(urlparse(normalized_url).path).name if normalized_url else ''
         if not normalized_filename:
             normalized_filename = inferred_filename or 'downloaded_lora.safetensors'
 
+        normalized_filename = ComfyUIService._sanitize_lora_filename(normalized_filename)
+
+        if normalized_model_type in {'', 'lora', 'loras'}:
+            normalized_model_type = 'lora'
+        if normalized_base in {'', 'none', 'lora', 'loras'}:
+            normalized_base = 'lora'
+
+        model_display_name = Path(normalized_filename).stem.replace('_', ' ').strip() or 'LoRA'
+        normalized_ui_id = str(ui_id or '').strip() or 'odysseia-bot'
+
         return {
-            'type': normalized_model_type or 'loras',
+            'type': normalized_model_type,
             'url': normalized_url,
             'filename': normalized_filename,
             'save_path': normalized_save_path or 'default',
-            'base': normalized_base or 'none',
+            'base': normalized_base,
+            'name': model_display_name,
+            'ui_id': normalized_ui_id,
         }
 
     @staticmethod
@@ -1043,7 +1056,10 @@ class ComfyUIService:
             180,
         )
         client_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-        install_url = f'{self.server_address}/manager/queue/install_model'
+        install_urls = [
+            f'{self.server_address}/manager/queue/install_model',
+            f'{self.server_address}/manager/install_model',
+        ]
         model_list_url = f'{self.server_address}/externalmodel/getlist'
         start_url = f'{self.server_address}/manager/queue/start'
 
@@ -1113,39 +1129,61 @@ class ComfyUIService:
                         save_path=save_path,
                     )
 
-                async with session.post(install_url, json=payload) as response:
-                    install_result = await self._read_response_payload(response)
-                    if response.status < 200 or response.status >= 300:
-                        detail_text = str(install_result or '').strip()
-                        if 'Invalid model install request' in detail_text:
-                            fallback_result = await self._download_lora_to_shared_dir(
-                                url=normalized_url,
-                                filename=inferred_filename,
-                            )
-                            if fallback_result.get('success'):
-                                return {
-                                    'success': True,
-                                    'message': 'LoRA 不在白名单，已回退为共享目录直链下载。',
-                                    'fallback_mode': 'shared_lora_dir',
-                                    'saved_filename': str(fallback_result.get('saved_filename') or ''),
-                                    'saved_path': str(fallback_result.get('saved_path') or ''),
-                                    'whitelist_matched': False,
-                                }
+                install_result: Any = None
+                install_status: Optional[int] = None
+                install_endpoint = ''
 
-                            fallback_error = str(fallback_result.get('error') or '').strip()
-                            detail_text = (
-                                '当前 ComfyUI-Manager 仅允许安装 model-list 白名单中的模型；'
-                                f'共享目录回退也失败：{fallback_error or "未知错误"}。'
-                                '请在 Bot 端配置 COMFYUI_SHARED_LORA_DIR，或将该模型加入白名单。'
-                            )
-                        return {
-                            'success': False,
-                            'error': detail_text or '调用 ComfyUI-Manager 安装 LoRA 失败，请确认已安装 Manager 插件。',
-                            'status': response.status,
-                            'response': install_result,
-                            'payload': payload,
-                            'whitelist_matched': matched_whitelist_item is not None,
-                        }
+                for index, install_url in enumerate(install_urls):
+                    async with session.post(install_url, json=payload) as response:
+                        install_status = response.status
+                        install_result = await self._read_response_payload(response)
+                        install_endpoint = install_url
+
+                    if install_status is None:
+                        continue
+
+                    if 200 <= install_status < 300:
+                        break
+
+                    has_next_endpoint = index < len(install_urls) - 1
+                    if has_next_endpoint and install_status in {404, 405}:
+                        continue
+
+                    break
+
+                if install_status is None or install_status < 200 or install_status >= 300:
+                    detail_text = str(install_result or '').strip()
+                    if 'Invalid model install request' in detail_text:
+                        fallback_result = await self._download_lora_to_shared_dir(
+                            url=normalized_url,
+                            filename=inferred_filename,
+                        )
+                        if fallback_result.get('success'):
+                            return {
+                                'success': True,
+                                'message': 'LoRA 不在白名单，已回退为共享目录直链下载。',
+                                'fallback_mode': 'shared_lora_dir',
+                                'saved_filename': str(fallback_result.get('saved_filename') or ''),
+                                'saved_path': str(fallback_result.get('saved_path') or ''),
+                                'whitelist_matched': False,
+                            }
+
+                        fallback_error = str(fallback_result.get('error') or '').strip()
+                        detail_text = (
+                            '当前 ComfyUI-Manager 仅允许安装 model-list 白名单中的模型；'
+                            f'共享目录回退也失败：{fallback_error or "未知错误"}。'
+                            '请在 Bot 端配置 COMFYUI_SHARED_LORA_DIR，或将该模型加入白名单。'
+                        )
+
+                    return {
+                        'success': False,
+                        'error': detail_text or '调用 ComfyUI-Manager 安装 LoRA 失败，请确认已安装 Manager 插件。',
+                        'status': install_status,
+                        'response': install_result,
+                        'endpoint': install_endpoint,
+                        'payload': payload,
+                        'whitelist_matched': matched_whitelist_item is not None,
+                    }
 
                 queue_start_result: Any = None
                 queue_start_status: Optional[int] = None
@@ -1167,6 +1205,7 @@ class ComfyUIService:
                     'queue_start_status': queue_start_status,
                     'queue_start_result': queue_start_result,
                     'queue_start_warning': queue_start_warning,
+                    'endpoint': install_endpoint,
                     'whitelist_matched': matched_whitelist_item is not None,
                     'saved_filename': str(payload.get('filename') or ''),
                 }

@@ -344,6 +344,8 @@ class ComfyPromptModal(discord.ui.Modal, title='ComfyUI 提示词设置'):
             default_lora=self.panel_view.user_default_lora,
             fixed_positive_prompt=self.panel_view.user_fixed_positive_prompt,
             fixed_negative_prompt=self.panel_view.user_fixed_negative_prompt,
+            prompt_text=self.panel_view.prompt,
+            negative_prompt_text=self.panel_view.negative_prompt,
         )
 
         if save_ok:
@@ -427,7 +429,22 @@ class ComfyParamsModal(discord.ui.Modal, title='ComfyUI 参数设置'):
         self.panel_view.selected_vae_name = str(self.vae_input.value or '').strip()
         self.panel_view.selected_clip_name = str(self.clip_input.value or '').strip()
 
-        await interaction.response.send_message('已更新参数设置。', ephemeral=True)
+        save_ok = await self.panel_view.persist_user_settings(
+            width=self.panel_view.width,
+            height=self.panel_view.height,
+            steps=self.panel_view.steps,
+            cfg=self.panel_view.cfg,
+            seed=self.panel_view.seed,
+            sampler=self.panel_view.selected_sampler,
+            scheduler=self.panel_view.selected_scheduler,
+            vae_name=self.panel_view.selected_vae_name,
+            clip_name=self.panel_view.selected_clip_name,
+        )
+
+        if save_ok:
+            await interaction.response.send_message('已更新参数设置并保存为个人默认。', ephemeral=True)
+        else:
+            await interaction.response.send_message('已更新参数设置，但保存个人默认失败。', ephemeral=True)
         await self.panel_view.refresh_panel_message()
 
 
@@ -570,6 +587,8 @@ class ComfyModelSelect(discord.ui.Select):
                 return
             self.panel_view.selected_model_name = target_name
 
+        await self.panel_view.persist_user_settings(model_name=self.panel_view.selected_model_name)
+
         self.panel_view.refresh_selects()
         await interaction.response.edit_message(
             embed=self.panel_view.cog.build_panel_embed(self.panel_view),
@@ -635,6 +654,11 @@ class ComfySamplingPresetSelect(discord.ui.Select):
             self.panel_view.selected_sampler = sampler
         if scheduler:
             self.panel_view.selected_scheduler = scheduler
+
+        await self.panel_view.persist_user_settings(
+            sampler=self.panel_view.selected_sampler,
+            scheduler=self.panel_view.selected_scheduler,
+        )
 
         self.panel_view.refresh_selects()
         await interaction.response.edit_message(
@@ -891,6 +915,18 @@ class ComfyUIPanelView(discord.ui.View):
         default_lora: Optional[str] = None,
         fixed_positive_prompt: Optional[str] = None,
         fixed_negative_prompt: Optional[str] = None,
+        prompt_text: Optional[str] = None,
+        negative_prompt_text: Optional[str] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        steps: Optional[int] = None,
+        cfg: Optional[float] = None,
+        seed: Optional[int] = None,
+        sampler: Optional[str] = None,
+        scheduler: Optional[str] = None,
+        model_name: Optional[str] = None,
+        vae_name: Optional[str] = None,
+        clip_name: Optional[str] = None,
     ) -> bool:
         try:
             return await chat_db_manager.set_comfyui_user_settings(
@@ -899,6 +935,18 @@ class ComfyUIPanelView(discord.ui.View):
                 default_lora=default_lora,
                 fixed_positive_prompt=fixed_positive_prompt,
                 fixed_negative_prompt=fixed_negative_prompt,
+                prompt_text=prompt_text,
+                negative_prompt_text=negative_prompt_text,
+                width=width,
+                height=height,
+                steps=steps,
+                cfg=cfg,
+                seed=seed,
+                sampler=sampler,
+                scheduler=scheduler,
+                model_name=model_name,
+                vae_name=vae_name,
+                clip_name=clip_name,
             )
         except Exception as error:
             log.warning(f'保存用户 ComfyUI 设置失败: user_id={self.user_id}, error={error}')
@@ -1368,11 +1416,25 @@ class ComfyUICog(commands.Cog):
             return await chat_db_manager.get_comfyui_user_settings(user_id)
         except Exception as error:
             log.warning(f'读取用户 ComfyUI 设置失败: {error}')
+            default_sampler = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SAMPLER') or 'euler').strip().lower()
+            default_scheduler = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SCHEDULER') or 'normal').strip().lower()
             return {
-                'workflow_path': '',
-                'default_lora': '',
+                'workflow_path': str(chat_config.COMFYUI_CONFIG.get('WORKFLOW_PATH') or '').strip(),
+                'default_lora': str(chat_config.COMFYUI_CONFIG.get('DEFAULT_LORA') or '').strip(),
                 'fixed_positive_prompt': '',
                 'fixed_negative_prompt': '',
+                'prompt_text': '',
+                'negative_prompt_text': '',
+                'width': _coerce_int(chat_config.COMFYUI_CONFIG.get('DEFAULT_WIDTH'), 832) or 832,
+                'height': _coerce_int(chat_config.COMFYUI_CONFIG.get('DEFAULT_HEIGHT'), 1216) or 1216,
+                'steps': _coerce_int(chat_config.COMFYUI_CONFIG.get('DEFAULT_STEPS'), 28) or 28,
+                'cfg': _coerce_float(chat_config.COMFYUI_CONFIG.get('DEFAULT_CFG'), 5.0) or 5.0,
+                'seed': _coerce_int(chat_config.COMFYUI_CONFIG.get('DEFAULT_SEED'), 12345),
+                'sampler': default_sampler if default_sampler else 'euler',
+                'scheduler': default_scheduler if default_scheduler else 'normal',
+                'model_name': str(chat_config.COMFYUI_CONFIG.get('DEFAULT_MODEL_NAME') or '').strip(),
+                'vae_name': str(chat_config.COMFYUI_CONFIG.get('DEFAULT_VAE_NAME') or '').strip(),
+                'clip_name': str(chat_config.COMFYUI_CONFIG.get('DEFAULT_CLIP_NAME') or '').strip(),
                 '_from_user': False,
             }
 
@@ -1667,6 +1729,13 @@ class ComfyUICog(commands.Cog):
 
         user_id = interaction.user.id
         user_settings = await self._get_user_comfy_settings(user_id)
+        selected_model_name = str(model_name or '').strip()
+        selected_vae_name = str(vae_name or '').strip()
+        selected_clip_name = str(clip_name or '').strip()
+        model_name_update = selected_model_name if selected_model_name else None
+        vae_name_update = selected_vae_name if selected_vae_name else None
+        clip_name_update = selected_clip_name if selected_clip_name else None
+
         imported_workflow_name: Optional[str] = None
         imported_lora_tokens: list[str] = []
         installed_custom_nodes: list[str] = []
@@ -1752,6 +1821,9 @@ class ComfyUICog(commands.Cog):
             or default_lora_update is not None
             or fixed_positive_prompt_update is not None
             or fixed_negative_prompt_update is not None
+            or model_name_update is not None
+            or vae_name_update is not None
+            or clip_name_update is not None
         ):
             save_ok = await chat_db_manager.set_comfyui_user_settings(
                 user_id,
@@ -1759,6 +1831,9 @@ class ComfyUICog(commands.Cog):
                 default_lora=default_lora_update,
                 fixed_positive_prompt=fixed_positive_prompt_update,
                 fixed_negative_prompt=fixed_negative_prompt_update,
+                model_name=model_name_update,
+                vae_name=vae_name_update,
+                clip_name=clip_name_update,
             )
             if not save_ok:
                 await interaction.response.send_message('保存 ComfyUI 用户配置失败，请稍后重试。', ephemeral=True)
@@ -1772,29 +1847,68 @@ class ComfyUICog(commands.Cog):
                 user_settings['fixed_positive_prompt'] = fixed_positive_prompt_update
             if fixed_negative_prompt_update is not None:
                 user_settings['fixed_negative_prompt'] = fixed_negative_prompt_update
+            if model_name_update is not None:
+                user_settings['model_name'] = model_name_update
+            if vae_name_update is not None:
+                user_settings['vae_name'] = vae_name_update
+            if clip_name_update is not None:
+                user_settings['clip_name'] = clip_name_update
             user_settings['_from_user'] = True
 
-        from_user = bool(user_settings.get('_from_user'))
-
-        selected_model_name = str(model_name or '').strip()
-        selected_vae_name = str(vae_name or '').strip()
-        selected_clip_name = str(clip_name or '').strip()
         available_models: list[str] = []
         try:
             available_models = await comfyui_service.get_available_model_names()
         except Exception as error:
             log.warning(f'读取 ComfyUI 底模列表失败: {error}')
 
+        has_user_settings = bool(user_settings.get('_from_user'))
+        panel_user_workflow_path = str(user_settings.get('workflow_path') or '').strip() if has_user_settings else ''
+        panel_user_default_lora = str(user_settings.get('default_lora') or '').strip() if has_user_settings else ''
+        panel_user_fixed_positive_prompt = (
+            str(user_settings.get('fixed_positive_prompt') or '').strip() if has_user_settings else ''
+        )
+        panel_user_fixed_negative_prompt = (
+            str(user_settings.get('fixed_negative_prompt') or '').strip() if has_user_settings else ''
+        )
+
         panel = ComfyUIPanelView(
             cog=self,
             user_id=user_id,
-            user_workflow_path=str(user_settings.get('workflow_path') or '').strip() if from_user else '',
-            user_default_lora=str(user_settings.get('default_lora') or '').strip() if from_user else '',
-            user_fixed_positive_prompt=str(user_settings.get('fixed_positive_prompt') or '').strip() if from_user else '',
-            user_fixed_negative_prompt=str(user_settings.get('fixed_negative_prompt') or '').strip() if from_user else '',
-            initial_model_name=selected_model_name,
+            user_workflow_path=panel_user_workflow_path,
+            user_default_lora=panel_user_default_lora,
+            user_fixed_positive_prompt=panel_user_fixed_positive_prompt,
+            user_fixed_negative_prompt=panel_user_fixed_negative_prompt,
+            initial_model_name=str(user_settings.get('model_name') or '').strip(),
             available_models=available_models,
         )
+
+        panel.prompt = str(user_settings.get('prompt_text') or '').strip()
+        panel.negative_prompt = str(user_settings.get('negative_prompt_text') or '').strip()
+        panel.width = _coerce_int(user_settings.get('width'), panel.width) or panel.width
+        panel.height = _coerce_int(user_settings.get('height'), panel.height) or panel.height
+        panel.steps = _coerce_int(user_settings.get('steps'), panel.steps) or panel.steps
+        panel.cfg = _coerce_float(user_settings.get('cfg'), panel.cfg) or panel.cfg
+        panel.seed = _coerce_int(user_settings.get('seed'), panel.seed)
+
+        saved_sampler = str(user_settings.get('sampler') or '').strip().lower()
+        if saved_sampler:
+            panel.selected_sampler = saved_sampler
+
+        saved_scheduler = str(user_settings.get('scheduler') or '').strip().lower()
+        if saved_scheduler:
+            panel.selected_scheduler = saved_scheduler
+
+        saved_model_name = str(user_settings.get('model_name') or '').strip()
+        if saved_model_name:
+            panel.selected_model_name = saved_model_name
+
+        saved_vae_name = str(user_settings.get('vae_name') or '').strip()
+        if saved_vae_name:
+            panel.selected_vae_name = saved_vae_name
+
+        saved_clip_name = str(user_settings.get('clip_name') or '').strip()
+        if saved_clip_name:
+            panel.selected_clip_name = saved_clip_name
 
         if imported_workflow_name:
             panel.workflow_path = str(user_settings.get('workflow_path') or '').strip()
