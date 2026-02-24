@@ -2,6 +2,7 @@
 
 import io
 import logging
+import re
 from typing import Optional
 
 import discord
@@ -16,6 +17,38 @@ log = logging.getLogger(__name__)
 GENERATING_EMOJI = '🎨'
 SUCCESS_EMOJI = '✅'
 FAILED_EMOJI = '❌'
+
+
+def _is_natural_language_model(model_name: Optional[str]) -> bool:
+    model_text = str(model_name or '').strip().lower()
+    if not model_text:
+        return False
+    return any(keyword in model_text for keyword in ('zimage', 'z_image', 'qwen'))
+
+
+def _looks_like_sd_tag_prompt(prompt_text: Optional[str]) -> bool:
+    text = str(prompt_text or '').strip()
+    if not text:
+        return False
+
+    if '<lora:' in text.lower() or '<wlr:' in text.lower():
+        return True
+
+    comma_count = text.count(',') + text.count('，')
+    if comma_count < 3:
+        return False
+
+    tokens = [segment.strip() for segment in re.split(r'[,，]+', text) if segment.strip()]
+    if len(tokens) < 4:
+        return False
+
+    chinese_char_count = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
+    english_char_count = sum(1 for ch in text if ('a' <= ch.lower() <= 'z'))
+
+    if english_char_count <= 0:
+        return False
+
+    return english_char_count > max(chinese_char_count * 2, 20)
 
 
 def _set_embed_author(embed: discord.Embed, message: Optional[discord.Message], request_user: Optional[discord.abc.User]) -> None:
@@ -176,6 +209,17 @@ async def generate_image_comfyui(
             'generation_failed': True,
             'reason': 'workflow_missing',
             'hint': '未找到可用工作流。请在 Dashboard 配置默认工作流，或让用户在 /comfy 面板设置个人工作流路径。',
+        }
+
+    if _is_natural_language_model(effective_model_name) and _looks_like_sd_tag_prompt(prompt):
+        return {
+            'generation_failed': True,
+            'reason': 'prompt_style_mismatch',
+            'hint': (
+                '当前底模属于真人自然语言模型（zimage/qwen），'
+                '但本次 prompt 看起来是 SD tag 风格。'
+                '请改为中文自然语言描述（完整句子）后再调用 generate_image_comfyui。'
+            ),
         }
 
     try:
