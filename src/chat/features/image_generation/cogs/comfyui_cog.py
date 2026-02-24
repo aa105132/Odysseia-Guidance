@@ -2,6 +2,8 @@
 
 import io
 import logging
+import random
+import re
 from typing import Any, Dict, Optional
 
 import discord
@@ -14,6 +16,28 @@ from src.chat.features.odysseia_coin.service.coin_service import coin_service
 from src.chat.utils.database import chat_db_manager
 
 log = logging.getLogger(__name__)
+
+SAMPLER_PRESETS = [
+    'euler',
+    'euler_a',
+    'heun',
+    'dpmpp_2m',
+    'dpmpp_2m_sde',
+    'dpmpp_sde',
+    'dpm_fast',
+    'ddim',
+    'lcm',
+]
+
+SCHEDULER_PRESETS = [
+    'normal',
+    'karras',
+    'exponential',
+    'sgm_uniform',
+    'simple',
+    'ddim_uniform',
+    'beta',
+]
 
 
 def _coerce_int(value: Any, default: Optional[int] = None) -> Optional[int]:
@@ -107,7 +131,7 @@ class ComfyUIGenerateModal(discord.ui.Modal, title='ComfyUI 快速生成'):
     )
     extra_input = discord.ui.TextInput(
         label='额外参数（key=value, 逗号分隔）',
-        placeholder='seed=1,sampler=euler,scheduler=normal,lora=xxx,workflow=D:\\a.json',
+        placeholder='seed=1,lora=animeA:0.7|<wlr:animeB:0.8>,workflow=D:\\a.json',
         required=False,
         max_length=600,
         style=discord.TextStyle.short,
@@ -178,9 +202,9 @@ class ComfyUIGenerateModal(discord.ui.Modal, title='ComfyUI 快速生成'):
             'steps': steps_cfg.get('steps'),
             'cfg': steps_cfg.get('cfg'),
             'seed': _coerce_int(extra.get('seed'), None),
-            'sampler': str(extra.get('sampler') or '').strip() or None,
-            'scheduler': str(extra.get('scheduler') or '').strip() or None,
-            'lora': str(extra.get('lora') or '').strip() or None,
+            'sampler': str(extra.get('sampler') or '').strip() or self.panel_view.selected_sampler,
+            'scheduler': str(extra.get('scheduler') or '').strip() or self.panel_view.selected_scheduler,
+            'lora': str(extra.get('lora') or extra.get('loras') or '').strip() or None,
             'lora_strength': _coerce_float(extra.get('lora_strength'), None),
             'workflow_path': str(extra.get('workflow') or '').strip() or None,
             'panel_user_workflow_path': self.panel_view.user_workflow_path,
@@ -188,6 +212,80 @@ class ComfyUIGenerateModal(discord.ui.Modal, title='ComfyUI 快速生成'):
         }
 
         await self.cog.handle_panel_generation(interaction, payload)
+
+
+class ComfySamplerSelect(discord.ui.Select):
+    def __init__(self, panel_view: 'ComfyUIPanelView'):
+        self.panel_view = panel_view
+        options = [
+            discord.SelectOption(
+                label='默认（跟随配置）',
+                value='__default__',
+                default=panel_view.selected_sampler is None,
+            )
+        ]
+        options.extend(
+            [
+                discord.SelectOption(
+                    label=sampler,
+                    value=sampler,
+                    default=panel_view.selected_sampler == sampler,
+                )
+                for sampler in SAMPLER_PRESETS
+            ]
+        )
+        super().__init__(
+            placeholder='选择采样器（也可留默认）',
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+        self.panel_view.selected_sampler = None if selected == '__default__' else selected
+        await interaction.response.edit_message(
+            embed=self.panel_view.cog.build_panel_embed(self.panel_view),
+            view=self.panel_view,
+        )
+
+
+class ComfySchedulerSelect(discord.ui.Select):
+    def __init__(self, panel_view: 'ComfyUIPanelView'):
+        self.panel_view = panel_view
+        options = [
+            discord.SelectOption(
+                label='默认（跟随配置）',
+                value='__default__',
+                default=panel_view.selected_scheduler is None,
+            )
+        ]
+        options.extend(
+            [
+                discord.SelectOption(
+                    label=scheduler,
+                    value=scheduler,
+                    default=panel_view.selected_scheduler == scheduler,
+                )
+                for scheduler in SCHEDULER_PRESETS
+            ]
+        )
+        super().__init__(
+            placeholder='选择调度器（也可留默认）',
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=2,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+        self.panel_view.selected_scheduler = None if selected == '__default__' else selected
+        await interaction.response.edit_message(
+            embed=self.panel_view.cog.build_panel_embed(self.panel_view),
+            view=self.panel_view,
+        )
 
 
 class ComfyUIPanelView(discord.ui.View):
@@ -203,7 +301,13 @@ class ComfyUIPanelView(discord.ui.View):
         self.user_id = user_id
         self.user_workflow_path = user_workflow_path
         self.user_default_lora = user_default_lora
+        default_sampler = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SAMPLER') or '').strip().lower()
+        default_scheduler = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SCHEDULER') or '').strip().lower()
+        self.selected_sampler = default_sampler if default_sampler in SAMPLER_PRESETS else None
+        self.selected_scheduler = default_scheduler if default_scheduler in SCHEDULER_PRESETS else None
         self.panel_message: Optional[discord.Message] = None
+        self.add_item(ComfySamplerSelect(self))
+        self.add_item(ComfySchedulerSelect(self))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -257,15 +361,74 @@ class ComfyUICog(commands.Cog):
         embed = discord.Embed(title='ComfyUI 交互绘图面板', color=0x2B2D31)
         workflow_text = view.user_workflow_path or '未设置（使用 Dashboard 全局工作流）'
         lora_text = view.user_default_lora or '未设置（使用全局默认或手动输入）'
+        sampler_text = view.selected_sampler or '默认（跟随 Dashboard）'
+        scheduler_text = view.selected_scheduler or '默认（跟随 Dashboard）'
         embed.add_field(name='个人默认工作流', value=f'`{workflow_text[:900]}`', inline=False)
         embed.add_field(name='个人默认 LoRA', value=f'`{lora_text[:900]}`', inline=False)
+        embed.add_field(name='面板采样器', value=f'`{sampler_text}`', inline=True)
+        embed.add_field(name='面板调度器', value=f'`{scheduler_text}`', inline=True)
         embed.add_field(
             name='使用说明',
-            value='点击「输入参数并生成」后会弹窗，可填写 prompt、分辨率、steps/cfg、lora、workflow 等参数。',
+            value='弹窗可填 prompt、分辨率、steps/cfg、lora、workflow；支持多 LoRA（含 <wlr:...>），seed=-1 为随机。',
             inline=False,
         )
         embed.set_footer(text='你可以在这里保存自己的 workflow 与 lora。')
         return embed
+
+    @staticmethod
+    def _parse_lora_tokens(raw_text: str, default_strength: float) -> list[str]:
+        text = str(raw_text or '').strip()
+        if not text:
+            return []
+
+        normalized = text.replace('，', ',').replace('；', ';').replace('\n', ',')
+        parts = [segment.strip() for segment in re.split(r'[|;,]+', normalized) if segment.strip()]
+        tokens: list[str] = []
+
+        for part in parts:
+            if part.startswith('<') and part.endswith('>') and ':' in part:
+                tokens.append(part)
+                continue
+
+            lora_name = part
+            lora_strength = default_strength
+            if ':' in part:
+                maybe_name, maybe_strength = part.rsplit(':', 1)
+                parsed_strength = _coerce_float(maybe_strength, None)
+                if maybe_name.strip() and parsed_strength is not None:
+                    lora_name = maybe_name.strip()
+                    lora_strength = parsed_strength
+
+            lora_name = lora_name.strip()
+            if not lora_name:
+                continue
+            tokens.append(f'<lora:{lora_name}:{lora_strength:.2f}>')
+
+        deduped: list[str] = []
+        seen = set()
+        for token in tokens:
+            token_key = token.lower()
+            if token_key in seen:
+                continue
+            seen.add(token_key)
+            deduped.append(token)
+        return deduped
+
+    @staticmethod
+    def _append_lora_tokens(prompt: str, lora_tokens: list[str]) -> str:
+        base_prompt = str(prompt or '').strip()
+        if not lora_tokens:
+            return base_prompt
+
+        existing_lower = base_prompt.lower()
+        append_tokens = [token for token in lora_tokens if token.lower() not in existing_lower]
+        if not append_tokens:
+            return base_prompt
+
+        lora_text = ', '.join(append_tokens)
+        if not base_prompt:
+            return lora_text
+        return f'{base_prompt}, {lora_text}'
 
     async def _get_user_comfy_settings(self, user_id: int) -> Dict[str, Any]:
         try:
@@ -293,8 +456,16 @@ class ComfyUICog(commands.Cog):
 
         workflow_path = str(payload.get('workflow_path') or '').strip() or panel_user_workflow_path
         lora_value = payload.get('lora')
-        lora = str(lora_value or '').strip() if lora_value is not None else panel_user_default_lora
-        lora = lora or None
+        raw_lora_text = str(lora_value or '').strip() if lora_value is not None else panel_user_default_lora
+        lora_strength = _coerce_float(payload.get('lora_strength'), 1.0) or 1.0
+        lora_tokens = self._parse_lora_tokens(raw_lora_text, lora_strength)
+        prompt_with_lora = self._append_lora_tokens(prompt, lora_tokens)
+
+        seed = _coerce_int(payload.get('seed'), None)
+        random_seed = False
+        if seed == -1:
+            seed = random.randint(0, 4294967295)
+            random_seed = True
 
         if not workflow_path and comfyui_service.workflow_template is None:
             await interaction.response.send_message(
@@ -321,8 +492,9 @@ class ComfyUICog(commands.Cog):
             return
 
         try:
+            service_lora_override = '' if lora_tokens else None
             image_bytes = await comfyui_service.generate_image(
-                prompt=prompt,
+                prompt=prompt_with_lora,
                 negative_prompt=str(payload.get('negative_prompt') or '').strip(),
                 width=_coerce_int(payload.get('width'), None),
                 height=_coerce_int(payload.get('height'), None),
@@ -330,9 +502,9 @@ class ComfyUICog(commands.Cog):
                 cfg=_coerce_float(payload.get('cfg'), None),
                 sampler=str(payload.get('sampler') or '').strip() or None,
                 scheduler=str(payload.get('scheduler') or '').strip() or None,
-                seed=_coerce_int(payload.get('seed'), None),
-                lora=lora,
-                lora_strength=_coerce_float(payload.get('lora_strength'), None),
+                seed=seed,
+                lora=service_lora_override,
+                lora_strength=None,
                 workflow_path=workflow_path or None,
             )
         except Exception as error:
@@ -350,7 +522,7 @@ class ComfyUICog(commands.Cog):
             name=interaction.user.display_name,
             icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
         )
-        embed.add_field(name='提示词', value=f'```\n{prompt[:1016]}\n```', inline=False)
+        embed.add_field(name='提示词', value=f'```\n{prompt_with_lora[:1016]}\n```', inline=False)
 
         footer_parts = [f'消耗 {cost} 月光币', f'余额 {new_balance}']
         steps_value = payload.get('steps')
@@ -364,8 +536,16 @@ class ComfyUICog(commands.Cog):
             footer_parts.append(f'cfg={cfg_value}')
         if width_value and height_value:
             footer_parts.append(f'{width_value}x{height_value}')
-        if lora:
-            footer_parts.append(f'lora={lora}')
+        if seed is not None:
+            if random_seed:
+                footer_parts.append(f'seed=随机({seed})')
+            else:
+                footer_parts.append(f'seed={seed}')
+        if lora_tokens:
+            lora_preview = ', '.join(lora_tokens)
+            if len(lora_preview) > 80:
+                lora_preview = f'{lora_preview[:80]}...'
+            footer_parts.append(f'lora={lora_preview}')
         embed.set_footer(text=' | '.join(footer_parts))
 
         target_channel = interaction.channel

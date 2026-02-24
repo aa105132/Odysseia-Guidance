@@ -188,9 +188,12 @@ class ComfyUIService:
         if positive_prompt is None:
             positive_prompt = kwargs.get('prompt')
 
-        lora_value = kwargs.get('lora')
-        if lora_value is None:
+        if 'lora' in kwargs:
+            lora_value = kwargs.get('lora')
+        elif 'lora_name' in kwargs:
             lora_value = kwargs.get('lora_name')
+        else:
+            lora_value = config.get('DEFAULT_LORA')
 
         params: Dict[str, Any] = {
             'positive_prompt': str(positive_prompt or '').strip(),
@@ -202,7 +205,7 @@ class ComfyUIService:
             'sampler': str(kwargs.get('sampler') or config.get('DEFAULT_SAMPLER') or '').strip(),
             'scheduler': str(kwargs.get('scheduler') or config.get('DEFAULT_SCHEDULER') or '').strip(),
             'seed': self._coerce_int(kwargs.get('seed'), self._coerce_int(config.get('DEFAULT_SEED'), 12345)),
-            'lora': str(lora_value or config.get('DEFAULT_LORA') or '').strip(),
+            'lora': str(lora_value or '').strip(),
             'lora_strength': self._coerce_float(
                 kwargs.get('lora_strength'),
                 self._coerce_float(config.get('DEFAULT_LORA_STRENGTH'), 1.0),
