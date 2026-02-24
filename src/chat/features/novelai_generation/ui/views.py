@@ -287,6 +287,7 @@ async def _build_prompt_summary_for_embed(
     prompt: Optional[str],
     negative_prompt: Optional[str],
     artist_string: Optional[str],
+    use_ai_conversion: bool = True,
 ) -> str:
     """构建主体外貌展示文本：直接使用 AI 提供的提示词，不做代码规则提取。"""
     _ = negative_prompt  # 保留参数签名，避免影响现有调用方
@@ -300,6 +301,11 @@ async def _build_prompt_summary_for_embed(
     compact_prompt = re.sub(r"\s+", " ", normalized_prompt).strip()
     if not compact_prompt:
         return "（AI未提供主体外貌标签）"
+
+    if not use_ai_conversion:
+        if len(compact_prompt) > 980:
+            return compact_prompt[:977] + "..."
+        return compact_prompt
 
     converted_prompt = ""
     try:
@@ -1215,13 +1221,8 @@ class PresetSelectView(discord.ui.View):
                 self.session.artist_prefix_mode = "preset"
                 self.session.preset_name = display_name
                 self.session.preset_artist_string = preset.get("artist_string", "")
-
-                if (
-                    scope == "user"
-                    and preset.get("negative_prompt")
-                    and not self.session.negative_prompt
-                ):
-                    self.session.negative_prompt = preset["negative_prompt"]
+                preset_negative = str(preset.get("negative_prompt") or "").strip()
+                self.session.negative_prompt = preset_negative
 
                 await chat_db_manager.set_novelai_active_preset_state(
                     interaction.user.id,
@@ -1873,6 +1874,7 @@ async def _slash_regenerate_novelai(
         prompt=final_prompt,
         negative_prompt=negative_prompt,
         artist_string=effective_artist_string,
+        use_ai_conversion=False,
     )
 
     # 生成图片（新种子）
@@ -2318,8 +2320,7 @@ class PresetActionView(discord.ui.View):
         self.session.artist_prefix_mode = "preset"
         self.session.preset_name = self.preset["name"]
         self.session.preset_artist_string = self.preset["artist_string"]
-        if self.preset.get("negative_prompt") and not self.session.negative_prompt:
-            self.session.negative_prompt = self.preset["negative_prompt"]
+        self.session.negative_prompt = str(self.preset.get("negative_prompt") or "").strip()
 
         await chat_db_manager.set_novelai_active_preset_state(
             self.user_id,

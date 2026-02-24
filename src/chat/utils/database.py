@@ -626,9 +626,16 @@ class ChatDatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE,
                     artist_string TEXT NOT NULL,
+                    negative_prompt TEXT DEFAULT '',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+
+            cursor.execute('PRAGMA table_info(novelai_admin_presets);')
+            novelai_admin_columns = [info[1] for info in cursor.fetchall()]
+            if 'negative_prompt' not in novelai_admin_columns:
+                cursor.execute("ALTER TABLE novelai_admin_presets ADD COLUMN negative_prompt TEXT DEFAULT '';" )
+                log.info('已向 novelai_admin_presets 表添加 negative_prompt 列。')
 
             # --- ComfyUI user profile settings ---
             cursor.execute('''
@@ -2724,30 +2731,36 @@ class ChatDatabaseManager:
 
     async def get_novelai_admin_presets(self) -> list:
         """获取所有管理员画师串预设。"""
-        query = "SELECT id, name, artist_string, created_at FROM novelai_admin_presets ORDER BY created_at DESC"
+        query = "SELECT id, name, artist_string, negative_prompt, created_at FROM novelai_admin_presets ORDER BY created_at DESC"
         rows = await self._execute(self._db_transaction, query, fetch="all")
         return [dict(row) for row in rows] if rows else []
 
     async def get_novelai_admin_preset(self, name: str) -> Optional[dict]:
         """按名称获取管理员画师串预设。"""
-        query = "SELECT id, name, artist_string, created_at FROM novelai_admin_presets WHERE name = ?"
+        query = "SELECT id, name, artist_string, negative_prompt, created_at FROM novelai_admin_presets WHERE name = ?"
         row = await self._execute(self._db_transaction, query, (name,), fetch="one")
         return dict(row) if row else None
 
-    async def save_novelai_admin_preset(self, name: str, artist_string: str) -> bool:
+    async def save_novelai_admin_preset(
+        self,
+        name: str,
+        artist_string: str,
+        negative_prompt: str = "",
+    ) -> bool:
         """保存或更新管理员画师串预设。"""
         query = """
-            INSERT INTO novelai_admin_presets (name, artist_string)
-            VALUES (?, ?)
+            INSERT INTO novelai_admin_presets (name, artist_string, negative_prompt)
+            VALUES (?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
                 artist_string = excluded.artist_string,
+                negative_prompt = excluded.negative_prompt,
                 created_at = CURRENT_TIMESTAMP;
         """
         try:
             await self._execute(
                 self._db_transaction,
                 query,
-                (name, artist_string),
+                (name, artist_string, negative_prompt),
                 commit=True,
             )
             return True
@@ -2760,12 +2773,14 @@ class ChatDatabaseManager:
         preset_id: int,
         name: str,
         artist_string: str,
+        negative_prompt: str = "",
     ) -> bool:
         """通过 ID 更新管理员画师串预设。"""
         query = """
             UPDATE novelai_admin_presets
             SET name = ?,
                 artist_string = ?,
+                negative_prompt = ?,
                 created_at = CURRENT_TIMESTAMP
             WHERE id = ?
         """
@@ -2773,7 +2788,7 @@ class ChatDatabaseManager:
             await self._execute(
                 self._db_transaction,
                 query,
-                (name, artist_string, preset_id),
+                (name, artist_string, negative_prompt, preset_id),
                 commit=True,
             )
             return True

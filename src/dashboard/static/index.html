@@ -2300,6 +2300,13 @@
                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm resize-y"></textarea>
                         </div>
 
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">负面提示词（可选）</label>
+                            <textarea x-model="novelaiAdminPresetForm.negative_prompt" rows="3"
+                                      placeholder="lowres, bad anatomy, worst quality, ..."
+                                      class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm resize-y"></textarea>
+                        </div>
+
                         <div class="flex items-center gap-2">
                             <button @click="saveNovelaiAdminPreset()"
                                     class="bg-purple-600/80 hover:bg-purple-500/80 text-white px-3 py-2 rounded-lg transition-all text-sm flex items-center gap-1.5">
@@ -2341,6 +2348,12 @@
                                 <div class="text-xs text-slate-400 bg-slate-800/50 p-2 rounded font-mono break-all"
                                      x-text="preset.artist_string.length > 260 ? preset.artist_string.slice(0, 260) + '...' : preset.artist_string">
                                 </div>
+                                <template x-if="preset.negative_prompt">
+                                    <div class="text-xs text-orange-400/70 bg-slate-800/50 p-2 rounded font-mono break-all">
+                                        <span class="text-orange-500 font-semibold">负面:</span>
+                                        <span x-text="preset.negative_prompt.length > 160 ? preset.negative_prompt.slice(0, 160) + '...' : preset.negative_prompt"></span>
+                                    </div>
+                                </template>
                             </div>
                         </template>
                     </div>
@@ -3553,7 +3566,7 @@
                 novelaiConfig: {},
                 novelaiPresets: [],
                 novelaiAdminPresets: [],
-                novelaiAdminPresetForm: { name: '', artist_string: '' },
+                novelaiAdminPresetForm: { name: '', artist_string: '', negative_prompt: '' },
                 novelaiAdminPresetEditingId: null,
                 showNovelaiApiToken: false,
                 showNovelaiPromptApiKey: false,
@@ -5301,6 +5314,7 @@
                     this.novelaiAdminPresetEditingId = preset.id;
                     this.novelaiAdminPresetForm.name = preset.name || '';
                     this.novelaiAdminPresetForm.artist_string = preset.artist_string || '';
+                    this.novelaiAdminPresetForm.negative_prompt = preset.negative_prompt || '';
                     this.showToast(`正在编辑「${preset.name}」`, 'success');
                 },
 
@@ -5308,11 +5322,13 @@
                     this.novelaiAdminPresetEditingId = null;
                     this.novelaiAdminPresetForm.name = '';
                     this.novelaiAdminPresetForm.artist_string = '';
+                    this.novelaiAdminPresetForm.negative_prompt = '';
                 },
 
                 async saveNovelaiAdminPreset() {
                     const name = (this.novelaiAdminPresetForm.name || '').trim();
                     const artistString = (this.novelaiAdminPresetForm.artist_string || '').trim();
+                    const negativePrompt = (this.novelaiAdminPresetForm.negative_prompt || '').trim();
 
                     if (!name || !artistString) {
                         this.showToast('请填写预设名称和画师串提示词', 'error');
@@ -5335,6 +5351,7 @@
                             body: JSON.stringify({
                                 name,
                                 artist_string: artistString,
+                                negative_prompt: negativePrompt,
                             })
                         });
 

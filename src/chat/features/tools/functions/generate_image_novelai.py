@@ -412,6 +412,7 @@ async def _build_prompt_summary_for_embed(
     prompt: Optional[str],
     negative_prompt: Optional[str],
     artist_string: Optional[str],
+    use_ai_conversion: bool = True,
 ) -> str:
     """构建主体外貌展示文本：直接使用 AI 提供的提示词，不做代码规则提取。"""
     _ = negative_prompt  # 保留参数签名，避免影响现有调用方
@@ -425,6 +426,11 @@ async def _build_prompt_summary_for_embed(
     compact_prompt = re.sub(r"\s+", " ", normalized_prompt).strip()
     if not compact_prompt:
         return "（AI未提供主体外貌标签）"
+
+    if not use_ai_conversion:
+        if len(compact_prompt) > 980:
+            return compact_prompt[:977] + "..."
+        return compact_prompt
 
     converted_prompt = ""
     try:
@@ -1283,13 +1289,10 @@ async def generate_image_novelai(
                 else:
                     effective_preset_name = selected_name
 
-            # 仅用户预设支持负面提示词
-            if (
-                selected_scope == "user"
-                and not negative_prompt
-                and selected_preset.get("negative_prompt")
-            ):
-                negative_prompt = selected_preset["negative_prompt"]
+            # 预设负面词：用户/管理员预设都支持
+            preset_negative_prompt = str(selected_preset.get("negative_prompt") or "").strip()
+            if (not negative_prompt) and preset_negative_prompt:
+                negative_prompt = preset_negative_prompt
 
         # 如果没有通过用户/管理员预设应用画师串，则使用全局默认画师串
         if not applied_artist:
@@ -2276,14 +2279,13 @@ class ArtistPresetSwitchView(discord.ui.View):
                 return
 
             target_artist_string = str(preset.get("artist_string") or "").strip() or None
+            preset_negative = str(preset.get("negative_prompt") or "").strip()
+            target_negative_prompt = preset_negative or None
             preset_name = str(preset.get("name") or "未命名预设")
             if preset.get("scope") == "admin":
                 target_preset_name = f"管理员/{preset_name}"
             else:
                 target_preset_name = preset_name
-                preset_negative = str(preset.get("negative_prompt") or "").strip()
-                if (not target_negative_prompt) and preset_negative:
-                    target_negative_prompt = preset_negative
 
         await _regenerate_novelai(
             interaction=interaction,
@@ -2595,6 +2597,7 @@ async def _regenerate_novelai(
         prompt=final_prompt,
         negative_prompt=negative_prompt,
         artist_string=effective_artist_string,
+        use_ai_conversion=False,
     )
 
     # 生成图片（新种子）

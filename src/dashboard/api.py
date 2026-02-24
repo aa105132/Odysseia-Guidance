@@ -233,6 +233,7 @@ class NovelAIAdminPresetUpsert(BaseModel):
     """管理员画师串预设新增/更新"""
     name: str
     artist_string: str
+    negative_prompt: Optional[str] = ""
 
 
 class EmbeddingConfigUpdate(BaseModel):
@@ -2927,6 +2928,7 @@ async def upsert_novelai_admin_preset(
 
     name = (payload.name or "").strip()
     artist_string = (payload.artist_string or "").strip()
+    negative_prompt = (payload.negative_prompt or "").strip()
     if not name:
         raise HTTPException(400, "预设名称不能为空")
     if not artist_string:
@@ -2934,7 +2936,11 @@ async def upsert_novelai_admin_preset(
     if len(name) > 100:
         raise HTTPException(400, "预设名称长度不能超过 100")
 
-    success = await chat_db_manager.save_novelai_admin_preset(name, artist_string)
+    success = await chat_db_manager.save_novelai_admin_preset(
+        name,
+        artist_string,
+        negative_prompt,
+    )
     if not success:
         raise HTTPException(500, "保存管理员画师串预设失败")
 
@@ -2952,6 +2958,7 @@ async def update_novelai_admin_preset(
 
     name = (payload.name or "").strip()
     artist_string = (payload.artist_string or "").strip()
+    negative_prompt = (payload.negative_prompt or "").strip()
     if not name:
         raise HTTPException(400, "预设名称不能为空")
     if not artist_string:
@@ -2963,6 +2970,7 @@ async def update_novelai_admin_preset(
         preset_id=preset_id,
         name=name,
         artist_string=artist_string,
+        negative_prompt=negative_prompt,
     )
     if not success:
         raise HTTPException(500, "编辑管理员画师串预设失败")
