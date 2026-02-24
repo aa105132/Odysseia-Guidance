@@ -809,7 +809,7 @@ class ComfyUIService:
         path = str(parsed.path or '').strip()
         if not scheme or not netloc:
             return url_text.rstrip('/').lower()
-        return f'{scheme}://{netloc}{path.rstrip('/')}'
+        return f"{scheme}://{netloc}{path.rstrip('/')}"
 
     @staticmethod
     def _build_lora_install_payload(
