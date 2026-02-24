@@ -332,6 +332,22 @@ async def generate_image_comfyui(
                 model_text = str(effective_model_name or '').strip()
                 if model_text:
                     footer_parts.append(f'底模: {model_text}')
+                if effective_width and effective_height:
+                    footer_parts.append(f'分辨率: {effective_width}x{effective_height}')
+                if effective_steps is not None:
+                    footer_parts.append(f'steps: {effective_steps}')
+                if effective_cfg is not None:
+                    footer_parts.append(f'cfg: {effective_cfg}')
+                if effective_sampler:
+                    footer_parts.append(f'sampler: {effective_sampler}')
+                if effective_scheduler:
+                    footer_parts.append(f'scheduler: {effective_scheduler}')
+                if effective_seed is not None:
+                    footer_parts.append(f'seed: {effective_seed}')
+                if effective_vae_name:
+                    footer_parts.append(f'vae: {effective_vae_name}')
+                if effective_clip_name:
+                    footer_parts.append(f'clip: {effective_clip_name}')
                 if new_balance is not None:
                     footer_parts.append(f'余额: {new_balance}')
                 embed.set_footer(text=' | '.join(footer_parts))
