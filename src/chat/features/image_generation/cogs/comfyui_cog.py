@@ -42,6 +42,17 @@ SCHEDULER_PRESETS = [
     'beta',
 ]
 
+SAMPLER_SCHEDULER_PRESETS = [
+    ('euler', 'normal', 'Euler · Normal'),
+    ('euler_a', 'normal', 'Euler A · Normal'),
+    ('heun', 'normal', 'Heun · Normal'),
+    ('dpmpp_2m', 'karras', 'DPM++ 2M · Karras'),
+    ('dpmpp_2m_sde', 'karras', 'DPM++ 2M SDE · Karras'),
+    ('dpmpp_sde', 'karras', 'DPM++ SDE · Karras'),
+    ('ddim', 'ddim_uniform', 'DDIM · DDIM Uniform'),
+    ('lcm', 'sgm_uniform', 'LCM · SGM Uniform'),
+]
+
 LORA_FILE_EXTENSIONS = {'.safetensors', '.ckpt', '.pt', '.pth', '.bin'}
 
 
@@ -430,11 +441,11 @@ class ComfyLoraSelect(discord.ui.Select):
         )
 
 
-class ComfySamplerSelect(discord.ui.Select):
+class ComfyModelSelect(discord.ui.Select):
     def __init__(self, panel_view: 'ComfyUIPanelView'):
         self.panel_view = panel_view
         super().__init__(
-            placeholder='选择采样器（类似 /draw）',
+            placeholder='选择底模（Checkpoint）',
             min_values=1,
             max_values=1,
             options=[discord.SelectOption(label='加载中...', value='__loading__')],
@@ -443,17 +454,26 @@ class ComfySamplerSelect(discord.ui.Select):
         self.refresh_options()
 
     def refresh_options(self) -> None:
-        self.options = [
-            discord.SelectOption(
-                label=sampler,
-                value=sampler,
-                default=self.panel_view.selected_sampler == sampler,
-            )
-            for sampler in SAMPLER_PRESETS
-        ]
+        options, value_map = self.panel_view.build_model_select_options()
+        self.panel_view.model_value_map = value_map
+        self.options = options
+        self.disabled = len(options) == 1 and options[0].value == '__none__'
 
     async def callback(self, interaction: discord.Interaction):
-        self.panel_view.selected_sampler = self.values[0]
+        selected = self.values[0]
+        if selected == '__none__':
+            await interaction.response.send_message('当前未发现可选底模，可用 `/comfy model_name:xxx` 手动指定。', ephemeral=True)
+            return
+
+        if selected == '__default__':
+            self.panel_view.selected_model_name = ''
+        else:
+            target_name = self.panel_view.model_value_map.get(selected)
+            if not target_name:
+                await interaction.response.send_message('切换底模失败：目标不存在。', ephemeral=True)
+                return
+            self.panel_view.selected_model_name = target_name
+
         self.panel_view.refresh_selects()
         await interaction.response.edit_message(
             embed=self.panel_view.cog.build_panel_embed(self.panel_view),
@@ -461,11 +481,11 @@ class ComfySamplerSelect(discord.ui.Select):
         )
 
 
-class ComfySchedulerSelect(discord.ui.Select):
+class ComfySamplingPresetSelect(discord.ui.Select):
     def __init__(self, panel_view: 'ComfyUIPanelView'):
         self.panel_view = panel_view
         super().__init__(
-            placeholder='选择调度器（类似 /draw）',
+            placeholder='采样器/调度器预设（常用）',
             min_values=1,
             max_values=1,
             options=[discord.SelectOption(label='加载中...', value='__loading__')],
@@ -474,17 +494,52 @@ class ComfySchedulerSelect(discord.ui.Select):
         self.refresh_options()
 
     def refresh_options(self) -> None:
-        self.options = [
-            discord.SelectOption(
-                label=scheduler,
-                value=scheduler,
-                default=self.panel_view.selected_scheduler == scheduler,
+        current_pair = f'{self.panel_view.selected_sampler}|{self.panel_view.selected_scheduler}'
+        options: list[discord.SelectOption] = []
+
+        for sampler, scheduler, label in SAMPLER_SCHEDULER_PRESETS:
+            value = f'{sampler}|{scheduler}'
+            options.append(
+                discord.SelectOption(
+                    label=label,
+                    value=value,
+                    default=current_pair == value,
+                    description=f'{sampler} + {scheduler}',
+                )
             )
-            for scheduler in SCHEDULER_PRESETS
-        ]
+
+        custom_value = current_pair
+        if custom_value and not any(option.value == custom_value for option in options):
+            options.insert(
+                0,
+                discord.SelectOption(
+                    label='当前自定义组合',
+                    value=custom_value,
+                    default=True,
+                    description=f'{self.panel_view.selected_sampler} + {self.panel_view.selected_scheduler}',
+                )
+            )
+
+        if not any(option.default for option in options) and options:
+            options[0].default = True
+
+        self.options = options or [discord.SelectOption(label='无可用预设', value='__none__', default=True)]
+        self.disabled = len(self.options) == 1 and self.options[0].value == '__none__'
 
     async def callback(self, interaction: discord.Interaction):
-        self.panel_view.selected_scheduler = self.values[0]
+        selected = self.values[0]
+        if selected == '__none__' or '|' not in selected:
+            await interaction.response.send_message('采样预设不可用。', ephemeral=True)
+            return
+
+        sampler, scheduler = selected.split('|', 1)
+        sampler = str(sampler).strip().lower()
+        scheduler = str(scheduler).strip().lower()
+        if sampler:
+            self.panel_view.selected_sampler = sampler
+        if scheduler:
+            self.panel_view.selected_scheduler = scheduler
+
         self.panel_view.refresh_selects()
         await interaction.response.edit_message(
             embed=self.panel_view.cog.build_panel_embed(self.panel_view),
@@ -499,6 +554,8 @@ class ComfyUIPanelView(discord.ui.View):
         user_id: int,
         user_workflow_path: str,
         user_default_lora: str,
+        initial_model_name: str = '',
+        available_models: Optional[list[str]] = None,
     ):
         super().__init__(timeout=900)
         self.cog = cog
@@ -506,6 +563,7 @@ class ComfyUIPanelView(discord.ui.View):
 
         self.workflow_value_map: Dict[str, str] = {}
         self.lora_value_map: Dict[str, str] = {}
+        self.model_value_map: Dict[str, str] = {}
 
         self.workflow_dir, self.lora_dir = self._ensure_user_asset_dirs()
         self.global_workflow_path = str(chat_config.COMFYUI_CONFIG.get('WORKFLOW_PATH') or '').strip()
@@ -525,19 +583,26 @@ class ComfyUIPanelView(discord.ui.View):
         default_scheduler = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SCHEDULER') or '').strip().lower()
         self.selected_sampler = default_sampler if default_sampler in SAMPLER_PRESETS else SAMPLER_PRESETS[0]
         self.selected_scheduler = default_scheduler if default_scheduler in SCHEDULER_PRESETS else SCHEDULER_PRESETS[0]
+        config_default_model_name = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_MODEL_NAME') or '').strip()
+        self.selected_model_name = str(initial_model_name or '').strip() or config_default_model_name
+        self.available_models = self._normalize_model_names(available_models or [])
+        if self.selected_model_name:
+            selected_key = self.selected_model_name.lower()
+            if selected_key not in {name.lower() for name in self.available_models}:
+                self.available_models.insert(0, self.selected_model_name)
 
         self.workflow_path = self.user_workflow_path or self.global_workflow_path
 
         self.workflow_select = ComfyWorkflowSelect(self)
         self.lora_select = ComfyLoraSelect(self)
-        self.sampler_select = ComfySamplerSelect(self)
-        self.scheduler_select = ComfySchedulerSelect(self)
+        self.model_select = ComfyModelSelect(self)
+        self.sampling_preset_select = ComfySamplingPresetSelect(self)
 
         self.panel_message: Optional[discord.Message] = None
         self.add_item(self.workflow_select)
         self.add_item(self.lora_select)
-        self.add_item(self.sampler_select)
-        self.add_item(self.scheduler_select)
+        self.add_item(self.model_select)
+        self.add_item(self.sampling_preset_select)
         self.refresh_selects()
 
     def _ensure_user_asset_dirs(self) -> tuple[Path, Path]:
@@ -555,6 +620,21 @@ class ComfyUIPanelView(discord.ui.View):
         if not normalized:
             return []
         return [segment.strip() for segment in re.split(r'[|;,]+', normalized) if segment.strip()]
+
+    @staticmethod
+    def _normalize_model_names(model_names: list[str]) -> list[str]:
+        deduped_names: list[str] = []
+        seen = set()
+        for model_name in model_names:
+            model_text = str(model_name or '').strip()
+            if not model_text:
+                continue
+            model_key = model_text.lower()
+            if model_key in seen:
+                continue
+            seen.add(model_key)
+            deduped_names.append(model_text)
+        return deduped_names
 
     def _list_uploaded_workflow_paths(self) -> list[str]:
         if not self.workflow_dir.exists():
@@ -662,11 +742,46 @@ class ComfyUIPanelView(discord.ui.View):
 
         return options, value_map
 
+    def build_model_select_options(self) -> tuple[list[discord.SelectOption], Dict[str, str]]:
+        current_model_name = str(self.selected_model_name or '').strip()
+        candidate_model_names = list(self.available_models)
+        if current_model_name and current_model_name.lower() not in {name.lower() for name in candidate_model_names}:
+            candidate_model_names.insert(0, current_model_name)
+
+        deduped_names = self._normalize_model_names(candidate_model_names)
+        value_map: Dict[str, str] = {}
+        options: list[discord.SelectOption] = [
+            discord.SelectOption(
+                label='使用工作流默认底模',
+                value='__default__',
+                default=not current_model_name,
+            )
+        ]
+
+        for index, model_name in enumerate(deduped_names[:24]):
+            option_value = f'model_{index}'
+            value_map[option_value] = model_name
+            options.append(
+                discord.SelectOption(
+                    label=model_name[:100],
+                    value=option_value,
+                    default=current_model_name.lower() == model_name.lower(),
+                )
+            )
+
+        if len(options) == 1 and not deduped_names:
+            options = [discord.SelectOption(label='未发现可选底模', value='__none__', default=True)]
+
+        if not any(option.default for option in options):
+            options[0].default = True
+
+        return options, value_map
+
     def refresh_selects(self) -> None:
         self.workflow_select.refresh_options()
         self.lora_select.refresh_options()
-        self.sampler_select.refresh_options()
-        self.scheduler_select.refresh_options()
+        self.model_select.refresh_options()
+        self.sampling_preset_select.refresh_options()
 
     async def persist_user_settings(
         self,
@@ -862,6 +977,7 @@ class ComfyUIPanelView(discord.ui.View):
             'seed': self.seed,
             'sampler': self.selected_sampler,
             'scheduler': self.selected_scheduler,
+            'model_name': self.selected_model_name,
             'lora': self.lora_text,
             'lora_strength': _coerce_float(chat_config.COMFYUI_CONFIG.get('DEFAULT_LORA_STRENGTH'), 1.0),
             'workflow_path': self.workflow_path,
@@ -902,10 +1018,12 @@ class ComfyUICog(commands.Cog):
         workflow_name = Path(view.workflow_path).name if view.workflow_path else '未设置（需上传或使用全局）'
         lora_preview = view.lora_text[:150] + ('...' if len(view.lora_text) > 150 else '') if view.lora_text else '不使用'
         seed_display = str(view.seed) if view.seed is not None else '随机'
+        model_display = str(view.selected_model_name or '').strip() or '工作流默认'
 
         embed.add_field(name='📝 提示词', value=prompt_preview, inline=False)
         embed.add_field(name='🚫 负面提示词', value=negative_preview, inline=False)
         embed.add_field(name='🧩 当前工作流', value=workflow_name, inline=True)
+        embed.add_field(name='🧱 当前底模', value=model_display[:100], inline=True)
         embed.add_field(name='🎨 当前 LoRA', value=lora_preview, inline=True)
         embed.add_field(name='📐 分辨率', value=f'{view.width}x{view.height}', inline=True)
         embed.add_field(name='🔢 步数', value=str(view.steps), inline=True)
@@ -1131,6 +1249,7 @@ class ComfyUICog(commands.Cog):
                 cfg=_coerce_float(payload.get('cfg'), None),
                 sampler=str(payload.get('sampler') or '').strip() or None,
                 scheduler=str(payload.get('scheduler') or '').strip() or None,
+                model_name=str(payload.get('model_name') or '').strip() or None,
                 seed=seed,
                 lora=service_lora_override,
                 lora_strength=None,
@@ -1158,6 +1277,7 @@ class ComfyUICog(commands.Cog):
         cfg_value = payload.get('cfg')
         width_value = payload.get('width')
         height_value = payload.get('height')
+        model_value = str(payload.get('model_name') or '').strip()
 
         if steps_value:
             footer_parts.append(f'steps={steps_value}')
@@ -1165,6 +1285,8 @@ class ComfyUICog(commands.Cog):
             footer_parts.append(f'cfg={cfg_value}')
         if width_value and height_value:
             footer_parts.append(f'{width_value}x{height_value}')
+        if model_value:
+            footer_parts.append(f'model={model_value}')
         if seed is not None:
             if random_seed:
                 footer_parts.append(f'seed=随机({seed})')
@@ -1205,6 +1327,7 @@ class ComfyUICog(commands.Cog):
         workflow_json='可选：直接粘贴工作流 JSON 文本（长 JSON 建议用文件）',
         lora_file='可选：直接上传 LoRA 文件（支持 safetensors/ckpt/pt/pth/bin）',
         lora_url='可选：填写 LoRA 下载链接（提交到 ComfyUI-Manager）',
+        model_name='可选：直接指定本次面板默认底模（用于 %MODEL_NAME%）',
     )
     async def comfy(
         self,
@@ -1213,6 +1336,7 @@ class ComfyUICog(commands.Cog):
         workflow_json: Optional[str] = None,
         lora_file: Optional[discord.Attachment] = None,
         lora_url: Optional[str] = None,
+        model_name: Optional[str] = None,
     ):
         comfy_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLED', False))
         slash_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLE_SLASH_COMMAND', True))
@@ -1294,11 +1418,20 @@ class ComfyUICog(commands.Cog):
 
         from_user = bool(user_settings.get('_from_user'))
 
+        selected_model_name = str(model_name or '').strip()
+        available_models: list[str] = []
+        try:
+            available_models = await comfyui_service.get_available_model_names()
+        except Exception as error:
+            log.warning(f'读取 ComfyUI 底模列表失败: {error}')
+
         panel = ComfyUIPanelView(
             cog=self,
             user_id=user_id,
             user_workflow_path=str(user_settings.get('workflow_path') or '').strip() if from_user else '',
             user_default_lora=str(user_settings.get('default_lora') or '').strip() if from_user else '',
+            initial_model_name=selected_model_name,
+            available_models=available_models,
         )
 
         if imported_workflow_name:
@@ -1307,6 +1440,10 @@ class ComfyUICog(commands.Cog):
         if imported_lora_tokens:
             panel.lora_text = str(user_settings.get('default_lora') or '').strip()
             panel.user_default_lora = panel.lora_text
+            panel.refresh_selects()
+
+        if selected_model_name:
+            panel.selected_model_name = selected_model_name
             panel.refresh_selects()
 
         embed = self.build_panel_embed(panel)
@@ -1336,6 +1473,9 @@ class ComfyUICog(commands.Cog):
                     joined_lora = '、'.join(f'`{name}`' for name in deduped_tokens[:5])
                     suffix = '' if len(deduped_tokens) <= 5 else f' 等 {len(deduped_tokens)} 个'
                     notice_parts.append(f'已导入 LoRA：{joined_lora}{suffix}')
+
+        if selected_model_name:
+            notice_parts.append(f'已预设底模：`{selected_model_name}`')
 
         if notice_parts:
             await interaction.followup.send('\n'.join(notice_parts), ephemeral=True)

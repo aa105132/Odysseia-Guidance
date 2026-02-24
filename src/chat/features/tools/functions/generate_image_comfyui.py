@@ -46,6 +46,7 @@ async def generate_image_comfyui(
     seed: Optional[int] = None,
     lora: Optional[str] = None,
     lora_strength: Optional[float] = None,
+    model_name: Optional[str] = None,
     workflow_path: Optional[str] = None,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
@@ -55,7 +56,7 @@ async def generate_image_comfyui(
     使用 ComfyUI 工作流生成图片。
 
     当默认绘图引擎是 comfyui 时，优先调用此工具。
-    支持常见参数：步数、分辨率、CFG、采样器、调度器、seed、LoRA。
+    支持常见参数：步数、分辨率、CFG、采样器、调度器、seed、LoRA、底模。
     '''
     message: Optional[discord.Message] = kwargs.get('message')
     channel = kwargs.get('channel')
@@ -164,6 +165,7 @@ async def generate_image_comfyui(
             seed=seed,
             lora=effective_lora,
             lora_strength=lora_strength,
+            model_name=model_name,
             workflow_path=effective_workflow_path or None,
         )
 
@@ -203,6 +205,9 @@ async def generate_image_comfyui(
                     embed.add_field(name='\u200b', value=replace_emojis(success_message)[:1024], inline=False)
 
                 footer_parts = [f'引擎: ComfyUI', f'消耗: {image_cost}']
+                model_text = str(model_name or '').strip()
+                if model_text:
+                    footer_parts.append(f'底模: {model_text}')
                 if new_balance is not None:
                     footer_parts.append(f'余额: {new_balance}')
                 embed.set_footer(text=' | '.join(footer_parts))

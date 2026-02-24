@@ -29,6 +29,7 @@ def test_prepare_workflow_applies_node_mapping_and_placeholders(tmp_path):
         '3': {'inputs': {'steps': 20}},
         '4': {'inputs': {'cfg': '{{cfg}}'}},
         '5': {'inputs': {'width': 512}},
+        '6': {'inputs': {'ckpt_name': '%MODEL_NAME%'}},
     }
     workflow_path = tmp_path / 'workflow_template.json'
     workflow_path.write_text(
@@ -60,6 +61,7 @@ def test_prepare_workflow_applies_node_mapping_and_placeholders(tmp_path):
             width=896,
             steps=36,
             cfg=6.5,
+            model_name='fooModel_v1.safetensors',
         )
 
         prepared_workflow = service._prepare_workflow(params)
@@ -69,6 +71,7 @@ def test_prepare_workflow_applies_node_mapping_and_placeholders(tmp_path):
         assert prepared_workflow['3']['inputs']['steps'] == 36
         assert prepared_workflow['4']['inputs']['cfg'] == 6.5
         assert prepared_workflow['5']['inputs']['width'] == 896
+        assert prepared_workflow['6']['inputs']['ckpt_name'] == 'fooModel_v1.safetensors'
     finally:
         chat_config.COMFYUI_CONFIG['PLACEHOLDER_MAPPING'] = original_placeholder_mapping
         chat_config.COMFYUI_CONFIG['NODE_MAPPING'] = original_node_mapping

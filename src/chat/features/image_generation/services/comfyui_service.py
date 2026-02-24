@@ -254,7 +254,93 @@ class ComfyUIService:
                     if mapped_token_text:
                         token_values[mapped_token_text] = value
 
+        common_aliases: Dict[str, list[str]] = {
+            'positive_prompt': ['%prompt%', '%positive_prompt%'],
+            'negative_prompt': ['%negative_prompt%'],
+            'width': ['%width%'],
+            'height': ['%height%'],
+            'steps': ['%steps%'],
+            'cfg': ['%cfg%'],
+            'sampler': ['%sampler%'],
+            'scheduler': ['%scheduler%'],
+            'seed': ['%seed%'],
+            'lora': ['%lora%'],
+            'lora_strength': ['%lora_strength%'],
+            'model_name': ['%MODEL_NAME%', '%model_name%'],
+            'vae_name': ['%VAE_NAME%', '%vae_name%'],
+        }
+
+        for key_text, tokens in common_aliases.items():
+            value = params.get(key_text)
+            if value is None:
+                continue
+            for token_text in tokens:
+                token_values[token_text] = value
+
         return token_values
+
+    async def get_available_model_names(self) -> list[str]:
+        if not self.server_address:
+            return []
+
+        timeout_seconds = self._coerce_int(
+            app_config.COMFYUI_CONFIG.get('REQUEST_TIMEOUT_SECONDS'),
+            180,
+        )
+        client_timeout = aiohttp.ClientTimeout(total=min(timeout_seconds, 30))
+        object_info_url = f'{self.server_address}/object_info'
+
+        try:
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                async with session.get(object_info_url) as response:
+                    if response.status < 200 or response.status >= 300:
+                        return []
+                    payload = await self._read_response_payload(response)
+        except Exception as error:
+            log.warning(f'获取 ComfyUI 底模列表失败: {error}')
+            return []
+
+        if not isinstance(payload, dict):
+            return []
+
+        model_names: list[str] = []
+        seen = set()
+
+        def collect_names_from_input_map(input_map: Any) -> None:
+            if not isinstance(input_map, dict):
+                return
+
+            for field_name in ('ckpt_name', 'model_name'):
+                field_obj = input_map.get(field_name)
+                if not isinstance(field_obj, (list, tuple)) or not field_obj:
+                    continue
+
+                choices = field_obj[0]
+                if not isinstance(choices, (list, tuple)):
+                    continue
+
+                for item in choices:
+                    item_text = str(item or '').strip()
+                    if not item_text:
+                        continue
+                    item_key = item_text.lower()
+                    if item_key in seen:
+                        continue
+                    seen.add(item_key)
+                    model_names.append(item_text)
+
+        for _, node_info in payload.items():
+            if not isinstance(node_info, dict):
+                continue
+
+            input_obj = node_info.get('input')
+            if not isinstance(input_obj, dict):
+                continue
+
+            collect_names_from_input_map(input_obj.get('required'))
+            collect_names_from_input_map(input_obj.get('optional'))
+
+        return model_names
 
     def _replace_placeholders_in_string(
         self,
