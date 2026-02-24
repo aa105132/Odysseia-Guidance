@@ -9,6 +9,7 @@ import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -730,6 +731,28 @@ class ComfyUIService:
             except Exception:
                 return ''
 
+    @staticmethod
+    def _build_lora_install_payload(
+        url: str,
+        filename: Optional[str] = None,
+        save_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized_url = str(url or '').strip()
+        normalized_filename = str(filename or '').strip()
+        normalized_save_path = str(save_path or '').strip()
+
+        inferred_filename = Path(urlparse(normalized_url).path).name if normalized_url else ''
+        if not normalized_filename:
+            normalized_filename = inferred_filename or 'downloaded_lora.safetensors'
+
+        return {
+            'type': 'loras',
+            'url': normalized_url,
+            'filename': normalized_filename,
+            'save_path': normalized_save_path or 'default',
+            'base': 'none',
+        }
+
     async def download_lora_from_url(
         self,
         url: str,
@@ -746,17 +769,11 @@ class ComfyUIService:
         if not self.server_address:
             return {'success': False, 'error': 'ComfyUI SERVER_ADDRESS 未配置'}
 
-        payload: Dict[str, Any] = {
-            'type': 'loras',
-            'url': normalized_url,
-        }
-
-        normalized_filename = str(filename or '').strip()
-        normalized_save_path = str(save_path or '').strip()
-        if normalized_filename:
-            payload['filename'] = normalized_filename
-        if normalized_save_path:
-            payload['save_path'] = normalized_save_path
+        payload = self._build_lora_install_payload(
+            url=normalized_url,
+            filename=filename,
+            save_path=save_path,
+        )
 
         timeout_seconds = self._coerce_int(
             app_config.COMFYUI_CONFIG.get('REQUEST_TIMEOUT_SECONDS'),
@@ -771,11 +788,19 @@ class ComfyUIService:
                 async with session.post(install_url, json=payload) as response:
                     install_result = await self._read_response_payload(response)
                     if response.status < 200 or response.status >= 300:
+                        detail_text = str(install_result or '').strip()
+                        if 'Invalid model install request' in detail_text:
+                            detail_text = (
+                                '当前 ComfyUI-Manager 仅允许安装 model-list 白名单中的模型，'
+                                '该 LoRA 链接不在白名单。请改用上传 LoRA，'
+                                '或先在 ComfyUI-Manager 的 model-list 中注册该模型。'
+                            )
                         return {
                             'success': False,
-                            'error': '调用 ComfyUI-Manager 安装 LoRA 失败，请确认已安装 Manager 插件。',
+                            'error': detail_text or '调用 ComfyUI-Manager 安装 LoRA 失败，请确认已安装 Manager 插件。',
                             'status': response.status,
                             'response': install_result,
+                            'payload': payload,
                         }
 
                 queue_start_result: Any = None
@@ -783,7 +808,7 @@ class ComfyUIService:
                 queue_start_warning: Optional[str] = None
 
                 try:
-                    async with session.post(start_url, json={}) as start_response:
+                    async with session.get(start_url) as start_response:
                         queue_start_status = start_response.status
                         queue_start_result = await self._read_response_payload(start_response)
                         if start_response.status < 200 or start_response.status >= 300:

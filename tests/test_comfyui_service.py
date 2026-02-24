@@ -213,3 +213,30 @@ def test_install_custom_node_from_url_requires_server_address():
 
     assert result.get('success') is False
     assert 'SERVER_ADDRESS' in str(result.get('error') or '')
+
+
+def test_build_lora_install_payload_includes_required_keys_with_defaults():
+    payload = ComfyUIService._build_lora_install_payload(
+        url='https://example.com/models/my_lora.safetensors',
+        filename=None,
+        save_path=None,
+    )
+
+    assert payload['type'] == 'loras'
+    assert payload['url'] == 'https://example.com/models/my_lora.safetensors'
+    assert payload['filename'] == 'my_lora.safetensors'
+    assert payload['save_path'] == 'default'
+    assert payload['base'] == 'none'
+
+
+def test_build_lora_install_payload_supports_explicit_filename_and_save_path():
+    payload = ComfyUIService._build_lora_install_payload(
+        url='https://example.com/models/abc.bin',
+        filename='custom_name.safetensors',
+        save_path='models/loras',
+    )
+
+    assert payload['filename'] == 'custom_name.safetensors'
+    assert payload['save_path'] == 'models/loras'
+    assert payload['base'] == 'none'
+
