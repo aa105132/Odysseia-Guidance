@@ -808,6 +808,7 @@ class ComfyUIPanelView(discord.ui.View):
         available_models: Optional[list[str]] = None,
         available_vaes: Optional[list[str]] = None,
         available_clips: Optional[list[str]] = None,
+        available_loras: Optional[list[str]] = None,
     ):
         super().__init__(timeout=900)
         self.cog = cog
@@ -846,6 +847,7 @@ class ComfyUIPanelView(discord.ui.View):
         self.available_models = self._normalize_model_names(available_models or [])
         self.available_vaes = self._normalize_model_names(available_vaes or [])
         self.available_clips = self._normalize_model_names(available_clips or [])
+        self.available_loras = self._normalize_model_names(available_loras or [])
         if self.selected_model_name:
             selected_key = self.selected_model_name.lower()
             if selected_key not in {name.lower() for name in self.available_models}:
@@ -978,11 +980,19 @@ class ComfyUIPanelView(discord.ui.View):
     def build_lora_select_options(self) -> tuple[list[discord.SelectOption], Dict[str, str]]:
         current_tokens = self._split_raw_lora_items(self.lora_text)
         uploaded_tokens = self._list_uploaded_lora_tokens()
+        api_tokens = list(self.available_loras)
 
-        candidates = list(uploaded_tokens)
-        for token in current_tokens:
-            if token not in candidates:
-                candidates.append(token)
+        candidates: list[str] = []
+        seen_tokens: set[str] = set()
+        for token in [*uploaded_tokens, *api_tokens, *current_tokens]:
+            token_text = str(token or '').strip()
+            if not token_text:
+                continue
+            token_key = token_text.lower()
+            if token_key in seen_tokens:
+                continue
+            seen_tokens.add(token_key)
+            candidates.append(token_text)
 
         value_map: Dict[str, str] = {}
         options: list[discord.SelectOption] = [
@@ -2075,10 +2085,12 @@ class ComfyUICog(commands.Cog):
         available_models: list[str] = []
         available_vaes: list[str] = []
         available_clips: list[str] = []
-        model_result, vae_result, clip_result = await asyncio.gather(
+        available_loras: list[str] = []
+        model_result, vae_result, clip_result, lora_result = await asyncio.gather(
             comfyui_service.get_available_model_names(),
             comfyui_service.get_available_vae_names(),
             comfyui_service.get_available_clip_names(),
+            comfyui_service.get_available_lora_names(),
             return_exceptions=True,
         )
 
@@ -2096,6 +2108,11 @@ class ComfyUICog(commands.Cog):
             log.warning(f'读取 ComfyUI CLIP 列表失败: {clip_result}')
         else:
             available_clips = clip_result
+
+        if isinstance(lora_result, Exception):
+            log.warning(f'读取 ComfyUI LoRA 列表失败: {lora_result}')
+        else:
+            available_loras = lora_result
 
         has_user_settings = bool(user_settings.get('_from_user'))
         panel_user_workflow_path = str(user_settings.get('workflow_path') or '').strip() if has_user_settings else ''
@@ -2118,6 +2135,7 @@ class ComfyUICog(commands.Cog):
             available_models=available_models,
             available_vaes=available_vaes,
             available_clips=available_clips,
+            available_loras=available_loras,
         )
 
         panel.prompt = str(user_settings.get('prompt_text') or '').strip()
