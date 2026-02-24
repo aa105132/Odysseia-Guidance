@@ -361,3 +361,46 @@ def test_pick_best_name_candidate_supports_preferred_and_avoid_keywords():
 
     assert selected == 'qwen\\qwen_image_vae.safetensors'
 
+
+def test_build_runtime_params_converts_negative_seed_to_random_value(tmp_path):
+    workflow_path = tmp_path / 'workflow_template.json'
+    workflow_path.write_text(json.dumps({'1': {'inputs': {'seed': '%seed%'}}}, ensure_ascii=False), encoding='utf-8')
+
+    service = ComfyUIService(
+        server_address='127.0.0.1:8188',
+        workflow_path=str(workflow_path),
+    )
+
+    params = service._build_runtime_params(prompt='test prompt', seed=-1)
+
+    assert isinstance(params['seed'], int)
+    assert 0 <= params['seed'] <= 4294967295
+
+
+def test_fill_missing_runtime_names_fallbacks_when_model_name_not_available(tmp_path):
+    workflow_template = {
+        '1': {'inputs': {'unet_name': '%MODEL_NAME%'}},
+    }
+    workflow_path = tmp_path / 'workflow_template.json'
+    workflow_path.write_text(json.dumps(workflow_template, ensure_ascii=False), encoding='utf-8')
+
+    service = ComfyUIService(
+        server_address='127.0.0.1:8188',
+        workflow_path=str(workflow_path),
+    )
+
+    async def _fake_models() -> list[str]:
+        return ['Rebalance_v1.safetensors', 'z_image_turbo_bf16.safetensors']
+
+    service.get_available_model_names = _fake_models  # type: ignore[method-assign]
+
+    params = {
+        'model_name': 'oneObsession_v19.safetensors',
+        'clip_name': '',
+        'vae_name': '',
+    }
+
+    updated = asyncio.run(service._fill_missing_runtime_names(params, workflow_template=workflow_template))
+
+    assert updated['model_name'] in {'Rebalance_v1.safetensors', 'z_image_turbo_bf16.safetensors'}
+

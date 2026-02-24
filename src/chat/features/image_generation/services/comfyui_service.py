@@ -4,6 +4,7 @@ import asyncio
 import copy
 import json
 import logging
+import random
 import re
 import unicodedata
 import uuid
@@ -239,6 +240,10 @@ class ComfyUIService:
 
     def _build_runtime_params(self, **kwargs: Any) -> Dict[str, Any]:
         config = app_config.COMFYUI_CONFIG
+        default_seed = self._coerce_int(config.get('DEFAULT_SEED'), 12345)
+        seed_value = self._coerce_int(kwargs.get('seed'), default_seed)
+        if seed_value < 0:
+            seed_value = random.randint(0, 4294967295)
 
         positive_prompt = kwargs.get('positive_prompt')
         if positive_prompt is None:
@@ -271,7 +276,7 @@ class ComfyUIService:
             'cfg': self._coerce_float(kwargs.get('cfg'), self._coerce_float(config.get('DEFAULT_CFG'), 5.0)),
             'sampler': str(kwargs.get('sampler') or config.get('DEFAULT_SAMPLER') or '').strip(),
             'scheduler': str(kwargs.get('scheduler') or config.get('DEFAULT_SCHEDULER') or '').strip(),
-            'seed': self._coerce_int(kwargs.get('seed'), self._coerce_int(config.get('DEFAULT_SEED'), 12345)),
+            'seed': seed_value,
             'lora': str(lora_value or '').strip(),
             'lora_strength': self._coerce_float(
                 kwargs.get('lora_strength'),
@@ -696,44 +701,76 @@ class ComfyUIService:
         except Exception:
             workflow_text = ''
 
+        def _is_name_in_candidates(name: str, candidates: list[str]) -> bool:
+            target = str(name or '').strip().lower()
+            if not target:
+                return False
+            return any(str(item or '').strip().lower() == target for item in candidates)
+
         model_name = str(params.get('model_name') or '').strip()
-        if not model_name and self._workflow_contains_any_token(
+        requires_model = self._workflow_contains_any_token(
             selected_template,
             ('%model_name%', '%ckpt_name%', '%model%', '{{model_name}}'),
-        ):
+        )
+        if requires_model or model_name:
             available_models = await self.get_available_model_names()
-            auto_model_name = self._pick_best_name_candidate(available_models, [])
-            if auto_model_name:
-                params['model_name'] = auto_model_name
-                model_name = auto_model_name
-                log.info(f'ComfyUI 自动填充 model_name: {auto_model_name}')
+            if model_name:
+                if available_models and not _is_name_in_candidates(model_name, available_models):
+                    auto_model_name = self._pick_best_name_candidate(
+                        available_models,
+                        [model_name, workflow_text],
+                    )
+                    if auto_model_name:
+                        params['model_name'] = auto_model_name
+                        model_name = auto_model_name
+                        log.warning(f'ComfyUI model_name 不可用，已自动回退: {auto_model_name}')
+            elif requires_model:
+                auto_model_name = self._pick_best_name_candidate(available_models, [workflow_text])
+                if auto_model_name:
+                    params['model_name'] = auto_model_name
+                    model_name = auto_model_name
+                    log.info(f'ComfyUI 自动填充 model_name: {auto_model_name}')
 
         clip_name = str(params.get('clip_name') or '').strip()
-        if not clip_name and self._workflow_contains_any_token(
+        requires_clip = self._workflow_contains_any_token(
             selected_template,
             ('%clip_name%', '%clip%', '{{clip_name}}'),
-        ):
+        )
+        if requires_clip or clip_name:
             available_clips = await self.get_available_clip_names()
             clip_preferred_keywords: list[str] = []
             combined_hint_text = f'{model_name} {workflow_text}'.lower()
             if 'qwen' in combined_hint_text:
                 clip_preferred_keywords.append('qwen')
 
-            auto_clip_name = self._pick_best_name_candidate(
-                available_clips,
-                [model_name, workflow_text],
-                preferred_keywords=clip_preferred_keywords,
-            )
-            if auto_clip_name:
-                params['clip_name'] = auto_clip_name
-                clip_name = auto_clip_name
-                log.info(f'ComfyUI 自动填充 clip_name: {auto_clip_name}')
+            if clip_name:
+                if available_clips and not _is_name_in_candidates(clip_name, available_clips):
+                    auto_clip_name = self._pick_best_name_candidate(
+                        available_clips,
+                        [clip_name, model_name, workflow_text],
+                        preferred_keywords=clip_preferred_keywords,
+                    )
+                    if auto_clip_name:
+                        params['clip_name'] = auto_clip_name
+                        clip_name = auto_clip_name
+                        log.warning(f'ComfyUI clip_name 不可用，已自动回退: {auto_clip_name}')
+            elif requires_clip:
+                auto_clip_name = self._pick_best_name_candidate(
+                    available_clips,
+                    [model_name, workflow_text],
+                    preferred_keywords=clip_preferred_keywords,
+                )
+                if auto_clip_name:
+                    params['clip_name'] = auto_clip_name
+                    clip_name = auto_clip_name
+                    log.info(f'ComfyUI 自动填充 clip_name: {auto_clip_name}')
 
         vae_name = str(params.get('vae_name') or '').strip()
-        if not vae_name and self._workflow_contains_any_token(
+        requires_vae = self._workflow_contains_any_token(
             selected_template,
             ('%vae_name%', '%vae%', '{{vae_name}}'),
-        ):
+        )
+        if requires_vae or vae_name:
             available_vaes = await self.get_available_vae_names()
 
             vae_preferred_keywords: list[str] = []
@@ -755,15 +792,27 @@ class ComfyUIService:
             if is_image_latent_workflow:
                 vae_avoid_keywords.extend(['wan', 'video'])
 
-            auto_vae_name = self._pick_best_name_candidate(
-                available_vaes,
-                [clip_name, model_name, workflow_text],
-                preferred_keywords=vae_preferred_keywords,
-                avoid_keywords=vae_avoid_keywords,
-            )
-            if auto_vae_name:
-                params['vae_name'] = auto_vae_name
-                log.info(f'ComfyUI 自动填充 vae_name: {auto_vae_name}')
+            if vae_name:
+                if available_vaes and not _is_name_in_candidates(vae_name, available_vaes):
+                    auto_vae_name = self._pick_best_name_candidate(
+                        available_vaes,
+                        [vae_name, clip_name, model_name, workflow_text],
+                        preferred_keywords=vae_preferred_keywords,
+                        avoid_keywords=vae_avoid_keywords,
+                    )
+                    if auto_vae_name:
+                        params['vae_name'] = auto_vae_name
+                        log.warning(f'ComfyUI vae_name 不可用，已自动回退: {auto_vae_name}')
+            elif requires_vae:
+                auto_vae_name = self._pick_best_name_candidate(
+                    available_vaes,
+                    [clip_name, model_name, workflow_text],
+                    preferred_keywords=vae_preferred_keywords,
+                    avoid_keywords=vae_avoid_keywords,
+                )
+                if auto_vae_name:
+                    params['vae_name'] = auto_vae_name
+                    log.info(f'ComfyUI 自动填充 vae_name: {auto_vae_name}')
 
         return params
 
