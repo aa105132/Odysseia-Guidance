@@ -797,7 +797,7 @@ class ComfyUIPanelView(discord.ui.View):
     @discord.ui.button(label='上传 LoRA', style=discord.ButtonStyle.secondary, emoji='🧩', row=0)
     async def btn_upload_lora(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
-            '请在 120 秒内发送 LoRA 附件，或直接发送 LoRA 下载链接（http/https）。',
+            '请在 120 秒内发送 LoRA 附件，或发送 LoRA 下载链接，或直接发送 LoRA 文本（如 name:0.8|<wlr:xx:0.7>）。',
             ephemeral=True,
         )
 
@@ -807,29 +807,36 @@ class ComfyUIPanelView(discord.ui.View):
             return
 
         try:
-            uploaded_token: Optional[str] = None
+            uploaded_tokens: list[str] = []
 
             if message.attachments:
                 uploaded_token = await self._save_uploaded_lora(message.attachments[0])
+                if uploaded_token:
+                    uploaded_tokens.append(uploaded_token)
             else:
                 url = _extract_first_url(message.content)
-                if not url:
-                    await interaction.followup.send('未检测到附件或有效链接。', ephemeral=True)
-                    return
+                if url:
+                    download_result = await comfyui_service.download_lora_from_url(url=url)
+                    if not download_result.get('success'):
+                        error_message = str(download_result.get('error') or '未知错误')
+                        await interaction.followup.send(
+                            f'LoRA 下载失败：{error_message}',
+                            ephemeral=True,
+                        )
+                        return
 
-                download_result = await comfyui_service.download_lora_from_url(url=url)
-                if not download_result.get('success'):
-                    await interaction.followup.send(
-                        f'LoRA 下载失败：{download_result.get(error) or 未知错误}',
-                        ephemeral=True,
-                    )
-                    return
+                    url_path = urlparse(url).path
+                    inferred_name = Path(url_path).name if url_path else ''
+                    uploaded_tokens.append(_sanitize_filename(inferred_name, 'downloaded_lora.safetensors'))
+                else:
+                    raw_tokens = self._split_raw_lora_items(message.content)
+                    if not raw_tokens:
+                        await interaction.followup.send('未检测到附件、有效链接或 LoRA 文本。', ephemeral=True)
+                        return
+                    uploaded_tokens.extend(raw_tokens)
 
-                url_path = urlparse(url).path
-                inferred_name = Path(url_path).name if url_path else ''
-                uploaded_token = _sanitize_filename(inferred_name, 'downloaded_lora.safetensors')
-
-            self._append_lora_token(uploaded_token or '')
+            for token in uploaded_tokens:
+                self._append_lora_token(token)
             self.user_default_lora = self.lora_text
             await self.persist_user_settings(default_lora=self.user_default_lora)
 
@@ -842,10 +849,6 @@ class ComfyUIPanelView(discord.ui.View):
                 await message.delete()
             except Exception:
                 pass
-
-    @discord.ui.button(label='编辑 LoRA 文本', style=discord.ButtonStyle.secondary, emoji='✍️', row=0)
-    async def btn_edit_lora_text(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ComfyLoraManualModal(self))
 
     @discord.ui.button(label='开始绘制', style=discord.ButtonStyle.success, emoji='🖌️', row=0)
     async def btn_generate(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -986,6 +989,87 @@ class ComfyUICog(commands.Cog):
                 '_from_user': False,
             }
 
+    @staticmethod
+    def _resolve_user_workflow_dir(user_id: int) -> Path:
+        project_root = Path(__file__).resolve().parents[5]
+        workflow_dir = project_root / 'data' / 'comfyui' / 'users' / str(user_id) / 'workflows'
+        workflow_dir.mkdir(parents=True, exist_ok=True)
+        return workflow_dir
+
+    async def _save_user_workflow_from_attachment(self, user_id: int, attachment: discord.Attachment) -> str:
+        safe_filename = _sanitize_filename(str(attachment.filename or '').strip(), 'workflow.json')
+        if not safe_filename.lower().endswith('.json'):
+            safe_filename = f'{safe_filename}.json'
+
+        content_bytes = await attachment.read()
+        decoded_text: Optional[str] = None
+        for encoding in ('utf-8-sig', 'utf-8', 'gbk'):
+            try:
+                decoded_text = content_bytes.decode(encoding)
+                break
+            except Exception:
+                continue
+
+        if decoded_text is None:
+            raise ValueError('工作流文件编码无法识别，请使用 UTF-8 JSON 文件。')
+
+        workflow_dir = self._resolve_user_workflow_dir(user_id)
+        target_path = workflow_dir / safe_filename
+        return comfyui_service.save_workflow_text(decoded_text, str(target_path))
+
+    def _save_user_workflow_from_text(self, user_id: int, workflow_json: str, filename_hint: str = 'workflow_pasted.json') -> str:
+        workflow_text = str(workflow_json or '').strip()
+        if not workflow_text:
+            raise ValueError('workflow_json 不能为空。')
+
+        safe_filename = _sanitize_filename(filename_hint, 'workflow_pasted.json')
+        if not safe_filename.lower().endswith('.json'):
+            safe_filename = f'{safe_filename}.json'
+
+        workflow_dir = self._resolve_user_workflow_dir(user_id)
+        target_path = workflow_dir / safe_filename
+        return comfyui_service.save_workflow_text(workflow_text, str(target_path))
+
+    @staticmethod
+    def _resolve_user_lora_dir(user_id: int) -> Path:
+        project_root = Path(__file__).resolve().parents[5]
+        lora_dir = project_root / 'data' / 'comfyui' / 'users' / str(user_id) / 'loras'
+        lora_dir.mkdir(parents=True, exist_ok=True)
+        return lora_dir
+
+    async def _save_user_lora_from_attachment(self, user_id: int, attachment: discord.Attachment) -> str:
+        safe_filename = _sanitize_filename(str(attachment.filename or '').strip(), 'uploaded_lora.safetensors')
+        suffix = Path(safe_filename).suffix.lower()
+        if suffix not in LORA_FILE_EXTENSIONS:
+            raise ValueError('LoRA 文件扩展名不受支持，请上传 .safetensors/.ckpt/.pt/.pth/.bin。')
+
+        content_bytes = await attachment.read()
+        lora_dir = self._resolve_user_lora_dir(user_id)
+        target_path = lora_dir / safe_filename
+        target_path.write_bytes(content_bytes)
+        return target_path.name
+
+    @staticmethod
+    def _split_lora_items(text: str) -> list[str]:
+        normalized = str(text or '').strip().replace('，', ',').replace('；', ';').replace('\n', '|')
+        if not normalized:
+            return []
+        return [segment.strip() for segment in re.split(r'[|;,]+', normalized) if segment.strip()]
+
+    @classmethod
+    def _append_lora_item(cls, existing_text: str, token: str) -> str:
+        token_text = str(token or '').strip()
+        current = cls._split_lora_items(existing_text)
+        if not token_text:
+            return '|'.join(current)
+
+        lower_set = {item.lower() for item in current}
+        if token_text.lower() in lower_set:
+            return '|'.join(current)
+
+        current.append(token_text)
+        return '|'.join(current)
+
     async def handle_panel_generation(self, interaction: discord.Interaction, payload: Dict[str, Any]) -> None:
         if not comfyui_service.is_server_ready():
             await interaction.response.send_message('ComfyUI 服务不可用，请先检查 Dashboard 服务地址。', ephemeral=True)
@@ -1116,7 +1200,20 @@ class ComfyUICog(commands.Cog):
         await interaction.followup.send('生成完成，图片已发送到当前频道。', ephemeral=True)
 
     @app_commands.command(name='comfy', description='ComfyUI 绘图面板（支持上传/切换工作流与 LoRA）')
-    async def comfy(self, interaction: discord.Interaction):
+    @app_commands.describe(
+        workflow_file='可选：直接上传 ComfyUI 工作流 JSON 文件',
+        workflow_json='可选：直接粘贴工作流 JSON 文本（长 JSON 建议用文件）',
+        lora_file='可选：直接上传 LoRA 文件（支持 safetensors/ckpt/pt/pth/bin）',
+        lora_url='可选：填写 LoRA 下载链接（提交到 ComfyUI-Manager）',
+    )
+    async def comfy(
+        self,
+        interaction: discord.Interaction,
+        workflow_file: Optional[discord.Attachment] = None,
+        workflow_json: Optional[str] = None,
+        lora_file: Optional[discord.Attachment] = None,
+        lora_url: Optional[str] = None,
+    ):
         comfy_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLED', False))
         slash_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLE_SLASH_COMMAND', True))
         if not comfy_enabled or not slash_enabled:
@@ -1130,17 +1227,118 @@ class ComfyUICog(commands.Cog):
             )
             return
 
-        user_settings = await self._get_user_comfy_settings(interaction.user.id)
+        user_id = interaction.user.id
+        user_settings = await self._get_user_comfy_settings(user_id)
+        imported_workflow_name: Optional[str] = None
+        imported_lora_tokens: list[str] = []
+        workflow_path_update: Optional[str] = None
+        default_lora_update: Optional[str] = None
+
+        if workflow_file is not None or (workflow_json is not None and str(workflow_json).strip()):
+            try:
+                if workflow_file is not None:
+                    saved_path = await self._save_user_workflow_from_attachment(user_id, workflow_file)
+                else:
+                    saved_path = self._save_user_workflow_from_text(user_id, str(workflow_json or ''), 'workflow_from_slash.json')
+
+                workflow_path_update = saved_path
+                imported_workflow_name = Path(saved_path).name
+            except Exception as error:
+                await interaction.response.send_message(f'导入工作流失败：{error}', ephemeral=True)
+                return
+
+        normalized_lora_url = str(lora_url or '').strip()
+        if lora_file is not None or normalized_lora_url:
+            try:
+                current_lora_text = str(user_settings.get('default_lora') or '').strip()
+
+                if lora_file is not None:
+                    uploaded_lora = await self._save_user_lora_from_attachment(user_id, lora_file)
+                    if uploaded_lora:
+                        imported_lora_tokens.append(uploaded_lora)
+                        current_lora_text = self._append_lora_item(current_lora_text, uploaded_lora)
+
+                if normalized_lora_url:
+                    download_result = await comfyui_service.download_lora_from_url(url=normalized_lora_url)
+                    if not download_result.get('success'):
+                        error_message = str(download_result.get('error') or '未知错误')
+                        await interaction.response.send_message(f'导入 LoRA 失败：{error_message}', ephemeral=True)
+                        return
+
+                    url_path = urlparse(normalized_lora_url).path
+                    inferred_name = Path(url_path).name if url_path else ''
+                    downloaded_lora = _sanitize_filename(inferred_name, 'downloaded_lora.safetensors')
+                    imported_lora_tokens.append(downloaded_lora)
+                    current_lora_text = self._append_lora_item(current_lora_text, downloaded_lora)
+
+                default_lora_update = current_lora_text
+            except Exception as error:
+                await interaction.response.send_message(f'导入 LoRA 失败：{error}', ephemeral=True)
+                return
+
+        if workflow_path_update is not None or default_lora_update is not None:
+            save_ok = await chat_db_manager.set_comfyui_user_settings(
+                user_id,
+                workflow_path=workflow_path_update,
+                default_lora=default_lora_update,
+            )
+            if not save_ok:
+                await interaction.response.send_message('保存 ComfyUI 用户配置失败，请稍后重试。', ephemeral=True)
+                return
+
+            if workflow_path_update is not None:
+                user_settings['workflow_path'] = workflow_path_update
+            if default_lora_update is not None:
+                user_settings['default_lora'] = default_lora_update
+            user_settings['_from_user'] = True
+
         from_user = bool(user_settings.get('_from_user'))
+
         panel = ComfyUIPanelView(
             cog=self,
-            user_id=interaction.user.id,
+            user_id=user_id,
             user_workflow_path=str(user_settings.get('workflow_path') or '').strip() if from_user else '',
             user_default_lora=str(user_settings.get('default_lora') or '').strip() if from_user else '',
         )
+
+        if imported_workflow_name:
+            panel.workflow_path = str(user_settings.get('workflow_path') or '').strip()
+
+        if imported_lora_tokens:
+            panel.lora_text = str(user_settings.get('default_lora') or '').strip()
+            panel.user_default_lora = panel.lora_text
+            panel.refresh_selects()
+
         embed = self.build_panel_embed(panel)
         await interaction.response.send_message(embed=embed, view=panel, ephemeral=True)
         panel.panel_message = await interaction.original_response()
+
+        notice_parts: list[str] = []
+        if imported_workflow_name:
+            notice_parts.append(f'已导入并切换工作流：`{imported_workflow_name}`')
+        if imported_lora_tokens:
+            deduped_tokens: list[str] = []
+            seen_tokens = set()
+            for token in imported_lora_tokens:
+                token_text = str(token or '').strip()
+                if not token_text:
+                    continue
+                token_key = token_text.lower()
+                if token_key in seen_tokens:
+                    continue
+                seen_tokens.add(token_key)
+                deduped_tokens.append(token_text)
+
+            if deduped_tokens:
+                if len(deduped_tokens) == 1:
+                    notice_parts.append(f'已导入 LoRA：`{deduped_tokens[0]}`')
+                else:
+                    joined_lora = '、'.join(f'`{name}`' for name in deduped_tokens[:5])
+                    suffix = '' if len(deduped_tokens) <= 5 else f' 等 {len(deduped_tokens)} 个'
+                    notice_parts.append(f'已导入 LoRA：{joined_lora}{suffix}')
+
+        if notice_parts:
+            await interaction.followup.send('\n'.join(notice_parts), ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
