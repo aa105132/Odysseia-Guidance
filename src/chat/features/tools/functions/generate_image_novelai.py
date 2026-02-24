@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 
 """
 NovelAI 图片生成工具
@@ -9,7 +9,7 @@ NovelAI 图片生成工具
 遵循 NAI 预设规则:
 - Tag 必须是 Danbooru 格式的英文单词/词语，逗号分隔
 - 单图 Tag 数量 ≤ 90 个（建议 75~90）
-- 使用权重语法: 统一使用 tag::weight（必须带数字）
+- 使用权重语法: 统一使用 weight::tag::（必须带数字）
 - 支持角色 DNA 系统确保角色一致性
 - 同人角色强制使用 `character_name (work_name)` 英文身份标签（如 `raiden shogun (genshin impact)`）
 - 支持 Character Prompt + Character UC 分离
@@ -612,8 +612,8 @@ async def generate_image_novelai(
     - 上课无聊 -> classroom, sitting, chin rest, looking away, yawning
 
     ### 4. 权重调整（重要）
-    - 增强核心元素（统一）: `tag::1.2` 或 `tag::1.3`（必须带数字）
-    - 减弱次要元素（统一）: `tag::0.8` 或 `tag::0.7`
+    - 增强核心元素（统一）: `1.2::tag::` 或 `1.3::tag::`（必须带数字）
+    - 减弱次要元素（统一）: `0.8::tag::` 或 `0.7::tag::`
     - 增强 3~8 次，减弱 2~4 次
     - 增强优先级: 同人角色姓名(含作品名) > 核心动作 > 服饰 > 特效 > 表情
 
@@ -644,7 +644,7 @@ async def generate_image_novelai(
     - 1girl, solo, original, green left eye, blue right eye, silver hair, high ponytail, pale skin, medium breasts
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
     - silver crescent moon hair stick, triangular watermelon earrings, silver crescent moon necklace（月牙发簪 + 三角西瓜耳坠 + 银色半月形项链，必须保留）
-    - 月月权重锁定（正确写法）: green left eye::1.45, blue right eye::1.45, silver hair::1.35, medium breasts::1.25, silver crescent moon hair stick::1.3, triangular watermelon earrings::1.45, silver crescent moon necklace::1.3, heterochromia::1.25
+    - 月月权重锁定（正确写法）: 1.45::green left eye, blue right eye::, 1.35::silver hair::, 1.25::medium breasts::, 1.3::silver crescent moon hair stick, silver crescent moon necklace::, 1.45::triangular watermelon earrings::, 1.25::heterochromia::
     - 异瞳顺序规则：green/blue 具体瞳色标签要前置，heterochromia 放后段，防止异瞳标签把具体瞳色带偏
     - 罩杯规则：默认 medium breasts(C)；仅当用户明确要求其他罩杯时才允许改成 small/large breasts
     - 提示词AI对月月只能补充场景/构图/光影细节，禁止改写以上外貌DNA与权重标签
@@ -713,12 +713,12 @@ async def generate_image_novelai(
     ### 11. 示例（以下是提示词 AI 的输出示例，不是主 AI 手写内容）
     用户说"画一个银发少女在月光下"，提示词 AI 会生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, sfw, 1girl, solo, outdoors, night, moonlight::1.2, starry sky, rim lighting, backlighting, full body, front view, cinematic angle, depth of field, bishoujo, silver hair::1.3, long hair, flowing hair, blue eyes, medium breasts, white skin, dress, white dress, long dress, elegant, standing, wind, hair flowing, looking at viewer, gentle smile, serene, falling leaves, light particles
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, sfw, 1girl, solo, outdoors, night, 1.2::moonlight::, starry sky, rim lighting, backlighting, full body, front view, cinematic angle, depth of field, bishoujo, 1.3::silver hair::, long hair, flowing hair, blue eyes, medium breasts, white skin, dress, white dress, long dress, elegant, standing, wind, hair flowing, looking at viewer, gentle smile, serene, falling leaves, light particles
     ```
 
     用户说"画月月在温泉里"，提示词 AI 会生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, green left eye::1.45, blue right eye::1.45, outdoors, night, starry sky, moonlight::1.2, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, bishoujo, silver hair::1.35, high ponytail, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, medium breasts::1.25, white skin, nude, completely nude, partially submerged, wet body, wet hair, shiny skin::1.2, triangular watermelon earrings, silver crescent moon necklace::1.3, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, falling leaves::0.8
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, 1.45::green left eye, blue right eye::, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, bishoujo, 1.35::silver hair::, high ponytail, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, 1.25::medium breasts::, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, triangular watermelon earrings, 1.3::silver crescent moon necklace::, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
     ```
 
     Args:
@@ -785,7 +785,7 @@ async def generate_image_novelai(
         work_name: 角色所属作品英文名（可选，但同人角色场景建议与 `character_name` 同时传）。
                 例如: "genshin impact"。
                 与 `character_name` 同时存在时，系统会自动确保提示词中包含
-                `character_name (work_name)::1.3` 身份标签（若原 prompt 缺失）。
+                `1.3::character_name (work_name)::` 身份标签（若原 prompt 缺失）。
 
         reference_image_index: 参考图序号（可选，1-based）。
                 当用户明确指定“参考第几张图”时必须传入该参数。
@@ -1287,7 +1287,7 @@ async def generate_image_novelai(
 
     if normalized_character_name and normalized_work_name:
         identity_tag = f"{normalized_character_name} ({normalized_work_name})"
-        weighted_identity_tag = f"{identity_tag}::1.3"
+        weighted_identity_tag = f"1.3::{identity_tag}::"
         if not _prompt_contains_tag(final_prompt, identity_tag):
             final_prompt = f"{weighted_identity_tag}, {final_prompt}"
             log.info(f"自动补充角色身份标签: {identity_tag}")

@@ -191,7 +191,7 @@ PROMPT_CONFIG = {
 5. **画自己（月月）时的描述要点（强制详细版）**：
    - 你必须在 `prompt` 中**显式写出主体外貌标签**，不要只写“兽耳娘/白发少女”这类模糊词。
    - 月月固定Tag模板（强制，调用 `generate_image_novelai` 时必须覆盖）：`1girl, solo, original, green left eye, blue right eye, silver hair, high ponytail, pale skin, medium breasts, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, triangular watermelon earrings, silver crescent moon necklace`
-   - 月月外貌权重模板（强制追加，按正确写法）：`green left eye::1.45, blue right eye::1.45, silver hair::1.35, medium breasts::1.25, silver crescent moon hair stick::1.3, triangular watermelon earrings::1.45, silver crescent moon necklace::1.3, heterochromia::1.25`
+   - 月月外貌权重模板（强制追加，按正确写法）：`1.45::green left eye, blue right eye::, 1.35::silver hair::, 1.25::medium breasts::, 1.3::silver crescent moon hair stick, silver crescent moon necklace::, 1.45::triangular watermelon earrings::, 1.25::heterochromia::`
    - 瞳色权重规则：`green left eye` 与 `blue right eye` 必须前置；`heterochromia` 必须后置，避免异瞳标签覆盖具体瞳色。
    - 瞳色禁止漂移：必须是 `green left eye + blue right eye`，禁止左右眼对调，禁止降级成 `green eyes` / `blue eyes` 这类泛化标签。
    - 发饰固定为：`silver crescent moon hair stick`（像筷子一样插在高马尾连接处的银色月牙发簪），不得替换为其他发饰描述。

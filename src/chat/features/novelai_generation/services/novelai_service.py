@@ -15,6 +15,7 @@ import zipfile
 import random
 import base64
 import asyncio
+import re
 import aiohttp
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
@@ -448,6 +449,18 @@ class NovelAIService:
             log.error(f"NovelAI 图片生成异常: {e}", exc_info=True)
             return None
 
+    @staticmethod
+    def _normalize_weighted_tag_for_match(tag: str) -> str:
+        """标准化标签文本，用于忽略新旧权重语法进行匹配。"""
+        normalized = str(tag or "").strip().lower()
+        normalized = normalized.replace("（", "(").replace("）", ")")
+        normalized = re.sub(r"^\s*[+-]?\d+(?:\.\d+)?::\s*", "", normalized)
+        normalized = re.sub(r"\s*::\s*[+-]?\d+(?:\.\d+)?\s*$", "", normalized)
+        normalized = re.sub(r"\s*::\s*$", "", normalized)
+        normalized = re.sub(r"^\(\s*(.*?)\s*:\s*[+-]?\d+(?:\.\d+)?\s*\)$", r"\1", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.strip()
+
     def _split_prompt_for_v4(self, prompt: str):
         """
         将提示词拆分为 base_caption 和 char_captions，用于 V4 结构化 prompt。
@@ -588,13 +601,8 @@ class NovelAIService:
         char_tags = []
 
         for tag in tags:
-            tag_lower = tag.lower().strip()
-            # 去除权重语法进行判断 (格式: n::Tag:: 或 n::Tag)
-            clean_tag = tag_lower
-            if "::" in clean_tag:
-                parts = clean_tag.split("::")
-                if len(parts) >= 2:
-                    clean_tag = parts[1].strip()
+            # 去除权重语法进行判断（兼容新语法 weight::tag:: 与旧语法 tag::weight）
+            clean_tag = self._normalize_weighted_tag_for_match(tag)
 
             # 1) 角色数量指示 → 同时归入 base 和 char
             if clean_tag in char_indicators:
