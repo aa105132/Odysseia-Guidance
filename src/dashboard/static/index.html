@@ -755,7 +755,7 @@
                                         class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
                                     <option value=''>请选择工作流文件</option>
                                     <template x-for='workflowPath in comfyuiAvailableWorkflowPaths' :key='`wf-${workflowPath}`'>
-                                        <option :value='workflowPath' x-text='workflowPath'></option>
+                                        <option :value='workflowPath' :title='workflowPath' x-text='getComfyuiWorkflowDisplayName(workflowPath)'></option>
                                     </template>
                                 </select>
                             </div>
@@ -775,7 +775,7 @@
                         </div>
 
                         <div>
-                            <label class='block text-sm font-medium text-slate-300 mb-2'>导入工作流文件（上传后会写入 workflow_json）</label>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>导入工作流文件（上传后会自动带文件名保存为独立工作流）</label>
                             <input type='file' accept='.json,application/json' @change='onComfyuiWorkflowFileChange($event)'
                                    class='w-full text-sm text-slate-300 file:mr-4 file:px-4 file:py-2 file:rounded-lg file:border-0 file:bg-emerald-600/20 file:text-emerald-300 hover:file:bg-emerald-600/30'>
                             <p class='text-xs text-slate-500 mt-2' x-show='comfyuiWorkflowFileName'>当前文件：<span x-text='comfyuiWorkflowFileName'></span></p>
@@ -1011,7 +1011,7 @@
                                         class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
                                     <option value=''>请选择工作流文件</option>
                                     <template x-for='workflowPath in comfyuiAvailableWorkflowPaths' :key='`wf-${workflowPath}`'>
-                                        <option :value='workflowPath' x-text='workflowPath'></option>
+                                        <option :value='workflowPath' :title='workflowPath' x-text='getComfyuiWorkflowDisplayName(workflowPath)'></option>
                                     </template>
                                 </select>
                             </div>
@@ -1031,7 +1031,7 @@
                         </div>
 
                         <div>
-                            <label class='block text-sm font-medium text-slate-300 mb-2'>导入工作流文件（上传后会写入 workflow_json）</label>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>导入工作流文件（上传后会自动带文件名保存为独立工作流）</label>
                             <input type='file' accept='.json,application/json' @change='onComfyuiWorkflowFileChange($event)'
                                    class='w-full text-sm text-slate-300 file:mr-4 file:px-4 file:py-2 file:rounded-lg file:border-0 file:bg-emerald-600/20 file:text-emerald-300 hover:file:bg-emerald-600/30'>
                             <p class='text-xs text-slate-500 mt-2' x-show='comfyuiWorkflowFileName'>当前文件：<span x-text='comfyuiWorkflowFileName'></span></p>
@@ -4900,7 +4900,18 @@
                         this.comfyuiForm.enable_slash_command = data.enable_slash_command ?? true;
                         this.comfyuiForm.server_address = data.server_address || 'http://127.0.0.1:8188';
                         this.comfyuiForm.workflow_path = data.workflow_path || '';
-                        this.comfyuiAvailableWorkflowPaths = Array.isArray(data.available_workflow_paths) ? data.available_workflow_paths : [];
+                        const workflowPathList = Array.isArray(data.available_workflow_paths) ? data.available_workflow_paths : [];
+                        const dedupedWorkflowPathList = [];
+                        const workflowPathSet = new Set();
+                        for (const rawPath of workflowPathList) {
+                            const normalizedPath = (rawPath || '').toString().trim();
+                            if (!normalizedPath) continue;
+                            const pathKey = normalizedPath.toLowerCase();
+                            if (workflowPathSet.has(pathKey)) continue;
+                            workflowPathSet.add(pathKey);
+                            dedupedWorkflowPathList.push(normalizedPath);
+                        }
+                        this.comfyuiAvailableWorkflowPaths = dedupedWorkflowPathList;
                         this.comfyuiForm.selected_workflow_path = this.comfyuiAvailableWorkflowPaths.includes(this.comfyuiForm.workflow_path)
                             ? this.comfyuiForm.workflow_path
                             : '';
@@ -5006,6 +5017,17 @@
                         this.showToast('LoRA 下载失败', 'error');
                     }
                     this.testing = false;
+                },
+
+                getComfyuiWorkflowDisplayName(pathText) {
+                    const rawText = (pathText || '').toString().trim();
+                    if (!rawText) {
+                        return '';
+                    }
+
+                    const normalizedText = rawText.replace(/\\/g, '/');
+                    const parts = normalizedText.split('/').filter(Boolean);
+                    return parts.length > 0 ? parts[parts.length - 1] : rawText;
                 },
 
                 applyComfyuiWorkflowPathFromSelect() {
@@ -5126,6 +5148,10 @@
                         const workflowJsonText = (this.comfyuiForm.workflow_json || '').trim();
                         if (workflowJsonText) {
                             payload.workflow_json = workflowJsonText;
+                            const workflowFilename = (this.comfyuiWorkflowFileName || '').trim();
+                            if (workflowFilename) {
+                                payload.workflow_filename = workflowFilename;
+                            }
                         }
 
                         const response = await fetch('/api/config/comfyui', {

@@ -200,6 +200,7 @@ class ComfyUIConfigUpdate(BaseModel):
     server_address: Optional[str] = None
     workflow_path: Optional[str] = None
     workflow_json: Optional[str] = None
+    workflow_filename: Optional[str] = None
     image_output_node_id: Optional[str] = None
     generation_cost: Optional[int] = None
     default_width: Optional[int] = None
@@ -3197,6 +3198,33 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
 
     if config.workflow_json is not None:
         workflow_save_path = normalized_workflow_path
+        workflow_filename_hint = str(config.workflow_filename or '').strip()
+
+        def build_safe_workflow_filename(filename_hint: str, fallback_stem: str = 'workflow') -> str:
+            base_name = os.path.basename(str(filename_hint or '').strip())
+            safe_name = re.sub(r'[^0-9A-Za-z._\-]+', '_', base_name).strip('._')
+            if not safe_name:
+                safe_name = f'{fallback_stem}.json'
+            if not safe_name.lower().endswith('.json'):
+                safe_name = f'{safe_name}.json'
+            return safe_name
+
+        def build_unique_workflow_path(directory: str, filename_hint: str) -> str:
+            safe_name = build_safe_workflow_filename(filename_hint)
+            candidate = os.path.join(directory, safe_name)
+            if not os.path.exists(candidate):
+                return candidate
+
+            stem, ext = os.path.splitext(safe_name)
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            return os.path.join(directory, f'{stem}_{timestamp}{ext}')
+
+        if not workflow_save_path and workflow_filename_hint:
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            workflow_dir = os.path.join(project_root, 'data', 'comfyui', 'workflows')
+            os.makedirs(workflow_dir, exist_ok=True)
+            workflow_save_path = build_unique_workflow_path(workflow_dir, workflow_filename_hint)
+
         if not workflow_save_path:
             db_workflow_path = await chat_db_manager.get_global_setting('comfyui_workflow_path')
             workflow_save_path = ComfyUIService._normalize_workflow_path(
@@ -3205,7 +3233,10 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
 
         if not workflow_save_path:
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            workflow_save_path = os.path.join(project_root, 'data', 'comfyui', 'workflow.json')
+            workflow_dir = os.path.join(project_root, 'data', 'comfyui', 'workflows')
+            os.makedirs(workflow_dir, exist_ok=True)
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            workflow_save_path = os.path.join(workflow_dir, f'workflow_{timestamp}.json')
 
         try:
             saved_path = comfyui_service.save_workflow_text(config.workflow_json, workflow_save_path)
@@ -3218,6 +3249,7 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
 
         normalized_workflow_path = ComfyUIService._normalize_workflow_path(saved_path)
         updated['workflow_imported'] = True
+        updated['workflow_imported_filename'] = os.path.basename(normalized_workflow_path)
 
     if normalized_workflow_path is not None:
         if normalized_workflow_path and not os.path.exists(normalized_workflow_path):
