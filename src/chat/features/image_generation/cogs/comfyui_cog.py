@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 
+import asyncio
 import io
 import logging
 import random
 import re
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import discord
 from discord import app_commands
@@ -38,6 +41,24 @@ SCHEDULER_PRESETS = [
     'ddim_uniform',
     'beta',
 ]
+
+LORA_FILE_EXTENSIONS = {'.safetensors', '.ckpt', '.pt', '.pth', '.bin'}
+
+
+def _sanitize_filename(raw_name: str, fallback_name: str) -> str:
+    base_name = Path(str(raw_name or '').strip()).name
+    if not base_name:
+        base_name = fallback_name
+    safe_name = re.sub(r'[^0-9A-Za-z._\-]+', '_', base_name)
+    safe_name = safe_name.strip('._')
+    return safe_name or fallback_name
+
+
+def _extract_first_url(text: str) -> Optional[str]:
+    match = re.search(r'https?://\S+', str(text or '').strip())
+    if not match:
+        return None
+    return match.group(0).rstrip(').,]}>')
 
 
 def _coerce_int(value: Any, default: Optional[int] = None) -> Optional[int]:
@@ -214,37 +235,226 @@ class ComfyUIGenerateModal(discord.ui.Modal, title='ComfyUI 快速生成'):
         await self.cog.handle_panel_generation(interaction, payload)
 
 
-class ComfySamplerSelect(discord.ui.Select):
+class ComfyPromptModal(discord.ui.Modal, title='ComfyUI 提示词设置'):
+    prompt_input = discord.ui.TextInput(
+        label='提示词',
+        placeholder='输入你要生成的画面内容',
+        required=True,
+        max_length=2000,
+        style=discord.TextStyle.paragraph,
+    )
+    negative_input = discord.ui.TextInput(
+        label='负面提示词（可选）',
+        placeholder='可留空',
+        required=False,
+        max_length=1000,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(self, panel_view: 'ComfyUIPanelView'):
+        super().__init__()
+        self.panel_view = panel_view
+        self.prompt_input.default = panel_view.prompt
+        self.negative_input.default = panel_view.negative_prompt
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.panel_view.prompt = str(self.prompt_input.value or '').strip()
+        self.panel_view.negative_prompt = str(self.negative_input.value or '').strip()
+        await interaction.response.send_message('已更新提示词设置。', ephemeral=True)
+        await self.panel_view.refresh_panel_message()
+
+
+class ComfyParamsModal(discord.ui.Modal, title='ComfyUI 参数设置'):
+    resolution_input = discord.ui.TextInput(
+        label='分辨率（widthxheight）',
+        placeholder='例如 832x1216',
+        required=False,
+        max_length=40,
+        style=discord.TextStyle.short,
+    )
+    steps_cfg_input = discord.ui.TextInput(
+        label='步数与 CFG（steps,cfg）',
+        placeholder='例如 28,5.0',
+        required=False,
+        max_length=50,
+        style=discord.TextStyle.short,
+    )
+    seed_input = discord.ui.TextInput(
+        label='Seed（-1 为随机）',
+        placeholder='例如 -1 或 12345',
+        required=False,
+        max_length=30,
+        style=discord.TextStyle.short,
+    )
+
+    def __init__(self, panel_view: 'ComfyUIPanelView'):
+        super().__init__()
+        self.panel_view = panel_view
+        self.resolution_input.default = f'{panel_view.width}x{panel_view.height}'
+        self.steps_cfg_input.default = f'{panel_view.steps},{panel_view.cfg}'
+        self.seed_input.default = '' if panel_view.seed is None else str(panel_view.seed)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        resolution = str(self.resolution_input.value or '').strip().lower().replace('×', 'x').replace(',', 'x')
+        if resolution:
+            parts = [segment.strip() for segment in resolution.split('x') if segment.strip()]
+            if len(parts) == 2:
+                width = _coerce_int(parts[0], None)
+                height = _coerce_int(parts[1], None)
+                if width and height:
+                    self.panel_view.width = width
+                    self.panel_view.height = height
+
+        steps_cfg = str(self.steps_cfg_input.value or '').strip().replace('，', ',')
+        if steps_cfg:
+            items = [segment.strip() for segment in steps_cfg.split(',') if segment.strip()]
+            if items:
+                parsed_steps = _coerce_int(items[0], None)
+                if parsed_steps is not None and parsed_steps > 0:
+                    self.panel_view.steps = parsed_steps
+            if len(items) >= 2:
+                parsed_cfg = _coerce_float(items[1], None)
+                if parsed_cfg is not None and parsed_cfg >= 0:
+                    self.panel_view.cfg = parsed_cfg
+
+        seed_text = str(self.seed_input.value or '').strip()
+        self.panel_view.seed = _coerce_int(seed_text, None) if seed_text else None
+
+        await interaction.response.send_message('已更新参数设置。', ephemeral=True)
+        await self.panel_view.refresh_panel_message()
+
+
+class ComfyLoraManualModal(discord.ui.Modal, title='ComfyUI LoRA 文本设置'):
+    lora_text_input = discord.ui.TextInput(
+        label='LoRA 列表（支持多项）',
+        placeholder='nameA:0.8|<wlr:nameB:0.7>|nameC',
+        required=False,
+        max_length=800,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(self, panel_view: 'ComfyUIPanelView'):
+        super().__init__()
+        self.panel_view = panel_view
+        self.lora_text_input.default = panel_view.lora_text
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.panel_view.lora_text = str(self.lora_text_input.value or '').strip()
+        self.panel_view.user_default_lora = self.panel_view.lora_text
+        await self.panel_view.persist_user_settings(default_lora=self.panel_view.user_default_lora)
+        await interaction.response.send_message('已更新 LoRA 文本并保存为个人默认。', ephemeral=True)
+        await self.panel_view.refresh_panel_message()
+
+
+class ComfyWorkflowSelect(discord.ui.Select):
     def __init__(self, panel_view: 'ComfyUIPanelView'):
         self.panel_view = panel_view
-        options = [
-            discord.SelectOption(
-                label='默认（跟随配置）',
-                value='__default__',
-                default=panel_view.selected_sampler is None,
-            )
-        ]
-        options.extend(
-            [
-                discord.SelectOption(
-                    label=sampler,
-                    value=sampler,
-                    default=panel_view.selected_sampler == sampler,
-                )
-                for sampler in SAMPLER_PRESETS
-            ]
-        )
         super().__init__(
-            placeholder='选择采样器（也可留默认）',
+            placeholder='切换工作流（全局/个人上传）',
             min_values=1,
             max_values=1,
-            options=options,
+            options=[discord.SelectOption(label='加载中...', value='__loading__')],
             row=1,
         )
+        self.refresh_options()
+
+    def refresh_options(self) -> None:
+        options, value_map = self.panel_view.build_workflow_select_options()
+        self.panel_view.workflow_value_map = value_map
+        self.options = options
+        self.disabled = len(options) == 1 and options[0].value == '__none__'
 
     async def callback(self, interaction: discord.Interaction):
         selected = self.values[0]
-        self.panel_view.selected_sampler = None if selected == '__default__' else selected
+        if selected == '__none__':
+            await interaction.response.send_message('当前没有可用工作流，请先上传 JSON 工作流。', ephemeral=True)
+            return
+
+        if selected == '__global__':
+            self.panel_view.workflow_path = self.panel_view.global_workflow_path
+            self.panel_view.user_workflow_path = ''
+            await self.panel_view.persist_user_settings(workflow_path='')
+        else:
+            target_path = self.panel_view.workflow_value_map.get(selected)
+            if not target_path:
+                await interaction.response.send_message('切换工作流失败：目标不存在。', ephemeral=True)
+                return
+            self.panel_view.workflow_path = target_path
+            self.panel_view.user_workflow_path = target_path
+            await self.panel_view.persist_user_settings(workflow_path=target_path)
+
+        self.panel_view.refresh_selects()
+        await interaction.response.edit_message(
+            embed=self.panel_view.cog.build_panel_embed(self.panel_view),
+            view=self.panel_view,
+        )
+
+
+class ComfyLoraSelect(discord.ui.Select):
+    def __init__(self, panel_view: 'ComfyUIPanelView'):
+        self.panel_view = panel_view
+        super().__init__(
+            placeholder='选择 LoRA（支持多选）',
+            min_values=1,
+            max_values=1,
+            options=[discord.SelectOption(label='加载中...', value='__loading__')],
+            row=2,
+        )
+        self.refresh_options()
+
+    def refresh_options(self) -> None:
+        options, value_map = self.panel_view.build_lora_select_options()
+        self.panel_view.lora_value_map = value_map
+        self.options = options
+        self.max_values = max(1, min(len(options), 10))
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_values = list(self.values)
+        if '__none__' in selected_values:
+            self.panel_view.lora_text = ''
+        else:
+            selected_tokens: List[str] = []
+            for value in selected_values:
+                token = self.panel_view.lora_value_map.get(value)
+                if token:
+                    selected_tokens.append(token)
+            self.panel_view.lora_text = '|'.join(selected_tokens)
+
+        self.panel_view.user_default_lora = self.panel_view.lora_text
+        await self.panel_view.persist_user_settings(default_lora=self.panel_view.user_default_lora)
+
+        self.panel_view.refresh_selects()
+        await interaction.response.edit_message(
+            embed=self.panel_view.cog.build_panel_embed(self.panel_view),
+            view=self.panel_view,
+        )
+
+
+class ComfySamplerSelect(discord.ui.Select):
+    def __init__(self, panel_view: 'ComfyUIPanelView'):
+        self.panel_view = panel_view
+        super().__init__(
+            placeholder='选择采样器（类似 /draw）',
+            min_values=1,
+            max_values=1,
+            options=[discord.SelectOption(label='加载中...', value='__loading__')],
+            row=3,
+        )
+        self.refresh_options()
+
+    def refresh_options(self) -> None:
+        self.options = [
+            discord.SelectOption(
+                label=sampler,
+                value=sampler,
+                default=self.panel_view.selected_sampler == sampler,
+            )
+            for sampler in SAMPLER_PRESETS
+        ]
+
+    async def callback(self, interaction: discord.Interaction):
+        self.panel_view.selected_sampler = self.values[0]
+        self.panel_view.refresh_selects()
         await interaction.response.edit_message(
             embed=self.panel_view.cog.build_panel_embed(self.panel_view),
             view=self.panel_view,
@@ -254,34 +464,28 @@ class ComfySamplerSelect(discord.ui.Select):
 class ComfySchedulerSelect(discord.ui.Select):
     def __init__(self, panel_view: 'ComfyUIPanelView'):
         self.panel_view = panel_view
-        options = [
-            discord.SelectOption(
-                label='默认（跟随配置）',
-                value='__default__',
-                default=panel_view.selected_scheduler is None,
-            )
-        ]
-        options.extend(
-            [
-                discord.SelectOption(
-                    label=scheduler,
-                    value=scheduler,
-                    default=panel_view.selected_scheduler == scheduler,
-                )
-                for scheduler in SCHEDULER_PRESETS
-            ]
-        )
         super().__init__(
-            placeholder='选择调度器（也可留默认）',
+            placeholder='选择调度器（类似 /draw）',
             min_values=1,
             max_values=1,
-            options=options,
-            row=2,
+            options=[discord.SelectOption(label='加载中...', value='__loading__')],
+            row=4,
         )
+        self.refresh_options()
+
+    def refresh_options(self) -> None:
+        self.options = [
+            discord.SelectOption(
+                label=scheduler,
+                value=scheduler,
+                default=self.panel_view.selected_scheduler == scheduler,
+            )
+            for scheduler in SCHEDULER_PRESETS
+        ]
 
     async def callback(self, interaction: discord.Interaction):
-        selected = self.values[0]
-        self.panel_view.selected_scheduler = None if selected == '__default__' else selected
+        self.panel_view.selected_scheduler = self.values[0]
+        self.panel_view.refresh_selects()
         await interaction.response.edit_message(
             embed=self.panel_view.cog.build_panel_embed(self.panel_view),
             view=self.panel_view,
@@ -299,15 +503,185 @@ class ComfyUIPanelView(discord.ui.View):
         super().__init__(timeout=900)
         self.cog = cog
         self.user_id = user_id
-        self.user_workflow_path = user_workflow_path
-        self.user_default_lora = user_default_lora
+
+        self.workflow_value_map: Dict[str, str] = {}
+        self.lora_value_map: Dict[str, str] = {}
+
+        self.workflow_dir, self.lora_dir = self._ensure_user_asset_dirs()
+        self.global_workflow_path = str(chat_config.COMFYUI_CONFIG.get('WORKFLOW_PATH') or '').strip()
+        self.user_workflow_path = str(user_workflow_path or '').strip()
+        self.user_default_lora = str(user_default_lora or '').strip()
+
+        self.prompt = ''
+        self.negative_prompt = ''
+        self.width = _coerce_int(chat_config.COMFYUI_CONFIG.get('DEFAULT_WIDTH'), 832) or 832
+        self.height = _coerce_int(chat_config.COMFYUI_CONFIG.get('DEFAULT_HEIGHT'), 1216) or 1216
+        self.steps = _coerce_int(chat_config.COMFYUI_CONFIG.get('DEFAULT_STEPS'), 28) or 28
+        self.cfg = _coerce_float(chat_config.COMFYUI_CONFIG.get('DEFAULT_CFG'), 5.0) or 5.0
+        self.seed = _coerce_int(chat_config.COMFYUI_CONFIG.get('DEFAULT_SEED'), 12345)
+        self.lora_text = self.user_default_lora
+
         default_sampler = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SAMPLER') or '').strip().lower()
         default_scheduler = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_SCHEDULER') or '').strip().lower()
-        self.selected_sampler = default_sampler if default_sampler in SAMPLER_PRESETS else None
-        self.selected_scheduler = default_scheduler if default_scheduler in SCHEDULER_PRESETS else None
+        self.selected_sampler = default_sampler if default_sampler in SAMPLER_PRESETS else SAMPLER_PRESETS[0]
+        self.selected_scheduler = default_scheduler if default_scheduler in SCHEDULER_PRESETS else SCHEDULER_PRESETS[0]
+
+        self.workflow_path = self.user_workflow_path or self.global_workflow_path
+
+        self.workflow_select = ComfyWorkflowSelect(self)
+        self.lora_select = ComfyLoraSelect(self)
+        self.sampler_select = ComfySamplerSelect(self)
+        self.scheduler_select = ComfySchedulerSelect(self)
+
         self.panel_message: Optional[discord.Message] = None
-        self.add_item(ComfySamplerSelect(self))
-        self.add_item(ComfySchedulerSelect(self))
+        self.add_item(self.workflow_select)
+        self.add_item(self.lora_select)
+        self.add_item(self.sampler_select)
+        self.add_item(self.scheduler_select)
+        self.refresh_selects()
+
+    def _ensure_user_asset_dirs(self) -> tuple[Path, Path]:
+        project_root = Path(__file__).resolve().parents[5]
+        user_root = project_root / 'data' / 'comfyui' / 'users' / str(self.user_id)
+        workflow_dir = user_root / 'workflows'
+        lora_dir = user_root / 'loras'
+        workflow_dir.mkdir(parents=True, exist_ok=True)
+        lora_dir.mkdir(parents=True, exist_ok=True)
+        return workflow_dir, lora_dir
+
+    @staticmethod
+    def _split_raw_lora_items(text: str) -> list[str]:
+        normalized = str(text or '').strip().replace('，', ',').replace('；', ';').replace('\n', '|')
+        if not normalized:
+            return []
+        return [segment.strip() for segment in re.split(r'[|;,]+', normalized) if segment.strip()]
+
+    def _list_uploaded_workflow_paths(self) -> list[str]:
+        if not self.workflow_dir.exists():
+            return []
+        files = sorted(self.workflow_dir.glob('*.json'), key=lambda item: item.stat().st_mtime, reverse=True)
+        return [str(item) for item in files]
+
+    def _list_uploaded_lora_tokens(self) -> list[str]:
+        if not self.lora_dir.exists():
+            return []
+        files = sorted(
+            [item for item in self.lora_dir.iterdir() if item.is_file() and item.suffix.lower() in LORA_FILE_EXTENSIONS],
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        return [item.name for item in files]
+
+    def build_workflow_select_options(self) -> tuple[list[discord.SelectOption], Dict[str, str]]:
+        options: list[discord.SelectOption] = []
+        value_map: Dict[str, str] = {}
+
+        current_path = str(self.workflow_path or '').strip()
+
+        if self.global_workflow_path:
+            options.append(
+                discord.SelectOption(
+                    label=f'全局默认: {Path(self.global_workflow_path).name}'[:100],
+                    value='__global__',
+                    default=current_path == self.global_workflow_path,
+                )
+            )
+
+        candidate_paths: list[str] = []
+        if self.user_workflow_path:
+            candidate_paths.append(self.user_workflow_path)
+        candidate_paths.extend(self._list_uploaded_workflow_paths())
+        if current_path and current_path not in candidate_paths and current_path != self.global_workflow_path:
+            candidate_paths.insert(0, current_path)
+
+        deduped_paths: list[str] = []
+        seen = set()
+        for path_text in candidate_paths:
+            normalized_path = str(path_text or '').strip()
+            if not normalized_path:
+                continue
+            key = normalized_path.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_paths.append(normalized_path)
+
+        for index, path_text in enumerate(deduped_paths[:24]):
+            value = f'wf_{index}'
+            value_map[value] = path_text
+            prefix = '个人' if path_text == self.user_workflow_path else '上传'
+            options.append(
+                discord.SelectOption(
+                    label=f'{prefix}: {Path(path_text).name}'[:100],
+                    value=value,
+                    description='点击切换到该工作流',
+                    default=current_path == path_text,
+                )
+            )
+
+        if not options:
+            options = [discord.SelectOption(label='暂无可用工作流（请先上传）', value='__none__', default=True)]
+
+        if not any(option.default for option in options):
+            options[0].default = True
+
+        return options, value_map
+
+    def build_lora_select_options(self) -> tuple[list[discord.SelectOption], Dict[str, str]]:
+        current_tokens = self._split_raw_lora_items(self.lora_text)
+        uploaded_tokens = self._list_uploaded_lora_tokens()
+
+        candidates = list(uploaded_tokens)
+        for token in current_tokens:
+            if token not in candidates:
+                candidates.append(token)
+
+        value_map: Dict[str, str] = {}
+        options: list[discord.SelectOption] = [
+            discord.SelectOption(
+                label='不使用 LoRA',
+                value='__none__',
+                default=not current_tokens,
+            )
+        ]
+
+        for index, token in enumerate(candidates[:24]):
+            value = f'lora_{index}'
+            value_map[value] = token
+            token_label = token if len(token) <= 95 else f'{token[:92]}...'
+            options.append(
+                discord.SelectOption(
+                    label=token_label,
+                    value=value,
+                    default=token in current_tokens,
+                )
+            )
+
+        if not any(option.default for option in options):
+            options[0].default = True
+
+        return options, value_map
+
+    def refresh_selects(self) -> None:
+        self.workflow_select.refresh_options()
+        self.lora_select.refresh_options()
+        self.sampler_select.refresh_options()
+        self.scheduler_select.refresh_options()
+
+    async def persist_user_settings(
+        self,
+        workflow_path: Optional[str] = None,
+        default_lora: Optional[str] = None,
+    ) -> bool:
+        try:
+            return await chat_db_manager.set_comfyui_user_settings(
+                self.user_id,
+                workflow_path=workflow_path,
+                default_lora=default_lora,
+            )
+        except Exception as error:
+            log.warning(f'保存用户 ComfyUI 设置失败: user_id={self.user_id}, error={error}')
+            return False
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -319,28 +693,179 @@ class ComfyUIPanelView(discord.ui.View):
         if not self.panel_message:
             return
         try:
+            self.refresh_selects()
             await self.panel_message.edit(embed=self.cog.build_panel_embed(self), view=self)
         except Exception:
             pass
 
-    @discord.ui.button(label='输入参数并生成', style=discord.ButtonStyle.primary, emoji='🎨')
-    async def btn_generate(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ComfyUIGenerateModal(self.cog, self))
+    async def _wait_user_message(self, interaction: discord.Interaction, timeout_seconds: int = 120) -> Optional[discord.Message]:
+        channel = interaction.channel
+        if channel is None:
+            return None
 
-    @discord.ui.button(label='保存个人默认配置', style=discord.ButtonStyle.secondary, emoji='⚙️')
-    async def btn_save_user_config(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ComfyUIUserConfigModal(self))
+        def _check(message: discord.Message) -> bool:
+            return message.author.id == self.user_id and message.channel.id == channel.id
 
-    @discord.ui.button(label='清空个人配置', style=discord.ButtonStyle.danger, emoji='🗑️')
-    async def btn_clear_user_config(self, interaction: discord.Interaction, button: discord.ui.Button):
-        success = await chat_db_manager.clear_comfyui_user_settings(interaction.user.id)
-        if not success:
-            await interaction.response.send_message('清空个人配置失败，请稍后重试。', ephemeral=True)
+        try:
+            return await self.cog.bot.wait_for('message', timeout=timeout_seconds, check=_check)
+        except asyncio.TimeoutError:
+            return None
+
+    async def _save_uploaded_workflow(self, attachment: discord.Attachment) -> str:
+        safe_filename = _sanitize_filename(str(attachment.filename or '').strip(), 'workflow.json')
+        if not safe_filename.lower().endswith('.json'):
+            safe_filename = f'{safe_filename}.json'
+
+        content_bytes = await attachment.read()
+        decoded_text: Optional[str] = None
+        for encoding in ('utf-8-sig', 'utf-8', 'gbk'):
+            try:
+                decoded_text = content_bytes.decode(encoding)
+                break
+            except Exception:
+                continue
+
+        if decoded_text is None:
+            raise ValueError('工作流文件编码无法识别，请使用 UTF-8 JSON 文件。')
+
+        target_path = self.workflow_dir / safe_filename
+        saved_path = comfyui_service.save_workflow_text(decoded_text, str(target_path))
+        return str(saved_path)
+
+    async def _save_uploaded_lora(self, attachment: discord.Attachment) -> str:
+        safe_filename = _sanitize_filename(str(attachment.filename or '').strip(), 'uploaded_lora.safetensors')
+        suffix = Path(safe_filename).suffix.lower()
+        if suffix not in LORA_FILE_EXTENSIONS:
+            raise ValueError('LoRA 文件扩展名不受支持，请上传 .safetensors/.ckpt/.pt/.pth/.bin。')
+
+        content_bytes = await attachment.read()
+        target_path = self.lora_dir / safe_filename
+        target_path.write_bytes(content_bytes)
+        return target_path.name
+
+    def _append_lora_token(self, token: str) -> None:
+        token_text = str(token or '').strip()
+        if not token_text:
             return
-        self.user_workflow_path = ''
-        self.user_default_lora = ''
-        await interaction.response.send_message('已清空你的个人 ComfyUI 默认配置。', ephemeral=True)
-        await self.refresh_panel_message()
+        current = self._split_raw_lora_items(self.lora_text)
+        lower_set = {item.lower() for item in current}
+        if token_text.lower() in lower_set:
+            return
+        current.append(token_text)
+        self.lora_text = '|'.join(current)
+
+    @discord.ui.button(label='设置提示词', style=discord.ButtonStyle.secondary, emoji='📝', row=0)
+    async def btn_prompt(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ComfyPromptModal(self))
+
+    @discord.ui.button(label='参数设置', style=discord.ButtonStyle.secondary, emoji='⚙️', row=0)
+    async def btn_params(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ComfyParamsModal(self))
+
+    @discord.ui.button(label='上传工作流', style=discord.ButtonStyle.secondary, emoji='📂', row=0)
+    async def btn_upload_workflow(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            '请在 120 秒内发送一个 JSON 工作流附件到当前频道（发送后会自动读取并切换）。',
+            ephemeral=True,
+        )
+
+        message = await self._wait_user_message(interaction, timeout_seconds=120)
+        if message is None:
+            await interaction.followup.send('等待上传超时，请重新点击「上传工作流」。', ephemeral=True)
+            return
+
+        try:
+            if not message.attachments:
+                await interaction.followup.send('未检测到附件，请重新上传 JSON 工作流文件。', ephemeral=True)
+                return
+
+            saved_path = await self._save_uploaded_workflow(message.attachments[0])
+            self.workflow_path = saved_path
+            self.user_workflow_path = saved_path
+            await self.persist_user_settings(workflow_path=saved_path)
+
+            await interaction.followup.send(f'工作流上传成功，已切换为 `{Path(saved_path).name}`。', ephemeral=True)
+            await self.refresh_panel_message()
+        except Exception as error:
+            await interaction.followup.send(f'上传工作流失败：{error}', ephemeral=True)
+        finally:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+
+    @discord.ui.button(label='上传 LoRA', style=discord.ButtonStyle.secondary, emoji='🧩', row=0)
+    async def btn_upload_lora(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            '请在 120 秒内发送 LoRA 附件，或直接发送 LoRA 下载链接（http/https）。',
+            ephemeral=True,
+        )
+
+        message = await self._wait_user_message(interaction, timeout_seconds=120)
+        if message is None:
+            await interaction.followup.send('等待上传超时，请重新点击「上传 LoRA」。', ephemeral=True)
+            return
+
+        try:
+            uploaded_token: Optional[str] = None
+
+            if message.attachments:
+                uploaded_token = await self._save_uploaded_lora(message.attachments[0])
+            else:
+                url = _extract_first_url(message.content)
+                if not url:
+                    await interaction.followup.send('未检测到附件或有效链接。', ephemeral=True)
+                    return
+
+                download_result = await comfyui_service.download_lora_from_url(url=url)
+                if not download_result.get('success'):
+                    await interaction.followup.send(
+                        f'LoRA 下载失败：{download_result.get(error) or 未知错误}',
+                        ephemeral=True,
+                    )
+                    return
+
+                url_path = urlparse(url).path
+                inferred_name = Path(url_path).name if url_path else ''
+                uploaded_token = _sanitize_filename(inferred_name, 'downloaded_lora.safetensors')
+
+            self._append_lora_token(uploaded_token or '')
+            self.user_default_lora = self.lora_text
+            await self.persist_user_settings(default_lora=self.user_default_lora)
+
+            await interaction.followup.send('LoRA 已加入列表并保存为个人默认。', ephemeral=True)
+            await self.refresh_panel_message()
+        except Exception as error:
+            await interaction.followup.send(f'上传 LoRA 失败：{error}', ephemeral=True)
+        finally:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+
+    @discord.ui.button(label='编辑 LoRA 文本', style=discord.ButtonStyle.secondary, emoji='✍️', row=0)
+    async def btn_edit_lora_text(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ComfyLoraManualModal(self))
+
+    @discord.ui.button(label='开始绘制', style=discord.ButtonStyle.success, emoji='🖌️', row=0)
+    async def btn_generate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        payload: Dict[str, Any] = {
+            'prompt': self.prompt,
+            'negative_prompt': self.negative_prompt,
+            'width': self.width,
+            'height': self.height,
+            'steps': self.steps,
+            'cfg': self.cfg,
+            'seed': self.seed,
+            'sampler': self.selected_sampler,
+            'scheduler': self.selected_scheduler,
+            'lora': self.lora_text,
+            'lora_strength': _coerce_float(chat_config.COMFYUI_CONFIG.get('DEFAULT_LORA_STRENGTH'), 1.0),
+            'workflow_path': self.workflow_path,
+            'panel_user_workflow_path': self.user_workflow_path,
+            'panel_user_default_lora': self.user_default_lora,
+        }
+        await self.cog.handle_panel_generation(interaction, payload)
 
 
 class ComfyUICog(commands.Cog):
@@ -358,21 +883,41 @@ class ComfyUICog(commands.Cog):
 
     @staticmethod
     def build_panel_embed(view: ComfyUIPanelView) -> discord.Embed:
-        embed = discord.Embed(title='ComfyUI 交互绘图面板', color=0x2B2D31)
-        workflow_text = view.user_workflow_path or '未设置（使用 Dashboard 全局工作流）'
-        lora_text = view.user_default_lora or '未设置（使用全局默认或手动输入）'
-        sampler_text = view.selected_sampler or '默认（跟随 Dashboard）'
-        scheduler_text = view.selected_scheduler or '默认（跟随 Dashboard）'
-        embed.add_field(name='个人默认工作流', value=f'`{workflow_text[:900]}`', inline=False)
-        embed.add_field(name='个人默认 LoRA', value=f'`{lora_text[:900]}`', inline=False)
-        embed.add_field(name='面板采样器', value=f'`{sampler_text}`', inline=True)
-        embed.add_field(name='面板调度器', value=f'`{scheduler_text}`', inline=True)
+        embed = discord.Embed(
+            title='🎨 ComfyUI 绘图面板',
+            description='像 /draw 一样分步设置，最后点「开始绘制」。',
+            color=0x2B2D31,
+        )
+
+        prompt_preview = view.prompt[:200] + ('...' if len(view.prompt) > 200 else '') if view.prompt else '（未设置）'
+        negative_preview = (
+            view.negative_prompt[:120] + ('...' if len(view.negative_prompt) > 120 else '')
+            if view.negative_prompt
+            else '（未设置）'
+        )
+
+        workflow_name = Path(view.workflow_path).name if view.workflow_path else '未设置（需上传或使用全局）'
+        lora_preview = view.lora_text[:150] + ('...' if len(view.lora_text) > 150 else '') if view.lora_text else '不使用'
+        seed_display = str(view.seed) if view.seed is not None else '随机'
+
+        embed.add_field(name='📝 提示词', value=prompt_preview, inline=False)
+        embed.add_field(name='🚫 负面提示词', value=negative_preview, inline=False)
+        embed.add_field(name='🧩 当前工作流', value=workflow_name, inline=True)
+        embed.add_field(name='🎨 当前 LoRA', value=lora_preview, inline=True)
+        embed.add_field(name='📐 分辨率', value=f'{view.width}x{view.height}', inline=True)
+        embed.add_field(name='🔢 步数', value=str(view.steps), inline=True)
+        embed.add_field(name='📊 CFG', value=str(view.cfg), inline=True)
+        embed.add_field(name='🎲 Seed', value=seed_display, inline=True)
+        embed.add_field(name='⚙️ 采样器', value=view.selected_sampler, inline=True)
+        embed.add_field(name='🧭 调度器', value=view.selected_scheduler, inline=True)
         embed.add_field(
-            name='使用说明',
-            value='弹窗可填 prompt、分辨率、steps/cfg、lora、workflow；支持多 LoRA（含 <wlr:...>），seed=-1 为随机。',
+            name='💡 上传与切换说明',
+            value='点「上传工作流 / 上传 LoRA」后，在频道发送附件（或 LoRA 下载链接）即可自动导入并切换。',
             inline=False,
         )
-        embed.set_footer(text='你可以在这里保存自己的 workflow 与 lora。')
+
+        cost = ComfyUICog._get_image_cost()
+        embed.set_footer(text=f'生成成本: {cost} 月光币 | 支持多 LoRA 与 <wlr:...> 语法')
         return embed
 
     @staticmethod
@@ -469,7 +1014,7 @@ class ComfyUICog(commands.Cog):
 
         if not workflow_path and comfyui_service.workflow_template is None:
             await interaction.response.send_message(
-                '未找到可用工作流。请在 Dashboard 设置默认工作流，或先点「保存个人默认配置」填写个人工作流路径。',
+                '未找到可用工作流。请在 Dashboard 设置全局工作流，或先在面板里点击「上传工作流」。',
                 ephemeral=True,
             )
             return
@@ -570,7 +1115,7 @@ class ComfyUICog(commands.Cog):
 
         await interaction.followup.send('生成完成，图片已发送到当前频道。', ephemeral=True)
 
-    @app_commands.command(name='comfy', description='ComfyUI 绘图面板（支持个人工作流与 LoRA）')
+    @app_commands.command(name='comfy', description='ComfyUI 绘图面板（支持上传/切换工作流与 LoRA）')
     async def comfy(self, interaction: discord.Interaction):
         comfy_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLED', False))
         slash_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLE_SLASH_COMMAND', True))
@@ -586,11 +1131,12 @@ class ComfyUICog(commands.Cog):
             return
 
         user_settings = await self._get_user_comfy_settings(interaction.user.id)
+        from_user = bool(user_settings.get('_from_user'))
         panel = ComfyUIPanelView(
             cog=self,
             user_id=interaction.user.id,
-            user_workflow_path=str(user_settings.get('workflow_path') or '').strip(),
-            user_default_lora=str(user_settings.get('default_lora') or '').strip(),
+            user_workflow_path=str(user_settings.get('workflow_path') or '').strip() if from_user else '',
+            user_default_lora=str(user_settings.get('default_lora') or '').strip() if from_user else '',
         )
         embed = self.build_panel_embed(panel)
         await interaction.response.send_message(embed=embed, view=panel, ephemeral=True)
