@@ -54,6 +54,9 @@ SAMPLER_SCHEDULER_PRESETS = [
 ]
 
 LORA_FILE_EXTENSIONS = {'.safetensors', '.ckpt', '.pt', '.pth', '.bin'}
+WORKFLOW_MAX_SIZE_BYTES = 10 * 1024 * 1024
+LORA_MAX_SIZE_BYTES = 100 * 1024 * 1024
+DEFAULT_MAX_USER_LORA_UPLOADS = 5
 
 
 def _sanitize_filename(raw_name: str, fallback_name: str) -> str:
@@ -88,6 +91,19 @@ def _coerce_float(value: Any, default: Optional[float] = None) -> Optional[float
         return float(str(value).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _count_lora_files_in_dir(lora_dir: Path) -> int:
+    try:
+        return len(
+            [
+                item
+                for item in lora_dir.iterdir()
+                if item.is_file() and item.suffix.lower() in LORA_FILE_EXTENSIONS
+            ]
+        )
+    except Exception:
+        return 0
 
 
 class ComfyUIUserConfigModal(discord.ui.Modal, title='ComfyUI 个人默认配置'):
@@ -831,7 +847,14 @@ class ComfyUIPanelView(discord.ui.View):
         if not safe_filename.lower().endswith('.json'):
             safe_filename = f'{safe_filename}.json'
 
+        attachment_size = int(getattr(attachment, 'size', 0) or 0)
+        if attachment_size > WORKFLOW_MAX_SIZE_BYTES:
+            raise ValueError('工作流文件不能超过 10MB。')
+
         content_bytes = await attachment.read()
+        if len(content_bytes) > WORKFLOW_MAX_SIZE_BYTES:
+            raise ValueError('工作流文件不能超过 10MB。')
+
         decoded_text: Optional[str] = None
         for encoding in ('utf-8-sig', 'utf-8', 'gbk'):
             try:
@@ -853,8 +876,20 @@ class ComfyUIPanelView(discord.ui.View):
         if suffix not in LORA_FILE_EXTENSIONS:
             raise ValueError('LoRA 文件扩展名不受支持，请上传 .safetensors/.ckpt/.pt/.pth/.bin。')
 
-        content_bytes = await attachment.read()
+        attachment_size = int(getattr(attachment, 'size', 0) or 0)
+        if attachment_size > LORA_MAX_SIZE_BYTES:
+            raise ValueError('LoRA 文件不能超过 100MB。')
+
+        current_count = _count_lora_files_in_dir(self.lora_dir)
+        max_count = self.cog._get_max_user_lora_uploads()
         target_path = self.lora_dir / safe_filename
+        if current_count >= max_count and not target_path.exists():
+            raise ValueError(f'每人最多上传 {max_count} 个 LoRA，请先删除不用的 LoRA。')
+
+        content_bytes = await attachment.read()
+        if len(content_bytes) > LORA_MAX_SIZE_BYTES:
+            raise ValueError('LoRA 文件不能超过 100MB。')
+
         target_path.write_bytes(content_bytes)
         return target_path.name
 
@@ -1001,6 +1036,14 @@ class ComfyUICog(commands.Cog):
             return 5
 
     @staticmethod
+    def _get_max_user_lora_uploads() -> int:
+        try:
+            configured_value = int(chat_config.COMFYUI_CONFIG.get('MAX_USER_LORA_UPLOADS', DEFAULT_MAX_USER_LORA_UPLOADS))
+        except (TypeError, ValueError):
+            configured_value = DEFAULT_MAX_USER_LORA_UPLOADS
+        return max(1, configured_value)
+
+    @staticmethod
     def build_panel_embed(view: ComfyUIPanelView) -> discord.Embed:
         embed = discord.Embed(
             title='🎨 ComfyUI 绘图面板',
@@ -1119,7 +1162,14 @@ class ComfyUICog(commands.Cog):
         if not safe_filename.lower().endswith('.json'):
             safe_filename = f'{safe_filename}.json'
 
+        attachment_size = int(getattr(attachment, 'size', 0) or 0)
+        if attachment_size > WORKFLOW_MAX_SIZE_BYTES:
+            raise ValueError('工作流文件不能超过 10MB。')
+
         content_bytes = await attachment.read()
+        if len(content_bytes) > WORKFLOW_MAX_SIZE_BYTES:
+            raise ValueError('工作流文件不能超过 10MB。')
+
         decoded_text: Optional[str] = None
         for encoding in ('utf-8-sig', 'utf-8', 'gbk'):
             try:
@@ -1139,6 +1189,9 @@ class ComfyUICog(commands.Cog):
         workflow_text = str(workflow_json or '').strip()
         if not workflow_text:
             raise ValueError('workflow_json 不能为空。')
+
+        if len(workflow_text.encode('utf-8')) > WORKFLOW_MAX_SIZE_BYTES:
+            raise ValueError('工作流文本不能超过 10MB。')
 
         safe_filename = _sanitize_filename(filename_hint, 'workflow_pasted.json')
         if not safe_filename.lower().endswith('.json'):
@@ -1161,9 +1214,22 @@ class ComfyUICog(commands.Cog):
         if suffix not in LORA_FILE_EXTENSIONS:
             raise ValueError('LoRA 文件扩展名不受支持，请上传 .safetensors/.ckpt/.pt/.pth/.bin。')
 
-        content_bytes = await attachment.read()
+        attachment_size = int(getattr(attachment, 'size', 0) or 0)
+        if attachment_size > LORA_MAX_SIZE_BYTES:
+            raise ValueError('LoRA 文件不能超过 100MB。')
+
         lora_dir = self._resolve_user_lora_dir(user_id)
+        current_count = _count_lora_files_in_dir(lora_dir)
+        max_count = self._get_max_user_lora_uploads()
         target_path = lora_dir / safe_filename
+
+        if current_count >= max_count and not target_path.exists():
+            raise ValueError(f'每人最多上传 {max_count} 个 LoRA，请先删除不用的 LoRA。')
+
+        content_bytes = await attachment.read()
+        if len(content_bytes) > LORA_MAX_SIZE_BYTES:
+            raise ValueError('LoRA 文件不能超过 100MB。')
+
         target_path.write_bytes(content_bytes)
         return target_path.name
 

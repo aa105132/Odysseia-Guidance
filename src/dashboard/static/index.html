@@ -880,6 +880,13 @@
                             </div>
                         </div>
 
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>每人最多上传 LoRA 数量</label>
+                            <input type='number' min='1' step='1' x-model.number='comfyuiForm.max_user_lora_uploads'
+                                   class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            <p class='text-xs text-slate-500 mt-1'>仅限制用户私有 LoRA 附件上传数量。</p>
+                        </div>
+
                         <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
                             <div>
                                 <label class='block text-sm font-medium text-slate-300 mb-2'>固定正面提示词</label>
@@ -1134,6 +1141,13 @@
                                     </button>
                                 </div>
                             </div>
+                        </div>
+
+                        <div>
+                            <label class='block text-sm font-medium text-slate-300 mb-2'>每人最多上传 LoRA 数量</label>
+                            <input type='number' min='1' step='1' x-model.number='comfyuiForm.max_user_lora_uploads'
+                                   class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            <p class='text-xs text-slate-500 mt-1'>仅限制用户私有 LoRA 附件上传数量。</p>
                         </div>
 
                         <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
@@ -3535,6 +3549,7 @@
                     default_model_name: '',
                     default_lora: '',
                     default_lora_strength: 1.0,
+                    max_user_lora_uploads: 5,
                     fixed_positive_prompt: '',
                     fixed_negative_prompt: '',
                     request_timeout_seconds: 180,
@@ -4927,6 +4942,7 @@
                         this.comfyuiForm.default_model_name = data.default_model_name || '';
                         this.comfyuiForm.default_lora = data.default_lora || '';
                         this.comfyuiForm.default_lora_strength = data.default_lora_strength ?? 1.0;
+                        this.comfyuiForm.max_user_lora_uploads = data.max_user_lora_uploads ?? 5;
                         this.comfyuiForm.fixed_positive_prompt = data.fixed_positive_prompt || '';
                         this.comfyuiForm.fixed_negative_prompt = data.fixed_negative_prompt || '';
                         this.comfyuiForm.request_timeout_seconds = data.request_timeout_seconds ?? 180;
@@ -5137,6 +5153,7 @@
                             default_model_name: (this.comfyuiForm.default_model_name || '').trim(),
                             default_lora: (this.comfyuiForm.default_lora || '').trim(),
                             default_lora_strength: parseFloat(this.comfyuiForm.default_lora_strength),
+                            max_user_lora_uploads: parseInt(this.comfyuiForm.max_user_lora_uploads),
                             fixed_positive_prompt: (this.comfyuiForm.fixed_positive_prompt || '').trim(),
                             fixed_negative_prompt: (this.comfyuiForm.fixed_negative_prompt || '').trim(),
                             request_timeout_seconds: parseInt(this.comfyuiForm.request_timeout_seconds),
@@ -6126,5 +6143,3 @@
     </script>
 </body>
 </html>
-
-

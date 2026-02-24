@@ -213,6 +213,7 @@ class ComfyUIConfigUpdate(BaseModel):
     default_model_name: Optional[str] = None
     default_lora: Optional[str] = None
     default_lora_strength: Optional[float] = None
+    max_user_lora_uploads: Optional[int] = None
     fixed_positive_prompt: Optional[str] = None
     fixed_negative_prompt: Optional[str] = None
     request_timeout_seconds: Optional[int] = None
@@ -3022,6 +3023,7 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
     db_default_model_name = await chat_db_manager.get_global_setting('comfyui_default_model_name')
     db_default_lora = await chat_db_manager.get_global_setting('comfyui_default_lora')
     db_default_lora_strength = await chat_db_manager.get_global_setting('comfyui_default_lora_strength')
+    db_max_user_lora_uploads = await chat_db_manager.get_global_setting('comfyui_max_user_lora_uploads')
     db_fixed_positive_prompt = await chat_db_manager.get_global_setting('comfyui_fixed_positive_prompt')
     db_fixed_negative_prompt = await chat_db_manager.get_global_setting('comfyui_fixed_negative_prompt')
     db_timeout = await chat_db_manager.get_global_setting('comfyui_request_timeout_seconds')
@@ -3054,6 +3056,11 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
         float(db_default_lora_strength)
         if db_default_lora_strength
         else float(config.get('DEFAULT_LORA_STRENGTH', 1.0))
+    )
+    max_user_lora_uploads = (
+        int(db_max_user_lora_uploads)
+        if db_max_user_lora_uploads
+        else int(config.get('MAX_USER_LORA_UPLOADS', 5))
     )
     fixed_positive_prompt = str(db_fixed_positive_prompt or config.get('FIXED_POSITIVE_PROMPT') or '').strip()
     fixed_negative_prompt = str(db_fixed_negative_prompt or config.get('FIXED_NEGATIVE_PROMPT') or '').strip()
@@ -3141,6 +3148,7 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
         'default_model_name': default_model_name,
         'default_lora': default_lora,
         'default_lora_strength': default_lora_strength,
+        'max_user_lora_uploads': max(1, max_user_lora_uploads),
         'fixed_positive_prompt': fixed_positive_prompt,
         'fixed_negative_prompt': fixed_negative_prompt,
         'request_timeout_seconds': request_timeout_seconds,
@@ -3277,6 +3285,7 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
         ('default_cfg', 'DEFAULT_CFG', 'COMFYUI_DEFAULT_CFG', 'comfyui_default_cfg', float, 0),
         ('default_seed', 'DEFAULT_SEED', 'COMFYUI_DEFAULT_SEED', 'comfyui_default_seed', int, 0),
         ('default_lora_strength', 'DEFAULT_LORA_STRENGTH', 'COMFYUI_DEFAULT_LORA_STRENGTH', 'comfyui_default_lora_strength', float, 0),
+        ('max_user_lora_uploads', 'MAX_USER_LORA_UPLOADS', 'COMFYUI_MAX_USER_LORA_UPLOADS', 'comfyui_max_user_lora_uploads', int, 1),
         ('request_timeout_seconds', 'REQUEST_TIMEOUT_SECONDS', 'COMFYUI_REQUEST_TIMEOUT_SECONDS', 'comfyui_request_timeout_seconds', int, 1),
         ('poll_interval_seconds', 'POLL_INTERVAL_SECONDS', 'COMFYUI_POLL_INTERVAL_SECONDS', 'comfyui_poll_interval_seconds', float, 0.1),
     ]
