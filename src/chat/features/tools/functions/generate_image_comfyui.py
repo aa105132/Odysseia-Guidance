@@ -106,6 +106,8 @@ async def generate_image_comfyui(
 
     effective_workflow_path = str(workflow_path or '').strip()
     effective_lora = str(lora or '').strip() if lora is not None else None
+    effective_user_fixed_positive_prompt = ''
+    effective_user_fixed_negative_prompt = ''
 
     if parsed_user_id is not None:
         try:
@@ -116,6 +118,8 @@ async def generate_image_comfyui(
                 effective_workflow_path = str(user_settings.get('workflow_path') or '').strip()
             if effective_lora is None:
                 effective_lora = str(user_settings.get('default_lora') or '').strip()
+            effective_user_fixed_positive_prompt = str(user_settings.get('fixed_positive_prompt') or '').strip()
+            effective_user_fixed_negative_prompt = str(user_settings.get('fixed_negative_prompt') or '').strip()
         except Exception as error:
             log.warning(f'读取用户 ComfyUI 个性化配置失败: {error}')
 
@@ -167,6 +171,8 @@ async def generate_image_comfyui(
             lora_strength=lora_strength,
             model_name=model_name,
             workflow_path=effective_workflow_path or None,
+            user_fixed_positive_prompt=effective_user_fixed_positive_prompt,
+            user_fixed_negative_prompt=effective_user_fixed_negative_prompt,
         )
 
         await remove_reaction(GENERATING_EMOJI)

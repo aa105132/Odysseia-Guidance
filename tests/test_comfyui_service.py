@@ -126,6 +126,36 @@ def test_prepare_workflow_supports_percent_style_alias_placeholders(tmp_path):
         chat_config.COMFYUI_CONFIG['PLACEHOLDER_MAPPING'] = original_placeholder_mapping
         chat_config.COMFYUI_CONFIG['NODE_MAPPING'] = original_node_mapping
 
+
+
+def test_build_runtime_params_supports_user_fixed_prompts(tmp_path):
+    workflow_path = tmp_path / 'workflow_template.json'
+    workflow_path.write_text(json.dumps({'1': {'inputs': {'text': '{{positive_prompt}}'}}}, ensure_ascii=False), encoding='utf-8')
+
+    original_fixed_positive = chat_config.COMFYUI_CONFIG.get('FIXED_POSITIVE_PROMPT')
+    original_fixed_negative = chat_config.COMFYUI_CONFIG.get('FIXED_NEGATIVE_PROMPT')
+
+    try:
+        chat_config.COMFYUI_CONFIG['FIXED_POSITIVE_PROMPT'] = 'global quality'
+        chat_config.COMFYUI_CONFIG['FIXED_NEGATIVE_PROMPT'] = 'global lowres'
+
+        service = ComfyUIService(
+            server_address='127.0.0.1:8188',
+            workflow_path=str(workflow_path),
+        )
+
+        params = service._build_runtime_params(
+            prompt='forest spirit',
+            negative_prompt='blurry',
+            user_fixed_positive_prompt='user style',
+            user_fixed_negative_prompt='user no_nsfw',
+        )
+
+        assert params['positive_prompt'] == 'global quality, user style, forest spirit'
+        assert params['negative_prompt'] == 'global lowres, user no_nsfw, blurry'
+    finally:
+        chat_config.COMFYUI_CONFIG['FIXED_POSITIVE_PROMPT'] = original_fixed_positive
+        chat_config.COMFYUI_CONFIG['FIXED_NEGATIVE_PROMPT'] = original_fixed_negative
 def test_build_runtime_params_merges_fixed_prompts_and_default_model(tmp_path):
     workflow_path = tmp_path / 'workflow_template.json'
     workflow_path.write_text(json.dumps({'1': {'inputs': {'text': '{{positive_prompt}}'}}}, ensure_ascii=False), encoding='utf-8')

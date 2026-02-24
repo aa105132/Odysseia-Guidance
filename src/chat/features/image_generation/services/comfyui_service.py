@@ -214,9 +214,14 @@ class ComfyUIService:
 
         fixed_positive_prompt = str(config.get('FIXED_POSITIVE_PROMPT') or '').strip()
         fixed_negative_prompt = str(config.get('FIXED_NEGATIVE_PROMPT') or '').strip()
+        user_fixed_positive_prompt = str(kwargs.get('user_fixed_positive_prompt') or '').strip()
+        user_fixed_negative_prompt = str(kwargs.get('user_fixed_negative_prompt') or '').strip()
 
-        merged_positive_prompt = self._merge_fixed_prompt(positive_prompt, fixed_positive_prompt)
-        merged_negative_prompt = self._merge_fixed_prompt(kwargs.get('negative_prompt'), fixed_negative_prompt)
+        effective_fixed_positive_prompt = self._merge_fixed_prompt(user_fixed_positive_prompt, fixed_positive_prompt)
+        effective_fixed_negative_prompt = self._merge_fixed_prompt(user_fixed_negative_prompt, fixed_negative_prompt)
+
+        merged_positive_prompt = self._merge_fixed_prompt(positive_prompt, effective_fixed_positive_prompt)
+        merged_negative_prompt = self._merge_fixed_prompt(kwargs.get('negative_prompt'), effective_fixed_negative_prompt)
 
         params: Dict[str, Any] = {
             'positive_prompt': merged_positive_prompt,

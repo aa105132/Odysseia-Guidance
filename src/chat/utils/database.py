@@ -636,9 +636,20 @@ class ChatDatabaseManager:
                     user_id INTEGER PRIMARY KEY,
                     workflow_path TEXT NOT NULL DEFAULT '',
                     default_lora TEXT NOT NULL DEFAULT '',
+                    fixed_positive_prompt TEXT NOT NULL DEFAULT '',
+                    fixed_negative_prompt TEXT NOT NULL DEFAULT '',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             ''')
+
+            cursor.execute('PRAGMA table_info(comfyui_user_settings);')
+            comfyui_user_columns = [info[1] for info in cursor.fetchall()]
+            if 'fixed_positive_prompt' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN fixed_positive_prompt TEXT NOT NULL DEFAULT '';")
+                log.info('已向 comfyui_user_settings 表添加 fixed_positive_prompt 列。')
+            if 'fixed_negative_prompt' not in comfyui_user_columns:
+                cursor.execute("ALTER TABLE comfyui_user_settings ADD COLUMN fixed_negative_prompt TEXT NOT NULL DEFAULT '';")
+                log.info('已向 comfyui_user_settings 表添加 fixed_negative_prompt 列。')
 
             # --- 图片消息记录表（用于反应举报归属） ---
             cursor.execute("""
@@ -2265,7 +2276,7 @@ class ChatDatabaseManager:
         default_lora = str(chat_config.COMFYUI_CONFIG.get('DEFAULT_LORA') or '').strip()
 
         query = '''
-            SELECT workflow_path, default_lora
+            SELECT workflow_path, default_lora, fixed_positive_prompt, fixed_negative_prompt
             FROM comfyui_user_settings
             WHERE user_id = ?
         '''
@@ -2280,12 +2291,16 @@ class ChatDatabaseManager:
             return {
                 'workflow_path': default_workflow_path,
                 'default_lora': default_lora,
+                'fixed_positive_prompt': '',
+                'fixed_negative_prompt': '',
                 '_from_user': False,
             }
 
         return {
             'workflow_path': str(row['workflow_path'] or '').strip(),
             'default_lora': str(row['default_lora'] or '').strip(),
+            'fixed_positive_prompt': str(row['fixed_positive_prompt'] or '').strip(),
+            'fixed_negative_prompt': str(row['fixed_negative_prompt'] or '').strip(),
             '_from_user': True,
         }
 
@@ -2294,13 +2309,20 @@ class ChatDatabaseManager:
         user_id: int,
         workflow_path: Optional[str] = None,
         default_lora: Optional[str] = None,
+        fixed_positive_prompt: Optional[str] = None,
+        fixed_negative_prompt: Optional[str] = None,
     ) -> bool:
         '''保存用户 ComfyUI 个性化配置，支持按字段部分更新。'''
-        if workflow_path is None and default_lora is None:
+        if (
+            workflow_path is None
+            and default_lora is None
+            and fixed_positive_prompt is None
+            and fixed_negative_prompt is None
+        ):
             return True
 
         query_current = '''
-            SELECT workflow_path, default_lora
+            SELECT workflow_path, default_lora, fixed_positive_prompt, fixed_negative_prompt
             FROM comfyui_user_settings
             WHERE user_id = ?
         '''
@@ -2321,6 +2343,16 @@ class ChatDatabaseManager:
             if current_row
             else str(chat_config.COMFYUI_CONFIG.get('DEFAULT_LORA') or '').strip()
         )
+        current_fixed_positive_prompt = (
+            str(current_row['fixed_positive_prompt'] or '').strip()
+            if current_row
+            else ''
+        )
+        current_fixed_negative_prompt = (
+            str(current_row['fixed_negative_prompt'] or '').strip()
+            if current_row
+            else ''
+        )
 
         normalized_workflow_path = (
             current_workflow_path
@@ -2332,13 +2364,32 @@ class ChatDatabaseManager:
             if default_lora is None
             else str(default_lora or '').strip()
         )
+        normalized_fixed_positive_prompt = (
+            current_fixed_positive_prompt
+            if fixed_positive_prompt is None
+            else str(fixed_positive_prompt or '').strip()
+        )
+        normalized_fixed_negative_prompt = (
+            current_fixed_negative_prompt
+            if fixed_negative_prompt is None
+            else str(fixed_negative_prompt or '').strip()
+        )
 
         query_upsert = '''
-            INSERT INTO comfyui_user_settings (user_id, workflow_path, default_lora, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO comfyui_user_settings (
+                user_id,
+                workflow_path,
+                default_lora,
+                fixed_positive_prompt,
+                fixed_negative_prompt,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
                 workflow_path = excluded.workflow_path,
                 default_lora = excluded.default_lora,
+                fixed_positive_prompt = excluded.fixed_positive_prompt,
+                fixed_negative_prompt = excluded.fixed_negative_prompt,
                 updated_at = CURRENT_TIMESTAMP;
         '''
 
@@ -2346,7 +2397,13 @@ class ChatDatabaseManager:
             await self._execute(
                 self._db_transaction,
                 query_upsert,
-                (user_id, normalized_workflow_path, normalized_default_lora),
+                (
+                    user_id,
+                    normalized_workflow_path,
+                    normalized_default_lora,
+                    normalized_fixed_positive_prompt,
+                    normalized_fixed_negative_prompt,
+                ),
                 commit=True,
             )
             return True

@@ -121,21 +121,41 @@ class ComfyUIUserConfigModal(discord.ui.Modal, title='ComfyUI 个人默认配置
         max_length=200,
         style=discord.TextStyle.short,
     )
+    fixed_positive_input = discord.ui.TextInput(
+        label='个人固定正面提示词（可留空）',
+        placeholder='会在每次生成时自动拼接到正面提示词前面',
+        required=False,
+        max_length=1200,
+        style=discord.TextStyle.paragraph,
+    )
+    fixed_negative_input = discord.ui.TextInput(
+        label='个人固定负面提示词（可留空）',
+        placeholder='会在每次生成时自动拼接到负面提示词前面',
+        required=False,
+        max_length=1200,
+        style=discord.TextStyle.paragraph,
+    )
 
     def __init__(self, panel_view: 'ComfyUIPanelView'):
         super().__init__()
         self.panel_view = panel_view
         self.workflow_path_input.default = panel_view.user_workflow_path or ''
         self.default_lora_input.default = panel_view.user_default_lora or ''
+        self.fixed_positive_input.default = panel_view.user_fixed_positive_prompt or ''
+        self.fixed_negative_input.default = panel_view.user_fixed_negative_prompt or ''
 
     async def on_submit(self, interaction: discord.Interaction):
         workflow_path = str(self.workflow_path_input.value or '').strip()
         default_lora = str(self.default_lora_input.value or '').strip()
+        fixed_positive_prompt = str(self.fixed_positive_input.value or '').strip()
+        fixed_negative_prompt = str(self.fixed_negative_input.value or '').strip()
 
         success = await chat_db_manager.set_comfyui_user_settings(
             interaction.user.id,
             workflow_path=workflow_path,
             default_lora=default_lora,
+            fixed_positive_prompt=fixed_positive_prompt,
+            fixed_negative_prompt=fixed_negative_prompt,
         )
         if not success:
             await interaction.response.send_message('保存个人 ComfyUI 配置失败，请稍后重试。', ephemeral=True)
@@ -143,6 +163,8 @@ class ComfyUIUserConfigModal(discord.ui.Modal, title='ComfyUI 个人默认配置
 
         self.panel_view.user_workflow_path = workflow_path
         self.panel_view.user_default_lora = default_lora
+        self.panel_view.user_fixed_positive_prompt = fixed_positive_prompt
+        self.panel_view.user_fixed_negative_prompt = fixed_negative_prompt
 
         await interaction.response.send_message('已保存你的个人 ComfyUI 默认配置。', ephemeral=True)
         await self.panel_view.refresh_panel_message()
@@ -257,6 +279,8 @@ class ComfyUIGenerateModal(discord.ui.Modal, title='ComfyUI 快速生成'):
             'workflow_path': str(extra.get('workflow') or '').strip() or None,
             'panel_user_workflow_path': self.panel_view.user_workflow_path,
             'panel_user_default_lora': self.panel_view.user_default_lora,
+            'panel_user_fixed_positive_prompt': self.panel_view.user_fixed_positive_prompt,
+            'panel_user_fixed_negative_prompt': self.panel_view.user_fixed_negative_prompt,
         }
 
         await self.cog.handle_panel_generation(interaction, payload)
@@ -277,17 +301,44 @@ class ComfyPromptModal(discord.ui.Modal, title='ComfyUI 提示词设置'):
         max_length=1000,
         style=discord.TextStyle.paragraph,
     )
+    fixed_positive_input = discord.ui.TextInput(
+        label='个人固定正面提示词（可留空）',
+        placeholder='会在每次生成时自动拼接在正面提示词前面',
+        required=False,
+        max_length=1200,
+        style=discord.TextStyle.paragraph,
+    )
+    fixed_negative_input = discord.ui.TextInput(
+        label='个人固定负面提示词（可留空）',
+        placeholder='会在每次生成时自动拼接在负面提示词前面',
+        required=False,
+        max_length=1200,
+        style=discord.TextStyle.paragraph,
+    )
 
     def __init__(self, panel_view: 'ComfyUIPanelView'):
         super().__init__()
         self.panel_view = panel_view
         self.prompt_input.default = panel_view.prompt
         self.negative_input.default = panel_view.negative_prompt
+        self.fixed_positive_input.default = panel_view.user_fixed_positive_prompt
+        self.fixed_negative_input.default = panel_view.user_fixed_negative_prompt
 
     async def on_submit(self, interaction: discord.Interaction):
         self.panel_view.prompt = str(self.prompt_input.value or '').strip()
         self.panel_view.negative_prompt = str(self.negative_input.value or '').strip()
-        await interaction.response.send_message('已更新提示词设置。', ephemeral=True)
+        self.panel_view.user_fixed_positive_prompt = str(self.fixed_positive_input.value or '').strip()
+        self.panel_view.user_fixed_negative_prompt = str(self.fixed_negative_input.value or '').strip()
+
+        save_ok = await self.panel_view.persist_user_settings(
+            fixed_positive_prompt=self.panel_view.user_fixed_positive_prompt,
+            fixed_negative_prompt=self.panel_view.user_fixed_negative_prompt,
+        )
+
+        if save_ok:
+            await interaction.response.send_message('已更新提示词，并保存个人固定提示词。', ephemeral=True)
+        else:
+            await interaction.response.send_message('已更新提示词，但保存个人固定提示词失败。', ephemeral=True)
         await self.panel_view.refresh_panel_message()
 
 
@@ -570,6 +621,8 @@ class ComfyUIPanelView(discord.ui.View):
         user_id: int,
         user_workflow_path: str,
         user_default_lora: str,
+        user_fixed_positive_prompt: str = '',
+        user_fixed_negative_prompt: str = '',
         initial_model_name: str = '',
         available_models: Optional[list[str]] = None,
     ):
@@ -585,6 +638,8 @@ class ComfyUIPanelView(discord.ui.View):
         self.global_workflow_path = str(chat_config.COMFYUI_CONFIG.get('WORKFLOW_PATH') or '').strip()
         self.user_workflow_path = str(user_workflow_path or '').strip()
         self.user_default_lora = str(user_default_lora or '').strip()
+        self.user_fixed_positive_prompt = str(user_fixed_positive_prompt or '').strip()
+        self.user_fixed_negative_prompt = str(user_fixed_negative_prompt or '').strip()
 
         self.prompt = ''
         self.negative_prompt = ''
@@ -803,12 +858,16 @@ class ComfyUIPanelView(discord.ui.View):
         self,
         workflow_path: Optional[str] = None,
         default_lora: Optional[str] = None,
+        fixed_positive_prompt: Optional[str] = None,
+        fixed_negative_prompt: Optional[str] = None,
     ) -> bool:
         try:
             return await chat_db_manager.set_comfyui_user_settings(
                 self.user_id,
                 workflow_path=workflow_path,
                 default_lora=default_lora,
+                fixed_positive_prompt=fixed_positive_prompt,
+                fixed_negative_prompt=fixed_negative_prompt,
             )
         except Exception as error:
             log.warning(f'保存用户 ComfyUI 设置失败: user_id={self.user_id}, error={error}')
@@ -1018,6 +1077,8 @@ class ComfyUIPanelView(discord.ui.View):
             'workflow_path': self.workflow_path,
             'panel_user_workflow_path': self.user_workflow_path,
             'panel_user_default_lora': self.user_default_lora,
+            'panel_user_fixed_positive_prompt': self.user_fixed_positive_prompt,
+            'panel_user_fixed_negative_prompt': self.user_fixed_negative_prompt,
         }
         await self.cog.handle_panel_generation(interaction, payload)
 
@@ -1063,8 +1124,21 @@ class ComfyUICog(commands.Cog):
         seed_display = str(view.seed) if view.seed is not None else '随机'
         model_display = str(view.selected_model_name or '').strip() or '工作流默认'
 
+        user_fixed_positive_preview = (
+            view.user_fixed_positive_prompt[:120] + ('...' if len(view.user_fixed_positive_prompt) > 120 else '')
+            if view.user_fixed_positive_prompt
+            else '（未设置）'
+        )
+        user_fixed_negative_preview = (
+            view.user_fixed_negative_prompt[:120] + ('...' if len(view.user_fixed_negative_prompt) > 120 else '')
+            if view.user_fixed_negative_prompt
+            else '（未设置）'
+        )
+
         embed.add_field(name='📝 提示词', value=prompt_preview, inline=False)
         embed.add_field(name='🚫 负面提示词', value=negative_preview, inline=False)
+        embed.add_field(name='🧷 个人固定正面', value=user_fixed_positive_preview, inline=False)
+        embed.add_field(name='🧷 个人固定负面', value=user_fixed_negative_preview, inline=False)
         embed.add_field(name='🧩 当前工作流', value=workflow_name, inline=True)
         embed.add_field(name='🧱 当前底模', value=model_display[:100], inline=True)
         embed.add_field(name='🎨 当前 LoRA', value=lora_preview, inline=True)
@@ -1147,6 +1221,8 @@ class ComfyUICog(commands.Cog):
             return {
                 'workflow_path': '',
                 'default_lora': '',
+                'fixed_positive_prompt': '',
+                'fixed_negative_prompt': '',
                 '_from_user': False,
             }
 
@@ -1266,6 +1342,8 @@ class ComfyUICog(commands.Cog):
 
         panel_user_workflow_path = str(payload.get('panel_user_workflow_path') or '').strip()
         panel_user_default_lora = str(payload.get('panel_user_default_lora') or '').strip()
+        panel_user_fixed_positive_prompt = str(payload.get('panel_user_fixed_positive_prompt') or '').strip()
+        panel_user_fixed_negative_prompt = str(payload.get('panel_user_fixed_negative_prompt') or '').strip()
 
         workflow_path = str(payload.get('workflow_path') or '').strip() or panel_user_workflow_path
         lora_value = payload.get('lora')
@@ -1320,6 +1398,8 @@ class ComfyUICog(commands.Cog):
                 lora=service_lora_override,
                 lora_strength=None,
                 workflow_path=workflow_path or None,
+                user_fixed_positive_prompt=panel_user_fixed_positive_prompt,
+                user_fixed_negative_prompt=panel_user_fixed_negative_prompt,
             )
         except Exception as error:
             log.error(f'/comfy 面板执行异常: {error}', exc_info=True)
@@ -1394,6 +1474,8 @@ class ComfyUICog(commands.Cog):
         lora_file='可选：直接上传 LoRA 文件（支持 safetensors/ckpt/pt/pth/bin）',
         lora_url='可选：填写 LoRA 下载链接（提交到 ComfyUI-Manager）',
         custom_node_url='可选：填写插件节点 Git 链接（自动提交到 ComfyUI-Manager）',
+        fixed_positive_prompt='可选：设置并保存你的个人固定正面提示词',
+        fixed_negative_prompt='可选：设置并保存你的个人固定负面提示词',
         model_name='可选：直接指定本次面板默认底模（用于 %MODEL_NAME%）',
     )
     async def comfy(
@@ -1404,6 +1486,8 @@ class ComfyUICog(commands.Cog):
         lora_file: Optional[discord.Attachment] = None,
         lora_url: Optional[str] = None,
         custom_node_url: Optional[str] = None,
+        fixed_positive_prompt: Optional[str] = None,
+        fixed_negative_prompt: Optional[str] = None,
         model_name: Optional[str] = None,
     ):
         comfy_enabled = bool(chat_config.COMFYUI_CONFIG.get('ENABLED', False))
@@ -1427,6 +1511,8 @@ class ComfyUICog(commands.Cog):
         custom_node_warnings: list[str] = []
         workflow_path_update: Optional[str] = None
         default_lora_update: Optional[str] = None
+        fixed_positive_prompt_update: Optional[str] = None
+        fixed_negative_prompt_update: Optional[str] = None
 
         if workflow_file is not None or (workflow_json is not None and str(workflow_json).strip()):
             try:
@@ -1470,6 +1556,11 @@ class ComfyUICog(commands.Cog):
                 await interaction.response.send_message(f'导入 LoRA 失败：{error}', ephemeral=True)
                 return
 
+        if fixed_positive_prompt is not None:
+            fixed_positive_prompt_update = str(fixed_positive_prompt or '').strip()
+        if fixed_negative_prompt is not None:
+            fixed_negative_prompt_update = str(fixed_negative_prompt or '').strip()
+
         normalized_custom_node_url = str(custom_node_url or '').strip()
         if normalized_custom_node_url:
             try:
@@ -1493,11 +1584,18 @@ class ComfyUICog(commands.Cog):
                 await interaction.response.send_message(f'安装插件节点失败：{error}', ephemeral=True)
                 return
 
-        if workflow_path_update is not None or default_lora_update is not None:
+        if (
+            workflow_path_update is not None
+            or default_lora_update is not None
+            or fixed_positive_prompt_update is not None
+            or fixed_negative_prompt_update is not None
+        ):
             save_ok = await chat_db_manager.set_comfyui_user_settings(
                 user_id,
                 workflow_path=workflow_path_update,
                 default_lora=default_lora_update,
+                fixed_positive_prompt=fixed_positive_prompt_update,
+                fixed_negative_prompt=fixed_negative_prompt_update,
             )
             if not save_ok:
                 await interaction.response.send_message('保存 ComfyUI 用户配置失败，请稍后重试。', ephemeral=True)
@@ -1507,6 +1605,10 @@ class ComfyUICog(commands.Cog):
                 user_settings['workflow_path'] = workflow_path_update
             if default_lora_update is not None:
                 user_settings['default_lora'] = default_lora_update
+            if fixed_positive_prompt_update is not None:
+                user_settings['fixed_positive_prompt'] = fixed_positive_prompt_update
+            if fixed_negative_prompt_update is not None:
+                user_settings['fixed_negative_prompt'] = fixed_negative_prompt_update
             user_settings['_from_user'] = True
 
         from_user = bool(user_settings.get('_from_user'))
@@ -1523,6 +1625,8 @@ class ComfyUICog(commands.Cog):
             user_id=user_id,
             user_workflow_path=str(user_settings.get('workflow_path') or '').strip() if from_user else '',
             user_default_lora=str(user_settings.get('default_lora') or '').strip() if from_user else '',
+            user_fixed_positive_prompt=str(user_settings.get('fixed_positive_prompt') or '').strip() if from_user else '',
+            user_fixed_negative_prompt=str(user_settings.get('fixed_negative_prompt') or '').strip() if from_user else '',
             initial_model_name=selected_model_name,
             available_models=available_models,
         )
@@ -1590,6 +1694,18 @@ class ComfyUICog(commands.Cog):
 
         if custom_node_warnings:
             notice_parts.append(f'⚠️ 插件安装提示：{custom_node_warnings[-1]}')
+
+        if fixed_positive_prompt_update is not None:
+            if fixed_positive_prompt_update:
+                notice_parts.append('已更新个人固定正面提示词。')
+            else:
+                notice_parts.append('已清空个人固定正面提示词。')
+
+        if fixed_negative_prompt_update is not None:
+            if fixed_negative_prompt_update:
+                notice_parts.append('已更新个人固定负面提示词。')
+            else:
+                notice_parts.append('已清空个人固定负面提示词。')
 
         if selected_model_name:
             notice_parts.append(f'已预设底模：`{selected_model_name}`')
