@@ -1488,6 +1488,7 @@ async def generate_image_novelai(
                         preset_name=effective_preset_name,
                         user_id=user_id,
                         cost=cost,
+                        appearance_summary=appearance_summary,
                     )
 
                     sent_message = await channel.send(
@@ -2171,6 +2172,7 @@ class ArtistPresetSwitchView(discord.ui.View):
         user_presets: List[dict],
         admin_presets: List[dict],
         current_artist_string: Optional[str] = None,
+        appearance_summary: Optional[str] = None,
     ):
         super().__init__(timeout=120)
         self._prompt = str(prompt or "").strip()
@@ -2185,6 +2187,7 @@ class ArtistPresetSwitchView(discord.ui.View):
         self._cost = cost
         normalized_current_artist = str(current_artist_string or "").strip()
         self._current_artist_string = normalized_current_artist or None
+        self._appearance_summary = str(appearance_summary or "").strip() or None
 
         self._user_presets = user_presets
         self._admin_presets = admin_presets
@@ -2301,6 +2304,7 @@ class ArtistPresetSwitchView(discord.ui.View):
             cost=self._cost,
             artist_string=target_artist_string,
             title_suffix="（切换画师串）",
+            appearance_summary_override=self._appearance_summary,
         )
 
 
@@ -2320,6 +2324,7 @@ class NovelAIResultView(discord.ui.View):
         user_id: Optional[str],
         cost: int,
         artist_string: Optional[str] = None,
+        appearance_summary: Optional[str] = None,
     ):
         super().__init__(timeout=600)  # 10 分钟超时
         normalized_artist = str(artist_string or "").strip()
@@ -2341,6 +2346,7 @@ class NovelAIResultView(discord.ui.View):
         self._preset_name = preset_name
         self._user_id = user_id
         self._cost = cost
+        self._appearance_summary = str(appearance_summary or "").strip() or None
 
     @discord.ui.button(label="重新生成", style=discord.ButtonStyle.primary, row=0)
     async def regenerate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2479,6 +2485,7 @@ class NovelAIResultView(discord.ui.View):
             user_presets=user_presets,
             admin_presets=admin_presets,
             current_artist_string=self._artist_string,
+            appearance_summary=self._appearance_summary,
         )
         await interaction.response.send_message("请选择要切换的画师串：", view=view, ephemeral=True)
 
@@ -2555,6 +2562,7 @@ async def _regenerate_novelai(
     cost: int,
     artist_string: Optional[str] = None,
     title_suffix: str = "（重新生成）",
+    appearance_summary_override: Optional[str] = None,
 ):
     """内部函数：使用 NovelAI 重新生成图片"""
     from src.chat.features.novelai_generation.services.novelai_service import novelai_service
@@ -2593,12 +2601,16 @@ async def _regenerate_novelai(
             )
             return
 
-    appearance_summary = await _build_prompt_summary_for_embed(
-        prompt=final_prompt,
-        negative_prompt=negative_prompt,
-        artist_string=effective_artist_string,
-        use_ai_conversion=False,
-    )
+    normalized_appearance_override = str(appearance_summary_override or "").strip()
+    if normalized_appearance_override:
+        appearance_summary = normalized_appearance_override
+    else:
+        appearance_summary = await _build_prompt_summary_for_embed(
+            prompt=final_prompt,
+            negative_prompt=negative_prompt,
+            artist_string=effective_artist_string,
+            use_ai_conversion=False,
+        )
 
     # 生成图片（新种子）
     result = await novelai_service.generate_image(
@@ -2680,6 +2692,7 @@ async def _regenerate_novelai(
         user_id=user_id,
         cost=cost,
         artist_string=effective_artist_string,
+        appearance_summary=appearance_summary,
     )
 
     sent_message = await interaction.followup.send(
