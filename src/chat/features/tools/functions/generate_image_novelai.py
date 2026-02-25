@@ -590,7 +590,7 @@ async def generate_image_novelai(
     - 单人女性必须写 `1girl, solo`；单人男性必须写 `1boy, solo`；禁止只写 `girl`/`boy` 代替角色数量与关系标签
     - 只允许在用户未明确的部分补充细节，补充内容必须与用户原意一致
     - 当主体是月月/你自己时，提示词AI必须严格遵循月月固定DNA标签与权重标签，不得改色、改发饰、改耳朵类型或删除标志性特征；瞳色权重标签必须前置，且发簪/耳坠/项链配饰权重（含半月形项链）需保留；月月必须保留 heterochromia
-    - 月月耳坠只允许 `triangular watermelon earrings`（西瓜配色三角形耳坠）；禁止 `moon earrings` / `crescent earrings` / `crescent moon earrings`。月牙元素只属于发簪与项链，不属于耳坠。
+    - 月月耳坠只允许 `small sharp triangular red and blue earrings`（细微尖三角形红蓝配色耳坠）；禁止 `moon earrings` / `crescent earrings` / `crescent moon earrings`。月牙元素只属于发簪与项链，不属于耳坠。
     - 当用户明确说“参考第N张图”时，必须传 `reference_image_index=N`，让提示词 AI 同时参考该图
     - 你负责补全用户意图里的关键信息：主体、场景、动作、构图、光影、氛围、服饰、表情
     - 定格画面：描述应聚焦单一静态瞬间，避免连续动作过程
@@ -651,8 +651,8 @@ async def generate_image_novelai(
     如果用户要求画"你"、"月月"、"自己"：
     - 1girl, solo, original, green left eye, blue right eye, silver hair, high ponytail, pale skin, medium breasts
     - fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail
-    - silver crescent moon hair stick, triangular watermelon earrings, silver crescent moon necklace（月牙发簪 + 三角西瓜耳坠 + 银色半月形项链，必须保留）
-    - 月月权重锁定（正确写法）: 1.45::green left eye, blue right eye::, 1.35::silver hair::, 1.25::medium breasts::, 1.3::silver crescent moon hair stick, silver crescent moon necklace::, 1.45::triangular watermelon earrings::, 1.25::heterochromia::
+    - silver crescent moon hair stick, small sharp triangular red and blue earrings, silver crescent moon necklace（月牙发簪 + 细微尖三角形红蓝配色耳坠 + 银色半月形项链，必须保留）
+    - 月月权重锁定（正确写法）: 1.45::green left eye, blue right eye::, 1.35::silver hair::, 1.25::medium breasts::, 1.3::silver crescent moon hair stick, silver crescent moon necklace::, 1.45::small sharp triangular red and blue earrings::, 1.25::heterochromia::
     - 异瞳顺序规则：green/blue 具体瞳色标签要前置，heterochromia 放后段，防止异瞳标签把具体瞳色带偏
     - 罩杯规则：默认 medium breasts(C)；仅当用户明确要求其他罩杯时才允许改成 small/large breasts
     - 提示词AI对月月只能补充场景/构图/光影细节，禁止改写以上外貌DNA与权重标签
@@ -726,7 +726,7 @@ async def generate_image_novelai(
 
     用户说"画月月在温泉里"，提示词 AI 会生成：
     ```
-    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, 1.45::green left eye, blue right eye::, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, bishoujo, 1.35::silver hair::, high ponytail, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, 1.25::medium breasts::, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, triangular watermelon earrings, 1.3::silver crescent moon necklace::, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
+    masterpiece, best quality, amazing quality, very aesthetic, absurdres, nsfw, 1girl, solo, 1.45::green left eye, blue right eye::, outdoors, night, starry sky, 1.2::moonlight::, rim lighting, onsen, steam, rocks, hot spring, cowboy shot, from above, depth of field, bishoujo, 1.35::silver hair::, high ponytail, fox ears, white fox ears, pink inner ear, fox tail, silver white tail, fluffy tail, silver crescent moon hair stick, 1.25::medium breasts::, white skin, nude, completely nude, partially submerged, wet body, wet hair, 1.2::shiny skin::, small sharp triangular red and blue earrings, 1.3::silver crescent moon necklace::, bathing, relaxing, arms on edge, looking at viewer, gentle smile, blush, nose blush, steam, water droplets, light particles, 0.8::falling leaves::
     ```
 
     Args:
