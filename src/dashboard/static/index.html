@@ -2099,6 +2099,20 @@
                             </p>
                         </div>
 
+                        <!-- 对话工具提示词模型开关 -->
+                        <div class="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg">
+                            <div class="pr-4">
+                                <span class="text-sm text-slate-300">对话工具启用提示词模型</span>
+                                <p class="text-xs text-slate-500 mt-1">
+                                    开启：草稿Tag + 提示词模型优化；关闭：直接使用对话AI生成的最终Tag绘图。
+                                </p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                <input type="checkbox" x-model="novelaiForm.use_prompt_model_in_chat_tool" class="sr-only peer">
+                                <div class="w-9 h-5 bg-slate-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
+                            </label>
+                        </div>
+
                         <!-- 提示词生成专用 API URL -->
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">提示词生成专用 API URL（可选）</label>
@@ -3562,7 +3576,7 @@
                 },
                 testingVoice: false,
                 voiceConfig: {},
-                novelaiForm: { enabled: false, api_token: '', model: 'nai-diffusion-4-5-full', custom_model: '', prompt_model: '', prompt_api_url: '', prompt_api_key: '', default_sampler: 'k_euler', default_width: 832, default_height: 1216, default_steps: 28, default_scale: 5.0, quality_toggle: true, uc_preset: 0, cfg_rescale: 0, noise_schedule: 'native', smea: false, smea_dyn: false, generation_cost: 5, default_negative_prompt: '', default_artist_string: '', max_retries: 3, empty_result_max_retries: 3 },
+                novelaiForm: { enabled: false, api_token: '', model: 'nai-diffusion-4-5-full', custom_model: '', prompt_model: '', prompt_api_url: '', prompt_api_key: '', use_prompt_model_in_chat_tool: true, default_sampler: 'k_euler', default_width: 832, default_height: 1216, default_steps: 28, default_scale: 5.0, quality_toggle: true, uc_preset: 0, cfg_rescale: 0, noise_schedule: 'native', smea: false, smea_dyn: false, generation_cost: 5, default_negative_prompt: '', default_artist_string: '', max_retries: 3, empty_result_max_retries: 3 },
                 novelaiConfig: {},
                 novelaiPresets: [],
                 novelaiAdminPresets: [],
@@ -3869,6 +3883,7 @@
                                 this.novelaiForm.prompt_model = data.prompt_model || '';
                                 this.novelaiForm.prompt_api_url = data.prompt_api_url || '';
                                 this.novelaiForm.prompt_api_key = '';
+                                this.novelaiForm.use_prompt_model_in_chat_tool = data.use_prompt_model_in_chat_tool ?? true;
                                 // 检查是否是预设模型
                                 const presetModels = data.available_models || [];
                                 if (!presetModels.includes(data.model)) {
@@ -5455,6 +5470,7 @@
                             model: this.novelaiForm.custom_model || this.novelaiForm.model,
                             prompt_model: this.novelaiForm.prompt_model ? this.novelaiForm.prompt_model.trim() : '',
                             prompt_api_url: this.novelaiForm.prompt_api_url ? this.novelaiForm.prompt_api_url.trim() : '',
+                            use_prompt_model_in_chat_tool: this.novelaiForm.use_prompt_model_in_chat_tool,
                             default_sampler: this.novelaiForm.default_sampler,
                             default_width: parseInt(this.novelaiForm.default_width),
                             default_height: parseInt(this.novelaiForm.default_height),

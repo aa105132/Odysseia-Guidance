@@ -191,6 +191,7 @@ class NovelAIConfigUpdate(BaseModel):
     prompt_model: Optional[str] = None  # NovelAI 提示词生成专用 LLM（AI描述/AI重写）
     prompt_api_url: Optional[str] = None  # NovelAI 提示词生成专用 API URL
     prompt_api_key: Optional[str] = None  # NovelAI 提示词生成专用 API KEY
+    use_prompt_model_in_chat_tool: Optional[bool] = None  # 对话工具是否启用提示词模型
 
 
 class ComfyUIConfigUpdate(BaseModel):
@@ -2590,6 +2591,9 @@ async def get_novelai_config(token: str = Depends(verify_token)):
     db_prompt_model = await chat_db_manager.get_global_setting("novelai_prompt_model")
     db_prompt_api_url = await chat_db_manager.get_global_setting("novelai_prompt_api_url")
     db_prompt_api_key = await chat_db_manager.get_global_setting("novelai_prompt_api_key")
+    db_use_prompt_model_in_chat_tool = await chat_db_manager.get_global_setting(
+        "novelai_use_prompt_model_in_chat_tool"
+    )
 
     config = chat_config.NOVELAI_CONFIG
 
@@ -2637,6 +2641,11 @@ async def get_novelai_config(token: str = Depends(verify_token)):
         db_prompt_api_key if db_prompt_api_key is not None else config.get("PROMPT_API_KEY", "")
     )
     configured_prompt_api_key = str(configured_prompt_api_key or "").strip()
+    use_prompt_model_in_chat_tool = (
+        db_use_prompt_model_in_chat_tool == "true"
+        if db_use_prompt_model_in_chat_tool is not None
+        else config.get("USE_PROMPT_MODEL_IN_CHAT_TOOL", True)
+    )
 
     # 掩码 API Token
     masked_token = api_token[:10] + "..." + api_token[-4:] if len(api_token) > 14 else ("***" if api_token else "")
@@ -2678,6 +2687,7 @@ async def get_novelai_config(token: str = Depends(verify_token)):
         "prompt_api_url": configured_prompt_api_url,
         "prompt_api_key_masked": masked_prompt_api_key,
         "has_prompt_api_key": bool(configured_prompt_api_key),
+        "use_prompt_model_in_chat_tool": use_prompt_model_in_chat_tool,
         "max_retries": max_retries,
         "empty_result_max_retries": empty_result_max_retries,
         "service_available": service_available,
@@ -2879,6 +2889,18 @@ async def update_novelai_config(config: NovelAIConfigUpdate, token: str = Depend
         env_updates["NOVELAI_PROMPT_API_KEY"] = normalized_prompt_api_key
         updated["prompt_api_key"] = "***" if normalized_prompt_api_key else ""
         await chat_db_manager.set_global_setting("novelai_prompt_api_key", normalized_prompt_api_key)
+
+    if config.use_prompt_model_in_chat_tool is not None:
+        use_prompt_model = bool(config.use_prompt_model_in_chat_tool)
+        normalized_use_prompt_model = str(use_prompt_model).lower()
+        chat_config.NOVELAI_CONFIG["USE_PROMPT_MODEL_IN_CHAT_TOOL"] = use_prompt_model
+        os.environ["NOVELAI_USE_PROMPT_MODEL_IN_CHAT_TOOL"] = normalized_use_prompt_model
+        env_updates["NOVELAI_USE_PROMPT_MODEL_IN_CHAT_TOOL"] = normalized_use_prompt_model
+        updated["use_prompt_model_in_chat_tool"] = use_prompt_model
+        await chat_db_manager.set_global_setting(
+            "novelai_use_prompt_model_in_chat_tool",
+            normalized_use_prompt_model,
+        )
 
     # 更新 .env 文件
     if env_updates:

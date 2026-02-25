@@ -654,6 +654,11 @@ def _get_novelai_config():
         # NovelAI 提示词生成专用 API 覆盖（留空则跟随主 AI 配置）
         "PROMPT_API_URL": os.getenv("NOVELAI_PROMPT_API_URL", ""),
         "PROMPT_API_KEY": os.getenv("NOVELAI_PROMPT_API_KEY", ""),
+        # 对话工具是否启用提示词生成模型（True=双串优化；False=直接使用对话AI最终Tag）
+        "USE_PROMPT_MODEL_IN_CHAT_TOOL": _parse_bool_env(
+            "NOVELAI_USE_PROMPT_MODEL_IN_CHAT_TOOL",
+            "True",
+        ),
     }
 
 NOVELAI_CONFIG = _get_novelai_config()
