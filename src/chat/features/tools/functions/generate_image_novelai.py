@@ -21,7 +21,7 @@ import io
 import random
 import re
 import discord
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any
 
 from src.chat.utils.prompt_utils import replace_emojis
 from src.chat.config.chat_config import NOVELAI_CONFIG
@@ -37,37 +37,6 @@ from src.chat.features.novelai_generation.tag_rules import (
 log = logging.getLogger(__name__)
 
 NOVELAI_PROMPT_MAX_OUTPUT_TOKENS = 8196
-
-YUEYUE_SIGNATURE_MARKERS = (
-    "green left eye",
-    "blue right eye",
-    "silver crescent moon hair stick",
-    "small sharp triangular red and blue earrings",
-    "silver crescent moon necklace",
-)
-
-YUEYUE_STRIP_MARKERS = (
-    *YUEYUE_SIGNATURE_MARKERS,
-    "fox ears",
-    "white fox ears",
-    "pink inner ear",
-    "fox tail",
-    "silver white tail",
-    "fluffy tail",
-    "heterochromia",
-)
-
-YUEYUE_EXPLICIT_REQUEST_PATTERNS = (
-    r"(画|生成|出图|绘制|来张|来一张|做一张)(一下|一张|个)?(月月|yueyue)",
-    r"(把|将)(月月|yueyue)(画|生成|出图|绘制|做)",
-    r"(画|生成|出图|绘制|来张|来一张|做一张)(一下|一张|个)?(你自己|你本人|你本体|助手本人)",
-    r"(把|将)(你自己|你本人|你本体|助手本人)(画|生成|出图|绘制|做)",
-    r"(draw|generate|render)(yueyue|yourself|assistant)",
-)
-
-YUEYUE_NEGATIVE_REQUEST_PATTERNS = (
-    r"(不要|别|不许|禁止)(再|去)?(画|生成|出图|绘制|做)?(月月|yueyue|你自己|你本人|你本体|助手本人)",
-)
 
 
 def _detect_novelai_prompt_api_format(prompt_api_url: Optional[str]) -> Optional[str]:
@@ -344,119 +313,6 @@ def _prompt_contains_tag(prompt: str, tag: str) -> bool:
 def _split_prompt_tokens(prompt: str) -> List[str]:
     """按逗号切分并清洗 Tag。"""
     return [seg.strip() for seg in str(prompt or "").split(",") if seg and seg.strip()]
-
-
-def _extract_user_intent_text(message: Optional[discord.Message], kwargs: Dict[str, Any]) -> str:
-    """收集可用于主体判定的用户意图文本。"""
-    parts: List[str] = []
-    for key in (
-        "user_text",
-        "raw_user_text",
-        "user_message",
-        "raw_user_message",
-        "original_user_message",
-    ):
-        value = kwargs.get(key)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if normalized:
-                parts.append(normalized)
-
-    if message is not None:
-        current_content = str(getattr(message, "content", "") or "").strip()
-        if current_content:
-            parts.append(current_content)
-
-        reference = getattr(message, "reference", None)
-        resolved = getattr(reference, "resolved", None)
-        reply_content = str(getattr(resolved, "content", "") or "").strip()
-        if reply_content:
-            parts.append(reply_content)
-
-    return "\n".join(parts)
-
-
-def _is_explicit_yueyue_subject_request(
-    user_intent_text: str,
-    character_name: Optional[str],
-    work_name: Optional[str],
-) -> bool:
-    """
-    判断用户是否“明确要求画月月本人”。
-    仅在明确命中时才允许保留月月 DNA 标签。
-    """
-    normalized_character_name = str(character_name or "").strip().lower()
-    normalized_work_name = str(work_name or "").strip().lower()
-    if normalized_character_name in {"月月", "yueyue"}:
-        return True
-    if normalized_character_name in {"assistant", "self"} and not normalized_work_name:
-        return True
-
-    normalized_text = re.sub(r"\s+", "", str(user_intent_text or "").lower())
-    if not normalized_text:
-        return False
-
-    for pattern in YUEYUE_NEGATIVE_REQUEST_PATTERNS:
-        if re.search(pattern, normalized_text):
-            return False
-
-    for pattern in YUEYUE_EXPLICIT_REQUEST_PATTERNS:
-        if re.search(pattern, normalized_text):
-            return True
-
-    return False
-
-
-def _has_yueyue_signature(prompt: str) -> bool:
-    """判断提示词中是否存在明显的月月 DNA 特征簇。"""
-    normalized_tokens = [
-        _normalize_tag_for_match(token)
-        for token in _split_prompt_tokens(prompt)
-    ]
-    normalized_tokens = [token for token in normalized_tokens if token]
-    if not normalized_tokens:
-        return False
-
-    matched_markers = 0
-    for marker in YUEYUE_SIGNATURE_MARKERS:
-        if any(marker in token for token in normalized_tokens):
-            matched_markers += 1
-
-    return matched_markers >= 3
-
-
-def _strip_yueyue_traits(prompt: str) -> Tuple[str, int]:
-    """从提示词中剥离月月特征标签，返回 (处理后提示词, 移除数量)。"""
-    tokens = _split_prompt_tokens(prompt)
-    if not tokens:
-        return str(prompt or "").strip(), 0
-
-    filtered_tokens: List[str] = []
-    removed_count = 0
-    for token in tokens:
-        normalized_token = _normalize_tag_for_match(token)
-        if normalized_token and any(marker in normalized_token for marker in YUEYUE_STRIP_MARKERS):
-            removed_count += 1
-            continue
-        filtered_tokens.append(token)
-
-    if not removed_count:
-        return ", ".join(tokens), 0
-
-    stripped_prompt = ", ".join(filtered_tokens).strip()
-    if not stripped_prompt:
-        return ", ".join(tokens), 0
-    return stripped_prompt, removed_count
-
-
-def _sanitize_non_yueyue_prompt(prompt: str) -> Tuple[str, int]:
-    """非月月主体请求的兜底清洗：仅在命中月月 DNA 特征簇时执行剥离。"""
-    normalized_prompt = str(prompt or "").strip()
-    if not normalized_prompt:
-        return normalized_prompt, 0
-    if not _has_yueyue_signature(normalized_prompt):
-        return normalized_prompt, 0
-    return _strip_yueyue_traits(normalized_prompt)
 
 
 def _strip_artist_tokens(prompt: str, artist_strings: List[Optional[str]]) -> str:
@@ -1250,20 +1106,6 @@ async def generate_image_novelai(
             log.info("提示词生成模型已关闭：直接按规则使用对话 AI 的最终 Tag 生成。")
         else:
             log.warning("提示词生成模型已关闭：当前提示词疑似非 Danbooru 标签，已直接尝试生成。")
-
-    user_intent_text = _extract_user_intent_text(message=message, kwargs=kwargs)
-    explicit_yueyue_subject = _is_explicit_yueyue_subject_request(
-        user_intent_text=user_intent_text,
-        character_name=character_name,
-        work_name=work_name,
-    )
-    if explicit_yueyue_subject:
-        log.info("检测到用户明确要求画月月主体，保留月月特征标签。")
-    else:
-        sanitized_prompt, removed_count = _sanitize_non_yueyue_prompt(prompt)
-        if removed_count > 0:
-            prompt = sanitized_prompt
-            log.info(f"非月月主体请求：已剔除 {removed_count} 个月月特征标签。")
 
     # 画师串应用策略：
     # skip_artist_prefix=True 时跳过所有画师串拼接
