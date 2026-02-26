@@ -10,6 +10,10 @@ import discord
 from src.chat.config.chat_config import COMFYUI_CONFIG
 from src.chat.features.image_generation.services.comfyui_service import comfyui_service
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
+from src.chat.features.tools.utils.discord_image_utils import (
+    extract_image_from_message_url,
+    fetch_image_from_url,
+)
 from src.chat.utils.prompt_utils import replace_emojis
 
 log = logging.getLogger(__name__)
@@ -384,6 +388,124 @@ def _set_embed_author(embed: discord.Embed, message: Optional[discord.Message], 
         embed.set_author(name=author_name, icon_url=author_icon_url)
 
 
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {'1', 'true', 'yes', 'y', 'on'}:
+        return True
+    if text in {'0', 'false', 'no', 'n', 'off'}:
+        return False
+    return default
+
+
+def _is_image_attachment(attachment: discord.Attachment) -> bool:
+    content_type = str(getattr(attachment, 'content_type', '') or '').lower()
+    filename = str(getattr(attachment, 'filename', '') or '').lower()
+    if content_type.startswith('image/'):
+        return True
+    return filename.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.avif'))
+
+
+async def _extract_image_from_message(message: Optional[discord.Message]) -> Optional[Dict[str, Any]]:
+    if not message:
+        return None
+
+    for attachment in (message.attachments or []):
+        if not _is_image_attachment(attachment):
+            continue
+        try:
+            image_bytes = await attachment.read()
+        except Exception:
+            continue
+        if not image_bytes:
+            continue
+
+        content_type = str(getattr(attachment, 'content_type', '') or '').strip() or 'image/png'
+        filename = str(getattr(attachment, 'filename', '') or '').strip() or 'reference_image.png'
+        return {
+            'data': image_bytes,
+            'mime_type': content_type,
+            'filename': filename,
+        }
+
+    try:
+        url_image = await extract_image_from_message_url(message)
+        if url_image:
+            return url_image
+    except Exception:
+        pass
+
+    return None
+
+
+async def _resolve_reference_image(
+    message: Optional[discord.Message],
+    channel: Optional[discord.abc.Messageable],
+    reference_image_url: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    normalized_url = str(reference_image_url or '').strip()
+    if normalized_url:
+        try:
+            image_from_url = await fetch_image_from_url(normalized_url)
+            if image_from_url:
+                return image_from_url
+        except Exception:
+            pass
+
+    direct_image = await _extract_image_from_message(message)
+    if direct_image:
+        return direct_image
+
+    if message and message.reference and message.reference.message_id and message.channel:
+        try:
+            referenced_message = await message.channel.fetch_message(message.reference.message_id)
+            referenced_image = await _extract_image_from_message(referenced_message)
+            if referenced_image:
+                return referenced_image
+        except Exception:
+            pass
+
+    if channel and hasattr(channel, 'history'):
+        try:
+            async for history_message in channel.history(limit=6):
+                if message and history_message.id == message.id:
+                    continue
+                history_image = await _extract_image_from_message(history_message)
+                if history_image:
+                    return history_image
+        except Exception:
+            pass
+
+    return None
+
+
+def _normalize_generation_mode(raw_mode: Optional[str]) -> str:
+    mode = str(raw_mode or '').strip().lower()
+    if mode in {'image_to_video', 'image2video', 'img2video', 'i2v', 'video'}:
+        return 'image_to_video'
+    return 'text_to_image'
+
+
+def _guess_filename_by_mime(mime_type: str, fallback_name: str = 'generated_comfyui_output') -> str:
+    mime_text = str(mime_type or '').strip().lower()
+    if mime_text == 'video/mp4':
+        return f'{fallback_name}.mp4'
+    if mime_text == 'video/webm':
+        return f'{fallback_name}.webm'
+    if mime_text == 'image/gif':
+        return f'{fallback_name}.gif'
+    if mime_text == 'image/jpeg':
+        return f'{fallback_name}.jpg'
+    if mime_text == 'image/webp':
+        return f'{fallback_name}.webp'
+    if mime_text == 'image/avif':
+        return f'{fallback_name}.avif'
+    return f'{fallback_name}.png'
+
+
 async def generate_image_comfyui(
     prompt: str,
     negative_prompt: Optional[str] = None,
@@ -399,6 +521,9 @@ async def generate_image_comfyui(
     model_name: Optional[str] = None,
     vae_name: Optional[str] = None,
     clip_name: Optional[str] = None,
+    generation_mode: Optional[str] = None,
+    use_reference_image: Optional[bool] = None,
+    reference_image_url: Optional[str] = None,
     workflow_path: Optional[str] = None,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
@@ -408,7 +533,8 @@ async def generate_image_comfyui(
     使用 ComfyUI 工作流生成图片。
 
     当默认绘图引擎是 comfyui 时，优先调用此工具。
-    支持常见参数：步数、分辨率、CFG、采样器、调度器、seed、LoRA、底模。
+    支持常见参数：步数、分辨率、CFG、采样器、调度器、seed、LoRA、底模；
+    支持图生视频：可传 generation_mode=image_to_video，并提供参考图（URL 或对话附件/回复）。
     '''
     message: Optional[discord.Message] = kwargs.get('message')
     channel = kwargs.get('channel')
@@ -509,6 +635,16 @@ async def generate_image_comfyui(
     effective_clip_name = str(clip_name or '').strip() if clip_name is not None else None
     effective_user_fixed_positive_prompt = ''
     effective_user_fixed_negative_prompt = ''
+    effective_generation_mode = _normalize_generation_mode(
+        generation_mode or kwargs.get('generation_mode')
+    )
+    effective_use_reference_image = (
+        _parse_bool(use_reference_image, default=False)
+        if use_reference_image is not None
+        else _parse_bool(kwargs.get('use_reference_image'), default=(effective_generation_mode == 'image_to_video'))
+    )
+    effective_reference_image_url = str(reference_image_url or kwargs.get('reference_image_url') or '').strip()
+    passthrough_runtime_kwargs.setdefault('generation_mode', effective_generation_mode)
 
     if parsed_user_id is not None:
         try:
@@ -562,6 +698,38 @@ async def generate_image_comfyui(
             ),
         }
 
+    uploaded_reference_name = ''
+    if effective_use_reference_image or effective_generation_mode == 'image_to_video':
+        reference_image = await _resolve_reference_image(
+            message=message,
+            channel=channel,
+            reference_image_url=effective_reference_image_url,
+        )
+        if not reference_image:
+            return {
+                'generation_failed': True,
+                'reason': 'missing_reference_image',
+                'hint': '图生视频需要参考图。请让用户上传图片、回复图片，或传 reference_image_url 后重试。',
+            }
+
+        uploaded_reference_name = str(
+            await comfyui_service.upload_input_image(
+                image_bytes=reference_image.get('data') or b'',
+                filename=str(reference_image.get('filename') or 'reference_image.png'),
+            )
+            or ''
+        ).strip()
+        if not uploaded_reference_name:
+            return {
+                'generation_failed': True,
+                'reason': 'upload_reference_failed',
+                'hint': '参考图上传到 ComfyUI 失败，请检查 ComfyUI /upload/image 接口后重试。',
+            }
+
+        for alias_key in ('input_image', 'reference_image', 'init_image', 'image'):
+            if alias_key not in passthrough_runtime_kwargs:
+                passthrough_runtime_kwargs[alias_key] = uploaded_reference_name
+
     try:
         image_cost = max(0, int(COMFYUI_CONFIG.get('IMAGE_GENERATION_COST', 5)))
     except (TypeError, ValueError):
@@ -589,7 +757,7 @@ async def generate_image_comfyui(
             log.warning(f'发送 ComfyUI 预告消息失败: {error}')
 
     try:
-        image_bytes = await comfyui_service.generate_image(
+        media_result = await comfyui_service.generate_media(
             prompt=prompt,
             negative_prompt=negative_prompt,
             width=effective_width,
@@ -612,13 +780,30 @@ async def generate_image_comfyui(
 
         await remove_reaction(GENERATING_EMOJI)
 
-        if not image_bytes:
+        if not media_result:
             await add_reaction(FAILED_EMOJI)
             return {
                 'generation_failed': True,
                 'reason': 'generation_failed',
-                'hint': 'ComfyUI 生成失败。请提示用户稍后重试，或检查工作流中的占位符映射。',
+                'hint': 'ComfyUI 生成失败。请提示用户稍后重试，或检查工作流占位符/节点映射。',
             }
+
+        media_bytes = media_result.get('bytes')
+        if not isinstance(media_bytes, bytes) or not media_bytes:
+            await add_reaction(FAILED_EMOJI)
+            return {
+                'generation_failed': True,
+                'reason': 'empty_media_result',
+                'hint': 'ComfyUI 返回了空媒体结果，请检查输出节点（images/videos/gifs）配置。',
+            }
+
+        media_kind = str(media_result.get('media_kind') or 'image').strip().lower()
+        mime_type = str(media_result.get('mime_type') or '').strip().lower()
+        generated_filename = str(media_result.get('filename') or '').strip()
+        if generated_filename:
+            generated_filename = generated_filename.split('/')[-1].split('\\')[-1]
+        if not generated_filename:
+            generated_filename = _guess_filename_by_mime(mime_type, fallback_name='generated_comfyui_output')
 
         new_balance = None
         if parsed_user_id is not None and image_cost > 0:
@@ -637,7 +822,8 @@ async def generate_image_comfyui(
             try:
                 from src.chat.utils.database import chat_db_manager
 
-                embed = discord.Embed(title='AI 图片生成（ComfyUI）', color=0x2B2D31)
+                embed_title = 'AI 视频生成（ComfyUI）' if media_kind == 'video' else 'AI 图片生成（ComfyUI）'
+                embed = discord.Embed(title=embed_title, color=0x2B2D31)
                 _set_embed_author(embed, message, request_user)
                 embed.add_field(name='提示词', value=f'```\n{prompt[:1016]}\n```', inline=False)
                 if negative_prompt:
@@ -665,6 +851,12 @@ async def generate_image_comfyui(
                     footer_parts.append(f'vae: {effective_vae_name}')
                 if effective_clip_name:
                     footer_parts.append(f'clip: {effective_clip_name}')
+                if effective_generation_mode == 'image_to_video':
+                    footer_parts.append('模式: 图生视频')
+                if uploaded_reference_name:
+                    footer_parts.append(f'参考图: {uploaded_reference_name}')
+                if mime_type:
+                    footer_parts.append(f'mime: {mime_type}')
                 if new_balance is not None:
                     footer_parts.append(f'余额: {new_balance}')
                 embed.set_footer(text=' | '.join(footer_parts))
@@ -687,6 +879,9 @@ async def generate_image_comfyui(
                             'model_name': effective_model_name,
                             'vae_name': effective_vae_name,
                             'clip_name': effective_clip_name,
+                            'generation_mode': effective_generation_mode,
+                            'use_reference_image': effective_use_reference_image,
+                            'reference_image_url': effective_reference_image_url or None,
                             'workflow_path': effective_workflow_path or None,
                             'success_message': success_message,
                             **passthrough_runtime_kwargs,
@@ -696,13 +891,13 @@ async def generate_image_comfyui(
 
                 sent_message = await channel.send(
                     embed=embed,
-                    file=discord.File(io.BytesIO(image_bytes), filename='generated_comfyui_image.png', spoiler=True),
+                    file=discord.File(io.BytesIO(media_bytes), filename=generated_filename, spoiler=(media_kind != 'video')),
                     view=result_view,
                 )
                 if result_view is not None:
                     result_view.message = sent_message
 
-                if parsed_user_id is not None and sent_message:
+                if parsed_user_id is not None and sent_message and media_kind == 'image':
                     await chat_db_manager.register_generated_image_message(
                         message_id=sent_message.id,
                         user_id=parsed_user_id,
@@ -716,7 +911,7 @@ async def generate_image_comfyui(
             'success': True,
             'skip_ai_response': True,
             'cost': image_cost,
-            'message': 'ComfyUI 图片已生成并发送，若已发送预告消息则无需再回复。',
+            'message': 'ComfyUI 媒体已生成并发送，若已发送预告消息则无需再回复。',
         }
     except Exception as error:
         await remove_reaction(GENERATING_EMOJI)

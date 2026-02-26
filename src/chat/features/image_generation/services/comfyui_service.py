@@ -89,6 +89,21 @@ class ComfyUIService:
             return default
 
     @staticmethod
+    def _sanitize_upload_filename(raw_name: Optional[str], fallback: str = 'reference_image.png') -> str:
+        base_name = Path(str(raw_name or '').strip()).name
+        if not base_name:
+            base_name = fallback
+
+        safe_name = re.sub(r'[^0-9A-Za-z._\-]+', '_', base_name).strip('._')
+        if not safe_name:
+            safe_name = fallback
+
+        if '.' not in safe_name:
+            safe_name = f'{safe_name}.png'
+
+        return safe_name
+
+    @staticmethod
     def _normalize_sampler_name(raw_sampler: Any) -> str:
         sampler_text = str(raw_sampler or '').strip().lower()
         alias_map = {
@@ -355,6 +370,14 @@ class ComfyUIService:
             'model_name': ['%MODEL_NAME%', '%model_name%', '%CKPT_NAME%', '%ckpt_name%', '%MODEL%', '%model%'],
             'vae_name': ['%VAE_NAME%', '%vae_name%', '%vae%'],
             'clip_name': ['%CLIP_NAME%', '%clip_name%', '%clip%'],
+            'input_image': [
+                '%input_image%', '%INPUT_IMAGE%',
+                '%reference_image%', '%REFERENCE_IMAGE%',
+                '%init_image%', '%INIT_IMAGE%',
+                '%image%', '%IMAGE%',
+            ],
+            'reference_image': ['%reference_image%', '%REFERENCE_IMAGE%'],
+            'init_image': ['%init_image%', '%INIT_IMAGE%'],
         }
 
         for key_text, tokens in common_aliases.items():
@@ -832,7 +855,7 @@ class ComfyUIService:
 
         return params
 
-    async def generate_image(
+    async def generate_media(
         self,
         prompt: Optional[str] = None,
         negative_prompt: Optional[str] = None,
@@ -850,7 +873,7 @@ class ComfyUIService:
         vae_name: Optional[str] = None,
         clip_name: Optional[str] = None,
         **kwargs: Any,
-    ) -> Optional[bytes]:
+    ) -> Optional[Dict[str, Any]]:
         try:
             if not self.is_server_ready():
                 log.warning('ComfyUI 服务当前不可用，请检查开关或服务地址配置。')
@@ -896,14 +919,75 @@ class ComfyUIService:
                 workflow_template=workflow_template_override,
             )
 
-            image_meta = await self._queue_prompt_and_wait_result(workflow_payload)
-            if not image_meta:
+            media_meta = await self._queue_prompt_and_wait_result(workflow_payload)
+            if not media_meta:
                 return None
 
-            return await self._download_image(image_meta)
+            media_bytes = await self._download_media(media_meta)
+            if not media_bytes:
+                return None
+
+            return {
+                'bytes': media_bytes,
+                'filename': str(media_meta.get('filename') or '').strip() or 'comfyui_output.bin',
+                'mime_type': str(media_meta.get('mime_type') or '').strip() or 'application/octet-stream',
+                'media_kind': str(media_meta.get('media_kind') or '').strip() or 'image',
+                'subfolder': str(media_meta.get('subfolder') or '').strip(),
+                'type': str(media_meta.get('type') or '').strip() or 'output',
+            }
         except Exception as error:
-            log.error(f'ComfyUI 生成图片失败: {error}', exc_info=True)
+            log.error(f'ComfyUI 生成媒体失败: {error}', exc_info=True)
             return None
+
+    async def generate_image(
+        self,
+        prompt: Optional[str] = None,
+        negative_prompt: Optional[str] = None,
+        seed: Optional[int] = None,
+        positive_prompt: Optional[str] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        steps: Optional[int] = None,
+        cfg: Optional[float] = None,
+        sampler: Optional[str] = None,
+        scheduler: Optional[str] = None,
+        lora: Optional[str] = None,
+        lora_strength: Optional[float] = None,
+        model_name: Optional[str] = None,
+        vae_name: Optional[str] = None,
+        clip_name: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[bytes]:
+        media_result = await self.generate_media(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            positive_prompt=positive_prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg=cfg,
+            sampler=sampler,
+            scheduler=scheduler,
+            lora=lora,
+            lora_strength=lora_strength,
+            model_name=model_name,
+            vae_name=vae_name,
+            clip_name=clip_name,
+            **kwargs,
+        )
+        if not media_result:
+            return None
+
+        media_kind = str(media_result.get('media_kind') or '').strip().lower()
+        if media_kind != 'image':
+            log.warning(f'ComfyUI 返回非图片媒体，generate_image 忽略: kind={media_kind}')
+            return None
+
+        media_bytes = media_result.get('bytes')
+        if isinstance(media_bytes, bytes):
+            return media_bytes
+        return None
 
     async def _queue_prompt_and_wait_result(self, workflow_payload: Dict[str, Any]) -> Optional[Dict[str, str]]:
         timeout_seconds = self._coerce_int(
@@ -943,53 +1027,124 @@ class ComfyUIService:
                     log.error(f'ComfyUI 返回缺少 prompt_id: {response_data}')
                     return None
 
-                return await self._poll_history_for_image(
+                return await self._poll_history_for_media(
                     session=session,
                     prompt_id=prompt_id,
                     timeout_seconds=timeout_seconds,
                     poll_interval_seconds=poll_interval_seconds,
                 )
 
-    def _extract_image_meta_from_outputs(self, outputs: Dict[str, Any]) -> Optional[Dict[str, str]]:
-        preferred_output_node_id = str(app_config.COMFYUI_CONFIG.get('IMAGE_OUTPUT_NODE_ID') or '').strip()
+    def _extract_media_meta_from_outputs(self, outputs: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        preferred_output_node_id = str(app_config.COMFYUI_CONFIG.get('MEDIA_OUTPUT_NODE_ID') or '').strip()
+        if not preferred_output_node_id:
+            preferred_output_node_id = str(app_config.COMFYUI_CONFIG.get('IMAGE_OUTPUT_NODE_ID') or '').strip()
+
         if preferred_output_node_id and preferred_output_node_id in outputs:
-            preferred_meta = self._extract_image_meta_from_output_node(outputs.get(preferred_output_node_id))
+            preferred_meta = self._extract_media_meta_from_output_node(outputs.get(preferred_output_node_id))
             if preferred_meta:
                 return preferred_meta
 
         for output_node_data in outputs.values():
-            meta = self._extract_image_meta_from_output_node(output_node_data)
+            meta = self._extract_media_meta_from_output_node(output_node_data)
             if meta:
                 return meta
 
         return None
 
     @staticmethod
-    def _extract_image_meta_from_output_node(output_node_data: Any) -> Optional[Dict[str, str]]:
+    def _infer_media_kind_from_filename(filename: str, fallback_kind: str) -> tuple[str, str]:
+        suffix = Path(str(filename or '').strip()).suffix.lower()
+        if suffix in {'.png'}:
+            return 'image', 'image/png'
+        if suffix in {'.jpg', '.jpeg'}:
+            return 'image', 'image/jpeg'
+        if suffix in {'.webp'}:
+            return 'image', 'image/webp'
+        if suffix in {'.bmp'}:
+            return 'image', 'image/bmp'
+        if suffix in {'.avif'}:
+            return 'image', 'image/avif'
+        if suffix in {'.gif'}:
+            return 'image', 'image/gif'
+        if suffix in {'.mp4'}:
+            return 'video', 'video/mp4'
+        if suffix in {'.webm'}:
+            return 'video', 'video/webm'
+        if suffix in {'.mov'}:
+            return 'video', 'video/quicktime'
+        if suffix in {'.avi'}:
+            return 'video', 'video/x-msvideo'
+        if suffix in {'.mkv'}:
+            return 'video', 'video/x-matroska'
+
+        fallback_text = str(fallback_kind or '').strip().lower()
+        if fallback_text == 'video':
+            return 'video', 'video/mp4'
+        return 'image', 'application/octet-stream'
+
+    @classmethod
+    def _normalize_declared_media_mime(cls, declared_format: Any, filename: str, fallback_kind: str) -> tuple[str, str]:
+        format_text = str(declared_format or '').strip().lower()
+        inferred_kind, inferred_mime = cls._infer_media_kind_from_filename(filename, fallback_kind)
+
+        if format_text.startswith('video/'):
+            if 'webm' in format_text:
+                return 'video', 'video/webm'
+            if 'quicktime' in format_text or 'mov' in format_text:
+                return 'video', 'video/quicktime'
+            return 'video', 'video/mp4'
+
+        if format_text.startswith('image/'):
+            return 'image', format_text
+
+        return inferred_kind, inferred_mime
+
+    @classmethod
+    def _extract_media_meta_from_output_node(cls, output_node_data: Any) -> Optional[Dict[str, str]]:
         if not isinstance(output_node_data, dict):
             return None
 
-        images = output_node_data.get('images')
-        if not isinstance(images, list) or not images:
+        media_fields: list[tuple[str, str]] = [
+            ('videos', 'video'),
+            ('gifs', 'image'),
+            ('images', 'image'),
+        ]
+
+        media_item: Optional[Dict[str, Any]] = None
+        fallback_kind = 'image'
+        for field_name, field_kind in media_fields:
+            items = output_node_data.get(field_name)
+            if isinstance(items, list) and items:
+                first_item = items[0]
+                if isinstance(first_item, dict):
+                    media_item = first_item
+                    fallback_kind = field_kind
+                    break
+
+        if media_item is None:
             return None
 
-        first_image = images[0]
-        if not isinstance(first_image, dict):
-            return None
-
-        filename = str(first_image.get('filename') or '').strip()
+        filename = str(media_item.get('filename') or '').strip()
         if not filename:
             return None
 
-        subfolder = str(first_image.get('subfolder') or '').strip()
-        image_type = str(first_image.get('type') or 'output').strip() or 'output'
+        subfolder = str(media_item.get('subfolder') or '').strip()
+        media_type = str(media_item.get('type') or 'output').strip() or 'output'
+        media_kind, mime_type = cls._normalize_declared_media_mime(
+            declared_format=media_item.get('format'),
+            filename=filename,
+            fallback_kind=fallback_kind,
+        )
+
         return {
             'filename': filename,
             'subfolder': subfolder,
-            'type': image_type,
+            'type': media_type,
+            'mime_type': mime_type,
+            'media_kind': media_kind,
         }
 
-    async def _poll_history_for_image(
+    async def _poll_history_for_media(
         self,
         session: aiohttp.ClientSession,
         prompt_id: str,
@@ -1022,9 +1177,9 @@ class ComfyUIService:
 
             outputs = prompt_record.get('outputs')
             if isinstance(outputs, dict):
-                image_meta = self._extract_image_meta_from_outputs(outputs)
-                if image_meta:
-                    return image_meta
+                media_meta = self._extract_media_meta_from_outputs(outputs)
+                if media_meta:
+                    return media_meta
 
             status = prompt_record.get('status')
             if isinstance(status, dict):
@@ -1038,14 +1193,14 @@ class ComfyUIService:
         log.error(f'ComfyUI 任务超时: prompt_id={prompt_id}, timeout={timeout_seconds}s')
         return None
 
-    async def _download_image(self, image_meta: Dict[str, str]) -> Optional[bytes]:
-        filename = str(image_meta.get('filename') or '').strip()
+    async def _download_media(self, media_meta: Dict[str, str]) -> Optional[bytes]:
+        filename = str(media_meta.get('filename') or '').strip()
         if not filename:
             return None
 
         params: Dict[str, str] = {'filename': filename}
-        subfolder = str(image_meta.get('subfolder') or '').strip()
-        image_type = str(image_meta.get('type') or '').strip()
+        subfolder = str(media_meta.get('subfolder') or '').strip()
+        image_type = str(media_meta.get('type') or '').strip()
         if subfolder:
             params['subfolder'] = subfolder
         if image_type:
@@ -1063,12 +1218,63 @@ class ComfyUIService:
                     if response.status != 200:
                         response_text = await response.text()
                         log.error(
-                            f'ComfyUI 下载图片失败: status={response.status}, body={response_text}'
+                            f'ComfyUI 下载媒体失败: status={response.status}, body={response_text}'
                         )
                         return None
                     return await response.read()
         except Exception as error:
-            log.error(f'ComfyUI 下载图片异常: {error}', exc_info=True)
+            log.error(f'ComfyUI 下载媒体异常: {error}', exc_info=True)
+            return None
+
+    async def upload_input_image(self, image_bytes: bytes, filename: Optional[str] = None) -> Optional[str]:
+        if not self.server_address:
+            return None
+
+        if not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
+            return None
+
+        timeout_seconds = self._coerce_int(
+            app_config.COMFYUI_CONFIG.get('REQUEST_TIMEOUT_SECONDS'),
+            180,
+        )
+        client_timeout = aiohttp.ClientTimeout(total=min(timeout_seconds, 60))
+        upload_url = f'{self.server_address}/upload/image'
+        safe_filename = self._sanitize_upload_filename(filename)
+
+        form = aiohttp.FormData()
+        form.add_field(
+            'image',
+            image_bytes,
+            filename=safe_filename,
+            content_type='application/octet-stream',
+        )
+        form.add_field('type', 'input')
+        form.add_field('overwrite', 'false')
+
+        try:
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                async with session.post(upload_url, data=form) as response:
+                    payload = await self._read_response_payload(response)
+                    if response.status < 200 or response.status >= 300:
+                        log.error(f'ComfyUI 上传输入图失败: status={response.status}, body={payload}')
+                        return None
+
+                    if isinstance(payload, dict):
+                        upload_name = str(payload.get('name') or payload.get('filename') or '').strip()
+                        upload_subfolder = str(payload.get('subfolder') or '').strip()
+                        if upload_name and upload_subfolder:
+                            return f'{upload_subfolder}/{upload_name}'
+                        if upload_name:
+                            return upload_name
+
+                    if isinstance(payload, str):
+                        payload_text = payload.strip()
+                        if payload_text:
+                            return payload_text
+
+                    return safe_filename
+        except Exception as error:
+            log.error(f'ComfyUI 上传输入图异常: {error}', exc_info=True)
             return None
 
     @staticmethod

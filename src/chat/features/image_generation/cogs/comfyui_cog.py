@@ -16,6 +16,10 @@ from discord.ext import commands
 from src.chat.config import chat_config
 from src.chat.features.image_generation.services.comfyui_service import comfyui_service
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
+from src.chat.features.tools.utils.discord_image_utils import (
+    extract_image_from_message_url,
+    fetch_image_from_url,
+)
 from src.chat.utils.database import chat_db_manager
 
 log = logging.getLogger(__name__)
@@ -91,6 +95,51 @@ def _coerce_float(value: Any, default: Optional[float] = None) -> Optional[float
         return float(str(value).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {'1', 'true', 'yes', 'y', 'on'}:
+        return True
+    if text in {'0', 'false', 'no', 'n', 'off'}:
+        return False
+    return default
+
+
+def _normalize_generation_mode(raw_mode: Any) -> str:
+    mode_text = str(raw_mode or '').strip().lower()
+    if mode_text in {'image_to_video', 'image2video', 'img2video', 'i2v', 'video'}:
+        return 'image_to_video'
+    return 'text_to_image'
+
+
+def _is_image_attachment(attachment: discord.Attachment) -> bool:
+    content_type = str(getattr(attachment, 'content_type', '') or '').lower()
+    filename = str(getattr(attachment, 'filename', '') or '').lower()
+    if content_type.startswith('image/'):
+        return True
+    return filename.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.avif'))
+
+
+def _guess_filename_by_mime(mime_type: str, fallback_name: str = 'comfyui_output') -> str:
+    mime_text = str(mime_type or '').strip().lower()
+    if mime_text == 'video/mp4':
+        return f'{fallback_name}.mp4'
+    if mime_text == 'video/webm':
+        return f'{fallback_name}.webm'
+    if mime_text == 'image/gif':
+        return f'{fallback_name}.gif'
+    if mime_text == 'image/jpeg':
+        return f'{fallback_name}.jpg'
+    if mime_text == 'image/webp':
+        return f'{fallback_name}.webp'
+    if mime_text == 'image/avif':
+        return f'{fallback_name}.avif'
+    return f'{fallback_name}.png'
 
 
 def _count_lora_files_in_dir(lora_dir: Path) -> int:
@@ -263,6 +312,40 @@ class ComfyUIGenerateModal(discord.ui.Modal, title='ComfyUI 快速生成'):
         resolution = self._parse_resolution(self.resolution_input.value)
         steps_cfg = self._parse_steps_cfg(self.steps_cfg_input.value)
         extra = self._parse_extra(self.extra_input.value)
+        normalized_generation_mode = _normalize_generation_mode(
+            extra.get('generation_mode') or extra.get('mode')
+        )
+        use_reference_image = _coerce_bool(
+            extra.get('use_reference_image'),
+            default=(normalized_generation_mode == 'image_to_video'),
+        )
+        reference_image_url = str(
+            extra.get('reference_image_url') or extra.get('image_url') or ''
+        ).strip() or None
+
+        reserved_extra_keys = {
+            'seed',
+            'sampler',
+            'scheduler',
+            'lora',
+            'loras',
+            'lora_strength',
+            'workflow',
+            'generation_mode',
+            'mode',
+            'use_reference_image',
+            'reference_image_url',
+            'image_url',
+        }
+        extra_runtime_kwargs: Dict[str, Any] = {}
+        for key, value in extra.items():
+            key_text = str(key or '').strip()
+            if not key_text or key_text in reserved_extra_keys:
+                continue
+            value_text = str(value or '').strip()
+            if not value_text:
+                continue
+            extra_runtime_kwargs[key_text] = value_text
 
         payload: Dict[str, Any] = {
             'prompt': str(self.prompt_input.value or '').strip(),
@@ -277,6 +360,10 @@ class ComfyUIGenerateModal(discord.ui.Modal, title='ComfyUI 快速生成'):
             'lora': str(extra.get('lora') or extra.get('loras') or '').strip() or None,
             'lora_strength': _coerce_float(extra.get('lora_strength'), None),
             'workflow_path': str(extra.get('workflow') or '').strip() or None,
+            'generation_mode': normalized_generation_mode,
+            'use_reference_image': use_reference_image,
+            'reference_image_url': reference_image_url,
+            'extra_runtime_kwargs': extra_runtime_kwargs,
             'panel_user_workflow_path': self.panel_view.user_workflow_path,
             'panel_user_default_lora': self.panel_view.user_default_lora,
             'panel_user_fixed_positive_prompt': self.panel_view.user_fixed_positive_prompt,
@@ -1769,6 +1856,70 @@ class ComfyUICog(commands.Cog):
         current.append(token_text)
         return '|'.join(current)
 
+    async def _extract_image_from_message(self, message: Optional[discord.Message]) -> Optional[Dict[str, Any]]:
+        if not message:
+            return None
+
+        for attachment in (message.attachments or []):
+            if not _is_image_attachment(attachment):
+                continue
+
+            try:
+                image_bytes = await attachment.read()
+            except Exception:
+                continue
+
+            if not image_bytes:
+                continue
+
+            return {
+                'data': image_bytes,
+                'mime_type': str(getattr(attachment, 'content_type', '') or '').strip() or 'image/png',
+                'filename': str(getattr(attachment, 'filename', '') or '').strip() or 'reference_image.png',
+            }
+
+        try:
+            url_image = await extract_image_from_message_url(message)
+            if url_image:
+                return url_image
+        except Exception:
+            pass
+
+        return None
+
+    async def _resolve_reference_image_for_interaction(
+        self,
+        interaction: discord.Interaction,
+        reference_image_url: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        normalized_url = str(reference_image_url or '').strip()
+        if normalized_url:
+            try:
+                image_from_url = await fetch_image_from_url(normalized_url)
+                if image_from_url:
+                    return image_from_url
+            except Exception:
+                pass
+
+        if interaction.message:
+            message_image = await self._extract_image_from_message(interaction.message)
+            if message_image:
+                return message_image
+
+        channel = interaction.channel
+        if channel and hasattr(channel, 'history'):
+            try:
+                async for history_message in channel.history(limit=8):
+                    if history_message.author.id != interaction.user.id:
+                        continue
+                    history_image = await self._extract_image_from_message(history_message)
+                    if history_image:
+                        return history_image
+            except Exception:
+                pass
+
+        return None
+
     async def handle_panel_generation(self, interaction: discord.Interaction, payload: Dict[str, Any]) -> None:
         if not comfyui_service.is_server_ready():
             await interaction.response.send_message('ComfyUI 服务不可用，请先检查 Dashboard 服务地址。', ephemeral=True)
@@ -1783,6 +1934,17 @@ class ComfyUICog(commands.Cog):
         panel_user_default_lora = str(payload.get('panel_user_default_lora') or '').strip()
         panel_user_fixed_positive_prompt = str(payload.get('panel_user_fixed_positive_prompt') or '').strip()
         panel_user_fixed_negative_prompt = str(payload.get('panel_user_fixed_negative_prompt') or '').strip()
+        generation_mode = _normalize_generation_mode(payload.get('generation_mode'))
+        use_reference_image = _coerce_bool(
+            payload.get('use_reference_image'),
+            default=(generation_mode == 'image_to_video'),
+        )
+        reference_image_url = str(payload.get('reference_image_url') or '').strip()
+        extra_runtime_kwargs = payload.get('extra_runtime_kwargs')
+        if not isinstance(extra_runtime_kwargs, dict):
+            extra_runtime_kwargs = {}
+        extra_runtime_kwargs = dict(extra_runtime_kwargs)
+        extra_runtime_kwargs.setdefault('generation_mode', generation_mode)
 
         workflow_path = str(payload.get('workflow_path') or '').strip() or panel_user_workflow_path
         lora_value = payload.get('lora')
@@ -1804,17 +1966,46 @@ class ComfyUICog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
         cost = self._get_image_cost()
         user_id = interaction.user.id
         balance = await coin_service.get_balance(user_id)
         if balance < cost:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f'你的月光币余额不足，生成一张图片需要 {cost}，当前余额 {balance}。',
                 ephemeral=True,
             )
             return
 
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        uploaded_reference_name = ''
+        if use_reference_image or generation_mode == 'image_to_video':
+            reference_image = await self._resolve_reference_image_for_interaction(
+                interaction=interaction,
+                reference_image_url=reference_image_url or None,
+            )
+            if not reference_image:
+                await interaction.followup.send(
+                    '图生视频需要参考图。请在最近消息里发图片，或在额外参数里传 reference_image_url。',
+                    ephemeral=True,
+                )
+                return
+
+            uploaded_reference_name = str(
+                await comfyui_service.upload_input_image(
+                    image_bytes=reference_image.get('data') or b'',
+                    filename=str(reference_image.get('filename') or 'reference_image.png'),
+                ) or ''
+            ).strip()
+            if not uploaded_reference_name:
+                await interaction.followup.send(
+                    '参考图上传到 ComfyUI 失败，请检查 ComfyUI /upload/image 接口后重试。',
+                    ephemeral=True,
+                )
+                return
+
+            for alias_key in ('input_image', 'reference_image', 'init_image', 'image'):
+                extra_runtime_kwargs.setdefault(alias_key, uploaded_reference_name)
 
         new_balance = await coin_service.remove_coins(user_id, cost, 'ComfyUI 交互面板生成图片')
         if new_balance is None:
@@ -1823,7 +2014,7 @@ class ComfyUICog(commands.Cog):
 
         try:
             service_lora_override = '' if lora_tokens else None
-            image_bytes = await comfyui_service.generate_image(
+            media_result = await comfyui_service.generate_media(
                 prompt=prompt_with_lora,
                 negative_prompt=str(payload.get('negative_prompt') or '').strip(),
                 width=_coerce_int(payload.get('width'), None),
@@ -1841,18 +2032,36 @@ class ComfyUICog(commands.Cog):
                 workflow_path=workflow_path or None,
                 user_fixed_positive_prompt=panel_user_fixed_positive_prompt,
                 user_fixed_negative_prompt=panel_user_fixed_negative_prompt,
+                **extra_runtime_kwargs,
             )
         except Exception as error:
             log.error(f'/comfy 面板执行异常: {error}', exc_info=True)
-            image_bytes = None
+            media_result = None
 
-        if not image_bytes:
+        if not media_result:
             await coin_service.add_coins(user_id, cost, 'ComfyUI 生成失败返还')
             await interaction.followup.send('图片生成失败，已返还月光币。', ephemeral=True)
             return
 
-        file = discord.File(io.BytesIO(image_bytes), filename='comfyui_image.png', spoiler=True)
-        embed = discord.Embed(title='ComfyUI 图片生成', color=0x2B2D31)
+        media_bytes = media_result.get('bytes')
+        if not isinstance(media_bytes, bytes) or not media_bytes:
+            await coin_service.add_coins(user_id, cost, 'ComfyUI 空结果返还')
+            await interaction.followup.send('生成失败（输出为空），已返还月光币。', ephemeral=True)
+            return
+
+        media_kind = str(media_result.get('media_kind') or 'image').strip().lower()
+        mime_type = str(media_result.get('mime_type') or '').strip().lower()
+        generated_filename = str(media_result.get('filename') or '').strip()
+        if generated_filename:
+            generated_filename = generated_filename.split('/')[-1].split('\\')[-1]
+        if not generated_filename:
+            generated_filename = _guess_filename_by_mime(mime_type, fallback_name='comfyui_output')
+
+        file = discord.File(io.BytesIO(media_bytes), filename=generated_filename, spoiler=(media_kind != 'video'))
+        embed = discord.Embed(
+            title='ComfyUI 视频生成' if media_kind == 'video' else 'ComfyUI 图片生成',
+            color=0x2B2D31,
+        )
         embed.set_author(
             name=interaction.user.display_name,
             icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
@@ -1880,6 +2089,12 @@ class ComfyUICog(commands.Cog):
             footer_parts.append(f'vae={vae_value}')
         if clip_value:
             footer_parts.append(f'clip={clip_value}')
+        if generation_mode == 'image_to_video':
+            footer_parts.append('模式=i2v')
+        if uploaded_reference_name:
+            footer_parts.append(f'参考图={uploaded_reference_name}')
+        if mime_type:
+            footer_parts.append(f'mime={mime_type}')
         if seed is not None:
             if random_seed:
                 footer_parts.append(f'seed=随机({seed})')
@@ -1900,19 +2115,23 @@ class ComfyUICog(commands.Cog):
 
         try:
             sent_message = await target_channel.send(embed=embed, file=file)
-            await chat_db_manager.register_generated_image_message(
-                message_id=sent_message.id,
-                user_id=user_id,
-                guild_id=sent_message.guild.id if sent_message.guild else None,
-                channel_id=sent_message.channel.id,
-            )
+            if media_kind == 'image':
+                await chat_db_manager.register_generated_image_message(
+                    message_id=sent_message.id,
+                    user_id=user_id,
+                    guild_id=sent_message.guild.id if sent_message.guild else None,
+                    channel_id=sent_message.channel.id,
+                )
         except Exception as error:
             await coin_service.add_coins(user_id, cost, 'ComfyUI 发送失败返还')
             log.error(f'ComfyUI 面板发送图片失败: {error}', exc_info=True)
             await interaction.followup.send('图片生成成功但发送失败，已返还月光币。', ephemeral=True)
             return
 
-        await interaction.followup.send('生成完成，图片已发送到当前频道。', ephemeral=True)
+        if media_kind == 'video':
+            await interaction.followup.send('生成完成，视频已发送到当前频道。', ephemeral=True)
+        else:
+            await interaction.followup.send('生成完成，图片已发送到当前频道。', ephemeral=True)
 
     @app_commands.command(name='comfy', description='ComfyUI 绘图面板（支持工作流/LoRA/插件节点导入）')
     @app_commands.describe(

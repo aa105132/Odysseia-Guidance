@@ -430,3 +430,72 @@ def test_replace_placeholders_in_string_trims_token_whitespace():
 
     assert result == 'euler_ancestral'
 
+
+def test_extract_media_meta_from_output_node_supports_videos():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+    output_node = {
+        'videos': [
+            {
+                'filename': 'demo.mp4',
+                'subfolder': '',
+                'type': 'output',
+                'format': 'video/h264-mp4',
+            }
+        ]
+    }
+
+    media_meta = service._extract_media_meta_from_output_node(output_node)
+
+    assert media_meta is not None
+    assert media_meta['filename'] == 'demo.mp4'
+    assert media_meta['media_kind'] == 'video'
+    assert media_meta['mime_type'] == 'video/mp4'
+
+
+def test_extract_media_meta_from_output_node_supports_images():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+    output_node = {
+        'images': [
+            {
+                'filename': 'demo.png',
+                'subfolder': 'ComfyUI',
+                'type': 'output',
+            }
+        ]
+    }
+
+    media_meta = service._extract_media_meta_from_output_node(output_node)
+
+    assert media_meta is not None
+    assert media_meta['filename'] == 'demo.png'
+    assert media_meta['subfolder'] == 'ComfyUI'
+    assert media_meta['media_kind'] == 'image'
+    assert media_meta['mime_type'] == 'image/png'
+
+
+def test_generate_image_ignores_non_image_media():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+
+    async def _fake_generate_media(*args, **kwargs):
+        return {
+            'bytes': b'video-data',
+            'filename': 'demo.mp4',
+            'mime_type': 'video/mp4',
+            'media_kind': 'video',
+        }
+
+    service.generate_media = _fake_generate_media  # type: ignore[method-assign]
+
+    result = asyncio.run(service.generate_image(prompt='test'))
+
+    assert result is None
+
+
+def test_build_placeholder_token_values_supports_reference_image_aliases():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+    token_values = service._build_placeholder_token_values({'input_image': 'input/ref_1.png'})
+
+    assert token_values['%input_image%'] == 'input/ref_1.png'
+    assert token_values['%reference_image%'] == 'input/ref_1.png'
+    assert token_values['%init_image%'] == 'input/ref_1.png'
+
