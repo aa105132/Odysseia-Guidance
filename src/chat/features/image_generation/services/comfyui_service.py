@@ -608,12 +608,22 @@ class ComfyUIService:
         cls,
         workflow_payload: Any,
         placeholder_mapping: Optional[Dict[str, Any]] = None,
+        only_parameter_keys: Optional[set[str]] = None,
     ) -> Dict[str, Any]:
         workflow = copy.deepcopy(cls._normalize_workflow_payload(workflow_payload))
         node_mapping = cls.infer_node_mapping_from_workflow_payload(workflow)
         effective_placeholder_mapping = cls._build_effective_placeholder_mapping_for_parameterize(
             placeholder_mapping
         )
+        normalized_only_keys: Optional[set[str]] = None
+        if only_parameter_keys:
+            normalized_only_keys = {
+                str(key).strip()
+                for key in only_parameter_keys
+                if str(key).strip()
+            }
+            if not normalized_only_keys:
+                normalized_only_keys = None
 
         replaced_keys: list[str] = []
         skipped_keys: list[str] = []
@@ -621,6 +631,8 @@ class ComfyUIService:
         for raw_key, mapping_value in node_mapping.items():
             key_text = str(raw_key or '').strip()
             if not key_text:
+                continue
+            if normalized_only_keys is not None and key_text not in normalized_only_keys:
                 continue
 
             token_text = str(

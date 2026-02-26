@@ -1020,7 +1020,12 @@
                             <div class='flex items-center justify-between mb-2'>
                                 <label class='block text-sm font-medium text-slate-300'>节点映射（JSON 对象）</label>
                                 <div class='flex items-center gap-2'>
-                                    <button @click='autoParameterizeComfyuiWorkflowFromWorkflow()'
+                                    <button @click="autoParameterizeComfyuiWorkflowFromWorkflow(false, 'prompt_only')"
+                                            type='button'
+                                            class='text-xs px-2.5 py-1 rounded-md border border-sky-500/60 text-sky-200 hover:bg-sky-700/20'>
+                                        仅替换Prompt
+                                    </button>
+                                    <button @click="autoParameterizeComfyuiWorkflowFromWorkflow(false, 'all')"
                                             type='button'
                                             class='text-xs px-2.5 py-1 rounded-md border border-cyan-500/60 text-cyan-200 hover:bg-cyan-700/20'>
                                         一键改占位符+映射
@@ -1309,7 +1314,12 @@
                             <div class='flex items-center justify-between mb-2'>
                                 <label class='block text-sm font-medium text-slate-300'>节点映射（JSON 对象）</label>
                                 <div class='flex items-center gap-2'>
-                                    <button @click='autoParameterizeComfyuiWorkflowFromWorkflow()'
+                                    <button @click="autoParameterizeComfyuiWorkflowFromWorkflow(false, 'prompt_only')"
+                                            type='button'
+                                            class='text-xs px-2.5 py-1 rounded-md border border-sky-500/60 text-sky-200 hover:bg-sky-700/20'>
+                                        仅替换Prompt
+                                    </button>
+                                    <button @click="autoParameterizeComfyuiWorkflowFromWorkflow(false, 'all')"
                                             type='button'
                                             class='text-xs px-2.5 py-1 rounded-md border border-cyan-500/60 text-cyan-200 hover:bg-cyan-700/20'>
                                         一键改占位符+映射
@@ -5168,18 +5178,16 @@
                         this.comfyuiForm.workflow_json = workflowText;
                         this.comfyuiWorkflowFileName = file.name || '';
                         this.showToast(`已加载工作流文件：${this.comfyuiWorkflowFileName}`, 'success');
-                        const transformed = await this.autoParameterizeComfyuiWorkflowFromWorkflow(true);
+                        const transformed = await this.autoParameterizeComfyuiWorkflowFromWorkflow(true, 'prompt_only');
                         if (transformed) {
-                            this.showToast('已自动转换为占位符并识别节点映射', 'success');
-                        } else {
-                            await this.autoDetectComfyuiNodeMappingFromWorkflow(true);
+                            this.showToast('已自动替换默认工作流 Prompt 占位符（其余参数保持工作流默认）', 'success');
                         }
                     } catch (e) {
                         this.showToast('读取工作流文件失败', 'error');
                     }
                 },
 
-                async autoParameterizeComfyuiWorkflowFromWorkflow(silent = false) {
+                async autoParameterizeComfyuiWorkflowFromWorkflow(silent = false, mode = 'all') {
                     const workflowJsonText = (this.comfyuiForm.workflow_json || '').trim();
                     const workflowPathText = (this.comfyuiForm.workflow_path || '').trim();
                     if (!workflowJsonText && !workflowPathText) {
@@ -5217,6 +5225,7 @@
                                 workflow_json: workflowJsonText || null,
                                 workflow_path: workflowJsonText ? null : workflowPathText || null,
                                 placeholder_mapping: placeholderMappingPayload,
+                                mode: (mode || 'all').toString(),
                             }),
                         });
 
@@ -5243,8 +5252,12 @@
                         if (!silent) {
                             const replacedCount = Array.isArray(data.replaced_keys)
                                 ? data.replaced_keys.length
-                                : Object.keys(normalizedNodeMapping).length;
-                            this.showToast(`已转换工作流，占位符与节点映射已更新（${replacedCount} 项）`, 'success');
+                                : 0;
+                            if (data.prompt_only_mode) {
+                                this.showToast(`已仅替换 Prompt 占位符（${replacedCount} 项），未改 NODE_MAPPING`, 'success');
+                            } else {
+                                this.showToast(`已转换工作流，占位符与节点映射已更新（${replacedCount} 项）`, 'success');
+                            }
                         }
                         return true;
                     } catch (e) {
@@ -5503,7 +5516,6 @@
                         const workflowJsonText = (this.comfyuiForm.workflow_json || '').trim();
                         if (workflowJsonText) {
                             payload.workflow_json = workflowJsonText;
-                            payload.auto_detect_node_mapping = true;
                             const workflowFilename = (this.comfyuiWorkflowFileName || '').trim();
                             if (workflowFilename) {
                                 payload.workflow_filename = workflowFilename;

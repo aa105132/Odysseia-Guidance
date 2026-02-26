@@ -246,6 +246,7 @@ class ComfyUIAutoParameterizeWorkflowRequest(BaseModel):
     workflow_json: Optional[str] = None
     workflow_path: Optional[str] = None
     placeholder_mapping: Optional[Dict[str, str]] = None
+    mode: Optional[str] = None
 
 
 class NovelAIAdminPresetUpsert(BaseModel):
@@ -3361,7 +3362,7 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
         should_auto_detect_node_mapping = (
             bool(config.auto_detect_node_mapping)
             if config.auto_detect_node_mapping is not None
-            else True
+            else False
         )
         if should_auto_detect_node_mapping:
             try:
@@ -3629,11 +3630,15 @@ async def auto_parameterize_comfyui_workflow(
         workflow_path=request.workflow_path,
     )
     normalized_placeholder_mapping = _normalize_string_map(request.placeholder_mapping or {})
+    mode_text = str(request.mode or '').strip().lower()
+    prompt_only_mode = mode_text in {'prompt_only', 'prompt-only', 'prompt'}
+    only_parameter_keys = {'positive_prompt', 'negative_prompt'} if prompt_only_mode else None
 
     try:
         parameterized_result = ComfyUIService.parameterize_workflow_payload(
             workflow_payload=workflow_payload,
             placeholder_mapping=normalized_placeholder_mapping,
+            only_parameter_keys=only_parameter_keys,
         )
     except ValueError as error:
         raise HTTPException(400, str(error))
@@ -3643,6 +3648,7 @@ async def auto_parameterize_comfyui_workflow(
     parameterized_workflow = parameterized_result.get('workflow') or {}
     workflow_json_text = json.dumps(parameterized_workflow, ensure_ascii=False, indent=2)
     detected_node_mapping = parameterized_result.get('node_mapping') or {}
+    effective_node_mapping = {} if prompt_only_mode else detected_node_mapping
     effective_placeholder_mapping = parameterized_result.get('placeholder_mapping') or {}
     replaced_keys = sorted(
         str(key).strip()
@@ -3659,10 +3665,11 @@ async def auto_parameterize_comfyui_workflow(
         'success': True,
         'workflow_json': workflow_json_text,
         'placeholder_mapping': effective_placeholder_mapping,
-        'node_mapping': detected_node_mapping,
-        'mapped_keys': sorted(detected_node_mapping.keys()),
+        'node_mapping': effective_node_mapping,
+        'mapped_keys': sorted(effective_node_mapping.keys()),
         'replaced_keys': replaced_keys,
         'skipped_keys': skipped_keys,
+        'prompt_only_mode': prompt_only_mode,
     }
 
 

@@ -268,6 +268,28 @@ def test_parameterize_workflow_payload_rewrites_placeholders_and_node_mapping():
     assert result['skipped_keys'] == []
 
 
+def test_parameterize_workflow_payload_supports_prompt_only_mode():
+    workflow_template = {
+        '1': {'class_type': 'UNETLoader', 'inputs': {'unet_name': 'base_model.safetensors'}},
+        '2': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'masterpiece, 1girl'}},
+        '3': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'lowres, bad anatomy'}},
+        '4': {'class_type': 'KSampler', 'inputs': {'steps': 30, 'cfg': 6.0}},
+    }
+
+    result = ComfyUIService.parameterize_workflow_payload(
+        workflow_payload=workflow_template,
+        only_parameter_keys={'positive_prompt', 'negative_prompt'},
+    )
+
+    workflow = result['workflow']
+    assert workflow['2']['inputs']['text'] == '{{positive_prompt}}'
+    assert workflow['3']['inputs']['text'] == '{{negative_prompt}}'
+    assert workflow['1']['inputs']['unet_name'] == 'base_model.safetensors'
+    assert workflow['4']['inputs']['steps'] == 30
+    assert workflow['4']['inputs']['cfg'] == 6.0
+    assert result['replaced_keys'] == ['negative_prompt', 'positive_prompt']
+
+
 
 def test_build_runtime_params_supports_user_fixed_prompts(tmp_path):
     workflow_path = tmp_path / 'workflow_template.json'

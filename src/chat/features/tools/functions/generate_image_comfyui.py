@@ -2,6 +2,7 @@
 
 import io
 import logging
+import os
 import re
 from typing import Any, Dict, Optional
 
@@ -62,6 +63,30 @@ def _infer_content_rating(prompt: str, negative_prompt: Optional[str] = None) ->
         '比基尼',
     ]
     return 'nsfw' if any(keyword in text for keyword in nsfw_keywords) else 'sfw'
+
+
+def _normalize_workflow_path_for_compare(raw_path: Optional[str]) -> str:
+    normalized = str(comfyui_service._normalize_workflow_path(raw_path) or '').strip()
+    if not normalized:
+        return ''
+    try:
+        return os.path.normcase(os.path.normpath(normalized))
+    except Exception:
+        return normalized.lower()
+
+
+def _is_default_workflow_path(workflow_path: Optional[str]) -> bool:
+    current_path = _normalize_workflow_path_for_compare(workflow_path)
+    if not current_path:
+        return True
+
+    default_paths = {
+        _normalize_workflow_path_for_compare(COMFYUI_CONFIG.get('WORKFLOW_PATH')),
+        _normalize_workflow_path_for_compare(COMFYUI_CONFIG.get('DEFAULT_REALISTIC_WORKFLOW_PATH')),
+        _normalize_workflow_path_for_compare(COMFYUI_CONFIG.get('DEFAULT_ANIME_WORKFLOW_PATH')),
+    }
+    default_paths.discard('')
+    return current_path in default_paths
 
 
 class ComfyEditPromptModal(discord.ui.Modal, title='修改提示词重新生成'):
@@ -653,32 +678,42 @@ async def generate_image_comfyui(
             from src.chat.utils.database import chat_db_manager
 
             user_settings = await chat_db_manager.get_comfyui_user_settings(parsed_user_id)
+            user_workflow_path = str(user_settings.get('workflow_path') or '').strip()
             if not effective_workflow_path:
-                effective_workflow_path = str(user_settings.get('workflow_path') or '').strip()
-            if effective_lora is None:
-                effective_lora = str(user_settings.get('default_lora') or '').strip()
-            if effective_width is None:
-                effective_width = _to_int(user_settings.get('width'))
-            if effective_height is None:
-                effective_height = _to_int(user_settings.get('height'))
-            if effective_steps is None:
-                effective_steps = _to_int(user_settings.get('steps'))
-            if effective_cfg is None:
-                effective_cfg = _to_float(user_settings.get('cfg'))
-            if effective_sampler is None:
-                effective_sampler = str(user_settings.get('sampler') or '').strip() or None
-            if effective_scheduler is None:
-                effective_scheduler = str(user_settings.get('scheduler') or '').strip() or None
-            if effective_seed is None:
-                effective_seed = _to_int(user_settings.get('seed'))
-            if effective_model_name is None:
-                effective_model_name = str(user_settings.get('model_name') or '').strip() or None
-            if effective_vae_name is None:
-                effective_vae_name = str(user_settings.get('vae_name') or '').strip() or None
-            if effective_clip_name is None:
-                effective_clip_name = str(user_settings.get('clip_name') or '').strip() or None
-            effective_user_fixed_positive_prompt = str(user_settings.get('fixed_positive_prompt') or '').strip()
-            effective_user_fixed_negative_prompt = str(user_settings.get('fixed_negative_prompt') or '').strip()
+                effective_workflow_path = user_workflow_path
+
+            should_apply_user_persisted_settings = not _is_default_workflow_path(
+                effective_workflow_path
+            )
+            if should_apply_user_persisted_settings:
+                if effective_lora is None:
+                    effective_lora = str(user_settings.get('default_lora') or '').strip()
+                if effective_width is None:
+                    effective_width = _to_int(user_settings.get('width'))
+                if effective_height is None:
+                    effective_height = _to_int(user_settings.get('height'))
+                if effective_steps is None:
+                    effective_steps = _to_int(user_settings.get('steps'))
+                if effective_cfg is None:
+                    effective_cfg = _to_float(user_settings.get('cfg'))
+                if effective_sampler is None:
+                    effective_sampler = str(user_settings.get('sampler') or '').strip() or None
+                if effective_scheduler is None:
+                    effective_scheduler = str(user_settings.get('scheduler') or '').strip() or None
+                if effective_seed is None:
+                    effective_seed = _to_int(user_settings.get('seed'))
+                if effective_model_name is None:
+                    effective_model_name = str(user_settings.get('model_name') or '').strip() or None
+                if effective_vae_name is None:
+                    effective_vae_name = str(user_settings.get('vae_name') or '').strip() or None
+                if effective_clip_name is None:
+                    effective_clip_name = str(user_settings.get('clip_name') or '').strip() or None
+                effective_user_fixed_positive_prompt = str(
+                    user_settings.get('fixed_positive_prompt') or ''
+                ).strip()
+                effective_user_fixed_negative_prompt = str(
+                    user_settings.get('fixed_negative_prompt') or ''
+                ).strip()
         except Exception as error:
             log.warning(f'读取用户 ComfyUI 个性化配置失败: {error}')
 
