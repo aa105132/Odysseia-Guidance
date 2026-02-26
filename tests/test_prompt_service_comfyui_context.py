@@ -91,6 +91,7 @@ def test_build_chat_prompt_treats_zit_model_as_real_human_candidate():
             comfyui_choice_context={
                 'available_model_names': [
                     'moodyPornMix_zitV9.safetensors',
+                    'moodyWildMix_v10Base50steps.safetensors',
                     'anime_mix_v9.safetensors',
                 ],
                 'available_lora_names': [],
@@ -101,6 +102,7 @@ def test_build_chat_prompt_treats_zit_model_as_real_human_candidate():
 
         assert '真人优先候选底模' in all_user_text
         assert 'moodyPornMix_zitV9.safetensors' in all_user_text
-        assert 'zimage / qwen / zit' in all_user_text
+        assert 'moodyWildMix_v10Base50steps.safetensors' in all_user_text
+        assert 'zimage / qwen / zit / zib' in all_user_text
     finally:
         chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine

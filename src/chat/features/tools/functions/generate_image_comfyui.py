@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import io
+import json
 import logging
 import os
 import re
@@ -22,7 +23,16 @@ log = logging.getLogger(__name__)
 GENERATING_EMOJI = '🎨'
 SUCCESS_EMOJI = '✅'
 FAILED_EMOJI = '❌'
-NATURAL_LANGUAGE_MODEL_KEYWORDS = ('zimage', 'z_image', 'qwen', 'zit')
+NATURAL_LANGUAGE_MODEL_KEYWORDS = (
+    'zimage',
+    'z_image',
+    'qwen',
+    'zit',
+    'zib',
+    'moodywildmix',
+    'moodypornmix',
+    'lumina2',
+)
 
 
 def _infer_imagen_aspect_ratio(width: Optional[int], height: Optional[int]) -> str:
@@ -415,6 +425,24 @@ def _extract_model_names_from_workflow_template(workflow_template: Optional[Dict
     return candidates
 
 
+def _extract_natural_model_hints_from_workflow(
+    workflow_template: Optional[Dict[str, Any]],
+) -> list[str]:
+    if not isinstance(workflow_template, dict):
+        return []
+
+    try:
+        workflow_text = json.dumps(workflow_template, ensure_ascii=False).lower()
+    except Exception:
+        return []
+
+    hints: list[str] = []
+    for keyword in NATURAL_LANGUAGE_MODEL_KEYWORDS:
+        if keyword in workflow_text:
+            hints.append(keyword)
+    return hints
+
+
 def _resolve_model_name_for_style_check(
     effective_model_name: Optional[str],
     effective_workflow_path: Optional[str],
@@ -455,6 +483,7 @@ def _resolve_model_name_for_style_check(
             workflow_template_for_check = comfyui_service.workflow_template
 
     model_candidates = _extract_model_names_from_workflow_template(workflow_template_for_check)
+    model_candidates.extend(_extract_natural_model_hints_from_workflow(workflow_template_for_check))
     if not model_candidates and default_model_name:
         return default_model_name
 
@@ -825,7 +854,7 @@ async def generate_image_comfyui(
             'generation_failed': True,
             'reason': 'prompt_style_mismatch',
             'hint': (
-                '当前底模属于真人自然语言模型（zimage/qwen/zit），'
+                '当前底模属于真人自然语言模型（zimage/qwen/zit/zib），'
                 '但本次 prompt 看起来是 SD tag 风格。'
                 '请改为高细节中文自然语言描述（包含风格、主体细节、动作关系、前景中景背景、光影参数）后再调用 generate_image_comfyui。'
             ),

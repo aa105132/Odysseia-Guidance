@@ -349,20 +349,23 @@ class PromptService:
             real_human_model_candidates = [
                 model_name
                 for model_name in available_model_names
-                if any(keyword in model_name.lower() for keyword in ('zimage', 'qwen', 'zit'))
+                if any(
+                    keyword in model_name.lower()
+                    for keyword in ('zimage', 'qwen', 'zit', 'zib', 'moodywildmix', 'moodypornmix')
+                )
             ]
 
             comfyui_model_lora_hint_lines = [
                 'ComfyUI 底模与 LoRA 选择规则：',
                 '1) 仅可从可用列表中选择 model_name / vae_name / clip_name / lora，禁止编造不存在的名称；',
-                '2) 当用户要画真人、写实肖像、现实人物时，优先选择名称包含 zimage / qwen / zit 的底模；',
-                '3) 若最终选择的底模名称包含 zimage / qwen / zit（大小写不敏感），prompt/negative_prompt 使用中文自然语言描述；',
+                '2) 当用户要画真人、写实肖像、现实人物时，优先选择名称包含 zimage / qwen / zit / zib 的底模；',
+                '3) 若最终选择的底模名称包含 zimage / qwen / zit / zib（大小写不敏感），prompt/negative_prompt 使用中文自然语言描述；',
                 '4) 其他底模保持 SD tag 风格（英文标签、逗号分隔）；',
                 '5) 用户明确指定底模或 LoRA 时，优先遵从用户指定。',
             ]
 
             comfyui_natural_language_protocol = (
-                '当底模为 zimage/qwen/zit 时，prompt/negative_prompt 必须使用高密度中文自然语言协议：\n'
+                '当底模为 zimage/qwen/zit/zib 时，prompt/negative_prompt 必须使用高密度中文自然语言协议：\n'
                 'A) 输出格式：只输出最终提示词正文，不要解释、不要编号、不要 Markdown、不要 SD tag 串；\n'
                 'B) 详细度要求：整体写成连续自然语言，建议不少于 12 句且不少于 350 字，必须覆盖以下维度：\n'
                 '   - 风格与画质：写清艺术风格/摄影风格、成像质感、清晰度、颗粒感、色彩倾向；\n'
@@ -402,14 +405,14 @@ class PromptService:
             final_conversation.append(
                 {
                     'role': 'model',
-                    'parts': ['收到，我会基于可用底模/LoRA列表选型，真人优先 zimage/qwen/zit，并按底模类型切换提示词写法。'],
+                    'parts': ['收到，我会基于可用底模/LoRA列表选型，真人优先 zimage/qwen/zit/zib，并按底模类型切换提示词写法。'],
                 }
             )
             final_conversation.append({'role': 'user', 'parts': [comfyui_natural_language_protocol]})
             final_conversation.append(
                 {
                     'role': 'model',
-                    'parts': ['收到，zimage/qwen/zit 模型我会按中文结构化自然语言协议写提示词，不再使用 SD tag 串。'],
+                    'parts': ['收到，zimage/qwen/zit/zib 模型我会按中文结构化自然语言协议写提示词，不再使用 SD tag 串。'],
                 }
             )
 
