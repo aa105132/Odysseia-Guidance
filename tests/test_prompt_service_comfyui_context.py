@@ -68,3 +68,39 @@ def test_build_chat_prompt_injects_comfyui_model_and_lora_context_rules():
         assert '建议不少于 12 句且不少于 350 字' in all_user_text
     finally:
         chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine
+
+
+def test_build_chat_prompt_treats_zit_model_as_real_human_candidate():
+    prompt_service = PromptService()
+    original_default_image_engine = chat_config.DEFAULT_IMAGE_ENGINE
+
+    try:
+        chat_config.DEFAULT_IMAGE_ENGINE = 'comfyui'
+
+        conversation = prompt_service.build_chat_prompt(
+            user_name='测试用户',
+            message='帮我画一个真人写真',
+            replied_message=None,
+            images=[],
+            channel_context=[],
+            world_book_entries=[],
+            affection_status=None,
+            guild_name='测试服务器',
+            location_name='测试频道',
+            user_id=123456,
+            comfyui_choice_context={
+                'available_model_names': [
+                    'moodyPornMix_zitV9.safetensors',
+                    'anime_mix_v9.safetensors',
+                ],
+                'available_lora_names': [],
+            },
+        )
+
+        all_user_text = _collect_user_text(conversation)
+
+        assert '真人优先候选底模' in all_user_text
+        assert 'moodyPornMix_zitV9.safetensors' in all_user_text
+        assert 'zimage / qwen / zit' in all_user_text
+    finally:
+        chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine

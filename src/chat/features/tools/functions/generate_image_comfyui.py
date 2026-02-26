@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 GENERATING_EMOJI = '🎨'
 SUCCESS_EMOJI = '✅'
 FAILED_EMOJI = '❌'
+NATURAL_LANGUAGE_MODEL_KEYWORDS = ('zimage', 'z_image', 'qwen', 'zit')
 
 
 def _infer_imagen_aspect_ratio(width: Optional[int], height: Optional[int]) -> str:
@@ -372,7 +373,7 @@ def _is_natural_language_model(model_name: Optional[str]) -> bool:
     model_text = str(model_name or '').strip().lower()
     if not model_text:
         return False
-    return any(keyword in model_text for keyword in ('zimage', 'z_image', 'qwen'))
+    return any(keyword in model_text for keyword in NATURAL_LANGUAGE_MODEL_KEYWORDS)
 
 
 def _is_placeholder_token_text(value_text: str) -> bool:
@@ -824,7 +825,7 @@ async def generate_image_comfyui(
             'generation_failed': True,
             'reason': 'prompt_style_mismatch',
             'hint': (
-                '当前底模属于真人自然语言模型（zimage/qwen），'
+                '当前底模属于真人自然语言模型（zimage/qwen/zit），'
                 '但本次 prompt 看起来是 SD tag 风格。'
                 '请改为高细节中文自然语言描述（包含风格、主体细节、动作关系、前景中景背景、光影参数）后再调用 generate_image_comfyui。'
             ),
