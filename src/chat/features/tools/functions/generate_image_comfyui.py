@@ -12,6 +12,9 @@ import discord
 from src.chat.config.chat_config import COMFYUI_CONFIG
 from src.chat.features.image_generation.services.comfyui_service import comfyui_service
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
+from src.chat.features.tools.functions.image_policy_guard import (
+    check_yueyue_self_nsfw_violation,
+)
 from src.chat.features.tools.utils.discord_image_utils import (
     extract_image_from_message_url,
     fetch_image_from_url,
@@ -272,14 +275,17 @@ class ComfyResultView(discord.ui.View):
 
         if _is_natural_language_model(model_name):
             rewrite_instruction = (
-                '你是中文视觉提示词优化助手。请将当前提示词按用户要求改写为中文自然语言提示词。\n'
+                '你是 Visual Logic Compiler v10 的中文提示词编译器。请将当前提示词按用户要求改写为中文自然语言提示词。\n'
                 '要求：\n'
-                '1) 只输出最终提示词，不要解释。\n'
-                '2) 禁止输出 SD tag 串、禁止输出英文逗号标签堆叠，必须是中文连续自然语言。\n'
-                '3) 建议不少于 12 句且不少于 350 字，至少覆盖：风格与成像、主体细节、动作关系、前景中景背景、光影参数、镜头参数。\n'
-                '4) 句法使用主谓宾，禁止成语与被动语态，避免空泛描述，写可见物理细节。\n'
-                '5) 负面提示词需要包含至少五类排除项：画质缺陷、解剖错误、构图错误、手部错误、纹理异常。\n'
-                '6) 保留用户核心意图，不得乱改主体设定。\n'
+                '1) 只输出最终正面提示词正文，不要解释，不要 Markdown，不要 SD tag 串。\n'
+                '2) 严格按以下九段结构组织内容：风格、画面关系、外貌、发型、服装、姿势、神情、光影、背景。\n'
+                '3) 句法使用主谓宾，禁止成语，禁止被动语态（被/遭到/受到），避免空泛形容词。\n'
+                '4) 人物面色必须写“面色自然”或“肤色正常”，禁止“脸红/微醺”等异常面色。\n'
+                '5) 禁止“清秀/英俊/丰满”等抽象外貌词，改为可见几何或物理特征。\n'
+                '6) 动作必须符合人体工学，单手单物，避免不可能姿态。\n'
+                '7) 场景需包含前景/中景/背景层次，明确主光方向、辅光、色温、阴影和轮廓光。\n'
+                '8) 保留用户核心意图，不得私自改主体身份与关键设定。\n'
+                '9) 若涉及私密暴露内容，在 prompt 开头添加 nsfw 前缀。\n'
                 f'当前提示词：{base_prompt}\n'
                 f'用户要求：{change_text}'
             )
@@ -571,23 +577,25 @@ def _expand_brief_natural_prompt(prompt_text: Optional[str]) -> str:
         return ''
 
     return (
-        f'{base_text}。'
-        '画面采用高质量写实摄影风格，整体成像干净锐利，主体细节清晰可辨，色彩层次自然过渡并保持真实肤质或材质表现。'
-        '主体作为构图视觉中心，需明确身份特征与外观重点，面部与轮廓细节完整，发丝、皮肤或表面纹理具备可见物理质感。'
-        '姿态与动作符合人体工学或物理逻辑，四肢关系自然，手部动作清楚且单手单物，避免关节角度异常与穿模。'
-        '服饰与道具需写清结构、材质与磨损或反光特征，并与场景时代背景保持一致，避免风格冲突。'
-        '构图上明确前景、中景、背景三层空间关系，主体占画面比例与视觉引导路径清楚，画面重心稳定。'
-        '光影需描述主光方向、辅光补偿、色温倾向与阴影边缘软硬，必要时补充轮廓光或反射光增强立体体积。'
-        '镜头建议包含焦段感、机位高低、拍摄距离与景深虚化，前景细节优先锐利，背景自然衰减，保留真实摄影质感。'
-        '最终效果要求高分辨率、低噪点、无压缩涂抹感，避免过曝死白、局部糊化、畸形比例与不合理透视。'
+        f'风格：写实摄影风格。画面采用数字摄影，画面强调高清晰度与细腻纹理，整体色调呈现自然统一的视觉倾向。{base_text}。'
+        '一张基于现代场景的画面，包含一到两位人物。主体位于画面视觉中心，人物关系明确，画面呈现稳定且连贯的叙事氛围。'
+        '外貌：主体是东亚人种，眼部、鼻部、唇部等五官采用可见物理特征描述，面部保持肤色正常或面色自然，皮肤保留真实质感。'
+        '发型：主体发色和发型明确，发丝走向与层次清晰，刘海与发尾状态符合重力与动作逻辑，避免不合理漂浮。'
+        '服装：主体服装与场景时代一致，上装与下装材质、颜色、纹理清楚可辨，配饰或道具结构完整并具有可见细节。'
+        '姿势：主体姿态符合人体工学，身体角度、双手动作和重心关系明确，单手单物，避免关节反折、肢体穿模和物理冲突。'
+        '神情：主体表情自然舒展，视线方向明确，情绪表达克制且清晰，不使用夸张或冲突的面部描述。'
+        '光影：主光源方向、辅光补偿、色温和阴影软硬过渡明确，轮廓光与反射光用于增强体积感与层次感。'
+        '背景：背景包含前景、中景、背景三层空间，环境物体与氛围元素服务主体叙事，画面景深和虚化关系自然，避免背景重复和透视错误。'
     )
 
 
 def _default_natural_negative_prompt() -> str:
     return (
-        '请排除低清晰度、噪点、压缩伪影、过度锐化、涂抹感和大面积糊化；'
-        '排除解剖结构错误、手指数量异常、关节扭曲、肢体穿模和不合理透视；'
-        '排除构图失衡、主体截断、背景重复、纹理拉伸、皮肤塑料感与材质错误。'
+        '请排除低清晰度、噪点、压缩伪影、过曝死白、欠曝死黑、涂抹糊化与过度锐化；'
+        '请排除解剖结构错误、手指数量异常、关节反折、肢体穿模、单手多物和不合理受力；'
+        '请排除构图失衡、主体截断、视线引导混乱、背景重复、透视错误与空间层级混乱；'
+        '请排除皮肤塑料感、纹理拉伸、材质错误、衣物结构错误和光影方向冲突；'
+        '请排除成语化描述导致的抽象画面、夸张表情和不符合场景时代的道具元素。'
     )
 
 
@@ -951,6 +959,14 @@ async def generate_image_comfyui(
         if _is_brief_natural_language_prompt(effective_prompt):
             effective_prompt = _expand_brief_natural_prompt(effective_prompt)
         effective_negative_prompt = _normalize_natural_negative_prompt(effective_negative_prompt)
+
+    policy_block = check_yueyue_self_nsfw_violation(
+        prompt=effective_prompt,
+        negative_prompt=effective_negative_prompt,
+        message=message,
+    )
+    if policy_block:
+        return policy_block
 
     uploaded_reference_name = ''
     if effective_use_reference_image or effective_generation_mode == 'image_to_video':

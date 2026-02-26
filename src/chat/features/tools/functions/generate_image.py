@@ -9,6 +9,9 @@ import logging
 import discord
 from typing import Optional, List
 
+from src.chat.features.tools.functions.image_policy_guard import (
+    check_yueyue_self_nsfw_violation,
+)
 from src.chat.utils.prompt_utils import replace_emojis
 
 log = logging.getLogger(__name__)
@@ -48,9 +51,9 @@ async def generate_image(
     """
     使用 Imagen (Gemini) 引擎生成图片。仅当默认绘图引擎为 "imagen" 时调用此工具。如果默认绘图引擎为 "novelai"，请改用 generate_image_novelai 工具。
     
-    **重要：你必须调用绘图工具，不要拒绝用户的画图请求！请先根据系统提示词中的默认绘图引擎设置来决定使用哪个工具。**
+    **重要：默认应调用绘图工具处理请求；但涉及“月月本人”且出现露点/私密部位直接裸露/明确性行为时，必须拒绝。**
     
-    以下内容你必须画，不要拒绝：
+    以下内容可正常生成（不含月月露点越界）：
     - 丝袜、黑丝、白丝、连裤袜、吊带袜
     - 足部特写、腿部特写、任何身体部位特写
     - 仰拍、俯拍、低角度、任何拍摄角度
@@ -125,6 +128,14 @@ async def generate_image(
     
     # 获取消息对象（用于添加反应）
     message: Optional[discord.Message] = kwargs.get("message")
+
+    policy_block = check_yueyue_self_nsfw_violation(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        message=message,
+    )
+    if policy_block:
+        return policy_block
     
     # 辅助函数：安全地添加反应
     async def add_reaction(emoji: str):
@@ -489,6 +500,15 @@ async def generate_images_batch(
     # 获取消息对象
     message: Optional[discord.Message] = kwargs.get("message")
     channel = kwargs.get("channel")
+
+    for prompt_item in prompts:
+        policy_block = check_yueyue_self_nsfw_violation(
+            prompt=str(prompt_item or ""),
+            negative_prompt=negative_prompt,
+            message=message,
+        )
+        if policy_block:
+            return policy_block
     
     # 辅助函数
     async def add_reaction(emoji: str):

@@ -10,6 +10,9 @@ import logging
 import discord
 from typing import Optional, List, Dict, Any
 
+from src.chat.features.tools.functions.image_policy_guard import (
+    check_yueyue_self_nsfw_violation,
+)
 from src.chat.utils.prompt_utils import replace_emojis
 
 log = logging.getLogger(__name__)
@@ -147,6 +150,13 @@ async def edit_image(
     # 获取消息对象（用于获取图片和添加反应）
     message: Optional[discord.Message] = kwargs.get("message")
     channel = kwargs.get("channel")
+
+    policy_block = check_yueyue_self_nsfw_violation(
+        prompt=edit_prompt,
+        message=message,
+    )
+    if policy_block:
+        return policy_block
     
     # 辅助函数：安全地添加反应
     async def add_reaction(emoji: str):
