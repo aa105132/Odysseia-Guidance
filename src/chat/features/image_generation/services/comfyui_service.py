@@ -1486,12 +1486,13 @@ class ComfyUIService:
             if preferred_meta:
                 return preferred_meta
 
+        last_meta: Optional[Dict[str, str]] = None
         for output_node_data in outputs.values():
             meta = self._extract_media_meta_from_output_node(output_node_data)
             if meta:
-                return meta
+                last_meta = meta
 
-        return None
+        return last_meta
 
     @staticmethod
     def _infer_media_kind_from_filename(filename: str, fallback_kind: str) -> tuple[str, str]:
@@ -1557,9 +1558,9 @@ class ComfyUIService:
         for field_name, field_kind in media_fields:
             items = output_node_data.get(field_name)
             if isinstance(items, list) and items:
-                first_item = items[0]
-                if isinstance(first_item, dict):
-                    media_item = first_item
+                last_item = items[-1]
+                if isinstance(last_item, dict):
+                    media_item = last_item
                     fallback_kind = field_kind
                     break
 

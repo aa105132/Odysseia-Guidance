@@ -265,9 +265,10 @@ class ComfyResultView(discord.ui.View):
                 '要求：\n'
                 '1) 只输出最终提示词，不要解释。\n'
                 '2) 禁止输出 SD tag 串、禁止输出英文逗号标签堆叠，必须是中文连续自然语言。\n'
-                '3) 建议不少于 8 句，至少覆盖：风格与成像、主体细节、动作关系、前景中景背景、光影参数。\n'
-                '4) 句法使用主谓宾，禁止成语与被动语态，避免空泛描述。\n'
-                '5) 保留用户核心意图，不得乱改主体设定。\n'
+                '3) 建议不少于 12 句且不少于 350 字，至少覆盖：风格与成像、主体细节、动作关系、前景中景背景、光影参数、镜头参数。\n'
+                '4) 句法使用主谓宾，禁止成语与被动语态，避免空泛描述，写可见物理细节。\n'
+                '5) 负面提示词需要包含至少五类排除项：画质缺陷、解剖错误、构图错误、手部错误、纹理异常。\n'
+                '6) 保留用户核心意图，不得乱改主体设定。\n'
                 f'当前提示词：{base_prompt}\n'
                 f'用户要求：{change_text}'
             )
@@ -372,6 +373,94 @@ def _is_natural_language_model(model_name: Optional[str]) -> bool:
     if not model_text:
         return False
     return any(keyword in model_text for keyword in ('zimage', 'z_image', 'qwen'))
+
+
+def _is_placeholder_token_text(value_text: str) -> bool:
+    text = str(value_text or '').strip()
+    if not text:
+        return False
+    if re.fullmatch(r'%[^%]+%', text):
+        return True
+    if re.fullmatch(r'\{\{[^{}]+\}\}', text):
+        return True
+    return False
+
+
+def _extract_model_names_from_workflow_template(workflow_template: Optional[Dict[str, Any]]) -> list[str]:
+    if not isinstance(workflow_template, dict):
+        return []
+
+    model_field_names = {'unet_name', 'ckpt_name', 'model_name'}
+    candidates: list[str] = []
+    seen = set()
+
+    for node_data in workflow_template.values():
+        if not isinstance(node_data, dict):
+            continue
+        inputs = node_data.get('inputs')
+        if not isinstance(inputs, dict):
+            continue
+        for field_name in model_field_names:
+            value = inputs.get(field_name)
+            value_text = str(value or '').strip()
+            if not value_text or _is_placeholder_token_text(value_text):
+                continue
+            key = value_text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(value_text)
+
+    return candidates
+
+
+def _resolve_model_name_for_style_check(
+    effective_model_name: Optional[str],
+    effective_workflow_path: Optional[str],
+    prompt: Optional[str],
+) -> str:
+    explicit_model_name = str(effective_model_name or '').strip()
+    if explicit_model_name:
+        return explicit_model_name
+
+    default_model_name = str(
+        comfyui_service.resolve_default_model_name(
+            prompt=prompt,
+            positive_prompt=prompt,
+        )
+        or ''
+    ).strip()
+
+    workflow_template_for_check: Optional[Dict[str, Any]] = None
+    normalized_workflow_path = str(effective_workflow_path or '').strip()
+
+    if normalized_workflow_path:
+        workflow_template_for_check = comfyui_service._load_workflow_template_from_path(
+            normalized_workflow_path
+        )
+    else:
+        style_workflow_path = str(
+            comfyui_service.resolve_default_workflow_path(
+                prompt=prompt,
+                positive_prompt=prompt,
+            )
+            or ''
+        ).strip()
+        if style_workflow_path:
+            workflow_template_for_check = comfyui_service._load_workflow_template_from_path(
+                style_workflow_path
+            )
+        elif isinstance(comfyui_service.workflow_template, dict):
+            workflow_template_for_check = comfyui_service.workflow_template
+
+    model_candidates = _extract_model_names_from_workflow_template(workflow_template_for_check)
+    if not model_candidates and default_model_name:
+        return default_model_name
+
+    if default_model_name:
+        model_candidates.append(default_model_name)
+
+    return ' '.join(model_candidates).strip()
 
 
 def _looks_like_sd_tag_prompt(prompt_text: Optional[str]) -> bool:
@@ -724,12 +813,11 @@ async def generate_image_comfyui(
             'hint': '未找到可用工作流。请在 Dashboard 配置默认工作流，或让用户在 /comfy 面板设置个人工作流路径。',
         }
 
-    model_name_for_style_check = str(effective_model_name or '').strip()
-    if not model_name_for_style_check:
-        model_name_for_style_check = comfyui_service.resolve_default_model_name(
-            prompt=prompt,
-            positive_prompt=prompt,
-        )
+    model_name_for_style_check = _resolve_model_name_for_style_check(
+        effective_model_name=effective_model_name,
+        effective_workflow_path=effective_workflow_path,
+        prompt=prompt,
+    )
 
     if _is_natural_language_model(model_name_for_style_check) and _looks_like_sd_tag_prompt(prompt):
         return {

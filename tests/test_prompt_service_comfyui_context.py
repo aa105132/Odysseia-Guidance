@@ -65,6 +65,6 @@ def test_build_chat_prompt_injects_comfyui_model_and_lora_context_rules():
         assert 'SD tag 风格' in all_user_text
         assert '只输出最终提示词正文' in all_user_text
         assert '前景/中景/背景' in all_user_text
-        assert '建议不少于 8 句' in all_user_text
+        assert '建议不少于 12 句且不少于 350 字' in all_user_text
     finally:
         chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine

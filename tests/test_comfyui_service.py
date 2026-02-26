@@ -675,6 +675,81 @@ def test_extract_media_meta_from_output_node_supports_images():
     assert media_meta['mime_type'] == 'image/png'
 
 
+def test_extract_media_meta_from_output_node_uses_last_image():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+    output_node = {
+        'images': [
+            {
+                'filename': 'preview.png',
+                'subfolder': 'ComfyUI',
+                'type': 'output',
+            },
+            {
+                'filename': 'final.png',
+                'subfolder': 'ComfyUI',
+                'type': 'output',
+            },
+        ]
+    }
+
+    media_meta = service._extract_media_meta_from_output_node(output_node)
+
+    assert media_meta is not None
+    assert media_meta['filename'] == 'final.png'
+
+
+def test_extract_media_meta_from_outputs_uses_last_available_output_node():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+    outputs = {
+        '101': {
+            'images': [
+                {'filename': 'first.png', 'subfolder': '', 'type': 'output'}
+            ]
+        },
+        '202': {
+            'images': [
+                {'filename': 'second.png', 'subfolder': '', 'type': 'output'}
+            ]
+        },
+    }
+
+    media_meta = service._extract_media_meta_from_outputs(outputs)
+
+    assert media_meta is not None
+    assert media_meta['filename'] == 'second.png'
+
+
+def test_extract_media_meta_from_outputs_prefers_configured_output_node(monkeypatch):
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+    original_output_node_id = chat_config.COMFYUI_CONFIG.get('IMAGE_OUTPUT_NODE_ID')
+    original_media_output_node_id = chat_config.COMFYUI_CONFIG.get('MEDIA_OUTPUT_NODE_ID')
+
+    try:
+        monkeypatch.setitem(chat_config.COMFYUI_CONFIG, 'MEDIA_OUTPUT_NODE_ID', '')
+        monkeypatch.setitem(chat_config.COMFYUI_CONFIG, 'IMAGE_OUTPUT_NODE_ID', '101')
+        outputs = {
+            '101': {
+                'images': [
+                    {'filename': 'first_a.png', 'subfolder': '', 'type': 'output'},
+                    {'filename': 'first_b.png', 'subfolder': '', 'type': 'output'},
+                ]
+            },
+            '202': {
+                'images': [
+                    {'filename': 'second.png', 'subfolder': '', 'type': 'output'}
+                ]
+            },
+        }
+
+        media_meta = service._extract_media_meta_from_outputs(outputs)
+
+        assert media_meta is not None
+        assert media_meta['filename'] == 'first_b.png'
+    finally:
+        chat_config.COMFYUI_CONFIG['IMAGE_OUTPUT_NODE_ID'] = original_output_node_id
+        chat_config.COMFYUI_CONFIG['MEDIA_OUTPUT_NODE_ID'] = original_media_output_node_id
+
+
 def test_generate_image_ignores_non_image_media():
     service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
 
