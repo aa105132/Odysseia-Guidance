@@ -201,6 +201,58 @@ def test_build_runtime_params_merges_fixed_prompts_and_default_model(tmp_path):
         chat_config.COMFYUI_CONFIG['DEFAULT_MODEL_NAME'] = original_default_model_name
 
 
+def test_build_runtime_params_prefers_style_specific_default_model(tmp_path):
+    workflow_path = tmp_path / 'workflow_template.json'
+    workflow_path.write_text(
+        json.dumps({'1': {'inputs': {'text': '{{positive_prompt}}'}}}, ensure_ascii=False),
+        encoding='utf-8',
+    )
+
+    original_default_model_name = chat_config.COMFYUI_CONFIG.get('DEFAULT_MODEL_NAME')
+    original_default_realistic_model_name = chat_config.COMFYUI_CONFIG.get('DEFAULT_REALISTIC_MODEL_NAME')
+    original_default_anime_model_name = chat_config.COMFYUI_CONFIG.get('DEFAULT_ANIME_MODEL_NAME')
+
+    try:
+        chat_config.COMFYUI_CONFIG['DEFAULT_MODEL_NAME'] = 'global_default.safetensors'
+        chat_config.COMFYUI_CONFIG['DEFAULT_REALISTIC_MODEL_NAME'] = 'zimage_realistic.safetensors'
+        chat_config.COMFYUI_CONFIG['DEFAULT_ANIME_MODEL_NAME'] = 'anime_default.safetensors'
+
+        service = ComfyUIService(
+            server_address='127.0.0.1:8188',
+            workflow_path=str(workflow_path),
+        )
+
+        realistic_params = service._build_runtime_params(prompt='真人写实摄影风格的肖像')
+        anime_params = service._build_runtime_params(prompt='二次元 anime 少女插画')
+        neutral_params = service._build_runtime_params(prompt='清晨森林风景')
+
+        assert realistic_params['model_name'] == 'zimage_realistic.safetensors'
+        assert anime_params['model_name'] == 'anime_default.safetensors'
+        assert neutral_params['model_name'] == 'global_default.safetensors'
+    finally:
+        chat_config.COMFYUI_CONFIG['DEFAULT_MODEL_NAME'] = original_default_model_name
+        chat_config.COMFYUI_CONFIG['DEFAULT_REALISTIC_MODEL_NAME'] = original_default_realistic_model_name
+        chat_config.COMFYUI_CONFIG['DEFAULT_ANIME_MODEL_NAME'] = original_default_anime_model_name
+
+
+def test_resolve_default_workflow_path_supports_style_split():
+    service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
+
+    original_default_realistic_workflow_path = chat_config.COMFYUI_CONFIG.get('DEFAULT_REALISTIC_WORKFLOW_PATH')
+    original_default_anime_workflow_path = chat_config.COMFYUI_CONFIG.get('DEFAULT_ANIME_WORKFLOW_PATH')
+
+    try:
+        chat_config.COMFYUI_CONFIG['DEFAULT_REALISTIC_WORKFLOW_PATH'] = r'D:\workflows\realistic.json'
+        chat_config.COMFYUI_CONFIG['DEFAULT_ANIME_WORKFLOW_PATH'] = r'D:\workflows\anime.json'
+
+        assert service.resolve_default_workflow_path(prompt='写实真人电影感人像') == r'D:\workflows\realistic.json'
+        assert service.resolve_default_workflow_path(prompt='二次元 anime 角色立绘') == r'D:\workflows\anime.json'
+        assert service.resolve_default_workflow_path(prompt='普通风景速写') == ''
+    finally:
+        chat_config.COMFYUI_CONFIG['DEFAULT_REALISTIC_WORKFLOW_PATH'] = original_default_realistic_workflow_path
+        chat_config.COMFYUI_CONFIG['DEFAULT_ANIME_WORKFLOW_PATH'] = original_default_anime_workflow_path
+
+
 def test_install_custom_node_from_url_rejects_empty_url():
     service = ComfyUIService(server_address='127.0.0.1:8188', workflow_path='')
 

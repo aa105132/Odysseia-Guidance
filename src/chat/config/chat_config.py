@@ -708,6 +708,9 @@ COMFYUI_CONFIG = {
     "SERVER_ADDRESS": os.getenv("COMFYUI_SERVER_ADDRESS", "http://127.0.0.1:8188"),
     # 工作流文件路径（支持绝对路径，如 D:\Downloads\xxx.json）
     "WORKFLOW_PATH": os.getenv("COMFYUI_WORKFLOW_PATH", ""),
+    # 画风分流默认工作流（未显式指定工作流时按提示词画风自动选择）
+    "DEFAULT_REALISTIC_WORKFLOW_PATH": os.getenv("COMFYUI_DEFAULT_REALISTIC_WORKFLOW_PATH", ""),
+    "DEFAULT_ANIME_WORKFLOW_PATH": os.getenv("COMFYUI_DEFAULT_ANIME_WORKFLOW_PATH", ""),
     # 生成一张图片的月光币成本
     "IMAGE_GENERATION_COST": _parse_int_env("COMFYUI_GENERATION_COST", 5),
     # 默认参数（可在 Dashboard 中覆盖）
@@ -719,6 +722,8 @@ COMFYUI_CONFIG = {
     "DEFAULT_SCHEDULER": os.getenv("COMFYUI_DEFAULT_SCHEDULER", "normal"),
     "DEFAULT_SEED": _parse_int_env("COMFYUI_DEFAULT_SEED", 12345),
     "DEFAULT_MODEL_NAME": os.getenv("COMFYUI_DEFAULT_MODEL_NAME", ""),
+    "DEFAULT_REALISTIC_MODEL_NAME": os.getenv("COMFYUI_DEFAULT_REALISTIC_MODEL_NAME", ""),
+    "DEFAULT_ANIME_MODEL_NAME": os.getenv("COMFYUI_DEFAULT_ANIME_MODEL_NAME", ""),
     "DEFAULT_VAE_NAME": os.getenv("COMFYUI_DEFAULT_VAE_NAME", ""),
     "DEFAULT_CLIP_NAME": os.getenv("COMFYUI_DEFAULT_CLIP_NAME", ""),
     "DEFAULT_LORA": os.getenv("COMFYUI_DEFAULT_LORA", ""),

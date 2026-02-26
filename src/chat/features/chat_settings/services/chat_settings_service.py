@@ -153,8 +153,24 @@ class ChatSettingsService:
             chat_config.COMFYUI_CONFIG['SERVER_ADDRESS'] = db_comfy_server.strip()
 
         db_comfy_workflow_path = await self.db_manager.get_global_setting('comfyui_workflow_path')
-        if db_comfy_workflow_path:
-            chat_config.COMFYUI_CONFIG['WORKFLOW_PATH'] = db_comfy_workflow_path.strip()
+        if db_comfy_workflow_path is not None:
+            chat_config.COMFYUI_CONFIG['WORKFLOW_PATH'] = str(db_comfy_workflow_path).strip()
+
+        db_comfy_default_realistic_workflow_path = await self.db_manager.get_global_setting(
+            'comfyui_default_realistic_workflow_path'
+        )
+        if db_comfy_default_realistic_workflow_path is not None:
+            chat_config.COMFYUI_CONFIG['DEFAULT_REALISTIC_WORKFLOW_PATH'] = (
+                str(db_comfy_default_realistic_workflow_path).strip()
+            )
+
+        db_comfy_default_anime_workflow_path = await self.db_manager.get_global_setting(
+            'comfyui_default_anime_workflow_path'
+        )
+        if db_comfy_default_anime_workflow_path is not None:
+            chat_config.COMFYUI_CONFIG['DEFAULT_ANIME_WORKFLOW_PATH'] = (
+                str(db_comfy_default_anime_workflow_path).strip()
+            )
 
         db_comfy_output_node = await self.db_manager.get_global_setting('comfyui_image_output_node_id')
         if db_comfy_output_node is not None:
@@ -191,6 +207,9 @@ class ChatSettingsService:
         string_setting_map = [
             ('comfyui_default_sampler', 'DEFAULT_SAMPLER'),
             ('comfyui_default_scheduler', 'DEFAULT_SCHEDULER'),
+            ('comfyui_default_model_name', 'DEFAULT_MODEL_NAME'),
+            ('comfyui_default_realistic_model_name', 'DEFAULT_REALISTIC_MODEL_NAME'),
+            ('comfyui_default_anime_model_name', 'DEFAULT_ANIME_MODEL_NAME'),
             ('comfyui_default_vae_name', 'DEFAULT_VAE_NAME'),
             ('comfyui_default_clip_name', 'DEFAULT_CLIP_NAME'),
             ('comfyui_default_lora', 'DEFAULT_LORA'),

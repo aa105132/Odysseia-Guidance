@@ -774,6 +774,36 @@
                                    class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500'>
                         </div>
 
+                        <div class='border border-slate-700 rounded-lg p-4 space-y-3'>
+                            <h4 class='text-sm font-semibold text-slate-200'>画风分流默认工作流</h4>
+                            <div class='grid grid-cols-1 md:grid-cols-2 gap-3'>
+                                <div>
+                                    <label class='block text-xs text-slate-400 mb-1'>真人默认工作流</label>
+                                    <select x-model='comfyuiForm.default_realistic_workflow_path'
+                                            class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                        <option value=''>留空（回退全局默认工作流）</option>
+                                        <template x-for='workflowPath in comfyuiAvailableWorkflowPaths' :key='`rwf-${workflowPath}`'>
+                                            <option :value='workflowPath' :title='workflowPath' x-text='getComfyuiWorkflowDisplayName(workflowPath)'></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class='block text-xs text-slate-400 mb-1'>二次元默认工作流</label>
+                                    <select x-model='comfyuiForm.default_anime_workflow_path'
+                                            class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                        <option value=''>留空（回退全局默认工作流）</option>
+                                        <template x-for='workflowPath in comfyuiAvailableWorkflowPaths' :key='`awf-${workflowPath}`'>
+                                            <option :value='workflowPath' :title='workflowPath' x-text='getComfyuiWorkflowDisplayName(workflowPath)'></option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                            <p class='text-xs text-slate-500'>
+                                对话未显式指定工作流时，会根据提示词画风自动选择：
+                                真人/写实/zimage/qwen → 真人工作流；二次元/anime/动漫 → 二次元工作流。
+                            </p>
+                        </div>
+
                         <div>
                             <label class='block text-sm font-medium text-slate-300 mb-2'>导入工作流文件（上传后会自动带文件名保存为独立工作流）</label>
                             <input type='file' accept='.json,application/json' @change='onComfyuiWorkflowFileChange($event)'
@@ -838,6 +868,32 @@
                                 <label class='block text-sm font-medium text-slate-300 mb-2'>默认 LoRA</label>
                                 <input type='text' x-model='comfyuiForm.default_lora' placeholder='例如：my_lora.safetensors'
                                        class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3'>
+                            </div>
+                        </div>
+
+                        <div class='border border-slate-700 rounded-lg p-4 space-y-3'>
+                            <h4 class='text-sm font-semibold text-slate-200'>画风分流默认底模</h4>
+                            <div class='grid grid-cols-1 md:grid-cols-2 gap-3'>
+                                <div>
+                                    <label class='block text-xs text-slate-400 mb-1'>真人默认底模</label>
+                                    <select x-model='comfyuiForm.default_realistic_model_name'
+                                            class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                        <option value=''>留空（回退通用默认底模）</option>
+                                        <template x-for='modelName in comfyuiAvailableModelNames' :key='`rmodel-${modelName}`'>
+                                            <option :value='modelName' x-text='modelName'></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class='block text-xs text-slate-400 mb-1'>二次元默认底模</label>
+                                    <select x-model='comfyuiForm.default_anime_model_name'
+                                            class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2'>
+                                        <option value=''>留空（回退通用默认底模）</option>
+                                        <template x-for='modelName in comfyuiAvailableModelNames' :key='`amodel-${modelName}`'>
+                                            <option :value='modelName' x-text='modelName'></option>
+                                        </template>
+                                    </select>
+                                </div>
                             </div>
                         </div>
 
@@ -3591,6 +3647,8 @@
                     server_address: 'http://127.0.0.1:8188',
                     workflow_path: '',
                     selected_workflow_path: '',
+                    default_realistic_workflow_path: '',
+                    default_anime_workflow_path: '',
                     workflow_json: '',
                     image_output_node_id: '',
                     generation_cost: 5,
@@ -3602,6 +3660,8 @@
                     default_scheduler: 'normal',
                     default_seed: 12345,
                     default_model_name: '',
+                    default_realistic_model_name: '',
+                    default_anime_model_name: '',
                     default_lora: '',
                     default_lora_strength: 1.0,
                     max_user_lora_uploads: 5,
@@ -5026,6 +5086,8 @@
                         this.comfyuiForm.enable_slash_command = data.enable_slash_command ?? true;
                         this.comfyuiForm.server_address = data.server_address || 'http://127.0.0.1:8188';
                         this.comfyuiForm.workflow_path = data.workflow_path || '';
+                        this.comfyuiForm.default_realistic_workflow_path = data.default_realistic_workflow_path || '';
+                        this.comfyuiForm.default_anime_workflow_path = data.default_anime_workflow_path || '';
                         const workflowPathList = Array.isArray(data.available_workflow_paths) ? data.available_workflow_paths : [];
                         const dedupedWorkflowPathList = [];
                         const workflowPathSet = new Set();
@@ -5051,6 +5113,8 @@
                         this.comfyuiForm.default_scheduler = data.default_scheduler || 'normal';
                         this.comfyuiForm.default_seed = data.default_seed ?? 12345;
                         this.comfyuiForm.default_model_name = data.default_model_name || '';
+                        this.comfyuiForm.default_realistic_model_name = data.default_realistic_model_name || '';
+                        this.comfyuiForm.default_anime_model_name = data.default_anime_model_name || '';
                         this.comfyuiForm.default_lora = data.default_lora || '';
                         this.comfyuiForm.default_lora_strength = data.default_lora_strength ?? 1.0;
                         this.comfyuiForm.max_user_lora_uploads = data.max_user_lora_uploads ?? 5;
@@ -5252,6 +5316,8 @@
                             enable_slash_command: this.comfyuiForm.enable_slash_command,
                             server_address: (this.comfyuiForm.server_address || '').trim(),
                             workflow_path: (this.comfyuiForm.workflow_path || '').trim(),
+                            default_realistic_workflow_path: (this.comfyuiForm.default_realistic_workflow_path || '').trim(),
+                            default_anime_workflow_path: (this.comfyuiForm.default_anime_workflow_path || '').trim(),
                             image_output_node_id: (this.comfyuiForm.image_output_node_id || '').trim(),
                             generation_cost: parseInt(this.comfyuiForm.generation_cost),
                             default_width: parseInt(this.comfyuiForm.default_width),
@@ -5262,6 +5328,8 @@
                             default_scheduler: (this.comfyuiForm.default_scheduler || '').trim(),
                             default_seed: parseInt(this.comfyuiForm.default_seed),
                             default_model_name: (this.comfyuiForm.default_model_name || '').trim(),
+                            default_realistic_model_name: (this.comfyuiForm.default_realistic_model_name || '').trim(),
+                            default_anime_model_name: (this.comfyuiForm.default_anime_model_name || '').trim(),
                             default_lora: (this.comfyuiForm.default_lora || '').trim(),
                             default_lora_strength: parseFloat(this.comfyuiForm.default_lora_strength),
                             max_user_lora_uploads: parseInt(this.comfyuiForm.max_user_lora_uploads),

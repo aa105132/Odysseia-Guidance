@@ -24,6 +24,39 @@ _PLACEHOLDER_RE = re.compile(r'\{\{\s*([a-zA-Z0-9_]+)\s*\}\}')
 class ComfyUIService:
     '''处理与 ComfyUI API 通信的业务逻辑（支持工作流导入与占位符替换）。'''
 
+    _REALISTIC_STYLE_KEYWORDS = (
+        '真人',
+        '写实',
+        '现实',
+        '写真',
+        '摄影',
+        '实拍',
+        'photoreal',
+        'photorealistic',
+        'realistic',
+        'portrait',
+        'cinematic',
+        'zimage',
+        'z_image',
+        'qwen',
+        'zib',
+        'zit',
+    )
+    _ANIME_STYLE_KEYWORDS = (
+        '二次元',
+        '动漫',
+        '动画',
+        'anime',
+        'manga',
+        'waifu',
+        'niji',
+        '插画',
+        '萌系',
+        '赛璐璐',
+        '卡通',
+        'galgame',
+    )
+
     def __init__(self, server_address: Optional[str] = None, workflow_path: Optional[str] = None):
         self.server_address = ''
         self.workflow_path = ''
@@ -73,6 +106,97 @@ class ComfyUIService:
             path_text = path_text[7:]
 
         return path_text.strip()
+
+    @staticmethod
+    def _normalize_prompt_style(raw_style: Optional[str]) -> str:
+        style_text = str(raw_style or '').strip().lower()
+        if not style_text:
+            return ''
+        if style_text in {'realistic', 'real', 'photo', 'photoreal', '真人', '写实'}:
+            return 'realistic'
+        if style_text in {'anime', '2d', 'cartoon', '二次元', '动漫'}:
+            return 'anime'
+        return ''
+
+    @classmethod
+    def _count_style_keyword_hits(cls, normalized_text: str, keywords: tuple[str, ...]) -> int:
+        if not normalized_text:
+            return 0
+        return sum(1 for keyword in keywords if keyword in normalized_text)
+
+    @classmethod
+    def _detect_prompt_style(
+        cls,
+        prompt: Optional[str] = None,
+        positive_prompt: Optional[str] = None,
+    ) -> str:
+        merged_text = ' '.join(
+            part.strip().lower()
+            for part in (
+                str(prompt or ''),
+                str(positive_prompt or ''),
+            )
+            if part and str(part).strip()
+        )
+        if not merged_text:
+            return ''
+
+        realistic_hits = cls._count_style_keyword_hits(merged_text, cls._REALISTIC_STYLE_KEYWORDS)
+        anime_hits = cls._count_style_keyword_hits(merged_text, cls._ANIME_STYLE_KEYWORDS)
+        if realistic_hits == anime_hits:
+            return ''
+        return 'realistic' if realistic_hits > anime_hits else 'anime'
+
+    def resolve_prompt_style(
+        self,
+        prompt: Optional[str] = None,
+        positive_prompt: Optional[str] = None,
+        prompt_style: Optional[str] = None,
+    ) -> str:
+        normalized_style = self._normalize_prompt_style(prompt_style)
+        if normalized_style:
+            return normalized_style
+        return self._detect_prompt_style(prompt=prompt, positive_prompt=positive_prompt)
+
+    def resolve_default_model_name(
+        self,
+        prompt: Optional[str] = None,
+        positive_prompt: Optional[str] = None,
+        prompt_style: Optional[str] = None,
+    ) -> str:
+        config = app_config.COMFYUI_CONFIG
+        resolved_style = self.resolve_prompt_style(
+            prompt=prompt,
+            positive_prompt=positive_prompt,
+            prompt_style=prompt_style,
+        )
+        if resolved_style == 'realistic':
+            style_model_name = str(config.get('DEFAULT_REALISTIC_MODEL_NAME') or '').strip()
+            if style_model_name:
+                return style_model_name
+        elif resolved_style == 'anime':
+            style_model_name = str(config.get('DEFAULT_ANIME_MODEL_NAME') or '').strip()
+            if style_model_name:
+                return style_model_name
+        return str(config.get('DEFAULT_MODEL_NAME') or '').strip()
+
+    def resolve_default_workflow_path(
+        self,
+        prompt: Optional[str] = None,
+        positive_prompt: Optional[str] = None,
+        prompt_style: Optional[str] = None,
+    ) -> str:
+        config = app_config.COMFYUI_CONFIG
+        resolved_style = self.resolve_prompt_style(
+            prompt=prompt,
+            positive_prompt=positive_prompt,
+            prompt_style=prompt_style,
+        )
+        if resolved_style == 'realistic':
+            return self._normalize_workflow_path(config.get('DEFAULT_REALISTIC_WORKFLOW_PATH'))
+        if resolved_style == 'anime':
+            return self._normalize_workflow_path(config.get('DEFAULT_ANIME_WORKFLOW_PATH'))
+        return ''
 
     @staticmethod
     def _coerce_int(value: Any, default: int) -> int:
@@ -276,6 +400,18 @@ class ComfyUIService:
         positive_prompt = kwargs.get('positive_prompt')
         if positive_prompt is None:
             positive_prompt = kwargs.get('prompt')
+        prompt_text = kwargs.get('prompt')
+
+        resolved_prompt_style = self.resolve_prompt_style(
+            prompt=prompt_text,
+            positive_prompt=positive_prompt,
+            prompt_style=kwargs.get('prompt_style'),
+        )
+        resolved_default_model_name = self.resolve_default_model_name(
+            prompt=prompt_text,
+            positive_prompt=positive_prompt,
+            prompt_style=resolved_prompt_style,
+        )
 
         if 'lora' in kwargs:
             lora_value = kwargs.get('lora')
@@ -310,9 +446,10 @@ class ComfyUIService:
                 kwargs.get('lora_strength'),
                 self._coerce_float(config.get('DEFAULT_LORA_STRENGTH'), 1.0),
             ),
-            'model_name': str(kwargs.get('model_name') or config.get('DEFAULT_MODEL_NAME') or '').strip(),
+            'model_name': str(kwargs.get('model_name') or resolved_default_model_name or '').strip(),
             'vae_name': str(kwargs.get('vae_name') or config.get('DEFAULT_VAE_NAME') or '').strip(),
             'clip_name': str(kwargs.get('clip_name') or config.get('DEFAULT_CLIP_NAME') or '').strip(),
+            'prompt_style': resolved_prompt_style,
         }
 
         for key, value in kwargs.items():
@@ -881,13 +1018,30 @@ class ComfyUIService:
 
             workflow_path_override = self._normalize_workflow_path(kwargs.get('workflow_path'))
             workflow_template_override: Optional[Dict[str, Any]] = None
+            resolved_prompt_style = self.resolve_prompt_style(
+                prompt=prompt,
+                positive_prompt=positive_prompt,
+                prompt_style=kwargs.get('prompt_style'),
+            )
+            default_style_workflow_path = ''
+            if not workflow_path_override:
+                default_style_workflow_path = self.resolve_default_workflow_path(
+                    prompt=prompt,
+                    positive_prompt=positive_prompt,
+                    prompt_style=resolved_prompt_style,
+                )
 
             if workflow_path_override:
                 workflow_template_override = self._load_workflow_template_from_path(workflow_path_override)
                 if workflow_template_override is None:
                     log.error(f'用户指定工作流加载失败: {workflow_path_override}')
                     return None
-            elif self.workflow_template is None:
+            elif default_style_workflow_path:
+                workflow_template_override = self._load_workflow_template_from_path(default_style_workflow_path)
+                if workflow_template_override is None:
+                    log.warning(f'画风分流工作流加载失败，回退全局默认工作流: {default_style_workflow_path}')
+
+            if workflow_template_override is None and self.workflow_template is None:
                 log.warning('ComfyUI 默认工作流未加载，且未提供用户工作流。')
                 return None
 
@@ -908,6 +1062,7 @@ class ComfyUIService:
             runtime_kwargs['model_name'] = model_name
             runtime_kwargs['vae_name'] = vae_name
             runtime_kwargs['clip_name'] = clip_name
+            runtime_kwargs['prompt_style'] = resolved_prompt_style
 
             params = self._build_runtime_params(**runtime_kwargs)
             params = await self._fill_missing_runtime_names(

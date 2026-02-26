@@ -200,6 +200,8 @@ class ComfyUIConfigUpdate(BaseModel):
     enable_slash_command: Optional[bool] = None
     server_address: Optional[str] = None
     workflow_path: Optional[str] = None
+    default_realistic_workflow_path: Optional[str] = None
+    default_anime_workflow_path: Optional[str] = None
     workflow_json: Optional[str] = None
     workflow_filename: Optional[str] = None
     image_output_node_id: Optional[str] = None
@@ -212,6 +214,8 @@ class ComfyUIConfigUpdate(BaseModel):
     default_scheduler: Optional[str] = None
     default_seed: Optional[int] = None
     default_model_name: Optional[str] = None
+    default_realistic_model_name: Optional[str] = None
+    default_anime_model_name: Optional[str] = None
     default_lora: Optional[str] = None
     default_lora_strength: Optional[float] = None
     max_user_lora_uploads: Optional[int] = None
@@ -3041,6 +3045,12 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
     db_slash_enabled = await chat_db_manager.get_global_setting('comfyui_enable_slash_command')
     db_server_address = await chat_db_manager.get_global_setting('comfyui_server_address')
     db_workflow_path = await chat_db_manager.get_global_setting('comfyui_workflow_path')
+    db_default_realistic_workflow_path = await chat_db_manager.get_global_setting(
+        'comfyui_default_realistic_workflow_path'
+    )
+    db_default_anime_workflow_path = await chat_db_manager.get_global_setting(
+        'comfyui_default_anime_workflow_path'
+    )
     db_output_node_id = await chat_db_manager.get_global_setting('comfyui_image_output_node_id')
     db_generation_cost = await chat_db_manager.get_global_setting('comfyui_generation_cost')
     db_default_width = await chat_db_manager.get_global_setting('comfyui_default_width')
@@ -3051,6 +3061,12 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
     db_default_scheduler = await chat_db_manager.get_global_setting('comfyui_default_scheduler')
     db_default_seed = await chat_db_manager.get_global_setting('comfyui_default_seed')
     db_default_model_name = await chat_db_manager.get_global_setting('comfyui_default_model_name')
+    db_default_realistic_model_name = await chat_db_manager.get_global_setting(
+        'comfyui_default_realistic_model_name'
+    )
+    db_default_anime_model_name = await chat_db_manager.get_global_setting(
+        'comfyui_default_anime_model_name'
+    )
     db_default_lora = await chat_db_manager.get_global_setting('comfyui_default_lora')
     db_default_lora_strength = await chat_db_manager.get_global_setting('comfyui_default_lora_strength')
     db_max_user_lora_uploads = await chat_db_manager.get_global_setting('comfyui_max_user_lora_uploads')
@@ -3070,6 +3086,12 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
 
     server_address = str(db_server_address or config.get('SERVER_ADDRESS') or '').strip()
     workflow_path = str(db_workflow_path or config.get('WORKFLOW_PATH') or '').strip()
+    default_realistic_workflow_path = str(
+        db_default_realistic_workflow_path or config.get('DEFAULT_REALISTIC_WORKFLOW_PATH') or ''
+    ).strip()
+    default_anime_workflow_path = str(
+        db_default_anime_workflow_path or config.get('DEFAULT_ANIME_WORKFLOW_PATH') or ''
+    ).strip()
     output_node_id = str(db_output_node_id or config.get('IMAGE_OUTPUT_NODE_ID') or '').strip()
 
     generation_cost = int(db_generation_cost) if db_generation_cost else int(config.get('IMAGE_GENERATION_COST', 5))
@@ -3081,6 +3103,12 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
     default_scheduler = str(db_default_scheduler or config.get('DEFAULT_SCHEDULER') or '').strip()
     default_seed = int(db_default_seed) if db_default_seed else int(config.get('DEFAULT_SEED', 12345))
     default_model_name = str(db_default_model_name or config.get('DEFAULT_MODEL_NAME') or '').strip()
+    default_realistic_model_name = str(
+        db_default_realistic_model_name or config.get('DEFAULT_REALISTIC_MODEL_NAME') or ''
+    ).strip()
+    default_anime_model_name = str(
+        db_default_anime_model_name or config.get('DEFAULT_ANIME_MODEL_NAME') or ''
+    ).strip()
     default_lora = str(db_default_lora or config.get('DEFAULT_LORA') or '').strip()
     default_lora_strength = (
         float(db_default_lora_strength)
@@ -3147,6 +3175,10 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
 
     add_workflow_path(workflow_path)
     add_workflow_path(config.get('WORKFLOW_PATH'))
+    add_workflow_path(default_realistic_workflow_path)
+    add_workflow_path(default_anime_workflow_path)
+    add_workflow_path(config.get('DEFAULT_REALISTIC_WORKFLOW_PATH'))
+    add_workflow_path(config.get('DEFAULT_ANIME_WORKFLOW_PATH'))
 
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     candidate_workflow_dirs = [
@@ -3170,6 +3202,8 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
         'enable_slash_command': enable_slash_command,
         'server_address': server_address,
         'workflow_path': workflow_path,
+        'default_realistic_workflow_path': default_realistic_workflow_path,
+        'default_anime_workflow_path': default_anime_workflow_path,
         'workflow_exists': workflow_exists,
         'available_workflow_paths': available_workflow_paths,
         'image_output_node_id': output_node_id,
@@ -3182,6 +3216,8 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
         'default_scheduler': default_scheduler,
         'default_seed': default_seed,
         'default_model_name': default_model_name,
+        'default_realistic_model_name': default_realistic_model_name,
+        'default_anime_model_name': default_anime_model_name,
         'default_lora': default_lora,
         'default_lora_strength': default_lora_strength,
         'max_user_lora_uploads': max(1, max_user_lora_uploads),
@@ -3239,6 +3275,18 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
     normalized_workflow_path: Optional[str] = None
     if config.workflow_path is not None:
         normalized_workflow_path = ComfyUIService._normalize_workflow_path(config.workflow_path)
+
+    normalized_default_realistic_workflow_path: Optional[str] = None
+    if config.default_realistic_workflow_path is not None:
+        normalized_default_realistic_workflow_path = ComfyUIService._normalize_workflow_path(
+            config.default_realistic_workflow_path
+        )
+
+    normalized_default_anime_workflow_path: Optional[str] = None
+    if config.default_anime_workflow_path is not None:
+        normalized_default_anime_workflow_path = ComfyUIService._normalize_workflow_path(
+            config.default_anime_workflow_path
+        )
 
     if config.workflow_json is not None:
         workflow_save_path = normalized_workflow_path
@@ -3305,6 +3353,38 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
         await chat_db_manager.set_global_setting('comfyui_workflow_path', normalized_workflow_path)
         updated['workflow_path'] = normalized_workflow_path
 
+    if normalized_default_realistic_workflow_path is not None:
+        if (
+            normalized_default_realistic_workflow_path
+            and not os.path.exists(normalized_default_realistic_workflow_path)
+        ):
+            raise HTTPException(
+                400,
+                f'工作流文件不存在: {normalized_default_realistic_workflow_path}',
+            )
+
+        runtime_config['DEFAULT_REALISTIC_WORKFLOW_PATH'] = normalized_default_realistic_workflow_path
+        os.environ['COMFYUI_DEFAULT_REALISTIC_WORKFLOW_PATH'] = normalized_default_realistic_workflow_path
+        env_updates['COMFYUI_DEFAULT_REALISTIC_WORKFLOW_PATH'] = normalized_default_realistic_workflow_path
+        await chat_db_manager.set_global_setting(
+            'comfyui_default_realistic_workflow_path',
+            normalized_default_realistic_workflow_path,
+        )
+        updated['default_realistic_workflow_path'] = normalized_default_realistic_workflow_path
+
+    if normalized_default_anime_workflow_path is not None:
+        if normalized_default_anime_workflow_path and not os.path.exists(normalized_default_anime_workflow_path):
+            raise HTTPException(400, f'工作流文件不存在: {normalized_default_anime_workflow_path}')
+
+        runtime_config['DEFAULT_ANIME_WORKFLOW_PATH'] = normalized_default_anime_workflow_path
+        os.environ['COMFYUI_DEFAULT_ANIME_WORKFLOW_PATH'] = normalized_default_anime_workflow_path
+        env_updates['COMFYUI_DEFAULT_ANIME_WORKFLOW_PATH'] = normalized_default_anime_workflow_path
+        await chat_db_manager.set_global_setting(
+            'comfyui_default_anime_workflow_path',
+            normalized_default_anime_workflow_path,
+        )
+        updated['default_anime_workflow_path'] = normalized_default_anime_workflow_path
+
     if config.image_output_node_id is not None:
         output_node_id = str(config.image_output_node_id or '').strip()
         runtime_config['IMAGE_OUTPUT_NODE_ID'] = output_node_id
@@ -3349,6 +3429,18 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
         ('default_sampler', 'DEFAULT_SAMPLER', 'COMFYUI_DEFAULT_SAMPLER', 'comfyui_default_sampler'),
         ('default_scheduler', 'DEFAULT_SCHEDULER', 'COMFYUI_DEFAULT_SCHEDULER', 'comfyui_default_scheduler'),
         ('default_model_name', 'DEFAULT_MODEL_NAME', 'COMFYUI_DEFAULT_MODEL_NAME', 'comfyui_default_model_name'),
+        (
+            'default_realistic_model_name',
+            'DEFAULT_REALISTIC_MODEL_NAME',
+            'COMFYUI_DEFAULT_REALISTIC_MODEL_NAME',
+            'comfyui_default_realistic_model_name',
+        ),
+        (
+            'default_anime_model_name',
+            'DEFAULT_ANIME_MODEL_NAME',
+            'COMFYUI_DEFAULT_ANIME_MODEL_NAME',
+            'comfyui_default_anime_model_name',
+        ),
         ('default_lora', 'DEFAULT_LORA', 'COMFYUI_DEFAULT_LORA', 'comfyui_default_lora'),
         ('fixed_positive_prompt', 'FIXED_POSITIVE_PROMPT', 'COMFYUI_FIXED_POSITIVE_PROMPT', 'comfyui_fixed_positive_prompt'),
         ('fixed_negative_prompt', 'FIXED_NEGATIVE_PROMPT', 'COMFYUI_FIXED_NEGATIVE_PROMPT', 'comfyui_fixed_negative_prompt'),

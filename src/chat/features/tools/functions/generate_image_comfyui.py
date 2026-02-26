@@ -687,7 +687,14 @@ async def generate_image_comfyui(
             'hint': '未找到可用工作流。请在 Dashboard 配置默认工作流，或让用户在 /comfy 面板设置个人工作流路径。',
         }
 
-    if _is_natural_language_model(effective_model_name) and _looks_like_sd_tag_prompt(prompt):
+    model_name_for_style_check = str(effective_model_name or '').strip()
+    if not model_name_for_style_check:
+        model_name_for_style_check = comfyui_service.resolve_default_model_name(
+            prompt=prompt,
+            positive_prompt=prompt,
+        )
+
+    if _is_natural_language_model(model_name_for_style_check) and _looks_like_sd_tag_prompt(prompt):
         return {
             'generation_failed': True,
             'reason': 'prompt_style_mismatch',
