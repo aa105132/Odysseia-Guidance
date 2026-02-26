@@ -1020,6 +1020,11 @@
                             <div class='flex items-center justify-between mb-2'>
                                 <label class='block text-sm font-medium text-slate-300'>节点映射（JSON 对象）</label>
                                 <div class='flex items-center gap-2'>
+                                    <button @click='autoParameterizeComfyuiWorkflowFromWorkflow()'
+                                            type='button'
+                                            class='text-xs px-2.5 py-1 rounded-md border border-cyan-500/60 text-cyan-200 hover:bg-cyan-700/20'>
+                                        一键改占位符+映射
+                                    </button>
                                     <button @click='autoDetectComfyuiNodeMappingFromWorkflow()'
                                             type='button'
                                             class='text-xs px-2.5 py-1 rounded-md border border-emerald-500/60 text-emerald-200 hover:bg-emerald-700/30'>
@@ -1303,11 +1308,23 @@
                         <div>
                             <div class='flex items-center justify-between mb-2'>
                                 <label class='block text-sm font-medium text-slate-300'>节点映射（JSON 对象）</label>
-                                <button @click='resetComfyuiNodeMapping()'
-                                        type='button'
-                                        class='text-xs px-2.5 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700/60'>
-                                    恢复默认
-                                </button>
+                                <div class='flex items-center gap-2'>
+                                    <button @click='autoParameterizeComfyuiWorkflowFromWorkflow()'
+                                            type='button'
+                                            class='text-xs px-2.5 py-1 rounded-md border border-cyan-500/60 text-cyan-200 hover:bg-cyan-700/20'>
+                                        一键改占位符+映射
+                                    </button>
+                                    <button @click='autoDetectComfyuiNodeMappingFromWorkflow()'
+                                            type='button'
+                                            class='text-xs px-2.5 py-1 rounded-md border border-emerald-500/60 text-emerald-200 hover:bg-emerald-700/30'>
+                                        一键识别工作流
+                                    </button>
+                                    <button @click='resetComfyuiNodeMapping()'
+                                            type='button'
+                                            class='text-xs px-2.5 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700/60'>
+                                        恢复默认
+                                    </button>
+                                </div>
                             </div>
                             <textarea x-model='comfyuiForm.node_mapping_text' rows='4'
                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
@@ -5151,9 +5168,92 @@
                         this.comfyuiForm.workflow_json = workflowText;
                         this.comfyuiWorkflowFileName = file.name || '';
                         this.showToast(`已加载工作流文件：${this.comfyuiWorkflowFileName}`, 'success');
-                        await this.autoDetectComfyuiNodeMappingFromWorkflow(true);
+                        const transformed = await this.autoParameterizeComfyuiWorkflowFromWorkflow(true);
+                        if (transformed) {
+                            this.showToast('已自动转换为占位符并识别节点映射', 'success');
+                        } else {
+                            await this.autoDetectComfyuiNodeMappingFromWorkflow(true);
+                        }
                     } catch (e) {
                         this.showToast('读取工作流文件失败', 'error');
+                    }
+                },
+
+                async autoParameterizeComfyuiWorkflowFromWorkflow(silent = false) {
+                    const workflowJsonText = (this.comfyuiForm.workflow_json || '').trim();
+                    const workflowPathText = (this.comfyuiForm.workflow_path || '').trim();
+                    if (!workflowJsonText && !workflowPathText) {
+                        if (!silent) {
+                            this.showToast('请先上传/粘贴工作流，或填写工作流路径', 'error');
+                        }
+                        return false;
+                    }
+
+                    let placeholderMappingPayload = this.getDefaultComfyuiPlaceholderMapping();
+                    const placeholderText = (this.comfyuiForm.placeholder_mapping_text || '').trim();
+                    if (placeholderText) {
+                        try {
+                            const parsed = JSON.parse(placeholderText);
+                            if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+                                placeholderMappingPayload = this.normalizeComfyuiPlaceholderMappingForDisplay(parsed);
+                            }
+                        } catch (e) {
+                            if (!silent) {
+                                this.showToast('占位符映射 JSON 格式错误，请先修正', 'error');
+                            }
+                            return false;
+                        }
+                    }
+
+                    this.testing = true;
+                    try {
+                        const response = await fetch('/api/config/comfyui/auto-parameterize-workflow', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                workflow_json: workflowJsonText || null,
+                                workflow_path: workflowJsonText ? null : workflowPathText || null,
+                                placeholder_mapping: placeholderMappingPayload,
+                            }),
+                        });
+
+                        if (!response.ok) {
+                            const data = await response.json();
+                            if (!silent) {
+                                this.showToast(data.detail || '自动转换工作流失败', 'error');
+                            }
+                            return false;
+                        }
+
+                        const data = await response.json();
+                        if (data.workflow_json) {
+                            this.comfyuiForm.workflow_json = data.workflow_json;
+                        }
+
+                        const normalizedPlaceholderMapping = this.normalizeComfyuiPlaceholderMappingForDisplay(
+                            data.placeholder_mapping || placeholderMappingPayload
+                        );
+                        const normalizedNodeMapping = this.normalizeComfyuiNodeMappingForDisplay(data.node_mapping || {});
+                        this.comfyuiForm.placeholder_mapping_text = JSON.stringify(normalizedPlaceholderMapping, null, 2);
+                        this.comfyuiForm.node_mapping_text = JSON.stringify(normalizedNodeMapping, null, 2);
+
+                        if (!silent) {
+                            const replacedCount = Array.isArray(data.replaced_keys)
+                                ? data.replaced_keys.length
+                                : Object.keys(normalizedNodeMapping).length;
+                            this.showToast(`已转换工作流，占位符与节点映射已更新（${replacedCount} 项）`, 'success');
+                        }
+                        return true;
+                    } catch (e) {
+                        if (!silent) {
+                            this.showToast('自动转换工作流失败', 'error');
+                        }
+                        return false;
+                    } finally {
+                        this.testing = false;
                     }
                 },
 

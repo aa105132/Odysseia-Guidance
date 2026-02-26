@@ -197,6 +197,77 @@ def test_infer_node_mapping_from_workflow_payload_supports_field_name_fallback()
     assert mapping['seed'] == ['12', 'seed']
 
 
+def test_parameterize_workflow_payload_rewrites_placeholders_and_node_mapping():
+    workflow_template = {
+        '1': {'class_type': 'UNETLoader', 'inputs': {'unet_name': 'base_model.safetensors'}},
+        '2': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'masterpiece, 1girl'}},
+        '3': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'lowres, bad anatomy'}},
+        '4': {'class_type': 'KSampler', 'inputs': {
+            'steps': 30,
+            'cfg': 6.0,
+            'sampler_name': 'euler',
+            'scheduler': 'normal',
+            'seed': 123456,
+        }},
+        '5': {'class_type': 'EmptyLatentImage', 'inputs': {'width': 896, 'height': 1216}},
+    }
+    placeholder_mapping = {
+        'model_name': '%MODEL_NAME%',
+        'positive_prompt': '%prompt%',
+        'negative_prompt': '%negative_prompt%',
+        'steps': '%steps%',
+        'cfg': '%cfg_scale%',
+        'sampler': '%sampler_name%',
+        'scheduler': '%scheduler%',
+        'seed': '%seed%',
+        'width': '%width%',
+        'height': '%height%',
+    }
+
+    result = ComfyUIService.parameterize_workflow_payload(
+        workflow_payload=workflow_template,
+        placeholder_mapping=placeholder_mapping,
+    )
+
+    workflow = result['workflow']
+    mapping = result['node_mapping']
+
+    assert mapping['model_name'] == ['1', 'unet_name']
+    assert mapping['positive_prompt'] == ['2', 'text']
+    assert mapping['negative_prompt'] == ['3', 'text']
+    assert mapping['steps'] == ['4', 'steps']
+    assert mapping['cfg'] == ['4', 'cfg']
+    assert mapping['sampler'] == ['4', 'sampler_name']
+    assert mapping['scheduler'] == ['4', 'scheduler']
+    assert mapping['seed'] == ['4', 'seed']
+    assert mapping['width'] == ['5', 'width']
+    assert mapping['height'] == ['5', 'height']
+
+    assert workflow['1']['inputs']['unet_name'] == '%MODEL_NAME%'
+    assert workflow['2']['inputs']['text'] == '%prompt%'
+    assert workflow['3']['inputs']['text'] == '%negative_prompt%'
+    assert workflow['4']['inputs']['steps'] == '%steps%'
+    assert workflow['4']['inputs']['cfg'] == '%cfg_scale%'
+    assert workflow['4']['inputs']['sampler_name'] == '%sampler_name%'
+    assert workflow['4']['inputs']['scheduler'] == '%scheduler%'
+    assert workflow['4']['inputs']['seed'] == '%seed%'
+    assert workflow['5']['inputs']['width'] == '%width%'
+    assert workflow['5']['inputs']['height'] == '%height%'
+    assert result['replaced_keys'] == [
+        'cfg',
+        'height',
+        'model_name',
+        'negative_prompt',
+        'positive_prompt',
+        'sampler',
+        'scheduler',
+        'seed',
+        'steps',
+        'width',
+    ]
+    assert result['skipped_keys'] == []
+
+
 
 def test_build_runtime_params_supports_user_fixed_prompts(tmp_path):
     workflow_path = tmp_path / 'workflow_template.json'

@@ -241,6 +241,13 @@ class ComfyUIAutoNodeMappingRequest(BaseModel):
     workflow_path: Optional[str] = None
 
 
+class ComfyUIAutoParameterizeWorkflowRequest(BaseModel):
+    """ComfyUI 工作流自动参数化请求（占位符 + NODE_MAPPING）"""
+    workflow_json: Optional[str] = None
+    workflow_path: Optional[str] = None
+    placeholder_mapping: Optional[Dict[str, str]] = None
+
+
 class NovelAIAdminPresetUpsert(BaseModel):
     """管理员画师串预设新增/更新"""
     name: str
@@ -3548,16 +3555,14 @@ async def test_comfyui_connection(token: str = Depends(verify_token)):
         return {'success': False, 'error': str(error)}
 
 
-@app.post('/api/config/comfyui/auto-node-mapping')
-async def auto_detect_comfyui_node_mapping(
-    request: ComfyUIAutoNodeMappingRequest,
-    token: str = Depends(verify_token),
-):
-    """自动识别工作流中的 NODE_MAPPING。"""
+def _resolve_comfyui_workflow_payload_from_request(
+    workflow_json: Optional[str],
+    workflow_path: Optional[str],
+) -> Any:
     from src.chat.features.image_generation.services.comfyui_service import ComfyUIService
 
-    workflow_json_text = str(request.workflow_json or '').strip()
-    workflow_path_text = ComfyUIService._normalize_workflow_path(request.workflow_path)
+    workflow_json_text = str(workflow_json or '').strip()
+    workflow_path_text = ComfyUIService._normalize_workflow_path(workflow_path)
     workflow_payload: Any = None
 
     if workflow_json_text:
@@ -3578,6 +3583,22 @@ async def auto_detect_comfyui_node_mapping(
     else:
         raise HTTPException(400, '请提供 workflow_json 或 workflow_path')
 
+    return workflow_payload
+
+
+@app.post('/api/config/comfyui/auto-node-mapping')
+async def auto_detect_comfyui_node_mapping(
+    request: ComfyUIAutoNodeMappingRequest,
+    token: str = Depends(verify_token),
+):
+    """自动识别工作流中的 NODE_MAPPING。"""
+    from src.chat.features.image_generation.services.comfyui_service import ComfyUIService
+
+    workflow_payload = _resolve_comfyui_workflow_payload_from_request(
+        workflow_json=request.workflow_json,
+        workflow_path=request.workflow_path,
+    )
+
     try:
         normalized_workflow_payload = ComfyUIService._normalize_workflow_payload(workflow_payload)
         detected_node_mapping = ComfyUIService.infer_node_mapping_from_workflow_payload(
@@ -3592,6 +3613,56 @@ async def auto_detect_comfyui_node_mapping(
         'success': True,
         'node_mapping': detected_node_mapping,
         'mapped_keys': sorted(detected_node_mapping.keys()),
+    }
+
+
+@app.post('/api/config/comfyui/auto-parameterize-workflow')
+async def auto_parameterize_comfyui_workflow(
+    request: ComfyUIAutoParameterizeWorkflowRequest,
+    token: str = Depends(verify_token),
+):
+    """自动将工作流改写为占位符，并返回 NODE_MAPPING。"""
+    from src.chat.features.image_generation.services.comfyui_service import ComfyUIService
+
+    workflow_payload = _resolve_comfyui_workflow_payload_from_request(
+        workflow_json=request.workflow_json,
+        workflow_path=request.workflow_path,
+    )
+    normalized_placeholder_mapping = _normalize_string_map(request.placeholder_mapping or {})
+
+    try:
+        parameterized_result = ComfyUIService.parameterize_workflow_payload(
+            workflow_payload=workflow_payload,
+            placeholder_mapping=normalized_placeholder_mapping,
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    except Exception as error:
+        raise HTTPException(500, f'自动参数化工作流失败: {error}')
+
+    parameterized_workflow = parameterized_result.get('workflow') or {}
+    workflow_json_text = json.dumps(parameterized_workflow, ensure_ascii=False, indent=2)
+    detected_node_mapping = parameterized_result.get('node_mapping') or {}
+    effective_placeholder_mapping = parameterized_result.get('placeholder_mapping') or {}
+    replaced_keys = sorted(
+        str(key).strip()
+        for key in (parameterized_result.get('replaced_keys') or [])
+        if str(key).strip()
+    )
+    skipped_keys = sorted(
+        str(key).strip()
+        for key in (parameterized_result.get('skipped_keys') or [])
+        if str(key).strip()
+    )
+
+    return {
+        'success': True,
+        'workflow_json': workflow_json_text,
+        'placeholder_mapping': effective_placeholder_mapping,
+        'node_mapping': detected_node_mapping,
+        'mapped_keys': sorted(detected_node_mapping.keys()),
+        'replaced_keys': replaced_keys,
+        'skipped_keys': skipped_keys,
     }
 
 

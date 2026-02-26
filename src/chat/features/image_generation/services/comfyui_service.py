@@ -561,6 +561,110 @@ class ComfyUIService:
 
         return mapping
 
+    @classmethod
+    def _build_effective_placeholder_mapping_for_parameterize(
+        cls,
+        placeholder_mapping: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        default_mapping: Dict[str, str] = {
+            'positive_prompt': '{{positive_prompt}}',
+            'negative_prompt': '{{negative_prompt}}',
+            'width': '{{width}}',
+            'height': '{{height}}',
+            'steps': '{{steps}}',
+            'cfg': '{{cfg}}',
+            'sampler': '{{sampler}}',
+            'scheduler': '{{scheduler}}',
+            'seed': '{{seed}}',
+            'lora': '{{lora}}',
+            'lora_strength': '{{lora_strength}}',
+            'model_name': '{{model_name}}',
+            'vae_name': '{{vae_name}}',
+            'clip_name': '{{clip_name}}',
+            'input_image': '{{input_image}}',
+            'reference_image': '{{reference_image}}',
+            'init_image': '{{init_image}}',
+        }
+
+        runtime_mapping = app_config.COMFYUI_CONFIG.get('PLACEHOLDER_MAPPING') or {}
+        if isinstance(runtime_mapping, dict):
+            for raw_key, raw_value in runtime_mapping.items():
+                key_text = str(raw_key or '').strip()
+                value_text = str(raw_value or '').strip()
+                if key_text and value_text:
+                    default_mapping[key_text] = value_text
+
+        if isinstance(placeholder_mapping, dict):
+            for raw_key, raw_value in placeholder_mapping.items():
+                key_text = str(raw_key or '').strip()
+                value_text = str(raw_value or '').strip()
+                if key_text and value_text:
+                    default_mapping[key_text] = value_text
+
+        return default_mapping
+
+    @classmethod
+    def parameterize_workflow_payload(
+        cls,
+        workflow_payload: Any,
+        placeholder_mapping: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        workflow = copy.deepcopy(cls._normalize_workflow_payload(workflow_payload))
+        node_mapping = cls.infer_node_mapping_from_workflow_payload(workflow)
+        effective_placeholder_mapping = cls._build_effective_placeholder_mapping_for_parameterize(
+            placeholder_mapping
+        )
+
+        replaced_keys: list[str] = []
+        skipped_keys: list[str] = []
+
+        for raw_key, mapping_value in node_mapping.items():
+            key_text = str(raw_key or '').strip()
+            if not key_text:
+                continue
+
+            token_text = str(
+                effective_placeholder_mapping.get(key_text) or f'{{{{{key_text}}}}}'
+            ).strip()
+            if not token_text:
+                token_text = f'{{{{{key_text}}}}}'
+
+            if not isinstance(mapping_value, (list, tuple)) or len(mapping_value) < 2:
+                skipped_keys.append(key_text)
+                continue
+
+            node_id = str(mapping_value[0] or '').strip()
+            input_field = str(mapping_value[1] or '').strip()
+            if not node_id or not input_field:
+                skipped_keys.append(key_text)
+                continue
+
+            node_obj = workflow.get(node_id)
+            if not isinstance(node_obj, dict):
+                skipped_keys.append(key_text)
+                continue
+
+            inputs = node_obj.get('inputs')
+            if not isinstance(inputs, dict) or input_field not in inputs:
+                skipped_keys.append(key_text)
+                continue
+
+            current_value = inputs.get(input_field)
+            if isinstance(current_value, (list, dict)):
+                skipped_keys.append(key_text)
+                continue
+
+            inputs[input_field] = token_text
+            replaced_keys.append(key_text)
+
+        return {
+            'workflow': workflow,
+            'node_mapping': node_mapping,
+            'placeholder_mapping': effective_placeholder_mapping,
+            'replaced_keys': sorted(set(replaced_keys)),
+            'skipped_keys': sorted(set(skipped_keys)),
+        }
+
     def _build_runtime_params(self, **kwargs: Any) -> Dict[str, Any]:
         config = app_config.COMFYUI_CONFIG
         default_seed = self._coerce_int(config.get('DEFAULT_SEED'), 12345)
