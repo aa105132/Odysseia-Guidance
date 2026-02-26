@@ -63,6 +63,8 @@ def test_build_chat_prompt_injects_comfyui_model_and_lora_context_rules():
         assert '可用 LoRA 列表' in all_user_text
         assert '中文自然语言描述' in all_user_text
         assert 'SD tag 风格' in all_user_text
+        assert '只输出最终提示词正文' in all_user_text
+        assert '前景/中景/背景' in all_user_text
+        assert '建议不少于 8 句' in all_user_text
     finally:
         chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine
-
