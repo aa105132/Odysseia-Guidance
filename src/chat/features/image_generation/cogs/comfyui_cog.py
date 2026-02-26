@@ -1954,6 +1954,8 @@ class ComfyUICog(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         user_id = interaction.user.id
         user_settings = await self._get_user_comfy_settings(user_id)
         selected_model_name = str(model_name or '').strip()
@@ -1982,7 +1984,7 @@ class ComfyUICog(commands.Cog):
                 workflow_path_update = saved_path
                 imported_workflow_name = Path(saved_path).name
             except Exception as error:
-                await interaction.response.send_message(f'导入工作流失败：{error}', ephemeral=True)
+                await interaction.followup.send(f'导入工作流失败：{error}', ephemeral=True)
                 return
 
         normalized_lora_url = str(lora_url or '').strip()
@@ -2000,7 +2002,7 @@ class ComfyUICog(commands.Cog):
                     download_result = await comfyui_service.download_lora_from_url(url=normalized_lora_url)
                     if not download_result.get('success'):
                         error_message = str(download_result.get('error') or '未知错误')
-                        await interaction.response.send_message(f'导入 LoRA 失败：{error_message}', ephemeral=True)
+                        await interaction.followup.send(f'导入 LoRA 失败：{error_message}', ephemeral=True)
                         return
 
                     saved_filename = str(download_result.get('saved_filename') or '').strip()
@@ -2012,7 +2014,7 @@ class ComfyUICog(commands.Cog):
 
                 default_lora_update = current_lora_text
             except Exception as error:
-                await interaction.response.send_message(f'导入 LoRA 失败：{error}', ephemeral=True)
+                await interaction.followup.send(f'导入 LoRA 失败：{error}', ephemeral=True)
                 return
 
         if fixed_positive_prompt is not None:
@@ -2026,7 +2028,7 @@ class ComfyUICog(commands.Cog):
                 install_result = await comfyui_service.install_custom_node_from_url(normalized_custom_node_url)
                 if not install_result.get('success'):
                     error_message = str(install_result.get('error') or '未知错误')
-                    await interaction.response.send_message(f'安装插件节点失败：{error_message}', ephemeral=True)
+                    await interaction.followup.send(f'安装插件节点失败：{error_message}', ephemeral=True)
                     return
 
                 repo_path = urlparse(normalized_custom_node_url).path
@@ -2040,7 +2042,7 @@ class ComfyUICog(commands.Cog):
                 if queue_warning:
                     custom_node_warnings.append(queue_warning)
             except Exception as error:
-                await interaction.response.send_message(f'安装插件节点失败：{error}', ephemeral=True)
+                await interaction.followup.send(f'安装插件节点失败：{error}', ephemeral=True)
                 return
 
         if (
@@ -2063,7 +2065,7 @@ class ComfyUICog(commands.Cog):
                 clip_name=clip_name_update,
             )
             if not save_ok:
-                await interaction.response.send_message('保存 ComfyUI 用户配置失败，请稍后重试。', ephemeral=True)
+                await interaction.followup.send('保存 ComfyUI 用户配置失败，请稍后重试。', ephemeral=True)
                 return
 
             if workflow_path_update is not None:
@@ -2183,8 +2185,7 @@ class ComfyUICog(commands.Cog):
         panel.refresh_selects()
 
         embed = self.build_panel_embed(panel)
-        await interaction.response.send_message(embed=embed, view=panel, ephemeral=True)
-        panel.panel_message = await interaction.original_response()
+        panel.panel_message = await interaction.followup.send(embed=embed, view=panel, ephemeral=True, wait=True)
 
         notice_parts: list[str] = []
         if imported_workflow_name:
