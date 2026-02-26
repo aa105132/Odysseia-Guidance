@@ -86,7 +86,7 @@ class WebSearchConfig:
             if db_value:
                 return db_value
         except Exception as e:
-            log.debug(f"从数据库获取配置 web_search_{key} 失败: {e}")
+            log.warning(f"从数据库获取配置 web_search_{key} 失败: {e}")
 
         # 回退到环境变量
         env_var = self._ENV_DEFAULTS.get(key)
@@ -464,6 +464,7 @@ async def _tavily_extract(url: str) -> Optional[str]:
     api_url = await _config.get_tavily_api_url()
 
     if not api_key:
+        log.warning("Tavily Extract 跳过：API Key 为空，请检查数据库或环境变量配置")
         return None
 
     endpoint = f"{api_url.rstrip('/')}/extract"
@@ -472,22 +473,36 @@ async def _tavily_extract(url: str) -> Optional[str]:
     }
     body = {"api_key": api_key, "urls": [url]}
 
+    log.info(f"Tavily Extract 请求: endpoint={endpoint}, url={url}")
+
     try:
         timeout = aiohttp.ClientTimeout(total=60, connect=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(endpoint, headers=headers, json=body) as response:
                 if response.status != 200:
+                    error_text = await response.text()
+                    log.warning(
+                        f"Tavily Extract 失败: HTTP {response.status}, "
+                        f"endpoint={endpoint}, error={error_text[:500]}"
+                    )
                     return None
 
                 data = await response.json()
                 results = data.get("results", [])
                 if results:
                     content = results[0].get("raw_content", "")
-                    return content if content and content.strip() else None
-                return None
+                    if content and content.strip():
+                        log.info(f"Tavily Extract 成功: 获取到 {len(content)} 字符内容")
+                        return content
+                    else:
+                        log.warning("Tavily Extract 返回空内容 (raw_content 为空)")
+                        return None
+                else:
+                    log.warning(f"Tavily Extract 返回无结果: {json.dumps(data, ensure_ascii=False)[:500]}")
+                    return None
 
     except Exception as e:
-        log.warning(f"Tavily 内容抓取异常: {_normalize_exception_message(e)}")
+        log.warning(f"Tavily Extract 异常: {_normalize_exception_message(e)}")
         return None
 
 
@@ -804,16 +819,25 @@ async def web_fetch(
         return "请提供有效的 URL 地址（以 http:// 或 https:// 开头）。"
 
     # 优先使用 Tavily Extract（更可靠的内容提取）
-    if await _config.is_tavily_configured():
+    tavily_configured = await _config.is_tavily_configured()
+    if tavily_configured:
+        log.info("web_fetch: Tavily 已配置，尝试 Tavily Extract...")
         content = await _tavily_extract(url)
         if content:
+            log.info("web_fetch: Tavily Extract 成功，返回内容")
             return _format_fetch_result(url, content)
+        log.warning("web_fetch: Tavily Extract 未返回有效内容，尝试 Grok 回退")
+    else:
+        log.warning("web_fetch: Tavily 未配置（API Key 为空），跳过 Tavily Extract")
 
     # 回退到 Grok 获取（通过 AI 读取页面）
-    if await _config.is_grok_configured():
+    grok_configured = await _config.is_grok_configured()
+    if grok_configured:
         api_url = await _config.get_grok_api_url()
         api_key = await _config.get_grok_api_key()
         model = await _config.get_grok_model()
+
+        log.info(f"web_fetch: 使用 Grok 回退，model={model}, endpoint={api_url}")
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -839,8 +863,19 @@ async def web_fetch(
                         if choices:
                             content = choices[0].get("message", {}).get("content", "")
                             if content:
+                                log.info(f"web_fetch: Grok 回退成功，获取到 {len(content)} 字符内容")
                                 return _format_fetch_result(url, content)
+                        log.warning("web_fetch: Grok 返回 200 但无有效内容")
+                    else:
+                        error_text = await response.text()
+                        log.warning(
+                            f"web_fetch: Grok 回退失败: HTTP {response.status}, "
+                            f"error={error_text[:500]}"
+                        )
         except Exception as e:
-            log.error(f"Grok 网页获取失败: {e}")
+            log.error(f"web_fetch: Grok 回退异常: {_normalize_exception_message(e)}")
+    else:
+        log.warning("web_fetch: Grok 也未配置，无可用后端")
 
+    log.error(f"web_fetch: 所有后端均失败，URL: {url}")
     return f"无法获取 {url} 的内容。请检查 URL 是否可访问，或联系管理员配置 Tavily/Grok API。"
