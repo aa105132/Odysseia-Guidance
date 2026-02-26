@@ -550,9 +550,9 @@ PROMPT_CONFIG = {
 当前位置: {location_name}
 当前北京时间: {current_time}
 </system_info>
-“””,
+""",
     },
-    “gemini-2.5-flash-custom”: {
+    "gemini-2.5-flash-custom": {
         "SYSTEM_PROMPT": """
 <character>
 <core_identity>
@@ -644,9 +644,9 @@ PROMPT_CONFIG = {
 当前位置: {location_name}
 当前北京时间: {current_time}
 </system_info>
-“””,
+""",
     },
-    “gemini-3-flash-custom”: {
+    "gemini-3-flash-custom": {
         "SYSTEM_PROMPT": """
 <character>
 <core_identity>
