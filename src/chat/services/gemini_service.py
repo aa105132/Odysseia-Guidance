@@ -2558,6 +2558,10 @@ class GeminiService:
                     ]
 
                     # 执行每个工具调用
+                    # 注意：必须先执行完整轮所有工具，再统一处理 skip_ai_response。
+                    # 否则当第一项工具（如 generate_voice）返回 skip_ai_response=True 时，
+                    # 会提前中断后续工具（如 generate_image_comfyui）。
+                    skip_ai_response_requested = False
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name", "")
                         tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
@@ -2668,13 +2672,17 @@ class GeminiService:
                             }
                         )
 
-                        # 检查是否有工具标记了 skip_ai_response（生图/生视频成功时跳过后续AI回复）
+                        # 检查是否有工具标记了 skip_ai_response（本轮工具执行完后统一处理）
                         if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
                             log.info(
-                                f"OpenAI 工具 '{tool_name}' 标记了 skip_ai_response，跳过后续AI回复。"
+                                f"OpenAI 工具 '{tool_name}' 标记了 skip_ai_response，"
+                                "将在本轮工具全部执行后跳过后续AI回复。"
                             )
-                            self.last_called_tools = called_tool_names
-                            return None
+                            skip_ai_response_requested = True
+
+                    if skip_ai_response_requested:
+                        self.last_called_tools = called_tool_names
+                        return None
 
                     # 继续循环以获取最终响应
                     continue

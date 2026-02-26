@@ -3248,6 +3248,143 @@ async def get_comfyui_config(token: str = Depends(verify_token)):
     }
 
 
+@app.get('/api/config/comfyui/workflow-content')
+async def get_comfyui_workflow_content(
+    workflow_path: str = Query(..., description='要读取的工作流绝对路径'),
+    token: str = Depends(verify_token),
+):
+    """读取指定 ComfyUI 工作流 JSON 内容（仅允许读取已发现列表中的 .json）。"""
+    from src.chat.features.image_generation.services.comfyui_service import ComfyUIService
+
+    normalized_target_path = ComfyUIService._normalize_workflow_path(workflow_path)
+    if not normalized_target_path:
+        raise HTTPException(400, 'workflow_path 不能为空')
+    if not normalized_target_path.lower().endswith('.json'):
+        raise HTTPException(400, '仅支持读取 .json 工作流文件')
+    if not os.path.isfile(normalized_target_path):
+        raise HTTPException(404, f'工作流文件不存在: {normalized_target_path}')
+
+    current_config = await get_comfyui_config(token=token)
+    available_paths = set()
+    for raw_path in (current_config.get('available_workflow_paths') or []):
+        normalized_path = ComfyUIService._normalize_workflow_path(raw_path)
+        if not normalized_path:
+            continue
+        available_paths.add(os.path.normcase(os.path.normpath(normalized_path)))
+
+    target_path_key = os.path.normcase(os.path.normpath(normalized_target_path))
+    if target_path_key not in available_paths:
+        raise HTTPException(400, '仅支持读取“默认工作流快捷选择”列表中的工作流文件')
+
+    try:
+        with open(normalized_target_path, 'r', encoding='utf-8') as file:
+            workflow_payload = json.load(file)
+    except json.JSONDecodeError as error:
+        raise HTTPException(400, f'工作流 JSON 解析失败: {error}')
+    except Exception as error:
+        raise HTTPException(500, f'读取工作流文件失败: {error}')
+
+    return {
+        'success': True,
+        'workflow_path': normalized_target_path,
+        'workflow_name': os.path.basename(normalized_target_path),
+        'workflow_json': json.dumps(workflow_payload, ensure_ascii=False, indent=2),
+    }
+
+
+@app.delete('/api/config/comfyui/workflow')
+async def delete_comfyui_workflow(
+    workflow_path: str = Query(..., description='要删除的工作流绝对路径'),
+    token: str = Depends(verify_token),
+):
+    """删除指定 ComfyUI 工作流文件（仅允许删除已发现列表中的 .json）。"""
+    from src.chat.features.image_generation.services.comfyui_service import (
+        ComfyUIService,
+        comfyui_service,
+    )
+    from src.chat.utils.database import chat_db_manager
+
+    normalized_target_path = ComfyUIService._normalize_workflow_path(workflow_path)
+    if not normalized_target_path:
+        raise HTTPException(400, 'workflow_path 不能为空')
+    if not normalized_target_path.lower().endswith('.json'):
+        raise HTTPException(400, '仅支持删除 .json 工作流文件')
+    if not os.path.isfile(normalized_target_path):
+        raise HTTPException(404, f'工作流文件不存在: {normalized_target_path}')
+
+    current_config = await get_comfyui_config(token=token)
+    available_paths = set()
+    for raw_path in (current_config.get('available_workflow_paths') or []):
+        normalized_path = ComfyUIService._normalize_workflow_path(raw_path)
+        if not normalized_path:
+            continue
+        available_paths.add(os.path.normcase(os.path.normpath(normalized_path)))
+
+    target_path_key = os.path.normcase(os.path.normpath(normalized_target_path))
+    if target_path_key not in available_paths:
+        raise HTTPException(400, '仅支持删除“默认工作流快捷选择”列表中的工作流文件')
+
+    try:
+        os.remove(normalized_target_path)
+    except Exception as error:
+        raise HTTPException(500, f'删除工作流文件失败: {error}')
+
+    runtime_config = chat_config.COMFYUI_CONFIG
+    env_updates: Dict[str, Any] = {}
+    cleared_config_keys: List[str] = []
+
+    clear_rules = [
+        ('WORKFLOW_PATH', 'COMFYUI_WORKFLOW_PATH', 'comfyui_workflow_path', 'workflow_path'),
+        (
+            'DEFAULT_REALISTIC_WORKFLOW_PATH',
+            'COMFYUI_DEFAULT_REALISTIC_WORKFLOW_PATH',
+            'comfyui_default_realistic_workflow_path',
+            'default_realistic_workflow_path',
+        ),
+        (
+            'DEFAULT_ANIME_WORKFLOW_PATH',
+            'COMFYUI_DEFAULT_ANIME_WORKFLOW_PATH',
+            'comfyui_default_anime_workflow_path',
+            'default_anime_workflow_path',
+        ),
+    ]
+
+    for runtime_key, env_key, db_key, response_key in clear_rules:
+        current_path = ComfyUIService._normalize_workflow_path(runtime_config.get(runtime_key))
+        if not current_path:
+            continue
+        current_path_key = os.path.normcase(os.path.normpath(current_path))
+        if current_path_key != target_path_key:
+            continue
+
+        runtime_config[runtime_key] = ''
+        os.environ[env_key] = ''
+        env_updates[env_key] = ''
+        await chat_db_manager.set_global_setting(db_key, '')
+        cleared_config_keys.append(response_key)
+
+    if env_updates:
+        update_env_file(env_updates)
+
+    service_reload_error = ''
+    service_reloaded = False
+    try:
+        comfyui_service.reinitialize()
+        service_reloaded = True
+    except Exception as error:
+        service_reload_error = str(error)
+        log.warning(f'删除工作流后重载 ComfyUI 服务失败: {error}')
+
+    return {
+        'success': True,
+        'deleted_workflow_path': normalized_target_path,
+        'deleted_workflow_name': os.path.basename(normalized_target_path),
+        'cleared_config_keys': cleared_config_keys,
+        'service_reloaded': service_reloaded,
+        'service_reload_error': service_reload_error,
+    }
+
+
 @app.put('/api/config/comfyui')
 async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depends(verify_token)):
     '''更新 ComfyUI 配置'''

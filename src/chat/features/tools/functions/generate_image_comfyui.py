@@ -518,6 +518,91 @@ def _looks_like_sd_tag_prompt(prompt_text: Optional[str]) -> bool:
     return english_char_count > max(chinese_char_count * 2, 20)
 
 
+def _count_sentence_segments(text: str) -> int:
+    segments = [
+        segment.strip()
+        for segment in re.split(r'[。！？!?；;\n]+', str(text or '').strip())
+        if segment.strip()
+    ]
+    return len(segments)
+
+
+def _is_brief_natural_language_prompt(prompt_text: Optional[str]) -> bool:
+    text = str(prompt_text or '').strip()
+    if not text:
+        return True
+
+    text_length = len(text)
+    sentence_count = _count_sentence_segments(text)
+    detail_keyword_hits = sum(
+        1
+        for keyword in (
+            '前景',
+            '中景',
+            '背景',
+            '光影',
+            '色温',
+            '镜头',
+            '构图',
+            '材质',
+            '纹理',
+            '动作',
+            '姿态',
+            '服装',
+            '发型',
+            '五官',
+            '景深',
+        )
+        if keyword in text
+    )
+
+    if text_length < 220:
+        return True
+    if sentence_count < 6:
+        return True
+    if detail_keyword_hits < 4:
+        return True
+    return False
+
+
+def _expand_brief_natural_prompt(prompt_text: Optional[str]) -> str:
+    base_text = str(prompt_text or '').strip().strip('。')
+    if not base_text:
+        return ''
+
+    return (
+        f'{base_text}。'
+        '画面采用高质量写实摄影风格，整体成像干净锐利，主体细节清晰可辨，色彩层次自然过渡并保持真实肤质或材质表现。'
+        '主体作为构图视觉中心，需明确身份特征与外观重点，面部与轮廓细节完整，发丝、皮肤或表面纹理具备可见物理质感。'
+        '姿态与动作符合人体工学或物理逻辑，四肢关系自然，手部动作清楚且单手单物，避免关节角度异常与穿模。'
+        '服饰与道具需写清结构、材质与磨损或反光特征，并与场景时代背景保持一致，避免风格冲突。'
+        '构图上明确前景、中景、背景三层空间关系，主体占画面比例与视觉引导路径清楚，画面重心稳定。'
+        '光影需描述主光方向、辅光补偿、色温倾向与阴影边缘软硬，必要时补充轮廓光或反射光增强立体体积。'
+        '镜头建议包含焦段感、机位高低、拍摄距离与景深虚化，前景细节优先锐利，背景自然衰减，保留真实摄影质感。'
+        '最终效果要求高分辨率、低噪点、无压缩涂抹感，避免过曝死白、局部糊化、畸形比例与不合理透视。'
+    )
+
+
+def _default_natural_negative_prompt() -> str:
+    return (
+        '请排除低清晰度、噪点、压缩伪影、过度锐化、涂抹感和大面积糊化；'
+        '排除解剖结构错误、手指数量异常、关节扭曲、肢体穿模和不合理透视；'
+        '排除构图失衡、主体截断、背景重复、纹理拉伸、皮肤塑料感与材质错误。'
+    )
+
+
+def _normalize_natural_negative_prompt(negative_prompt: Optional[str]) -> str:
+    text = str(negative_prompt or '').strip()
+    default_text = _default_natural_negative_prompt()
+    if not text:
+        return default_text
+    if _looks_like_sd_tag_prompt(text):
+        return default_text
+    if len(text) < 80:
+        return f'{text}；{default_text}'
+    return text
+
+
 def _set_embed_author(embed: discord.Embed, message: Optional[discord.Message], request_user: Optional[discord.abc.User]) -> None:
     author_user = request_user
     if not author_user and message and hasattr(message, 'author') and message.author:
@@ -860,6 +945,13 @@ async def generate_image_comfyui(
             ),
         }
 
+    effective_prompt = str(prompt or '').strip()
+    effective_negative_prompt = str(negative_prompt or '').strip() or None
+    if _is_natural_language_model(model_name_for_style_check):
+        if _is_brief_natural_language_prompt(effective_prompt):
+            effective_prompt = _expand_brief_natural_prompt(effective_prompt)
+        effective_negative_prompt = _normalize_natural_negative_prompt(effective_negative_prompt)
+
     uploaded_reference_name = ''
     if effective_use_reference_image or effective_generation_mode == 'image_to_video':
         reference_image = await _resolve_reference_image(
@@ -920,8 +1012,8 @@ async def generate_image_comfyui(
 
     try:
         media_result = await comfyui_service.generate_media(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
+            prompt=effective_prompt,
+            negative_prompt=effective_negative_prompt,
             width=effective_width,
             height=effective_height,
             steps=effective_steps,
@@ -987,9 +1079,9 @@ async def generate_image_comfyui(
                 embed_title = 'AI 视频生成（ComfyUI）' if media_kind == 'video' else 'AI 图片生成（ComfyUI）'
                 embed = discord.Embed(title=embed_title, color=0x2B2D31)
                 _set_embed_author(embed, message, request_user)
-                embed.add_field(name='提示词', value=f'```\n{prompt[:1016]}\n```', inline=False)
-                if negative_prompt:
-                    embed.add_field(name='负面提示词', value=f'```\n{negative_prompt[:1016]}\n```', inline=False)
+                embed.add_field(name='提示词', value=f'```\n{effective_prompt[:1016]}\n```', inline=False)
+                if effective_negative_prompt:
+                    embed.add_field(name='负面提示词', value=f'```\n{effective_negative_prompt[:1016]}\n```', inline=False)
                 if success_message:
                     embed.add_field(name='\u200b', value=replace_emojis(success_message)[:1024], inline=False)
 
@@ -1027,8 +1119,8 @@ async def generate_image_comfyui(
                 if parsed_user_id is not None:
                     result_view = ComfyResultView(
                         original_params={
-                            'prompt': prompt,
-                            'negative_prompt': negative_prompt,
+                            'prompt': effective_prompt,
+                            'negative_prompt': effective_negative_prompt,
                             'width': effective_width,
                             'height': effective_height,
                             'steps': effective_steps,

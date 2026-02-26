@@ -748,7 +748,7 @@
                                    class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500'>
                         </div>
 
-                        <div class='grid grid-cols-1 md:grid-cols-3 gap-3'>
+                        <div class='grid grid-cols-1 md:grid-cols-5 gap-3'>
                             <div class='md:col-span-2'>
                                 <label class='block text-sm font-medium text-slate-300 mb-2'>默认工作流快捷选择（已发现文件）</label>
                                 <select x-model='comfyuiForm.selected_workflow_path'
@@ -764,6 +764,20 @@
                                         type='button'
                                         class='w-full bg-slate-700 hover:bg-slate-600 text-white px-4 py-3 rounded-lg'>
                                     设为默认工作流
+                                </button>
+                            </div>
+                            <div class='flex items-end'>
+                                <button @click='loadSelectedComfyuiWorkflowToEditor()'
+                                        type='button'
+                                        class='w-full bg-indigo-700 hover:bg-indigo-600 text-white px-4 py-3 rounded-lg'>
+                                    编辑所选JSON
+                                </button>
+                            </div>
+                            <div class='flex items-end'>
+                                <button @click='deleteSelectedComfyuiWorkflow()'
+                                        type='button'
+                                        class='w-full bg-rose-700 hover:bg-rose-600 text-white px-4 py-3 rounded-lg'>
+                                    删除所选工作流
                                 </button>
                             </div>
                         </div>
@@ -1098,7 +1112,7 @@
                                    class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500'>
                         </div>
 
-                        <div class='grid grid-cols-1 md:grid-cols-3 gap-3'>
+                        <div class='grid grid-cols-1 md:grid-cols-5 gap-3'>
                             <div class='md:col-span-2'>
                                 <label class='block text-sm font-medium text-slate-300 mb-2'>默认工作流快捷选择（已发现文件）</label>
                                 <select x-model='comfyuiForm.selected_workflow_path'
@@ -1114,6 +1128,20 @@
                                         type='button'
                                         class='w-full bg-slate-700 hover:bg-slate-600 text-white px-4 py-3 rounded-lg'>
                                     设为默认工作流
+                                </button>
+                            </div>
+                            <div class='flex items-end'>
+                                <button @click='loadSelectedComfyuiWorkflowToEditor()'
+                                        type='button'
+                                        class='w-full bg-indigo-700 hover:bg-indigo-600 text-white px-4 py-3 rounded-lg'>
+                                    编辑所选JSON
+                                </button>
+                            </div>
+                            <div class='flex items-end'>
+                                <button @click='deleteSelectedComfyuiWorkflow()'
+                                        type='button'
+                                        class='w-full bg-rose-700 hover:bg-rose-600 text-white px-4 py-3 rounded-lg'>
+                                    删除所选工作流
                                 </button>
                             </div>
                         </div>
@@ -5350,6 +5378,108 @@
                     }
                     this.comfyuiForm.workflow_path = selectedPath;
                     this.showToast('已填入默认工作流路径', 'success');
+                },
+
+                async loadSelectedComfyuiWorkflowToEditor() {
+                    const selectedPath = (this.comfyuiForm.selected_workflow_path || '').trim()
+                        || (this.comfyuiForm.workflow_path || '').trim();
+                    if (!selectedPath) {
+                        this.showToast('请先选择工作流路径', 'error');
+                        return;
+                    }
+
+                    this.testing = true;
+                    try {
+                        const response = await fetch(`/api/config/comfyui/workflow-content?workflow_path=${encodeURIComponent(selectedPath)}`, {
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                            },
+                        });
+                        if (!response.ok) {
+                            const data = await response.json();
+                            this.showToast(data.detail || '读取工作流失败', 'error');
+                            return;
+                        }
+
+                        const data = await response.json();
+                        this.comfyuiForm.workflow_json = data.workflow_json || '';
+                        this.comfyuiForm.workflow_path = data.workflow_path || selectedPath;
+                        this.comfyuiForm.selected_workflow_path = data.workflow_path || selectedPath;
+                        this.comfyuiWorkflowFileName = data.workflow_name || this.getComfyuiWorkflowDisplayName(selectedPath);
+                        this.showToast(`已载入工作流 JSON：${this.comfyuiWorkflowFileName}`, 'success');
+                    } catch (e) {
+                        this.showToast('读取工作流失败', 'error');
+                    } finally {
+                        this.testing = false;
+                    }
+                },
+
+                async deleteSelectedComfyuiWorkflow() {
+                    const selectedPath = (this.comfyuiForm.selected_workflow_path || '').trim()
+                        || (this.comfyuiForm.workflow_path || '').trim();
+                    if (!selectedPath) {
+                        this.showToast('请先选择工作流路径', 'error');
+                        return;
+                    }
+
+                    const displayName = this.getComfyuiWorkflowDisplayName(selectedPath) || selectedPath;
+                    const confirmed = window.confirm(`确认删除工作流「${displayName}」吗？该操作不可恢复。`);
+                    if (!confirmed) {
+                        return;
+                    }
+
+                    const normalizePath = (pathText) => (pathText || '')
+                        .toString()
+                        .trim()
+                        .replace(/\\/g, '/')
+                        .toLowerCase();
+                    const selectedKey = normalizePath(selectedPath);
+
+                    this.testing = true;
+                    try {
+                        const response = await fetch(`/api/config/comfyui/workflow?workflow_path=${encodeURIComponent(selectedPath)}`, {
+                            method: 'DELETE',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                            },
+                        });
+
+                        if (!response.ok) {
+                            const data = await response.json();
+                            this.showToast(data.detail || '删除工作流失败', 'error');
+                            return;
+                        }
+
+                        const data = await response.json();
+                        const clearedConfigKeys = Array.isArray(data.cleared_config_keys)
+                            ? data.cleared_config_keys
+                            : [];
+
+                        if (normalizePath(this.comfyuiForm.workflow_path) === selectedKey) {
+                            this.comfyuiForm.workflow_path = '';
+                        }
+                        if (normalizePath(this.comfyuiForm.selected_workflow_path) === selectedKey) {
+                            this.comfyuiForm.selected_workflow_path = '';
+                        }
+                        if (normalizePath(this.comfyuiForm.default_realistic_workflow_path) === selectedKey) {
+                            this.comfyuiForm.default_realistic_workflow_path = '';
+                        }
+                        if (normalizePath(this.comfyuiForm.default_anime_workflow_path) === selectedKey) {
+                            this.comfyuiForm.default_anime_workflow_path = '';
+                        }
+                        this.comfyuiForm.workflow_json = '';
+                        this.comfyuiWorkflowFileName = '';
+
+                        const clearedText = clearedConfigKeys.length > 0
+                            ? `，已同步清空：${clearedConfigKeys.join('、')}`
+                            : '';
+                        this.showToast(`已删除工作流：${data.deleted_workflow_name || displayName}${clearedText}`, 'success');
+                        await this.loadComfyuiConfig();
+                    } catch (e) {
+                        this.showToast('删除工作流失败', 'error');
+                    } finally {
+                        this.testing = false;
+                    }
                 },
 
                 async autoDetectComfyuiNodeMappingFromWorkflow(silent = false) {
