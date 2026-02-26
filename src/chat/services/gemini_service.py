@@ -658,6 +658,31 @@ class GeminiService:
             "请不要调用 generate_voice，直接使用文字回复。"
             "即使用户语气激烈或带辱骂，也保持文字输出。"
         )
+
+    @staticmethod
+    def _exception_chain_contains_timeout(error: BaseException) -> bool:
+        """判断异常链中是否包含超时信号（含 TimeoutError 文本为空的场景）。"""
+        visited: set[int] = set()
+        current: Optional[BaseException] = error
+
+        while current is not None:
+            current_id = id(current)
+            if current_id in visited:
+                break
+            visited.add(current_id)
+
+            if isinstance(current, asyncio.TimeoutError):
+                return True
+
+            class_name = current.__class__.__name__.lower()
+            error_text = str(current).lower()
+            if "timeout" in class_name or "timed out" in error_text or "超时" in error_text:
+                return True
+
+            current = current.__cause__ or current.__context__
+
+        return False
+
     def _handle_safety_ratings(
         self, response: types.GenerateContentResponse, key: str
     ) -> int:
@@ -1049,16 +1074,22 @@ class GeminiService:
                         try:
                             response_text = await response.text()
                         except (aiohttp.ClientError, asyncio.TimeoutError) as read_error:
-                            last_error_text = str(read_error)
+                            read_error_text = str(read_error).strip()
+                            read_error_repr = (
+                                f"{type(read_error).__name__}: {read_error_text}"
+                                if read_error_text
+                                else type(read_error).__name__
+                            )
+                            last_error_text = read_error_repr
                             log.warning(
                                 f"{log_prefix} failed to read response body "
-                                f"(attempt {attempt + 1}/{max_attempts}): {read_error}"
+                                f"(attempt {attempt + 1}/{max_attempts}): {read_error_repr}"
                             )
                             if attempt < max_attempts - 1:
                                 await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
                                 continue
                             raise Exception(
-                                f"{log_prefix} failed to read response body: {read_error}"
+                                f"{log_prefix} failed to read response body: {read_error_repr}"
                             )
 
                         if response.status == 200:
@@ -1111,15 +1142,21 @@ class GeminiService:
                         raise Exception(f"API returned {response.status}: {error_msg}")
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as request_error:
-                last_error_text = str(request_error)
+                request_error_text = str(request_error).strip()
+                request_error_repr = (
+                    f"{type(request_error).__name__}: {request_error_text}"
+                    if request_error_text
+                    else type(request_error).__name__
+                )
+                last_error_text = request_error_repr
                 log.warning(
                     f"{log_prefix} request failed "
-                    f"(attempt {attempt + 1}/{max_attempts}): {request_error}"
+                    f"(attempt {attempt + 1}/{max_attempts}): {request_error_repr}"
                 )
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
                     continue
-                raise Exception(f"{log_prefix} request failed: {request_error}")
+                raise Exception(f"{log_prefix} request failed: {request_error_repr}")
 
         raise Exception(f"{log_prefix} retries exhausted: {last_error_text}")
 
@@ -3412,8 +3449,7 @@ class GeminiService:
             log.warning(f"OpenAI 兼容 API (简单响应) 返回空响应: {result}")
             return None
         except Exception as e:
-            error_text = str(e).lower()
-            if "timeout" in error_text or "timed out" in error_text or "超时" in error_text:
+            if self._exception_chain_contains_timeout(e):
                 log.error(f"OpenAI 兼容 API (简单响应) 请求超时: {e}")
                 if return_error_text:
                     return "抱歉，AI服务响应超时，请稍后再试。"
