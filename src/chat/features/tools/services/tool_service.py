@@ -260,7 +260,7 @@ class ToolService:
                 log.info(f"工具 '{tool_name}' 执行完毕。")
 
             # 步骤 5: 根据工具返回的结果，构造相应的 Part
-            if "image_data" in result and isinstance(result["image_data"], dict):
+            if isinstance(result, dict) and "image_data" in result and isinstance(result["image_data"], dict):
                 # 这是一个多模态（图片）结果
                 image_info = result["image_data"]
                 if log_detailed:
