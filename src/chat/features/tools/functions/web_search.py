@@ -420,6 +420,13 @@ async def _tavily_search(query: str, max_results: int = 5) -> list:
     if not api_key:
         return []
 
+    # 检测 Tavily URL 是否合理
+    normalized_url = api_url.lower().rstrip("/")
+    if normalized_url and "tavily" not in normalized_url and normalized_url != "https://api.tavily.com":
+        log.warning(
+            f"Tavily API URL 可能配置错误: '{api_url}'，标准 URL 应为 https://api.tavily.com"
+        )
+
     endpoint = f"{api_url.rstrip('/')}/search"
     headers = {
         "Content-Type": "application/json",
@@ -467,13 +474,23 @@ async def _tavily_extract(url: str) -> Optional[str]:
         log.warning("Tavily Extract 跳过：API Key 为空，请检查数据库或环境变量配置")
         return None
 
+    # 检测 Tavily URL 是否合理（防止误配置为其他服务的 URL）
+    normalized_url = api_url.lower().rstrip("/")
+    if normalized_url and "tavily" not in normalized_url and normalized_url != "https://api.tavily.com":
+        log.warning(
+            f"Tavily API URL 可能配置错误: '{api_url}' 不包含 'tavily'，"
+            f"请检查是否将 Grok 或其他服务的 URL 误填为 Tavily URL。"
+            f"标准 Tavily URL 应为 https://api.tavily.com"
+        )
+
     endpoint = f"{api_url.rstrip('/')}/extract"
     headers = {
         "Content-Type": "application/json",
     }
     body = {"api_key": api_key, "urls": [url]}
 
-    log.info(f"Tavily Extract 请求: endpoint={endpoint}, url={url}")
+    masked_key = api_key[:6] + "..." + api_key[-4:] if len(api_key) > 10 else "***"
+    log.info(f"Tavily Extract 请求: endpoint={endpoint}, url={url}, key={masked_key}")
 
     try:
         timeout = aiohttp.ClientTimeout(total=60, connect=10)

@@ -911,6 +911,7 @@ API_RETRY_CONFIG = {
     "MAX_ATTEMPTS_PER_KEY": 1,  # 单个密钥在因可重试错误而被轮换前，允许的最大尝试次数
     "RETRY_DELAY_SECONDS": 1,  # 对同一个密钥进行重试前的延迟（秒）
     "EMPTY_RESPONSE_MAX_ATTEMPTS": 2,  # 当API返回空回复（可能因安全设置）时，使用同一个密钥进行重试的最大次数
+    "MAX_KEY_ROTATION_RETRIES": 3,  # 外层密钥轮换的最大重试次数，防止持续性API错误导致无限循环
 }
 
 # 定义不同安全风险等级对应的信誉惩罚值
@@ -1011,8 +1012,8 @@ PERSONAL_MEMORY_CONFIG = {
 
 # --- 频道记忆功能 ---
 CHANNEL_MEMORY_CONFIG = {
-    "raw_history_limit": 35,  # 从Discord API获取的原始消息数量
-    "formatted_history_limit": 35,  # 格式化为AI模型可用的对话历史消息数量
+    "raw_history_limit": _parse_int_env("CHANNEL_RAW_HISTORY_LIMIT", 35),  # 从Discord API获取的原始消息数量
+    "formatted_history_limit": _parse_int_env("CHANNEL_FORMATTED_HISTORY_LIMIT", 35),  # 格式化为AI模型可用的对话历史消息数量
 }
 
 

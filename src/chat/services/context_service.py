@@ -49,11 +49,13 @@ class ContextService:
     async def get_channel_conversation_history(
         self,
         channel_id: int,
-        limit: int = chat_config.CHANNEL_MEMORY_CONFIG["raw_history_limit"],
+        limit: int = None,
     ) -> List[Dict]:
         """
         从Discord API获取频道的全局对话历史（最近N条消息）
         """
+        if limit is None:
+            limit = chat_config.CHANNEL_MEMORY_CONFIG["raw_history_limit"]
         if not self.bot:
             log.error("ContextService 的 bot 实例未设置，无法获取频道消息历史。")
             return []
@@ -105,7 +107,7 @@ class ContextService:
         channel_id: int,
         user_id: int,
         guild_id: int,
-        limit: int = chat_config.CHANNEL_MEMORY_CONFIG["formatted_history_limit"],
+        limit: int = None,
         exclude_message_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
@@ -118,6 +120,8 @@ class ContextService:
             limit (int): 获取的消息数量上限。
             exclude_message_id (Optional[int]): 需要从历史记录中排除的特定消息ID。
         """
+        if limit is None:
+            limit = chat_config.CHANNEL_MEMORY_CONFIG["formatted_history_limit"]
         log.info(f"--- 开始获取频道 {channel_id} 的历史记录 ---")
         if not self.bot:
             log.error("ContextService 的 bot 实例未设置，无法获取频道消息历史。")

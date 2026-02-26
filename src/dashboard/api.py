@@ -277,6 +277,7 @@ class AIConfigUpdate(BaseModel):
     summary_model: Optional[str] = None  # 摘要模型
     query_model: Optional[str] = None  # 查询重写模型
     available_models: Optional[List[str]] = None
+    channel_history_limit: Optional[int] = None  # 频道消息上下文条数
 
 
 AI_AVAILABLE_MODELS_SETTING_KEY = 'ai_available_models'
@@ -786,7 +787,8 @@ async def get_all_config(token: str = Depends(verify_token)):
                 "gemini-2.5-flash-custom",
                 "gemini-2.5-pro-custom",
                 "gemini-2.5-flash-lite",
-            ]
+            ],
+            "channel_history_limit": chat_config.CHANNEL_MEMORY_CONFIG.get("formatted_history_limit", 35),
         },
         "imagen": {
             "enabled": chat_config.GEMINI_IMAGEN_CONFIG.get("ENABLED", False),
@@ -1027,7 +1029,8 @@ async def get_ai_config(token: str = Depends(verify_token)):
         "api_key_masked": masked_key,
         "has_api_key": bool(api_key),
         "api_format": api_format,
-        "available_models": available_models
+        "available_models": available_models,
+        "channel_history_limit": chat_config.CHANNEL_MEMORY_CONFIG.get("formatted_history_limit", 35),
     }
 
 
@@ -1131,6 +1134,19 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         await chat_db_manager.set_global_setting("ai_api_format", config.api_format)
         updated["api_format"] = config.api_format
         log.info(f"✅ API 格式已保存: {config.api_format}")
+
+    if config.channel_history_limit is not None:
+        if not 5 <= config.channel_history_limit <= 100:
+            raise HTTPException(400, "频道消息上下文条数必须在 5 到 100 之间")
+        limit_val = int(config.channel_history_limit)
+        chat_config.CHANNEL_MEMORY_CONFIG["raw_history_limit"] = limit_val
+        chat_config.CHANNEL_MEMORY_CONFIG["formatted_history_limit"] = limit_val
+        env_updates["CHANNEL_RAW_HISTORY_LIMIT"] = str(limit_val)
+        env_updates["CHANNEL_FORMATTED_HISTORY_LIMIT"] = str(limit_val)
+        updated["channel_history_limit"] = limit_val
+        # 写入数据库持久化
+        await chat_db_manager.set_global_setting("channel_formatted_history_limit", str(limit_val))
+        log.info(f"✅ 频道消息上下文条数已更新为: {limit_val}")
     
     # 如果有环境变量更新，尝试写入 .env 文件（作为备份）
     if env_updates:

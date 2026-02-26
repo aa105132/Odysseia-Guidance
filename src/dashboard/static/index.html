@@ -367,6 +367,16 @@
                                    placeholder="gemini-2.5-flash-lite"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                消息上下文条数
+                                <span class="text-xs text-slate-500 ml-2">每次对话读取的历史消息数量（5-100）</span>
+                            </label>
+                            <input type="number" x-model.number="aiForm.channel_history_limit"
+                                   min="5" max="100"
+                                   class="w-full max-w-xs bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
                         
                         <button @click="saveAIConfig()"
                                 :disabled="saving"
@@ -3642,7 +3652,7 @@
                 toast: { show: false, message: '', type: 'success' },
                 
                 // 表单数据
-                aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '' },
+                aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '', channel_history_limit: 35 },
                 imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto', sfw_model: '', sfw_edit_model: '', sfw_model_2k: '', sfw_edit_model_2k: '', sfw_model_4k: '', sfw_edit_model_4k: '', nsfw_model: '', nsfw_edit_model: '', nsfw_model_2k: '', nsfw_edit_model_2k: '', nsfw_model_4k: '', nsfw_edit_model_4k: '' },
                 videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8, empty_result_max_retries: 3 },
                 videoConfig: {},
@@ -3892,6 +3902,7 @@
                         this.aiForm.api_key = '';  // 不显示真实的key，只显示placeholder
                         this.aiForm.summary_model = this.config.ai.summary_model || '';
                         this.aiForm.query_model = this.config.ai.query_model || '';
+                        this.aiForm.channel_history_limit = this.config.ai.channel_history_limit ?? 35;
                     }
                     if (this.config.imagen) {
                         this.imagenForm.enabled = this.config.imagen.enabled || false;
@@ -4966,6 +4977,11 @@
                         // 发送查询重写模型配置
                         if (this.aiForm.query_model) {
                             payload.query_model = this.aiForm.query_model;
+                        }
+
+                        // 发送频道消息上下文条数
+                        if (this.aiForm.channel_history_limit) {
+                            payload.channel_history_limit = parseInt(this.aiForm.channel_history_limit);
                         }
                         
                         const response = await fetch('/api/config/ai', {

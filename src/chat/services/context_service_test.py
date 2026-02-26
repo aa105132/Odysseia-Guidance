@@ -56,13 +56,15 @@ class ContextServiceTest:
         channel_id: int,
         user_id: int,
         guild_id: int,
-        limit: int = chat_config.CHANNEL_MEMORY_CONFIG["formatted_history_limit"],
+        limit: int = None,
         exclude_message_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         获取结构化的频道对话历史。
         此方法将历史消息与用户的最新消息分离，以引导模型只回复最新内容。
         """
+        if limit is None:
+            limit = chat_config.CHANNEL_MEMORY_CONFIG["formatted_history_limit"]
         if not self.bot:
             log.error("ContextServiceTest 的 bot 实例未设置，无法获取频道消息历史。")
             return []

@@ -377,6 +377,19 @@ class ChatSettingsService:
                 "AUTO_CHAT_CONTEXT_MESSAGE_LIMIT"
             ] = int(db_auto_context_limit)
 
+        # --- 频道消息上下文条数 ---
+        db_channel_history_limit = await self.db_manager.get_global_setting(
+            "channel_formatted_history_limit"
+        )
+        if db_channel_history_limit:
+            chat_config.CHANNEL_MEMORY_CONFIG["formatted_history_limit"] = int(
+                db_channel_history_limit
+            )
+            # raw_history_limit 与 formatted_history_limit 保持一致
+            chat_config.CHANNEL_MEMORY_CONFIG["raw_history_limit"] = int(
+                db_channel_history_limit
+            )
+
         log.info("数据库配置加载完成。")
 
     async def set_entity_settings(

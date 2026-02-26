@@ -79,7 +79,8 @@ def _api_key_handler(func: Callable) -> Callable:
 
     @wraps(func)
     async def wrapper(self: "GeminiService", *args, **kwargs):
-        while True:
+        max_key_rotations = max(1, app_config.API_RETRY_CONFIG.get("MAX_KEY_ROTATION_RETRIES", 3))
+        for rotation_attempt in range(max_key_rotations):
             key_obj = None
             try:
                 key_obj = await self.key_rotation_service.acquire_key()
@@ -167,6 +168,14 @@ def _api_key_handler(func: Callable) -> Callable:
                 if not kwargs.get("return_error_text", True):
                     return None
                 return "啊啊啊服务器要爆炸啦！现在有点忙不过来，你过一会儿再来找我玩吧！<生气>"
+
+        # 所有密钥轮换尝试均已耗尽
+        log.error(
+            f"已达到最大密钥轮换重试次数 ({max_key_rotations})，所有尝试均失败。"
+        )
+        if not kwargs.get("return_error_text", True):
+            return None
+        return "呜...连续请求都失败了，服务可能暂时不太稳定，请稍后再试试吧 <委屈>"
 
     return wrapper
 
