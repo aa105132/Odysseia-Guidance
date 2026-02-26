@@ -56,6 +56,77 @@ class ComfyUIService:
         '卡通',
         'galgame',
     )
+    _NODE_MAPPING_TOKEN_ALIASES: Dict[str, str] = {
+        'prompt': 'positive_prompt',
+        'positive_prompt': 'positive_prompt',
+        'negative_prompt': 'negative_prompt',
+        'width': 'width',
+        'height': 'height',
+        'steps': 'steps',
+        'cfg': 'cfg',
+        'cfg_scale': 'cfg',
+        'sampler': 'sampler',
+        'sampler_name': 'sampler',
+        'scheduler': 'scheduler',
+        'scheduler_name': 'scheduler',
+        'seed': 'seed',
+        'lora': 'lora',
+        'lora_strength': 'lora_strength',
+        'model_name': 'model_name',
+        'ckpt_name': 'model_name',
+        'model': 'model_name',
+        'vae_name': 'vae_name',
+        'vae': 'vae_name',
+        'clip_name': 'clip_name',
+        'clip': 'clip_name',
+        'input_image': 'input_image',
+        'reference_image': 'reference_image',
+        'init_image': 'init_image',
+        'image': 'input_image',
+    }
+    _NODE_MAPPING_FIELD_ALIASES: Dict[str, str] = {
+        'width': 'width',
+        'height': 'height',
+        'steps': 'steps',
+        'cfg': 'cfg',
+        'cfg_scale': 'cfg',
+        'sampler_name': 'sampler',
+        'sampler': 'sampler',
+        'scheduler': 'scheduler',
+        'scheduler_name': 'scheduler',
+        'seed': 'seed',
+        'noise_seed': 'seed',
+        'random_seed': 'seed',
+        'lora': 'lora',
+        'lora_name': 'lora',
+        'lora_strength': 'lora_strength',
+        'strength_model': 'lora_strength',
+        'strength_clip': 'lora_strength',
+        'unet_name': 'model_name',
+        'ckpt_name': 'model_name',
+        'model_name': 'model_name',
+        'vae_name': 'vae_name',
+        'clip_name': 'clip_name',
+        'input_image': 'input_image',
+        'reference_image': 'reference_image',
+        'init_image': 'init_image',
+        'image': 'input_image',
+        'prompt': 'positive_prompt',
+        'positive': 'positive_prompt',
+        'negative': 'negative_prompt',
+        'negative_prompt': 'negative_prompt',
+    }
+    _NODE_MAPPING_NEGATIVE_HINTS = (
+        'negative',
+        '负面',
+        '反向',
+        'lowres',
+        'worst',
+        'bad',
+        'bad anatomy',
+        'nsfw',
+    )
+    _PERCENT_TOKEN_RE = re.compile(r'%\s*([A-Za-z0-9_]+)\s*%')
 
     def __init__(self, server_address: Optional[str] = None, workflow_path: Optional[str] = None):
         self.server_address = ''
@@ -389,6 +460,106 @@ class ComfyUIService:
             encoding='utf-8',
         )
         return str(save_path)
+
+    @classmethod
+    def _extract_param_key_from_text_tokens(cls, raw_text: Optional[str]) -> str:
+        text = str(raw_text or '').strip()
+        if not text:
+            return ''
+
+        for match in cls._PERCENT_TOKEN_RE.finditer(text):
+            token_key = str(match.group(1) or '').strip().lower()
+            if token_key in cls._NODE_MAPPING_TOKEN_ALIASES:
+                return cls._NODE_MAPPING_TOKEN_ALIASES[token_key]
+
+        for match in _PLACEHOLDER_RE.finditer(text):
+            token_key = str(match.group(1) or '').strip().lower()
+            if token_key in cls._NODE_MAPPING_TOKEN_ALIASES:
+                return cls._NODE_MAPPING_TOKEN_ALIASES[token_key]
+
+        return ''
+
+    @classmethod
+    def _infer_param_key_from_field(
+        cls,
+        field_name: str,
+        class_type: str,
+        field_value: Any,
+        current_mapping: Dict[str, list[str]],
+    ) -> str:
+        normalized_field_name = str(field_name or '').strip().lower()
+        if not normalized_field_name:
+            return ''
+
+        direct_key = cls._NODE_MAPPING_FIELD_ALIASES.get(normalized_field_name, '')
+        if direct_key and normalized_field_name != 'text':
+            return direct_key
+
+        if normalized_field_name != 'text':
+            return direct_key
+
+        class_type_text = str(class_type or '').strip().lower()
+        if 'cliptextencode' not in class_type_text:
+            return ''
+
+        value_text = str(field_value or '').strip().lower()
+        has_negative_hint = any(hint in value_text for hint in cls._NODE_MAPPING_NEGATIVE_HINTS)
+        if has_negative_hint and 'negative_prompt' not in current_mapping:
+            return 'negative_prompt'
+
+        if 'positive_prompt' not in current_mapping:
+            return 'positive_prompt'
+        if 'negative_prompt' not in current_mapping:
+            return 'negative_prompt'
+        return ''
+
+    @classmethod
+    def infer_node_mapping_from_workflow_payload(cls, workflow_payload: Any) -> Dict[str, list[str]]:
+        workflow = cls._normalize_workflow_payload(workflow_payload)
+        mapping: Dict[str, list[str]] = {}
+
+        def sort_key(raw_node_id: Any) -> tuple[int, Any]:
+            node_id_text = str(raw_node_id or '').strip()
+            if node_id_text.isdigit():
+                return (0, int(node_id_text))
+            return (1, node_id_text)
+
+        for raw_node_id in sorted(workflow.keys(), key=sort_key):
+            node_id = str(raw_node_id).strip()
+            node_obj = workflow.get(raw_node_id)
+            if not isinstance(node_obj, dict):
+                continue
+
+            class_type = str(node_obj.get('class_type') or '').strip()
+            inputs = node_obj.get('inputs')
+            if not isinstance(inputs, dict):
+                continue
+
+            for raw_field_name, field_value in inputs.items():
+                field_name = str(raw_field_name or '').strip()
+                if not field_name:
+                    continue
+                if isinstance(field_value, (list, dict)):
+                    continue
+
+                inferred_param_key = ''
+                if isinstance(field_value, str):
+                    inferred_param_key = cls._extract_param_key_from_text_tokens(field_value)
+
+                if not inferred_param_key:
+                    inferred_param_key = cls._infer_param_key_from_field(
+                        field_name=field_name,
+                        class_type=class_type,
+                        field_value=field_value,
+                        current_mapping=mapping,
+                    )
+
+                if not inferred_param_key or inferred_param_key in mapping:
+                    continue
+
+                mapping[inferred_param_key] = [node_id, field_name]
+
+        return mapping
 
     def _build_runtime_params(self, **kwargs: Any) -> Dict[str, Any]:
         config = app_config.COMFYUI_CONFIG

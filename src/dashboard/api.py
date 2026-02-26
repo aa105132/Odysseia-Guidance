@@ -204,6 +204,7 @@ class ComfyUIConfigUpdate(BaseModel):
     default_anime_workflow_path: Optional[str] = None
     workflow_json: Optional[str] = None
     workflow_filename: Optional[str] = None
+    auto_detect_node_mapping: Optional[bool] = None
     image_output_node_id: Optional[str] = None
     generation_cost: Optional[int] = None
     default_width: Optional[int] = None
@@ -232,6 +233,12 @@ class ComfyUILoraDownloadRequest(BaseModel):
     url: str
     filename: Optional[str] = None
     save_path: Optional[str] = None
+
+
+class ComfyUIAutoNodeMappingRequest(BaseModel):
+    """ComfyUI 节点映射自动识别请求"""
+    workflow_json: Optional[str] = None
+    workflow_path: Optional[str] = None
 
 
 class NovelAIAdminPresetUpsert(BaseModel):
@@ -3288,6 +3295,7 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
             config.default_anime_workflow_path
         )
 
+    auto_detected_node_mapping: Optional[Dict[str, Any]] = None
     if config.workflow_json is not None:
         workflow_save_path = normalized_workflow_path
         workflow_filename_hint = str(config.workflow_filename or '').strip()
@@ -3342,6 +3350,26 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
         normalized_workflow_path = ComfyUIService._normalize_workflow_path(saved_path)
         updated['workflow_imported'] = True
         updated['workflow_imported_filename'] = os.path.basename(normalized_workflow_path)
+
+        should_auto_detect_node_mapping = (
+            bool(config.auto_detect_node_mapping)
+            if config.auto_detect_node_mapping is not None
+            else True
+        )
+        if should_auto_detect_node_mapping:
+            try:
+                workflow_payload = json.loads(str(config.workflow_json or ''))
+                normalized_payload = ComfyUIService._normalize_workflow_payload(workflow_payload)
+                auto_detected_node_mapping = ComfyUIService.infer_node_mapping_from_workflow_payload(
+                    normalized_payload
+                )
+                updated['auto_detected_node_mapping_keys'] = sorted(auto_detected_node_mapping.keys())
+            except json.JSONDecodeError as error:
+                raise HTTPException(400, f'工作流 JSON 解析失败: {error}')
+            except ValueError as error:
+                raise HTTPException(400, str(error))
+            except Exception as error:
+                raise HTTPException(500, f'自动识别 NODE_MAPPING 失败: {error}')
 
     if normalized_workflow_path is not None:
         if normalized_workflow_path and not os.path.exists(normalized_workflow_path):
@@ -3467,8 +3495,15 @@ async def update_comfyui_config(config: ComfyUIConfigUpdate, token: str = Depend
         await chat_db_manager.set_global_setting('comfyui_placeholder_mapping', serialized_placeholder_mapping)
         updated['placeholder_mapping'] = normalized_placeholder_mapping
 
-    if config.node_mapping is not None:
-        normalized_node_mapping = _normalize_json_object(config.node_mapping)
+    resolved_node_mapping_payload: Optional[Dict[str, Any]] = None
+    if auto_detected_node_mapping is not None:
+        resolved_node_mapping_payload = auto_detected_node_mapping
+        updated['node_mapping_auto_detected'] = True
+    elif config.node_mapping is not None:
+        resolved_node_mapping_payload = config.node_mapping
+
+    if resolved_node_mapping_payload is not None:
+        normalized_node_mapping = _normalize_json_object(resolved_node_mapping_payload)
         serialized_node_mapping = json.dumps(normalized_node_mapping, ensure_ascii=False)
         runtime_config['NODE_MAPPING'] = normalized_node_mapping
         os.environ['COMFYUI_NODE_MAPPING'] = serialized_node_mapping
@@ -3511,6 +3546,53 @@ async def test_comfyui_connection(token: str = Depends(verify_token)):
     except Exception as error:
         log.error(f'测试 ComfyUI 连接失败: {error}', exc_info=True)
         return {'success': False, 'error': str(error)}
+
+
+@app.post('/api/config/comfyui/auto-node-mapping')
+async def auto_detect_comfyui_node_mapping(
+    request: ComfyUIAutoNodeMappingRequest,
+    token: str = Depends(verify_token),
+):
+    """自动识别工作流中的 NODE_MAPPING。"""
+    from src.chat.features.image_generation.services.comfyui_service import ComfyUIService
+
+    workflow_json_text = str(request.workflow_json or '').strip()
+    workflow_path_text = ComfyUIService._normalize_workflow_path(request.workflow_path)
+    workflow_payload: Any = None
+
+    if workflow_json_text:
+        try:
+            workflow_payload = json.loads(workflow_json_text)
+        except json.JSONDecodeError as error:
+            raise HTTPException(400, f'工作流 JSON 解析失败: {error}')
+    elif workflow_path_text:
+        if not os.path.isfile(workflow_path_text):
+            raise HTTPException(400, f'工作流文件不存在: {workflow_path_text}')
+        try:
+            with open(workflow_path_text, 'r', encoding='utf-8') as file:
+                workflow_payload = json.load(file)
+        except json.JSONDecodeError as error:
+            raise HTTPException(400, f'工作流 JSON 解析失败: {error}')
+        except Exception as error:
+            raise HTTPException(500, f'读取工作流文件失败: {error}')
+    else:
+        raise HTTPException(400, '请提供 workflow_json 或 workflow_path')
+
+    try:
+        normalized_workflow_payload = ComfyUIService._normalize_workflow_payload(workflow_payload)
+        detected_node_mapping = ComfyUIService.infer_node_mapping_from_workflow_payload(
+            normalized_workflow_payload
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    except Exception as error:
+        raise HTTPException(500, f'自动识别 NODE_MAPPING 失败: {error}')
+
+    return {
+        'success': True,
+        'node_mapping': detected_node_mapping,
+        'mapped_keys': sorted(detected_node_mapping.keys()),
+    }
 
 
 @app.post('/api/config/comfyui/download-lora')

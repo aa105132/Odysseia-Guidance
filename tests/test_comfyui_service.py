@@ -140,6 +140,63 @@ def test_prepare_workflow_supports_percent_style_alias_placeholders(tmp_path):
         chat_config.COMFYUI_CONFIG['NODE_MAPPING'] = original_node_mapping
 
 
+def test_infer_node_mapping_from_workflow_payload_supports_placeholder_tokens():
+    workflow_template = {
+        '1': {'class_type': 'UNETLoader', 'inputs': {'unet_name': '%MODEL_NAME%'}},
+        '2': {'class_type': 'CLIPTextEncode', 'inputs': {'text': '%prompt%'}},
+        '3': {'class_type': 'CLIPTextEncode', 'inputs': {'text': '%negative_prompt%'}},
+        '4': {'class_type': 'KSampler', 'inputs': {
+            'steps': '%steps%',
+            'cfg': '%cfg_scale%',
+            'sampler_name': '%sampler_name%',
+            'scheduler': '%scheduler%',
+            'seed': '%seed%',
+        }},
+        '5': {'class_type': 'EmptyLatentImage', 'inputs': {'width': '%width%', 'height': '%height%'}},
+        '6': {'class_type': 'VAELoader', 'inputs': {'vae_name': '%vae%'}},
+        '7': {'class_type': 'CLIPLoader', 'inputs': {'clip_name': '%clip_name%'}},
+    }
+
+    mapping = ComfyUIService.infer_node_mapping_from_workflow_payload(workflow_template)
+
+    assert mapping['model_name'] == ['1', 'unet_name']
+    assert mapping['positive_prompt'] == ['2', 'text']
+    assert mapping['negative_prompt'] == ['3', 'text']
+    assert mapping['steps'] == ['4', 'steps']
+    assert mapping['cfg'] == ['4', 'cfg']
+    assert mapping['sampler'] == ['4', 'sampler_name']
+    assert mapping['scheduler'] == ['4', 'scheduler']
+    assert mapping['seed'] == ['4', 'seed']
+    assert mapping['width'] == ['5', 'width']
+    assert mapping['height'] == ['5', 'height']
+    assert mapping['vae_name'] == ['6', 'vae_name']
+    assert mapping['clip_name'] == ['7', 'clip_name']
+
+
+def test_infer_node_mapping_from_workflow_payload_supports_field_name_fallback():
+    workflow_template = {
+        '10': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'masterpiece, best quality'}},
+        '11': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'worst quality, lowres'}},
+        '12': {'class_type': 'KSampler', 'inputs': {
+            'steps': 30,
+            'cfg': 5.5,
+            'sampler_name': 'euler',
+            'scheduler': 'normal',
+            'seed': 12345,
+        }},
+    }
+
+    mapping = ComfyUIService.infer_node_mapping_from_workflow_payload(workflow_template)
+
+    assert mapping['positive_prompt'] == ['10', 'text']
+    assert mapping['negative_prompt'] == ['11', 'text']
+    assert mapping['steps'] == ['12', 'steps']
+    assert mapping['cfg'] == ['12', 'cfg']
+    assert mapping['sampler'] == ['12', 'sampler_name']
+    assert mapping['scheduler'] == ['12', 'scheduler']
+    assert mapping['seed'] == ['12', 'seed']
+
+
 
 def test_build_runtime_params_supports_user_fixed_prompts(tmp_path):
     workflow_path = tmp_path / 'workflow_template.json'

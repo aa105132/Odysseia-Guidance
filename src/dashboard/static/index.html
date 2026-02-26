@@ -1019,11 +1019,18 @@
                         <div>
                             <div class='flex items-center justify-between mb-2'>
                                 <label class='block text-sm font-medium text-slate-300'>节点映射（JSON 对象）</label>
-                                <button @click='resetComfyuiNodeMapping()'
-                                        type='button'
-                                        class='text-xs px-2.5 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700/60'>
-                                    恢复默认
-                                </button>
+                                <div class='flex items-center gap-2'>
+                                    <button @click='autoDetectComfyuiNodeMappingFromWorkflow()'
+                                            type='button'
+                                            class='text-xs px-2.5 py-1 rounded-md border border-emerald-500/60 text-emerald-200 hover:bg-emerald-700/30'>
+                                        一键识别工作流
+                                    </button>
+                                    <button @click='resetComfyuiNodeMapping()'
+                                            type='button'
+                                            class='text-xs px-2.5 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700/60'>
+                                        恢复默认
+                                    </button>
+                                </div>
                             </div>
                             <textarea x-model='comfyuiForm.node_mapping_text' rows='4'
                                       class='w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 font-mono text-xs'></textarea>
@@ -5144,6 +5151,7 @@
                         this.comfyuiForm.workflow_json = workflowText;
                         this.comfyuiWorkflowFileName = file.name || '';
                         this.showToast(`已加载工作流文件：${this.comfyuiWorkflowFileName}`, 'success');
+                        await this.autoDetectComfyuiNodeMappingFromWorkflow(true);
                     } catch (e) {
                         this.showToast('读取工作流文件失败', 'error');
                     }
@@ -5229,6 +5237,57 @@
                     }
                     this.comfyuiForm.workflow_path = selectedPath;
                     this.showToast('已填入默认工作流路径', 'success');
+                },
+
+                async autoDetectComfyuiNodeMappingFromWorkflow(silent = false) {
+                    const workflowJsonText = (this.comfyuiForm.workflow_json || '').trim();
+                    const workflowPathText = (this.comfyuiForm.workflow_path || '').trim();
+                    if (!workflowJsonText && !workflowPathText) {
+                        if (!silent) {
+                            this.showToast('请先上传/粘贴工作流，或填写工作流路径', 'error');
+                        }
+                        return false;
+                    }
+
+                    this.testing = true;
+                    try {
+                        const response = await fetch('/api/config/comfyui/auto-node-mapping', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${this.secretKey}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                workflow_json: workflowJsonText || null,
+                                workflow_path: workflowJsonText ? null : workflowPathText || null,
+                            }),
+                        });
+
+                        if (!response.ok) {
+                            const data = await response.json();
+                            if (!silent) {
+                                this.showToast(data.detail || '自动识别节点映射失败', 'error');
+                            }
+                            return false;
+                        }
+
+                        const data = await response.json();
+                        const nodeMapping = this.normalizeComfyuiNodeMappingForDisplay(data.node_mapping || {});
+                        this.comfyuiForm.node_mapping_text = JSON.stringify(nodeMapping, null, 2);
+                        const mappedKeyCount = Array.isArray(data.mapped_keys) ? data.mapped_keys.length : Object.keys(nodeMapping).length;
+
+                        if (!silent) {
+                            this.showToast(`已自动识别 ${mappedKeyCount} 项节点映射`, 'success');
+                        }
+                        return true;
+                    } catch (e) {
+                        if (!silent) {
+                            this.showToast('自动识别节点映射失败', 'error');
+                        }
+                        return false;
+                    } finally {
+                        this.testing = false;
+                    }
                 },
 
                 getComfyuiQuickLoraToken() {
@@ -5344,6 +5403,7 @@
                         const workflowJsonText = (this.comfyuiForm.workflow_json || '').trim();
                         if (workflowJsonText) {
                             payload.workflow_json = workflowJsonText;
+                            payload.auto_detect_node_mapping = true;
                             const workflowFilename = (this.comfyuiWorkflowFileName || '').trim();
                             if (workflowFilename) {
                                 payload.workflow_filename = workflowFilename;
