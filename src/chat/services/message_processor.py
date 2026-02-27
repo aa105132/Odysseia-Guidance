@@ -282,7 +282,7 @@ class MessageProcessor:
                 await self._extract_images_from_attachments(message.attachments)
             )
 
-        # 新增：处理文本中的 Discord 图片链接（例如 [󠄀](https://cdn.discordapp.com/emojis/...webp)）
+        # 处理文本中的 Discord 图片链接（例如 [󠄀](https://cdn.discordapp.com/emojis/...webp)）
         if message.content:
             image_data_list.extend(
                 await self._extract_images_from_text_links(
@@ -291,6 +291,14 @@ class MessageProcessor:
                     seen_urls=seen_text_image_urls,
                 )
             )
+
+        # 从 embed 中提取图片（用户贴的 CDN 链接会被 Discord 自动嵌入，
+        # embed 的 proxy_url 经过 Discord 代理，不受 CDN 签名参数限制）
+        if message.embeds and not image_data_list:
+            embed_images = await self._extract_images_from_embeds(
+                message.embeds, seen_urls=seen_text_image_urls
+            )
+            image_data_list.extend(embed_images)
 
         replied_message_content = ""
         if message.reference and message.reference.message_id:
@@ -464,6 +472,18 @@ class MessageProcessor:
                                 img["source"] = "replied_attachment"
                             image_data_list.extend(replied_images)
 
+                        # 从回复消息的 embed 中提取图片（proxy_url 回退）
+                        if ref_msg.embeds and not any(
+                            img.get("source") == "replied_attachment"
+                            for img in image_data_list
+                        ):
+                            replied_embed_images = await self._extract_images_from_embeds(
+                                ref_msg.embeds, seen_urls=seen_text_image_urls
+                            )
+                            for img in replied_embed_images:
+                                img["source"] = "replied_attachment"
+                            image_data_list.extend(replied_embed_images)
+
             except (discord.NotFound, discord.Forbidden):
                 log.warning(
                     f"无法找到或无权访问被回复的消息 ID: {message.reference.message_id}"
@@ -485,6 +505,88 @@ class MessageProcessor:
             "replied_content": replied_message_content,
             "image_data_list": image_data_list,
         }
+
+    async def _extract_images_from_embeds(
+        self,
+        embeds: List[discord.Embed],
+        seen_urls: Optional[Set[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        从消息 embed 中提取图片数据。
+
+        当用户贴了 Discord CDN 图片链接时，Discord 会自动生成 embed，
+        其中 proxy_url 是经过 Discord 代理的 URL，不受 CDN 签名参数限制，
+        比原始 url 更可靠。
+        """
+        if not embeds:
+            return []
+
+        if seen_urls is None:
+            seen_urls = set()
+
+        candidate_urls: List[str] = []
+
+        for embed in embeds:
+            # 优先使用 proxy_url（经过 Discord 代理，更可靠）
+            if getattr(embed, "image", None):
+                proxy = getattr(embed.image, "proxy_url", None)
+                url = getattr(embed.image, "url", None)
+                chosen = proxy or url
+                if chosen and chosen not in seen_urls:
+                    seen_urls.add(chosen)
+                    candidate_urls.append(chosen)
+
+            if getattr(embed, "thumbnail", None):
+                proxy = getattr(embed.thumbnail, "proxy_url", None)
+                url = getattr(embed.thumbnail, "url", None)
+                chosen = proxy or url
+                if chosen and chosen not in seen_urls:
+                    seen_urls.add(chosen)
+                    candidate_urls.append(chosen)
+
+        if not candidate_urls:
+            return []
+
+        proxy_url = config.PROXY_URL
+        image_data_list: List[Dict[str, Any]] = []
+
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                asyncio.create_task(self._fetch_image_aio(session, url, proxy=proxy_url))
+                for url in candidate_urls
+            ]
+            results = await asyncio.gather(*tasks)
+
+        for url, fetch_result in zip(candidate_urls, results):
+            if not fetch_result or not fetch_result.get("data"):
+                log.warning(f"从 embed 下载图片失败: {url[:120]}")
+                continue
+
+            image_bytes = fetch_result["data"]
+            response_mime_type = (fetch_result.get("mime_type") or "").lower()
+            final_url = fetch_result.get("final_url") or url
+            guessed_mime_type = self._guess_mime_type_from_url(
+                final_url
+            ) or self._guess_mime_type_from_url(url)
+
+            if response_mime_type.startswith("image/"):
+                mime_type = response_mime_type
+            elif guessed_mime_type:
+                mime_type = guessed_mime_type
+            else:
+                log.warning(f"embed 链接返回了非图片内容，已跳过: {url[:120]}")
+                continue
+
+            image_data_list.append(
+                {
+                    "mime_type": mime_type,
+                    "data": image_bytes,
+                    "source": "embed",
+                }
+            )
+            log.info(f"成功从 embed proxy_url 提取图片: {url[:120]} ({mime_type})")
+
+        return image_data_list
 
     async def _extract_images_from_attachments(
         self, attachments: List[discord.Attachment]

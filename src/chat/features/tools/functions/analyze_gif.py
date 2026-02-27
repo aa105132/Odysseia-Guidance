@@ -115,6 +115,28 @@ async def _extract_gif_from_message(
     except Exception as e:
         log.warning(f"从消息 URL 提取动态图失败: {e}")
 
+    # 3) 从 embed 的 proxy_url 回退提取（CDN 链接需要签名参数时的回退方案）
+    for embed in getattr(message, "embeds", []) or []:
+        for attr_name in ("image", "thumbnail"):
+            embed_media = getattr(embed, attr_name, None)
+            if not embed_media:
+                continue
+            # 优先 proxy_url，其次原始 url
+            target_url = getattr(embed_media, "proxy_url", None) or getattr(
+                embed_media, "url", None
+            )
+            if not target_url:
+                continue
+            try:
+                fetched = await fetch_image_from_url(target_url)
+                if fetched and _is_animated_image(
+                    fetched.get("data", b""), fetched.get("mime_type", "")
+                ):
+                    log.info(f"从 embed {attr_name} proxy_url 成功提取动态图")
+                    return fetched
+            except Exception as e:
+                log.warning(f"从 embed {attr_name} proxy_url 提取失败: {e}")
+
     return None
 
 

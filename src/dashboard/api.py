@@ -278,6 +278,9 @@ class AIConfigUpdate(BaseModel):
     query_model: Optional[str] = None  # 查询重写模型
     available_models: Optional[List[str]] = None
     channel_history_limit: Optional[int] = None  # 频道消息上下文条数
+    max_attempts_per_key: Optional[int] = None  # 主聊天单密钥最大重试次数
+    retry_delay_seconds: Optional[int] = None  # 主聊天重试延迟（秒）
+    max_key_rotation_retries: Optional[int] = None  # 主聊天密钥轮换重试次数
 
 
 AI_AVAILABLE_MODELS_SETTING_KEY = 'ai_available_models'
@@ -789,6 +792,9 @@ async def get_all_config(token: str = Depends(verify_token)):
                 "gemini-2.5-flash-lite",
             ],
             "channel_history_limit": chat_config.CHANNEL_MEMORY_CONFIG.get("formatted_history_limit", 35),
+            "max_attempts_per_key": int(chat_config.API_RETRY_CONFIG.get("MAX_ATTEMPTS_PER_KEY", 1)),
+            "retry_delay_seconds": int(chat_config.API_RETRY_CONFIG.get("RETRY_DELAY_SECONDS", 1)),
+            "max_key_rotation_retries": int(chat_config.API_RETRY_CONFIG.get("MAX_KEY_ROTATION_RETRIES", 3)),
         },
         "imagen": {
             "enabled": chat_config.GEMINI_IMAGEN_CONFIG.get("ENABLED", False),
@@ -973,6 +979,9 @@ async def get_ai_config(token: str = Depends(verify_token)):
     db_api_url = await chat_db_manager.get_global_setting("gemini_api_url")
     db_api_key = await chat_db_manager.get_global_setting("gemini_api_key")
     db_api_format = await chat_db_manager.get_global_setting("ai_api_format")
+    db_max_attempts_per_key = await chat_db_manager.get_global_setting("ai_max_attempts_per_key")
+    db_retry_delay_seconds = await chat_db_manager.get_global_setting("ai_retry_delay_seconds")
+    db_max_key_rotation_retries = await chat_db_manager.get_global_setting("ai_max_key_rotation_retries")
     
     # 优先使用数据库值，否则回退到环境变量/内存配置
     model = db_model or chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL
@@ -988,6 +997,32 @@ async def get_ai_config(token: str = Depends(verify_token)):
     api_url = db_api_url or os.getenv("GEMINI_API_BASE_URL", "")
     api_key = db_api_key or os.getenv("GEMINI_API_KEYS", "")
     api_format = db_api_format or "gemini"
+    try:
+        max_attempts_per_key = (
+            int(db_max_attempts_per_key)
+            if db_max_attempts_per_key is not None
+            else int(chat_config.API_RETRY_CONFIG.get("MAX_ATTEMPTS_PER_KEY", 1))
+        )
+    except (TypeError, ValueError):
+        max_attempts_per_key = int(chat_config.API_RETRY_CONFIG.get("MAX_ATTEMPTS_PER_KEY", 1))
+
+    try:
+        retry_delay_seconds = (
+            int(db_retry_delay_seconds)
+            if db_retry_delay_seconds is not None
+            else int(chat_config.API_RETRY_CONFIG.get("RETRY_DELAY_SECONDS", 1))
+        )
+    except (TypeError, ValueError):
+        retry_delay_seconds = int(chat_config.API_RETRY_CONFIG.get("RETRY_DELAY_SECONDS", 1))
+
+    try:
+        max_key_rotation_retries = (
+            int(db_max_key_rotation_retries)
+            if db_max_key_rotation_retries is not None
+            else int(chat_config.API_RETRY_CONFIG.get("MAX_KEY_ROTATION_RETRIES", 3))
+        )
+    except (TypeError, ValueError):
+        max_key_rotation_retries = int(chat_config.API_RETRY_CONFIG.get("MAX_KEY_ROTATION_RETRIES", 3))
     
     # 隐藏敏感信息
     masked_url = api_url[:30] + "..." if len(api_url) > 30 else api_url
@@ -1031,6 +1066,9 @@ async def get_ai_config(token: str = Depends(verify_token)):
         "api_format": api_format,
         "available_models": available_models,
         "channel_history_limit": chat_config.CHANNEL_MEMORY_CONFIG.get("formatted_history_limit", 35),
+        "max_attempts_per_key": max_attempts_per_key,
+        "retry_delay_seconds": retry_delay_seconds,
+        "max_key_rotation_retries": max_key_rotation_retries,
     }
 
 
@@ -1147,6 +1185,36 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         # 写入数据库持久化
         await chat_db_manager.set_global_setting("channel_formatted_history_limit", str(limit_val))
         log.info(f"✅ 频道消息上下文条数已更新为: {limit_val}")
+
+    if config.max_attempts_per_key is not None:
+        if not 1 <= config.max_attempts_per_key <= 10:
+            raise HTTPException(400, "主聊天单密钥重试次数必须在 1 到 10 之间")
+        retry_val = int(config.max_attempts_per_key)
+        chat_config.API_RETRY_CONFIG["MAX_ATTEMPTS_PER_KEY"] = retry_val
+        env_updates["AI_MAX_ATTEMPTS_PER_KEY"] = str(retry_val)
+        updated["max_attempts_per_key"] = retry_val
+        await chat_db_manager.set_global_setting("ai_max_attempts_per_key", str(retry_val))
+        log.info(f"✅ 主聊天单密钥重试次数已更新为: {retry_val}")
+
+    if config.retry_delay_seconds is not None:
+        if not 0 <= config.retry_delay_seconds <= 30:
+            raise HTTPException(400, "主聊天重试延迟必须在 0 到 30 秒之间")
+        delay_val = int(config.retry_delay_seconds)
+        chat_config.API_RETRY_CONFIG["RETRY_DELAY_SECONDS"] = delay_val
+        env_updates["AI_RETRY_DELAY_SECONDS"] = str(delay_val)
+        updated["retry_delay_seconds"] = delay_val
+        await chat_db_manager.set_global_setting("ai_retry_delay_seconds", str(delay_val))
+        log.info(f"✅ 主聊天重试延迟已更新为: {delay_val}s")
+
+    if config.max_key_rotation_retries is not None:
+        if not 1 <= config.max_key_rotation_retries <= 20:
+            raise HTTPException(400, "主聊天轮换重试次数必须在 1 到 20 之间")
+        rotation_val = int(config.max_key_rotation_retries)
+        chat_config.API_RETRY_CONFIG["MAX_KEY_ROTATION_RETRIES"] = rotation_val
+        env_updates["AI_MAX_KEY_ROTATION_RETRIES"] = str(rotation_val)
+        updated["max_key_rotation_retries"] = rotation_val
+        await chat_db_manager.set_global_setting("ai_max_key_rotation_retries", str(rotation_val))
+        log.info(f"✅ 主聊天轮换重试次数已更新为: {rotation_val}")
     
     # 如果有环境变量更新，尝试写入 .env 文件（作为备份）
     if env_updates:

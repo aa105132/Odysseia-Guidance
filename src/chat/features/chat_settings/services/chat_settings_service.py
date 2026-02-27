@@ -89,6 +89,44 @@ class ChatSettingsService:
         if db_api_format:
             chat_config._db_api_format = db_api_format
             log.info(f"  ✅ API 格式: {db_api_format}")
+
+        db_max_attempts_per_key = await self.db_manager.get_global_setting(
+            "ai_max_attempts_per_key"
+        )
+        if db_max_attempts_per_key is not None:
+            try:
+                parsed_attempts = int(db_max_attempts_per_key)
+                if parsed_attempts >= 1:
+                    chat_config.API_RETRY_CONFIG["MAX_ATTEMPTS_PER_KEY"] = parsed_attempts
+                    log.info(f"  ✅ 主聊天单密钥重试次数: {parsed_attempts}")
+            except (TypeError, ValueError):
+                log.warning(f"主聊天单密钥重试次数解析失败: {db_max_attempts_per_key}")
+
+        db_retry_delay_seconds = await self.db_manager.get_global_setting(
+            "ai_retry_delay_seconds"
+        )
+        if db_retry_delay_seconds is not None:
+            try:
+                parsed_delay = int(db_retry_delay_seconds)
+                if parsed_delay >= 0:
+                    chat_config.API_RETRY_CONFIG["RETRY_DELAY_SECONDS"] = parsed_delay
+                    log.info(f"  ✅ 主聊天重试延迟: {parsed_delay}s")
+            except (TypeError, ValueError):
+                log.warning(f"主聊天重试延迟解析失败: {db_retry_delay_seconds}")
+
+        db_max_key_rotation_retries = await self.db_manager.get_global_setting(
+            "ai_max_key_rotation_retries"
+        )
+        if db_max_key_rotation_retries is not None:
+            try:
+                parsed_rotation = int(db_max_key_rotation_retries)
+                if parsed_rotation >= 1:
+                    chat_config.API_RETRY_CONFIG[
+                        "MAX_KEY_ROTATION_RETRIES"
+                    ] = parsed_rotation
+                    log.info(f"  ✅ 主聊天轮换重试次数: {parsed_rotation}")
+            except (TypeError, ValueError):
+                log.warning(f"主聊天轮换重试次数解析失败: {db_max_key_rotation_retries}")
         
         # --- Imagen 配置 ---
         db_imagen_enabled = await self.db_manager.get_global_setting("imagen_enabled")
