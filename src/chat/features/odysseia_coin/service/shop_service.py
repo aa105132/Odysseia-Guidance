@@ -159,6 +159,56 @@ class ShopService:
             log.error(f"添加教程 '{title}' 时出错: {e}", exc_info=True)
             return False
 
+    async def add_discord_annotation(
+        self,
+        title: str,
+        description: str,
+        author_id: int,
+        author_name: str,
+        thread_id: int,
+        source_url: str,
+    ) -> bool:
+        """将 Discord 右键标注信息写入教程库，并触发后台向量化处理。"""
+        query = text(
+            """
+            INSERT INTO tutorials.tutorial_documents
+            (title, category, source_url, author, author_id, thread_id, original_content)
+            VALUES (:title, :category, :source_url, :author_name, :author_id, :thread_id, :description)
+            RETURNING id;
+        """
+        )
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    query,
+                    {
+                        "title": title,
+                        "category": "discord_annotation",
+                        "source_url": source_url,
+                        "author_name": author_name,
+                        "author_id": str(author_id),
+                        "thread_id": str(thread_id),
+                        "description": description,
+                    },
+                )
+                await session.commit()
+                new_document_id = result.scalar_one_or_none()
+
+                if new_document_id:
+                    log.info(
+                        f"Discord 标注 '{title}' 已成功添加，ID: {new_document_id}。准备进行RAG处理。"
+                    )
+                    asyncio.create_task(
+                        tutorial_rag_service.process_tutorial_document(new_document_id)
+                    )
+                    return True
+
+                log.error(f"未能获取 Discord 标注 '{title}' 的ID。")
+                return False
+        except Exception as e:
+            log.error(f"添加 Discord 标注 '{title}' 时出错: {e}", exc_info=True)
+            return False
+
     async def delete_tutorial(self, tutorial_id: int, author_id: int) -> bool:
         """删除一个教程，包括其数据库记录和向量存储。"""
         log.info(f"用户 {author_id} 正在尝试删除教程 ID: {tutorial_id}")
