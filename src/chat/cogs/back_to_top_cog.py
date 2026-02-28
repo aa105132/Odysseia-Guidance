@@ -2,7 +2,7 @@
 
 """
 回顶功能 Cog
-当用户在帖子中发送"回顶"、"回到顶楼"等关键词时，
+当用户在帖子中发送"/回顶"、"回顶"、"回到顶楼"、"/回到顶楼"时，
 自动发送帖子顶楼的链接，并在3分钟后自动删除消息。
 """
 
@@ -10,28 +10,24 @@ import discord
 from discord.ext import commands
 import logging
 import asyncio
-import re
 import random
 
 log = logging.getLogger(__name__)
 
-# 回顶关键词列表
-BACK_TO_TOP_KEYWORDS = [
+# 仅响应这四个精确触发词
+BACK_TO_TOP_TRIGGERS = {
+    "/回顶",
     "回顶",
     "回到顶楼",
-    "返回顶楼",
-    "回顶楼",
-    "顶楼链接",
-    "回到顶部",
-    "返回顶部",
-    "回到1楼",
-    "回到一楼",
-    "跳转顶楼",
-    "去顶楼",
-    "看顶楼",
-    "顶楼在哪",
-    "btt",  # back to top
-]
+    "/回到顶楼",
+}
+
+# 3分钟后需删除的用户指令消息
+DELETE_USER_MESSAGES = {
+    "回顶",
+    "/回顶",
+    "/回到顶楼",
+}
 
 # 傲娇风格的回顶台词
 TSUNDERE_RESPONSES = [
@@ -56,17 +52,14 @@ class BackToTopCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # 编译正则表达式以提高效率
-        pattern = "|".join(re.escape(kw) for kw in BACK_TO_TOP_KEYWORDS)
-        self.keyword_pattern = re.compile(pattern, re.IGNORECASE)
 
     def _is_back_to_top_request(self, content: str) -> bool:
         """检查消息内容是否为回顶请求"""
-        # 消息内容较短且包含关键词
-        # 限制消息长度以避免误判
-        if len(content) > 30:
-            return False
-        return bool(self.keyword_pattern.search(content))
+        return content in BACK_TO_TOP_TRIGGERS
+
+    def _should_delete_user_message(self, content: str) -> bool:
+        """判断是否需要在延迟后删除用户触发消息"""
+        return content in DELETE_USER_MESSAGES
 
     async def _get_thread_first_message_link(self, thread: discord.Thread) -> str | None:
         """获取帖子第一条消息（顶楼）的链接"""
@@ -162,6 +155,15 @@ class BackToTopCog(commands.Cog):
                 pass
             except discord.Forbidden:
                 log.warning(f"无权限删除回顶链接消息 (帖子: '{thread.name}')")
+
+            try:
+                await message.delete()
+                log.info(f"已自动删除用户回顶消息 (帖子: '{thread.name}')")
+            except discord.NotFound:
+                # 用户消息已被手动删除
+                pass
+            except discord.Forbidden:
+                log.warning(f"无权限删除用户回顶消息 (帖子: '{thread.name}')")
             
         except discord.Forbidden:
             log.warning(f"无权限在帖子 '{thread.name}' 中发送回顶链接")
