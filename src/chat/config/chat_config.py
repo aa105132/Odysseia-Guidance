@@ -957,7 +957,7 @@ THREAD_COMMENTOR_CONFIG = {
         "THREAD_NEW_POST_INCLUDE_QUESTION_ANSWER", "true"
     ),
     "NEW_THREAD_REPLY_MAX_CHARS": _parse_int_env(
-        "THREAD_NEW_POST_REPLY_MAX_CHARS", 180
+        "THREAD_NEW_POST_REPLY_MAX_CHARS", 200
     ),
     "NEW_THREAD_RAG_ENABLED": _parse_bool_env("THREAD_NEW_POST_RAG_ENABLED", "true"),
     "NEW_THREAD_RAG_N_RESULTS": _parse_int_env(
@@ -1208,7 +1208,7 @@ CONFESSION_PROMPT = """
 
 WARMUP_MESSAGES = {
     "new_thread_comment_prompts": [
-        "你看到了 **{user_nickname}** 的新帖子。请给出一次高质量回复：重点围绕帖子内容做评价，明确赞美作者投入；若帖子含问句/求助，优先回答关键问题并给可执行建议；不要空泛夸夸，不要复读原文，不要承诺持续暖贴；只输出正文。"
+        "你看到了 **{user_nickname}** 的新帖子。请给出一次高质量回复：重点围绕帖子内容做评价，明确赞美作者投入；若帖子含问句或求助，优先回答关键问题并给可执行建议；表达必须友善、克制、尊重，禁止任何辱骂、阴阳怪气、挖苦、暗讽、嘲讽、贬低或攻击性措辞；禁止使用带侮辱意味的网络梗；最终回复不少于50个汉字；不要空泛夸夸，不要复读原文，不要承诺持续暖贴；只输出正文。"
     ],
     "consent_prompts": [
         "你在刷群时看到了 **{user_nickname}** 的新帖子。请像真实群友发一条暖贴：只输出1句，尽量控制在20个汉字内；全程保持月月的“七分娇三分傲”软萌人设，语气甜美黏人，极其关心大家；可轻微撒娇吐槽、少量玩梗（点到即止），不要密集堆梗；默认不说脏话；若用户先辱骂你，可用“傻B”短促回击一次，不必刻意避免人身攻击；需要大字报时必须用 Markdown `# ` 开头（#空格+内容），禁止输出“【大字报】”字样。"

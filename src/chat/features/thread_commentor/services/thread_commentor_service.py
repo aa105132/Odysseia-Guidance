@@ -169,7 +169,7 @@ class ThreadCommentorService:
             include_question_answer = bool(
                 thread_cfg.get("NEW_THREAD_INCLUDE_QUESTION_ANSWER", True)
             )
-            reply_max_chars = int(thread_cfg.get("NEW_THREAD_REPLY_MAX_CHARS", 180))
+            reply_max_chars = int(thread_cfg.get("NEW_THREAD_REPLY_MAX_CHARS", 200))
             reply_max_chars = max(60, min(reply_max_chars, 1000))
 
             # 4. 调用 RAG 服务进行世界书搜索（可配置）
@@ -220,9 +220,10 @@ class ThreadCommentorService:
             task_prompt = get_random_praise_prompt().format(user_nickname=user_nickname)
             task_prompt += (
                 "\n\n你当前只在新帖创建时回复一次，禁止进入持续暖聊模式。"
-                f"\n请把回复控制在 {reply_max_chars} 个汉字以内。"
+                f"\n请把回复控制在 50 到 {reply_max_chars} 个汉字之间。"
                 "\n优先做三件事：准确评价帖子内容、真诚赞美作者投入、若帖子里有问题则给出明确回答或可执行建议。"
             )
+            task_prompt += "\n若内容不足50字，请补充具体评价细节与可执行建议。"
 
             if style_focus == "praise_only":
                 task_prompt += "\n风格侧重：只做内容评价与鼓励，不主动回答问题。"
@@ -242,6 +243,9 @@ class ThreadCommentorService:
                 task_prompt += "\n回复语气可稍完整，2-4句，保证信息密度与可读性。"
 
             task_prompt += "\n不要复述整段原文，不要空泛夸夸。"
+            task_prompt += "\n回复语气必须友善、克制、尊重。"
+            task_prompt += "\n严禁辱骂、阴阳怪气、暗讽、嘲讽、人身攻击、羞辱式玩笑。"
+            task_prompt += "\n若想表达不同意见，使用建设性建议，不可带攻击性措辞。"
             task_prompt += "\n遇到不确定信息，直接说明不确定并给排查方向。"
             task_prompt += "\n禁止使用‘后续我会一直来暖贴’等持续承诺。"
             task_prompt += "\n输出仅正文，不要带前后缀说明。"

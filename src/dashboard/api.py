@@ -982,7 +982,7 @@ async def get_all_config(token: str = Depends(verify_token)):
                 "NEW_THREAD_INCLUDE_QUESTION_ANSWER", True
             ),
             "new_thread_reply_max_chars": chat_config.THREAD_COMMENTOR_CONFIG.get(
-                "NEW_THREAD_REPLY_MAX_CHARS", 180
+                "NEW_THREAD_REPLY_MAX_CHARS", 200
             ),
             "new_thread_rag_enabled": chat_config.THREAD_COMMENTOR_CONFIG.get(
                 "NEW_THREAD_RAG_ENABLED", True
@@ -4969,7 +4969,7 @@ async def get_thread_auto_speaker_config(token: str = Depends(verify_token)):
         ),
         "new_thread_reply_max_chars": _safe_int(
             db_new_thread_reply_max_chars,
-            int(runtime.get("NEW_THREAD_REPLY_MAX_CHARS", 180)),
+            int(runtime.get("NEW_THREAD_REPLY_MAX_CHARS", 200)),
         ),
         "new_thread_rag_enabled": (
             db_new_thread_rag_enabled.lower() == "true"
@@ -5147,8 +5147,8 @@ async def update_thread_auto_speaker_config(
         updated["new_thread_include_question_answer"] = include_question_answer
 
     if config.new_thread_reply_max_chars is not None:
-        if not 60 <= config.new_thread_reply_max_chars <= 1000:
-            raise HTTPException(400, "新帖回复最大字数必须在 60-1000 之间")
+        if not 50 <= config.new_thread_reply_max_chars <= 1000:
+            raise HTTPException(400, "新帖回复最大字数必须在 50-1000 之间")
         max_chars = int(config.new_thread_reply_max_chars)
         runtime["NEW_THREAD_REPLY_MAX_CHARS"] = max_chars
         await chat_db_manager.set_global_setting(

@@ -3339,8 +3339,9 @@
                                 <div>
                                     <label class="block text-sm font-medium text-slate-300 mb-2">回复最大字数</label>
                                     <input type="number" x-model.number="threadAutoSpeakerForm.new_thread_reply_max_chars"
-                                           min="60" max="1000"
+                                           min="50" max="1000"
                                            class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                    <p class="text-xs text-slate-500 mt-1">新帖回复将强制不少于 50 字。</p>
                                 </div>
                                 <div class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-600/50 mt-7">
                                     <div>
@@ -3950,7 +3951,7 @@
                     new_thread_reply_mode: 'analysis',
                     new_thread_style_focus: 'praise_and_answer',
                     new_thread_include_question_answer: true,
-                    new_thread_reply_max_chars: 180,
+                    new_thread_reply_max_chars: 200,
                     new_thread_rag_enabled: true,
                     new_thread_rag_n_results: 10,
                 },
@@ -4249,7 +4250,7 @@
                         this.threadAutoSpeakerForm.new_thread_reply_mode = autoConfig.new_thread_reply_mode || 'analysis';
                         this.threadAutoSpeakerForm.new_thread_style_focus = autoConfig.new_thread_style_focus || 'praise_and_answer';
                         this.threadAutoSpeakerForm.new_thread_include_question_answer = autoConfig.new_thread_include_question_answer ?? true;
-                        this.threadAutoSpeakerForm.new_thread_reply_max_chars = autoConfig.new_thread_reply_max_chars ?? 180;
+                        this.threadAutoSpeakerForm.new_thread_reply_max_chars = autoConfig.new_thread_reply_max_chars ?? 200;
                         this.threadAutoSpeakerForm.new_thread_rag_enabled = autoConfig.new_thread_rag_enabled ?? true;
                         this.threadAutoSpeakerForm.new_thread_rag_n_results = autoConfig.new_thread_rag_n_results ?? 10;
                     }
@@ -4719,7 +4720,7 @@
                             this.threadAutoSpeakerForm.new_thread_reply_mode = data.new_thread_reply_mode || 'analysis';
                             this.threadAutoSpeakerForm.new_thread_style_focus = data.new_thread_style_focus || 'praise_and_answer';
                             this.threadAutoSpeakerForm.new_thread_include_question_answer = data.new_thread_include_question_answer ?? true;
-                            this.threadAutoSpeakerForm.new_thread_reply_max_chars = data.new_thread_reply_max_chars ?? 180;
+                            this.threadAutoSpeakerForm.new_thread_reply_max_chars = data.new_thread_reply_max_chars ?? 200;
                             this.threadAutoSpeakerForm.new_thread_rag_enabled = data.new_thread_rag_enabled ?? true;
                             this.threadAutoSpeakerForm.new_thread_rag_n_results = data.new_thread_rag_n_results ?? 10;
                         }
@@ -4781,8 +4782,8 @@
                         if (Number.isNaN(payload.new_thread_comment_delay_seconds) || payload.new_thread_comment_delay_seconds < 0 || payload.new_thread_comment_delay_seconds > 7200) {
                             throw new Error('新帖评价延迟需在 0-7200 秒之间');
                         }
-                        if (Number.isNaN(payload.new_thread_reply_max_chars) || payload.new_thread_reply_max_chars < 60 || payload.new_thread_reply_max_chars > 1000) {
-                            throw new Error('新帖回复最大字数需在 60-1000 之间');
+                        if (Number.isNaN(payload.new_thread_reply_max_chars) || payload.new_thread_reply_max_chars < 50 || payload.new_thread_reply_max_chars > 1000) {
+                            throw new Error('新帖回复最大字数需在 50-1000 之间');
                         }
                         if (Number.isNaN(payload.new_thread_rag_n_results) || payload.new_thread_rag_n_results < 1 || payload.new_thread_rag_n_results > 20) {
                             throw new Error('新帖RAG条数需在 1-20 之间');
