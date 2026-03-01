@@ -1022,7 +1022,11 @@ async def generate_image_comfyui(
     suppress_preview_message = 'generate_voice' in current_turn_tool_names
     if channel and preview_message and not suppress_preview_message:
         try:
-            await channel.send(replace_emojis(preview_message))
+            processed_preview = replace_emojis(preview_message)
+            if message:
+                await message.reply(processed_preview, mention_author=False)
+            else:
+                await channel.send(processed_preview)
         except Exception as error:
             log.warning(f'发送 ComfyUI 预告消息失败: {error}')
 
@@ -1159,11 +1163,15 @@ async def generate_image_comfyui(
                         user_id=parsed_user_id,
                     )
 
-                sent_message = await channel.send(
-                    embed=embed,
-                    file=discord.File(io.BytesIO(media_bytes), filename=generated_filename, spoiler=(media_kind != 'video')),
-                    view=result_view,
-                )
+                send_kwargs = {
+                    'embed': embed,
+                    'file': discord.File(io.BytesIO(media_bytes), filename=generated_filename, spoiler=(media_kind != 'video')),
+                    'view': result_view,
+                }
+                if message:
+                    sent_message = await message.reply(**send_kwargs, mention_author=False)
+                else:
+                    sent_message = await channel.send(**send_kwargs)
                 if result_view is not None:
                     result_view.message = sent_message
 

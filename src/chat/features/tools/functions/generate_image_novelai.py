@@ -1370,7 +1370,10 @@ async def generate_image_novelai(
     if channel and preview_message and not suppress_preview_message:
         try:
             processed_message = replace_emojis(preview_message)
-            await channel.send(processed_message)
+            if message:
+                await message.reply(processed_message, mention_author=False)
+            else:
+                await channel.send(processed_message)
             log.info(f"已发送 NovelAI 图片生成预告消息")
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
@@ -1513,9 +1516,11 @@ async def generate_image_novelai(
                         appearance_summary=appearance_summary,
                     )
 
-                    sent_message = await channel.send(
-                        embed=embed, file=image_file, view=interaction_view
-                    )
+                    send_kwargs = {"embed": embed, "file": image_file, "view": interaction_view}
+                    if message:
+                        sent_message = await message.reply(**send_kwargs, mention_author=False)
+                    else:
+                        sent_message = await channel.send(**send_kwargs)
                     if parsed_user_id is not None:
                         await chat_db_manager.register_generated_image_message(
                             message_id=sent_message.id,

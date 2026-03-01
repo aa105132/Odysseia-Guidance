@@ -222,7 +222,10 @@ async def generate_image(
         try:
             # 替换表情占位符为实际表情
             processed_message = replace_emojis(preview_message)
-            preview_msg = await channel.send(processed_message)
+            if message:
+                preview_msg = await message.reply(processed_message, mention_author=False)
+            else:
+                preview_msg = await channel.send(processed_message)
             log.info(f"已发送图片生成预告消息: {preview_message[:50]}...")
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
@@ -374,7 +377,10 @@ async def generate_image(
                             send_kwargs = {"embed": embed, "files": batch_files}
                             if regenerate_view:
                                 send_kwargs["view"] = regenerate_view
-                            sent_message = await channel.send(**send_kwargs)
+                            if message:
+                                sent_message = await message.reply(**send_kwargs, mention_author=False)
+                            else:
+                                sent_message = await channel.send(**send_kwargs)
                         else:
                             sent_message = await channel.send(files=batch_files)
 
@@ -595,7 +601,10 @@ async def generate_images_batch(
     if channel and preview_message and not suppress_preview_message:
         try:
             processed_message = replace_emojis(preview_message)
-            preview_msg = await channel.send(processed_message)
+            if message:
+                preview_msg = await message.reply(processed_message, mention_author=False)
+            else:
+                preview_msg = await channel.send(processed_message)
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
     elif channel and preview_message and suppress_preview_message:
@@ -714,7 +723,10 @@ async def generate_images_batch(
                         # 只在第一批图片时附带 Embed
                         sent_message: Optional[discord.Message] = None
                         if batch_start == 0:
-                            sent_message = await channel.send(embed=embed, files=batch_files)
+                            if message:
+                                sent_message = await message.reply(embed=embed, files=batch_files, mention_author=False)
+                            else:
+                                sent_message = await channel.send(embed=embed, files=batch_files)
                         else:
                             sent_message = await channel.send(files=batch_files)
 
