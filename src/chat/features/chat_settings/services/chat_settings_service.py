@@ -357,6 +357,73 @@ class ChatSettingsService:
             apply_ghost_card_image_urls(**ghost_card_url_updates)
             log.info(f"  ✅ 抽鬼牌图片 URL 配置: 已加载 {len(ghost_card_url_updates)} 项")
 
+        # --- 帖子暖贴配置 ---
+        db_new_thread_comment_enabled = await self.db_manager.get_global_setting(
+            "thread_new_post_comment_enabled"
+        )
+        if db_new_thread_comment_enabled is not None:
+            enabled = db_new_thread_comment_enabled.lower() == "true"
+            chat_config.THREAD_COMMENTOR_CONFIG["NEW_THREAD_COMMENT_ENABLED"] = enabled
+            log.info(f"  ✅ 新帖自动评价开关: {db_new_thread_comment_enabled}")
+
+        db_new_thread_comment_delay = await self.db_manager.get_global_setting(
+            "thread_new_post_comment_delay_seconds"
+        )
+        if db_new_thread_comment_delay:
+            delay_seconds = int(db_new_thread_comment_delay)
+            chat_config.THREAD_COMMENTOR_CONFIG[
+                "NEW_THREAD_COMMENT_DELAY_SECONDS"
+            ] = delay_seconds
+            chat_config.THREAD_COMMENTOR_CONFIG["INITIAL_DELAY_SECONDS"] = delay_seconds
+
+        db_new_thread_reply_mode = await self.db_manager.get_global_setting(
+            "thread_new_post_reply_mode"
+        )
+        if db_new_thread_reply_mode is not None:
+            chat_config.THREAD_COMMENTOR_CONFIG["NEW_THREAD_REPLY_MODE"] = (
+                str(db_new_thread_reply_mode).strip().lower()
+            )
+
+        db_new_thread_style_focus = await self.db_manager.get_global_setting(
+            "thread_new_post_style_focus"
+        )
+        if db_new_thread_style_focus is not None:
+            chat_config.THREAD_COMMENTOR_CONFIG["NEW_THREAD_STYLE_FOCUS"] = (
+                str(db_new_thread_style_focus).strip().lower()
+            )
+
+        db_new_thread_include_question_answer = await self.db_manager.get_global_setting(
+            "thread_new_post_include_question_answer"
+        )
+        if db_new_thread_include_question_answer is not None:
+            chat_config.THREAD_COMMENTOR_CONFIG["NEW_THREAD_INCLUDE_QUESTION_ANSWER"] = (
+                db_new_thread_include_question_answer.lower() == "true"
+            )
+
+        db_new_thread_reply_max_chars = await self.db_manager.get_global_setting(
+            "thread_new_post_reply_max_chars"
+        )
+        if db_new_thread_reply_max_chars:
+            chat_config.THREAD_COMMENTOR_CONFIG["NEW_THREAD_REPLY_MAX_CHARS"] = int(
+                db_new_thread_reply_max_chars
+            )
+
+        db_new_thread_rag_enabled = await self.db_manager.get_global_setting(
+            "thread_new_post_rag_enabled"
+        )
+        if db_new_thread_rag_enabled is not None:
+            chat_config.THREAD_COMMENTOR_CONFIG["NEW_THREAD_RAG_ENABLED"] = (
+                db_new_thread_rag_enabled.lower() == "true"
+            )
+
+        db_new_thread_rag_n_results = await self.db_manager.get_global_setting(
+            "thread_new_post_rag_n_results"
+        )
+        if db_new_thread_rag_n_results:
+            chat_config.THREAD_COMMENTOR_CONFIG["NEW_THREAD_RAG_N_RESULTS"] = int(
+                db_new_thread_rag_n_results
+            )
+
         # --- 自动暖贴配置 ---
         db_auto_enabled = await self.db_manager.get_global_setting(
             "thread_auto_speaker_enabled"

@@ -3298,59 +3298,138 @@
                 <h2 class="text-2xl font-bold mb-6">自动暖贴设置</h2>
 
                 <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 mb-6 max-w-3xl">
-                    <div class="flex items-center justify-between mb-6">
-                        <div>
-                            <p class="font-medium">启用自动发言</p>
-                            <p class="text-sm text-slate-400">按配置的帖子 ID 定时暖聊，冷场时自动喊人续聊</p>
-                        </div>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" x-model="threadAutoSpeakerForm.enabled" class="sr-only peer">
-                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:bg-green-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
-                        </label>
-                    </div>
-
-                    <div class="space-y-4" :class="!threadAutoSpeakerForm.enabled && 'opacity-60'">
-                        <div>
-                            <label class="block text-sm font-medium text-slate-300 mb-2">目标 ID（每行一个）</label>
-                            <textarea x-model="threadAutoSpeakerForm.thread_ids_text"
-                                      rows="5"
-                                      placeholder="123456789012345678&#10;223456789012345679"
-                                      class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"></textarea>
-                            <p class="text-xs text-slate-500 mt-1">支持帖子 ID、论坛频道 ID、普通文本频道 ID、子区分类 ID（换行/逗号/空格分隔）。</p>
-                        </div>
-
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-medium text-slate-300 mb-2">轮询间隔（秒）</label>
-                                <input type="number" x-model.number="threadAutoSpeakerForm.check_interval_seconds"
-                                       min="30" max="3600"
-                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    <div class="space-y-4">
+                        <div class="p-4 bg-slate-700/30 rounded-lg border border-slate-600/50">
+                            <div class="flex items-center justify-between mb-2">
+                                <p class="font-medium">新帖只评一次</p>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="threadAutoSpeakerForm.new_thread_comment_enabled" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-slate-600 rounded-full peer peer-checked:bg-emerald-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
                             </div>
+                            <p class="text-xs text-slate-400 mb-3">开启后，机器人仅在新帖创建时回一次，不会在该帖持续暖聊。</p>
                             <div>
-                                <label class="block text-sm font-medium text-slate-300 mb-2">常规发言间隔（秒）</label>
-                                <input type="number" x-model.number="threadAutoSpeakerForm.message_interval_seconds"
-                                       min="60" max="86400"
-                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-slate-300 mb-2">冷场阈值（秒）</label>
-                                <input type="number" x-model.number="threadAutoSpeakerForm.idle_trigger_seconds"
-                                       min="300" max="604800"
-                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-slate-300 mb-2">冷场提醒间隔（秒）</label>
-                                <input type="number" x-model.number="threadAutoSpeakerForm.idle_reminder_seconds"
-                                       min="300" max="604800"
-                                       class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <label class="block text-sm font-medium text-slate-300 mb-2">新帖评价延迟（秒）</label>
+                                <input type="number" x-model.number="threadAutoSpeakerForm.new_thread_comment_delay_seconds"
+                                       min="0" max="7200"
+                                       class="w-full max-w-xs bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500">
                             </div>
                         </div>
 
-                        <div>
-                            <label class="block text-sm font-medium text-slate-300 mb-2">上下文消息条数</label>
-                            <input type="number" x-model.number="threadAutoSpeakerForm.context_message_limit"
-                                   min="5" max="80"
-                                   class="w-full max-w-xs bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        <div class="p-4 bg-slate-700/30 rounded-lg border border-slate-600/50 space-y-4">
+                            <p class="font-medium">新帖回复风格</p>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-300 mb-2">回复模式</label>
+                                    <select x-model="threadAutoSpeakerForm.new_thread_reply_mode"
+                                            class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                        <option value="analysis">分析型（2-4句）</option>
+                                        <option value="light">轻量型（1-2句）</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-300 mb-2">内容侧重点</label>
+                                    <select x-model="threadAutoSpeakerForm.new_thread_style_focus"
+                                            class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                        <option value="praise_and_answer">评价+赞美+答疑</option>
+                                        <option value="praise_only">仅评价赞美</option>
+                                        <option value="answer_only">优先答疑</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-300 mb-2">回复最大字数</label>
+                                    <input type="number" x-model.number="threadAutoSpeakerForm.new_thread_reply_max_chars"
+                                           min="60" max="1000"
+                                           class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                                <div class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-600/50 mt-7">
+                                    <div>
+                                        <p class="text-sm font-medium">检测并回答帖子问题</p>
+                                        <p class="text-xs text-slate-400">开启后会优先回答作者在新帖里的问句</p>
+                                    </div>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" x-model="threadAutoSpeakerForm.new_thread_include_question_answer" class="sr-only peer">
+                                        <div class="w-11 h-6 bg-slate-600 rounded-full peer peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="p-4 bg-slate-700/30 rounded-lg border border-slate-600/50 space-y-3">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="font-medium">新帖评价使用 RAG</p>
+                                    <p class="text-xs text-slate-400">给新帖评价补充社区知识，避免答偏</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="threadAutoSpeakerForm.new_thread_rag_enabled" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-slate-600 rounded-full peer peer-checked:bg-indigo-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">RAG 参考条数</label>
+                                <input type="number" x-model.number="threadAutoSpeakerForm.new_thread_rag_n_results"
+                                       min="1" max="20"
+                                       class="w-full max-w-xs bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            </div>
+                        </div>
+
+                        <div class="p-4 bg-slate-700/30 rounded-lg border border-slate-600/50">
+                            <div class="flex items-center justify-between mb-4">
+                                <div>
+                                    <p class="font-medium">启用自动发言</p>
+                                    <p class="text-sm text-slate-400">按配置目标定时暖聊，冷场时自动喊人续聊</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" x-model="threadAutoSpeakerForm.enabled" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:bg-green-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                                </label>
+                            </div>
+
+                            <div class="space-y-4" :class="!threadAutoSpeakerForm.enabled && 'opacity-60'">
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-300 mb-2">目标 ID（每行一个）</label>
+                                    <textarea x-model="threadAutoSpeakerForm.thread_ids_text"
+                                              rows="5"
+                                              placeholder="123456789012345678&#10;223456789012345679"
+                                              class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"></textarea>
+                                    <p class="text-xs text-slate-500 mt-1">支持帖子 ID、论坛频道 ID、普通文本频道 ID、子区分类 ID（换行/逗号/空格分隔）。</p>
+                                </div>
+
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">轮询间隔（秒）</label>
+                                        <input type="number" x-model.number="threadAutoSpeakerForm.check_interval_seconds"
+                                               min="30" max="3600"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">常规发言间隔（秒）</label>
+                                        <input type="number" x-model.number="threadAutoSpeakerForm.message_interval_seconds"
+                                               min="60" max="86400"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">冷场阈值（秒）</label>
+                                        <input type="number" x-model.number="threadAutoSpeakerForm.idle_trigger_seconds"
+                                               min="300" max="604800"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">冷场提醒间隔（秒）</label>
+                                        <input type="number" x-model.number="threadAutoSpeakerForm.idle_reminder_seconds"
+                                               min="300" max="604800"
+                                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-300 mb-2">上下文消息条数</label>
+                                    <input type="number" x-model.number="threadAutoSpeakerForm.context_message_limit"
+                                           min="5" max="80"
+                                           class="w-full max-w-xs bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                </div>
+                            </div>
                         </div>
 
                         <button @click="saveThreadAutoSpeakerConfig()"
@@ -3866,6 +3945,14 @@
                     idle_trigger_seconds: 7200,
                     idle_reminder_seconds: 3600,
                     context_message_limit: 20,
+                    new_thread_comment_enabled: true,
+                    new_thread_comment_delay_seconds: 600,
+                    new_thread_reply_mode: 'analysis',
+                    new_thread_style_focus: 'praise_and_answer',
+                    new_thread_include_question_answer: true,
+                    new_thread_reply_max_chars: 180,
+                    new_thread_rag_enabled: true,
+                    new_thread_rag_n_results: 10,
                 },
 
                 // 网络搜索数据
@@ -4157,6 +4244,14 @@
                         this.threadAutoSpeakerForm.idle_trigger_seconds = autoConfig.idle_trigger_seconds ?? 7200;
                         this.threadAutoSpeakerForm.idle_reminder_seconds = autoConfig.idle_reminder_seconds ?? 3600;
                         this.threadAutoSpeakerForm.context_message_limit = autoConfig.context_message_limit ?? 20;
+                        this.threadAutoSpeakerForm.new_thread_comment_enabled = autoConfig.new_thread_comment_enabled ?? true;
+                        this.threadAutoSpeakerForm.new_thread_comment_delay_seconds = autoConfig.new_thread_comment_delay_seconds ?? 600;
+                        this.threadAutoSpeakerForm.new_thread_reply_mode = autoConfig.new_thread_reply_mode || 'analysis';
+                        this.threadAutoSpeakerForm.new_thread_style_focus = autoConfig.new_thread_style_focus || 'praise_and_answer';
+                        this.threadAutoSpeakerForm.new_thread_include_question_answer = autoConfig.new_thread_include_question_answer ?? true;
+                        this.threadAutoSpeakerForm.new_thread_reply_max_chars = autoConfig.new_thread_reply_max_chars ?? 180;
+                        this.threadAutoSpeakerForm.new_thread_rag_enabled = autoConfig.new_thread_rag_enabled ?? true;
+                        this.threadAutoSpeakerForm.new_thread_rag_n_results = autoConfig.new_thread_rag_n_results ?? 10;
                     }
                     // 加载表情配置
                     this.loadEmojiConfig();
@@ -4619,6 +4714,14 @@
                             this.threadAutoSpeakerForm.idle_trigger_seconds = data.idle_trigger_seconds ?? 7200;
                             this.threadAutoSpeakerForm.idle_reminder_seconds = data.idle_reminder_seconds ?? 3600;
                             this.threadAutoSpeakerForm.context_message_limit = data.context_message_limit ?? 20;
+                            this.threadAutoSpeakerForm.new_thread_comment_enabled = data.new_thread_comment_enabled ?? true;
+                            this.threadAutoSpeakerForm.new_thread_comment_delay_seconds = data.new_thread_comment_delay_seconds ?? 600;
+                            this.threadAutoSpeakerForm.new_thread_reply_mode = data.new_thread_reply_mode || 'analysis';
+                            this.threadAutoSpeakerForm.new_thread_style_focus = data.new_thread_style_focus || 'praise_and_answer';
+                            this.threadAutoSpeakerForm.new_thread_include_question_answer = data.new_thread_include_question_answer ?? true;
+                            this.threadAutoSpeakerForm.new_thread_reply_max_chars = data.new_thread_reply_max_chars ?? 180;
+                            this.threadAutoSpeakerForm.new_thread_rag_enabled = data.new_thread_rag_enabled ?? true;
+                            this.threadAutoSpeakerForm.new_thread_rag_n_results = data.new_thread_rag_n_results ?? 10;
                         }
                     } catch (e) {
                         console.error('加载自动暖贴配置失败', e);
@@ -4637,7 +4740,53 @@
                             idle_trigger_seconds: parseInt(this.threadAutoSpeakerForm.idle_trigger_seconds),
                             idle_reminder_seconds: parseInt(this.threadAutoSpeakerForm.idle_reminder_seconds),
                             context_message_limit: parseInt(this.threadAutoSpeakerForm.context_message_limit),
+                            new_thread_comment_enabled: !!this.threadAutoSpeakerForm.new_thread_comment_enabled,
+                            new_thread_comment_delay_seconds: parseInt(this.threadAutoSpeakerForm.new_thread_comment_delay_seconds),
+                            new_thread_reply_mode: this.threadAutoSpeakerForm.new_thread_reply_mode,
+                            new_thread_style_focus: this.threadAutoSpeakerForm.new_thread_style_focus,
+                            new_thread_include_question_answer: !!this.threadAutoSpeakerForm.new_thread_include_question_answer,
+                            new_thread_reply_max_chars: parseInt(this.threadAutoSpeakerForm.new_thread_reply_max_chars),
+                            new_thread_rag_enabled: !!this.threadAutoSpeakerForm.new_thread_rag_enabled,
+                            new_thread_rag_n_results: parseInt(this.threadAutoSpeakerForm.new_thread_rag_n_results),
                         };
+
+                        const validReplyModes = ['analysis', 'light'];
+                        if (!validReplyModes.includes(payload.new_thread_reply_mode)) {
+                            throw new Error('新帖回复模式无效');
+                        }
+
+                        const validStyleFocus = ['praise_and_answer', 'praise_only', 'answer_only'];
+                        if (!validStyleFocus.includes(payload.new_thread_style_focus)) {
+                            throw new Error('新帖侧重点配置无效');
+                        }
+
+                        if (Number.isNaN(payload.check_interval_seconds) || payload.check_interval_seconds < 30 || payload.check_interval_seconds > 3600) {
+                            throw new Error('轮询间隔需在 30-3600 秒之间');
+                        }
+                        if (Number.isNaN(payload.message_interval_seconds) || payload.message_interval_seconds < 60 || payload.message_interval_seconds > 86400) {
+                            throw new Error('常规发言间隔需在 60-86400 秒之间');
+                        }
+                        if (Number.isNaN(payload.idle_trigger_seconds) || payload.idle_trigger_seconds < 300 || payload.idle_trigger_seconds > 604800) {
+                            throw new Error('冷场阈值需在 300-604800 秒之间');
+                        }
+                        if (Number.isNaN(payload.idle_reminder_seconds) || payload.idle_reminder_seconds < 300 || payload.idle_reminder_seconds > 604800) {
+                            throw new Error('冷场提醒间隔需在 300-604800 秒之间');
+                        }
+                        if (payload.idle_reminder_seconds > payload.idle_trigger_seconds) {
+                            throw new Error('冷场提醒间隔不能大于冷场阈值');
+                        }
+                        if (Number.isNaN(payload.context_message_limit) || payload.context_message_limit < 5 || payload.context_message_limit > 80) {
+                            throw new Error('上下文消息条数需在 5-80 之间');
+                        }
+                        if (Number.isNaN(payload.new_thread_comment_delay_seconds) || payload.new_thread_comment_delay_seconds < 0 || payload.new_thread_comment_delay_seconds > 7200) {
+                            throw new Error('新帖评价延迟需在 0-7200 秒之间');
+                        }
+                        if (Number.isNaN(payload.new_thread_reply_max_chars) || payload.new_thread_reply_max_chars < 60 || payload.new_thread_reply_max_chars > 1000) {
+                            throw new Error('新帖回复最大字数需在 60-1000 之间');
+                        }
+                        if (Number.isNaN(payload.new_thread_rag_n_results) || payload.new_thread_rag_n_results < 1 || payload.new_thread_rag_n_results > 20) {
+                            throw new Error('新帖RAG条数需在 1-20 之间');
+                        }
 
                         const response = await fetch('/api/config/thread-auto-speaker', {
                             method: 'PUT',

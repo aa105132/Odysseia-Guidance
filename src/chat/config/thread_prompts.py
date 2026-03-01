@@ -4,8 +4,11 @@ from src.chat.config.chat_config import WARMUP_MESSAGES
 
 
 def get_random_praise_prompt():
-    """从列表中随机选择一个暖贴提示词"""
-    return random.choice(WARMUP_MESSAGES["consent_prompts"])
+    """从列表中随机选择一个新帖评价提示词"""
+    prompts = WARMUP_MESSAGES.get("new_thread_comment_prompts")
+    if not prompts:
+        prompts = WARMUP_MESSAGES["consent_prompts"]
+    return random.choice(prompts)
 
 
 def get_random_auto_chat_prompt(is_idle_call: bool = False):

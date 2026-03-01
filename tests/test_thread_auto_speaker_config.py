@@ -23,7 +23,12 @@ if "psycopg2" not in sys.modules:
     sys.modules["psycopg2.extras"] = fake_psycopg2_extras
     sys.modules["psycopg2.extensions"] = fake_psycopg2_extensions
 
-from src.dashboard.api import _normalize_thread_ids, _parse_thread_ids_text, _safe_int
+from src.dashboard.api import (
+    _normalize_thread_ids,
+    _parse_thread_ids_text,
+    _safe_int,
+    ThreadAutoSpeakerConfigUpdate,
+)
 from src.chat.features.chat_settings.services.chat_settings_service import (
     _parse_id_set_from_text,
 )

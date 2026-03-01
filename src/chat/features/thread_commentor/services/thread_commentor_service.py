@@ -153,45 +153,98 @@ class ThreadCommentorService:
             # 3. 获取用户记忆
             user_memory = await self._get_user_memory(user_id)
 
-            # 4. 新增：调用 RAG 服务进行世界书搜索
-            rag_context = ""
-            try:
-                log.info(f"开始为帖子 '{title}' 的内容进行 RAG 搜索...")
-                rag_results = await world_book_service.find_entries(
-                    latest_query=thread_full_content,
-                    user_id=user_id,
-                    guild_id=thread.guild.id,
-                    user_name=user_nickname,
-                    n_results=chat_config.RAG_N_RESULTS_THREAD_COMMENTOR,  # 最多获取10个相关条目
-                    max_distance=0.7,
-                )
-                if rag_results:
-                    rag_context_parts = [
-                        "为了帮助你更好地理解帖子中可能提到的社区术语，这里有一些相关的背景知识："
-                    ]
-                    for result in rag_results:
-                        entry_title = result.get("metadata", {}).get(
-                            "title", "未知标题"
-                        )
-                        entry_content = result.get("document", "无内容")
-                        rag_context_parts.append(
-                            f"- **{entry_title}**: {entry_content}"
-                        )
+            thread_cfg = chat_config.THREAD_COMMENTOR_CONFIG
+            new_thread_reply_mode = str(
+                thread_cfg.get("NEW_THREAD_REPLY_MODE", "analysis")
+            ).strip().lower()
+            if new_thread_reply_mode not in {"analysis", "light"}:
+                new_thread_reply_mode = "analysis"
 
-                    rag_context = "\n".join(rag_context_parts)
-                    log.info(
-                        f"RAG 搜索成功，为帖子 '{title}' 找到了 {len(rag_results)} 个相关条目。"
+            style_focus = str(
+                thread_cfg.get("NEW_THREAD_STYLE_FOCUS", "praise_and_answer")
+            ).strip().lower()
+            if style_focus not in {"praise_and_answer", "praise_only", "answer_only"}:
+                style_focus = "praise_and_answer"
+
+            include_question_answer = bool(
+                thread_cfg.get("NEW_THREAD_INCLUDE_QUESTION_ANSWER", True)
+            )
+            reply_max_chars = int(thread_cfg.get("NEW_THREAD_REPLY_MAX_CHARS", 180))
+            reply_max_chars = max(60, min(reply_max_chars, 1000))
+
+            # 4. 调用 RAG 服务进行世界书搜索（可配置）
+            rag_context = ""
+            if bool(thread_cfg.get("NEW_THREAD_RAG_ENABLED", True)):
+                rag_n_results = int(
+                    thread_cfg.get(
+                        "NEW_THREAD_RAG_N_RESULTS", chat_config.RAG_N_RESULTS_THREAD_COMMENTOR
                     )
-                else:
-                    log.info(f"RAG 搜索没有为帖子 '{title}' 找到相关条目。")
-            except Exception as e:
-                log.error(
-                    f"为帖子 '{title}' 进行 RAG 搜索时发生错误: {e}", exc_info=True
                 )
+                rag_n_results = max(1, min(rag_n_results, 20))
+                try:
+                    log.info(f"开始为帖子 '{title}' 的内容进行 RAG 搜索...")
+                    rag_results = await world_book_service.find_entries(
+                        latest_query=thread_full_content,
+                        user_id=user_id,
+                        guild_id=thread.guild.id,
+                        user_name=user_nickname,
+                        n_results=rag_n_results,
+                        max_distance=0.7,
+                    )
+                    if rag_results:
+                        rag_context_parts = [
+                            "为了帮助你更好地理解帖子中可能提到的社区术语，这里有一些相关的背景知识："
+                        ]
+                        for result in rag_results:
+                            entry_title = result.get("metadata", {}).get(
+                                "title", "未知标题"
+                            )
+                            entry_content = result.get("document", "无内容")
+                            rag_context_parts.append(
+                                f"- **{entry_title}**: {entry_content}"
+                            )
+
+                        rag_context = "\n".join(rag_context_parts)
+                        log.info(
+                            f"RAG 搜索成功，为帖子 '{title}' 找到了 {len(rag_results)} 个相关条目。"
+                        )
+                    else:
+                        log.info(f"RAG 搜索没有为帖子 '{title}' 找到相关条目。")
+                except Exception as e:
+                    log.error(
+                        f"为帖子 '{title}' 进行 RAG 搜索时发生错误: {e}", exc_info=True
+                    )
 
             # 5. 准备调用所需的所有信息片段
             core_persona = get_thread_commentor_persona()
             task_prompt = get_random_praise_prompt().format(user_nickname=user_nickname)
+            task_prompt += (
+                "\n\n你当前只在新帖创建时回复一次，禁止进入持续暖聊模式。"
+                f"\n请把回复控制在 {reply_max_chars} 个汉字以内。"
+                "\n优先做三件事：准确评价帖子内容、真诚赞美作者投入、若帖子里有问题则给出明确回答或可执行建议。"
+            )
+
+            if style_focus == "praise_only":
+                task_prompt += "\n风格侧重：只做内容评价与鼓励，不主动回答问题。"
+            elif style_focus == "answer_only":
+                task_prompt += "\n风格侧重：优先回答问题，赞美保持简短。"
+            else:
+                task_prompt += "\n风格侧重：内容评价 + 赞美 + 问题解答三者兼顾。"
+
+            if include_question_answer:
+                task_prompt += "\n若帖子中出现问句或求助，请必须正面回应关键问题。"
+            else:
+                task_prompt += "\n若帖子中出现问句，仅做简短点到，不展开答案。"
+
+            if new_thread_reply_mode == "light":
+                task_prompt += "\n回复语气轻松简短，1-2句即可。"
+            else:
+                task_prompt += "\n回复语气可稍完整，2-4句，保证信息密度与可读性。"
+
+            task_prompt += "\n不要复述整段原文，不要空泛夸夸。"
+            task_prompt += "\n遇到不确定信息，直接说明不确定并给排查方向。"
+            task_prompt += "\n禁止使用‘后续我会一直来暖贴’等持续承诺。"
+            task_prompt += "\n输出仅正文，不要带前后缀说明。"
 
             log.info(f"为帖子 '{title}' 构建带有破限功能的统一上下文，即将调用AI服务。")
 

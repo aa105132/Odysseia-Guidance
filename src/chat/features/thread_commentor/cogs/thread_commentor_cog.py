@@ -406,6 +406,10 @@ class ThreadCommentorCog(commands.Cog):
         """
         由中央事件处理器调用的公共方法，用于对新帖子进行暖贴评价。
         """
+        if not THREAD_COMMENTOR_CONFIG.get("NEW_THREAD_COMMENT_ENABLED", True):
+            log.debug("[ThreadCommentorCog] 新帖自动评价已关闭，跳过。")
+            return
+
         # 检查发帖人是否为机器人本身，避免自我循环
         if thread.owner_id == self.bot.user.id:
             log.info(
@@ -434,8 +438,13 @@ class ThreadCommentorCog(commands.Cog):
 
         log.info(f"[ThreadCommentorCog] 帖子作者: {user_nickname} (ID: {user_id})")
 
-        # 添加一个随机延迟，让回复看起来更自然
-        delay = THREAD_COMMENTOR_CONFIG["INITIAL_DELAY_SECONDS"]
+        # 添加延迟，让回复看起来更自然
+        delay = int(
+            THREAD_COMMENTOR_CONFIG.get(
+                "NEW_THREAD_COMMENT_DELAY_SECONDS",
+                THREAD_COMMENTOR_CONFIG.get("INITIAL_DELAY_SECONDS", 600),
+            )
+        )
         log.info(f"[ThreadCommentorCog] 等待 {delay} 秒后发送评价...")
         await asyncio.sleep(delay)
 

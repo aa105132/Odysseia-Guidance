@@ -647,6 +647,14 @@ class ThreadAutoSpeakerConfigUpdate(BaseModel):
     idle_trigger_seconds: Optional[int] = None
     idle_reminder_seconds: Optional[int] = None
     context_message_limit: Optional[int] = None
+    new_thread_comment_enabled: Optional[bool] = None
+    new_thread_comment_delay_seconds: Optional[int] = None
+    new_thread_reply_mode: Optional[str] = None
+    new_thread_style_focus: Optional[str] = None
+    new_thread_include_question_answer: Optional[bool] = None
+    new_thread_reply_max_chars: Optional[int] = None
+    new_thread_rag_enabled: Optional[bool] = None
+    new_thread_rag_n_results: Optional[int] = None
 
 
 class EmojiMapping(BaseModel):
@@ -957,6 +965,30 @@ async def get_all_config(token: str = Depends(verify_token)):
             ),
             "context_message_limit": chat_config.THREAD_COMMENTOR_CONFIG.get(
                 "AUTO_CHAT_CONTEXT_MESSAGE_LIMIT", 20
+            ),
+            "new_thread_comment_enabled": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "NEW_THREAD_COMMENT_ENABLED", True
+            ),
+            "new_thread_comment_delay_seconds": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "NEW_THREAD_COMMENT_DELAY_SECONDS", 600
+            ),
+            "new_thread_reply_mode": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "NEW_THREAD_REPLY_MODE", "analysis"
+            ),
+            "new_thread_style_focus": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "NEW_THREAD_STYLE_FOCUS", "praise_and_answer"
+            ),
+            "new_thread_include_question_answer": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "NEW_THREAD_INCLUDE_QUESTION_ANSWER", True
+            ),
+            "new_thread_reply_max_chars": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "NEW_THREAD_REPLY_MAX_CHARS", 180
+            ),
+            "new_thread_rag_enabled": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "NEW_THREAD_RAG_ENABLED", True
+            ),
+            "new_thread_rag_n_results": chat_config.THREAD_COMMENTOR_CONFIG.get(
+                "NEW_THREAD_RAG_N_RESULTS", chat_config.RAG_N_RESULTS_THREAD_COMMENTOR
             ),
         },
     }
@@ -4853,6 +4885,31 @@ async def get_thread_auto_speaker_config(token: str = Depends(verify_token)):
         "thread_auto_speaker_context_message_limit"
     )
 
+    db_new_thread_comment_enabled = await chat_db_manager.get_global_setting(
+        "thread_new_post_comment_enabled"
+    )
+    db_new_thread_comment_delay = await chat_db_manager.get_global_setting(
+        "thread_new_post_comment_delay_seconds"
+    )
+    db_new_thread_reply_mode = await chat_db_manager.get_global_setting(
+        "thread_new_post_reply_mode"
+    )
+    db_new_thread_style_focus = await chat_db_manager.get_global_setting(
+        "thread_new_post_style_focus"
+    )
+    db_new_thread_include_question_answer = await chat_db_manager.get_global_setting(
+        "thread_new_post_include_question_answer"
+    )
+    db_new_thread_reply_max_chars = await chat_db_manager.get_global_setting(
+        "thread_new_post_reply_max_chars"
+    )
+    db_new_thread_rag_enabled = await chat_db_manager.get_global_setting(
+        "thread_new_post_rag_enabled"
+    )
+    db_new_thread_rag_n_results = await chat_db_manager.get_global_setting(
+        "thread_new_post_rag_n_results"
+    )
+
     return {
         "enabled": (
             db_enabled.lower() == "true"
@@ -4885,6 +4942,48 @@ async def get_thread_auto_speaker_config(token: str = Depends(verify_token)):
         "context_message_limit": _safe_int(
             db_context_limit,
             int(runtime.get("AUTO_CHAT_CONTEXT_MESSAGE_LIMIT", 20)),
+        ),
+        "new_thread_comment_enabled": (
+            db_new_thread_comment_enabled.lower() == "true"
+            if db_new_thread_comment_enabled is not None
+            else bool(runtime.get("NEW_THREAD_COMMENT_ENABLED", True))
+        ),
+        "new_thread_comment_delay_seconds": _safe_int(
+            db_new_thread_comment_delay,
+            int(runtime.get("NEW_THREAD_COMMENT_DELAY_SECONDS", 600)),
+        ),
+        "new_thread_reply_mode": (
+            str(db_new_thread_reply_mode).strip()
+            if db_new_thread_reply_mode is not None
+            else str(runtime.get("NEW_THREAD_REPLY_MODE", "analysis"))
+        ),
+        "new_thread_style_focus": (
+            str(db_new_thread_style_focus).strip()
+            if db_new_thread_style_focus is not None
+            else str(runtime.get("NEW_THREAD_STYLE_FOCUS", "praise_and_answer"))
+        ),
+        "new_thread_include_question_answer": (
+            db_new_thread_include_question_answer.lower() == "true"
+            if db_new_thread_include_question_answer is not None
+            else bool(runtime.get("NEW_THREAD_INCLUDE_QUESTION_ANSWER", True))
+        ),
+        "new_thread_reply_max_chars": _safe_int(
+            db_new_thread_reply_max_chars,
+            int(runtime.get("NEW_THREAD_REPLY_MAX_CHARS", 180)),
+        ),
+        "new_thread_rag_enabled": (
+            db_new_thread_rag_enabled.lower() == "true"
+            if db_new_thread_rag_enabled is not None
+            else bool(runtime.get("NEW_THREAD_RAG_ENABLED", True))
+        ),
+        "new_thread_rag_n_results": _safe_int(
+            db_new_thread_rag_n_results,
+            int(
+                runtime.get(
+                    "NEW_THREAD_RAG_N_RESULTS",
+                    chat_config.RAG_N_RESULTS_THREAD_COMMENTOR,
+                )
+            ),
         ),
     }
 
@@ -4989,6 +5088,94 @@ async def update_thread_auto_speaker_config(
             int(config.context_message_limit)
         )
         updated["context_message_limit"] = int(config.context_message_limit)
+
+    if config.new_thread_comment_enabled is not None:
+        enabled = bool(config.new_thread_comment_enabled)
+        runtime["NEW_THREAD_COMMENT_ENABLED"] = enabled
+        await chat_db_manager.set_global_setting(
+            "thread_new_post_comment_enabled", str(enabled).lower()
+        )
+        env_updates["THREAD_NEW_POST_COMMENT_ENABLED"] = str(enabled).lower()
+        updated["new_thread_comment_enabled"] = enabled
+
+    if config.new_thread_comment_delay_seconds is not None:
+        if not 0 <= config.new_thread_comment_delay_seconds <= 7200:
+            raise HTTPException(400, "新帖评价延迟必须在 0-7200 秒之间")
+        delay_seconds = int(config.new_thread_comment_delay_seconds)
+        runtime["NEW_THREAD_COMMENT_DELAY_SECONDS"] = delay_seconds
+        runtime["INITIAL_DELAY_SECONDS"] = delay_seconds
+        await chat_db_manager.set_global_setting(
+            "thread_new_post_comment_delay_seconds", str(delay_seconds)
+        )
+        env_updates["THREAD_NEW_POST_COMMENT_DELAY_SECONDS"] = str(delay_seconds)
+        updated["new_thread_comment_delay_seconds"] = delay_seconds
+
+    if config.new_thread_reply_mode is not None:
+        mode = str(config.new_thread_reply_mode).strip().lower()
+        allowed_modes = {"analysis", "light"}
+        if mode not in allowed_modes:
+            raise HTTPException(400, "新帖回复模式仅支持 analysis 或 light")
+        runtime["NEW_THREAD_REPLY_MODE"] = mode
+        await chat_db_manager.set_global_setting("thread_new_post_reply_mode", mode)
+        env_updates["THREAD_NEW_POST_REPLY_MODE"] = mode
+        updated["new_thread_reply_mode"] = mode
+
+    if config.new_thread_style_focus is not None:
+        style_focus = str(config.new_thread_style_focus).strip().lower()
+        allowed_focus = {"praise_and_answer", "praise_only", "answer_only"}
+        if style_focus not in allowed_focus:
+            raise HTTPException(
+                400, "新帖风格侧重点仅支持 praise_and_answer/praise_only/answer_only"
+            )
+        runtime["NEW_THREAD_STYLE_FOCUS"] = style_focus
+        await chat_db_manager.set_global_setting(
+            "thread_new_post_style_focus", style_focus
+        )
+        env_updates["THREAD_NEW_POST_STYLE_FOCUS"] = style_focus
+        updated["new_thread_style_focus"] = style_focus
+
+    if config.new_thread_include_question_answer is not None:
+        include_question_answer = bool(config.new_thread_include_question_answer)
+        runtime["NEW_THREAD_INCLUDE_QUESTION_ANSWER"] = include_question_answer
+        await chat_db_manager.set_global_setting(
+            "thread_new_post_include_question_answer",
+            str(include_question_answer).lower(),
+        )
+        env_updates["THREAD_NEW_POST_INCLUDE_QUESTION_ANSWER"] = str(
+            include_question_answer
+        ).lower()
+        updated["new_thread_include_question_answer"] = include_question_answer
+
+    if config.new_thread_reply_max_chars is not None:
+        if not 60 <= config.new_thread_reply_max_chars <= 1000:
+            raise HTTPException(400, "新帖回复最大字数必须在 60-1000 之间")
+        max_chars = int(config.new_thread_reply_max_chars)
+        runtime["NEW_THREAD_REPLY_MAX_CHARS"] = max_chars
+        await chat_db_manager.set_global_setting(
+            "thread_new_post_reply_max_chars", str(max_chars)
+        )
+        env_updates["THREAD_NEW_POST_REPLY_MAX_CHARS"] = str(max_chars)
+        updated["new_thread_reply_max_chars"] = max_chars
+
+    if config.new_thread_rag_enabled is not None:
+        rag_enabled = bool(config.new_thread_rag_enabled)
+        runtime["NEW_THREAD_RAG_ENABLED"] = rag_enabled
+        await chat_db_manager.set_global_setting(
+            "thread_new_post_rag_enabled", str(rag_enabled).lower()
+        )
+        env_updates["THREAD_NEW_POST_RAG_ENABLED"] = str(rag_enabled).lower()
+        updated["new_thread_rag_enabled"] = rag_enabled
+
+    if config.new_thread_rag_n_results is not None:
+        if not 1 <= config.new_thread_rag_n_results <= 20:
+            raise HTTPException(400, "新帖RAG条数必须在 1-20 之间")
+        rag_n_results = int(config.new_thread_rag_n_results)
+        runtime["NEW_THREAD_RAG_N_RESULTS"] = rag_n_results
+        await chat_db_manager.set_global_setting(
+            "thread_new_post_rag_n_results", str(rag_n_results)
+        )
+        env_updates["THREAD_NEW_POST_RAG_N_RESULTS"] = str(rag_n_results)
+        updated["new_thread_rag_n_results"] = rag_n_results
 
     if not updated:
         return {"success": True, "message": "没有需要更新的配置"}
