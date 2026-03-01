@@ -176,7 +176,6 @@ async def _send_native_voice_message(
     audio_bytes: bytes,
     filename: str,
     duration_secs: float,
-    reference: Optional[discord.Message] = None,
 ) -> None:
     """
     走底层 HTTP 参数发送"原生语音消息"：
@@ -203,17 +202,11 @@ async def _send_native_voice_message(
     # 避免某些版本缺少 flags.is_voice_message 属性 setter。
     flags = MessageFlags._from_value(8192)
 
-    # 构造回复引用
-    msg_reference = None
-    if reference is not None:
-        msg_reference = discord.MessageReference.from_message(reference)
-
     with handle_message_parameters(
         content=None,
         attachments=[voice_file],
         flags=flags,
         allowed_mentions=state.allowed_mentions,
-        message_reference=msg_reference,
     ) as params:
         await state.http.send_message(channel_id, params=params)
 
@@ -384,7 +377,6 @@ async def generate_voice(
                             audio_bytes=result.audio_bytes,
                             filename=native_filename,
                             duration_secs=estimated_duration,
-                            reference=message,
                         )
                         sent_native_voice = True
                         log.info(
@@ -402,10 +394,7 @@ async def generate_voice(
                         io.BytesIO(result.audio_bytes),
                         filename=filename,
                     )
-                    if message:
-                        await message.reply(file=audio_file, mention_author=False)
-                    else:
-                        await channel.send(file=audio_file)
+                    await channel.send(file=audio_file)
                     log.info(
                         f"语音已按普通附件发送: provider={result.provider}, model={result.model_name}, ext={result.file_ext}"
                     )
@@ -413,7 +402,10 @@ async def generate_voice(
                 # 可选：发送同文文本
                 if should_send_text_after_voice:
                     try:
-                        await channel.send(text)
+                        if message:
+                            await message.reply(text, mention_author=False)
+                        else:
+                            await channel.send(text)
                         text_sent_after_voice = True
                         log.info("语音后已补发同文文本。")
                     except Exception as text_send_error:
