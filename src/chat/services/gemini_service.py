@@ -16,6 +16,8 @@ import ipaddress
 import aiohttp
 from urllib.parse import urlparse
 
+from src.chat.services.regex_service import regex_service
+
 from PIL import Image
 import io
 
@@ -457,7 +459,7 @@ class GeminiService:
         formatted = re.sub(
             r"<CURRENT_USER_MESSAGE_TO_REPLY.*?>", "", formatted, flags=re.IGNORECASE
         )
-        # formatted = regex_service.clean_ai_output(formatted)
+        formatted = regex_service.clean_ai_output(formatted)
 
         # 2. Remove old Discord emoji codes (like :emoji_name:)
         discord_emoji_pattern = re.compile(r":\w+:")
@@ -3469,85 +3471,87 @@ class GeminiService:
                 return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
             return None
 
-    @_api_key_handler
     async def generate_thread_praise(
         self, conversation_history: List[Dict[str, Any]], client: Any = None
     ) -> Optional[str]:
         """
         专用于生成帖子夸奖的方法。
-        现在接收一个由 prompt_service 构建好的完整对话历史。
+        统一复用 generate_simple_response 的路由能力，
+        以便自动遵循 Dashboard 中的 API 格式（Gemini / OpenAI 兼容）。
 
         Args:
             conversation_history: 完整的对话历史列表。
-            client: (由装饰器注入) Gemini 客户端。
+            client: 保留参数以兼容旧调用，当前逻辑不再依赖该参数。
 
         Returns:
             生成的夸奖文本，如果失败则返回 None。
         """
-        if not client:
-            raise ValueError("装饰器未能提供客户端实例。")
+        if not conversation_history:
+            return None
 
-        loop = asyncio.get_event_loop()
-        # --- (新增) 为暖贴功能启用思考 ---
         praise_config = app_config.GEMINI_THREAD_PRAISE_CONFIG.copy()
         thinking_budget = praise_config.pop("thinking_budget", None)
 
-        gen_config = types.GenerateContentConfig(
-            **praise_config,
-            safety_settings=self.safety_settings,
-        )
-
         final_model_name = self.default_model_name
         if thinking_budget is not None and not self._is_no_thinking_model(final_model_name):
-            gen_config.thinking_config = types.ThinkingConfig(
-                include_thoughts=True, thinking_budget=thinking_budget
+            praise_config["thinking_config"] = {
+                "include_thoughts": True,
+                "thinking_budget": thinking_budget,
+            }
+            log.info(f"已为暖贴功能注入思维链配置 (Thinking)，预算: {thinking_budget}。")
+
+        messages: List[Dict[str, str]] = []
+        for turn in conversation_history:
+            role = str(turn.get("role", "")).strip().lower()
+            if role not in {"user", "model", "assistant"}:
+                continue
+
+            parts = turn.get("parts", [])
+            text_fragments: List[str] = []
+
+            if isinstance(parts, list):
+                for part in parts:
+                    if isinstance(part, str):
+                        cleaned_part = part.strip()
+                        if cleaned_part:
+                            text_fragments.append(cleaned_part)
+                    elif isinstance(part, dict):
+                        maybe_text = part.get("text")
+                        if isinstance(maybe_text, str):
+                            cleaned_part = maybe_text.strip()
+                            if cleaned_part:
+                                text_fragments.append(cleaned_part)
+            elif isinstance(parts, str):
+                cleaned_part = parts.strip()
+                if cleaned_part:
+                    text_fragments.append(cleaned_part)
+
+            if not text_fragments:
+                continue
+
+            messages.append(
+                {
+                    "role": role,
+                    "content": "\n".join(text_fragments),
+                }
             )
-            log.info(f"已为暖贴功能启用思维链 (Thinking)，预算: {thinking_budget}。")
 
-        final_contents = self._prepare_api_contents(conversation_history)
+        if not messages:
+            log.warning("generate_thread_praise 未构建出有效 messages，已跳过调用。")
+            return None
 
-        # 如果开启了 AI 完整上下文日志，则打印到终端
-        if app_config.DEBUG_CONFIG["LOG_AI_FULL_CONTEXT"]:
-            log.info("--- 暖贴功能 · 完整 AI 上下文 ---")
-            log.info(
-                json.dumps(
-                    [
-                        self._serialize_parts_for_logging_full(content)
-                        for content in final_contents
-                    ],
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
-            log.info("------------------------------------")
-
-        response = await loop.run_in_executor(
-            self.executor,
-            lambda: client.models.generate_content(
-                model=final_model_name, contents=final_contents, config=gen_config
-            ),
+        generated_text = await self.generate_simple_response(
+            prompt="",
+            generation_config=praise_config,
+            model_name=final_model_name,
+            messages=messages,
+            return_error_text=False,
         )
 
-        if response.parts:
-            # --- (修正) 采用与主对话相同的逻辑，正确分离思考过程和最终回复 ---
-            final_text = ""
-            for part in response.parts:
-                # 关键：只有当 part 不是思考过程时，才将其文本内容计入最终回复
-                if hasattr(part, "thought") and part.thought:
-                    # 这是思考过程，忽略它
-                    pass
-                elif hasattr(part, "text"):
-                    # 这是最终回复
-                    final_text += part.text
-            return final_text.strip()
+        if not generated_text:
+            return None
 
-        log.warning(f"generate_thread_praise 未能生成有效内容。API 响应: {response}")
-        if response.prompt_feedback and response.prompt_feedback.block_reason:
-            log.warning(
-                f"请求可能被安全策略阻止，原因: {response.prompt_feedback.block_reason}"
-            )
-
-        return None
+        return regex_service.clean_ai_output(generated_text).strip()
 
     async def summarize_for_rag(
         self,

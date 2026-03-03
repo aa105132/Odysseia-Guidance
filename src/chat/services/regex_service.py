@@ -64,12 +64,36 @@ class RegexService:
         if not isinstance(text, str):
             return ""
 
-        # 移除模型输出中可能包含的各种思考过程标签和内容
+        # 移除模型输出中可能包含的各种思考过程标签和内容（XML风格）
         think_pattern = re.compile(
             r"<(思考|think|thinking|thought|scratchpad|reasoning|rationale)>.*?</\1>\s*",
             re.DOTALL | re.IGNORECASE,
         )
         text = think_pattern.sub("", text)
+
+        # 兼容方括号风格思考块：[thinking]...[/thinking] / [思考]...[/思考]
+        bracket_think_pattern = re.compile(
+            r"\[(思考|think|thinking|thought|scratchpad|reasoning|rationale)\].*?\[/\1\]\s*",
+            re.DOTALL | re.IGNORECASE,
+        )
+        text = bracket_think_pattern.sub("", text)
+
+        # 兼容部分模型泄露的前缀格式，例如：[image]thinking
+        image_think_prefix_pattern = re.compile(
+            r"\[image\]\s*(?:\[(?:思考|think|thinking|thought|scratchpad|reasoning|rationale)\]|(?:思考|think|thinking|thought|scratchpad|reasoning|rationale))\b\s*",
+            re.IGNORECASE,
+        )
+        text = image_think_prefix_pattern.sub("", text)
+
+        # 清理独立一行的 thinking 标记（避免残留）
+        standalone_think_line_pattern = re.compile(
+            r"^\s*(?:\[(?:思考|think|thinking|thought|scratchpad|reasoning|rationale)\]|(?:思考|think|thinking|thought|scratchpad|reasoning|rationale))\s*$",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        text = standalone_think_line_pattern.sub("", text)
+
+        # 合并清理后可能出现的多余空行
+        text = re.sub(r"\n{3,}", "\n\n", text)
 
         # 替换 1011 为 [数据删除]
         text = re.sub(r"1011", "[数据删除]", text)
