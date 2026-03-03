@@ -85,6 +85,41 @@ class GeminiImagenService:
             self._client is not None
             and app_config.GEMINI_IMAGEN_CONFIG.get("ENABLED", False)
         )
+
+    def _build_openai_timeout(self, streaming: bool = False) -> aiohttp.ClientTimeout:
+        """构建 OpenAI 兼容接口的超时配置。"""
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        total_default = 180 if streaming else 120
+        total_timeout = max(
+            30,
+            int(
+                config.get(
+                    "STREAMING_TIMEOUT_SECONDS" if streaming else "REQUEST_TIMEOUT_SECONDS",
+                    total_default,
+                )
+            ),
+        )
+        connect_timeout = max(3, int(config.get("CONNECT_TIMEOUT_SECONDS", 15)))
+        return aiohttp.ClientTimeout(
+            total=total_timeout,
+            connect=connect_timeout,
+            sock_connect=connect_timeout,
+            sock_read=total_timeout,
+        )
+
+    def _get_transient_retry_policy(self) -> tuple[int, float]:
+        """获取瞬态错误重试策略。"""
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        max_attempts = max(1, int(config.get("TRANSIENT_MAX_RETRIES", 2)))
+        base_delay = max(
+            0.2, float(config.get("TRANSIENT_RETRY_BASE_DELAY_SECONDS", 1.0))
+        )
+        return max_attempts, base_delay
+
+    @staticmethod
+    def _is_retryable_status(status_code: int) -> bool:
+        """判断 HTTP 状态码是否属于可重试的瞬态错误。"""
+        return status_code in {408, 425, 429, 500, 502, 503, 504, 520, 522, 524}
     
     def reload_config(self) -> dict:
         """
@@ -671,68 +706,98 @@ class GeminiImagenService:
                 model_name=model_name,
             )
         
-        # 非流式请求的原有逻辑
-        try:
-            base_url = self._client["base_url"].rstrip("/")
-            api_key = self._client["api_key"]
-            
-            # 构建提示词
-            full_prompt = f"请生成一张图片：{prompt}"
-            if negative_prompt:
-                full_prompt += f"\n请避免：{negative_prompt}"
-            if aspect_ratio != "1:1":
-                full_prompt += f"\n宽高比：{aspect_ratio}"
-            
-            log.info(f"[OpenAI格式] 正在使用 {model_name} 生成图像, 提示词: {prompt[:100]}...")
-            
-            # 构建请求
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            
-            payload = {
-                "model": model_name,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": full_prompt
-                    }
-                ],
-                "max_tokens": 4096,
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120)
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        log.error(f"OpenAI API 返回错误 {response.status}: {error_text[:500]}")
-                        return None
-                    
-                    data = await response.json()
-                    
-                    # 解析响应，提取图像
-                    images = await self._extract_images_from_openai_response(data)
-                    
-                    if images:
-                        log.info(f"成功生成 {len(images)} 张图像")
-                        return images
-                    else:
+        base_url = self._client["base_url"].rstrip("/")
+        api_key = self._client["api_key"]
+
+        # 构建提示词
+        full_prompt = f"请生成一张图片：{prompt}"
+        if negative_prompt:
+            full_prompt += f"\n请避免：{negative_prompt}"
+        if aspect_ratio != "1:1":
+            full_prompt += f"\n宽高比：{aspect_ratio}"
+
+        log.info(f"[OpenAI格式] 正在使用 {model_name} 生成图像, 提示词: {prompt[:100]}...")
+
+        # 构建请求
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": full_prompt
+                }
+            ],
+            "max_tokens": 4096,
+        }
+
+        retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
+        timeout = self._build_openai_timeout(streaming=False)
+
+        for attempt in range(1, retry_max_attempts + 1):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{base_url}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=timeout
+                    ) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            if self._is_retryable_status(response.status) and attempt < retry_max_attempts:
+                                delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                                log.warning(
+                                    f"OpenAI API 返回可重试错误 {response.status}，将在 {delay:.1f}s 后重试 "
+                                    f"({attempt}/{retry_max_attempts})"
+                                )
+                                await asyncio.sleep(delay)
+                                continue
+                            log.error(f"OpenAI API 返回错误 {response.status}: {error_text[:500]}")
+                            return None
+
+                        data = await response.json()
+
+                        # 解析响应，提取图像
+                        images = await self._extract_images_from_openai_response(data)
+
+                        if images:
+                            log.info(f"成功生成 {len(images)} 张图像")
+                            return images
+
                         log.warning("API 返回成功但没有找到图像数据")
                         log.debug(f"响应内容: {json.dumps(data, ensure_ascii=False)[:1000]}")
                         return None
 
-        except asyncio.TimeoutError:
-            log.error("OpenAI API 请求超时")
-            return None
-        except Exception as e:
-            log.error(f"OpenAI 格式生成图像时发生错误: {e}", exc_info=True)
-            return None
+            except asyncio.TimeoutError:
+                if attempt < retry_max_attempts:
+                    delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                    log.warning(
+                        f"OpenAI API 请求超时，{delay:.1f}s 后重试 ({attempt}/{retry_max_attempts})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                log.error("OpenAI API 请求超时")
+                return None
+            except aiohttp.ClientError as e:
+                if attempt < retry_max_attempts:
+                    delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                    log.warning(
+                        f"OpenAI API 网络错误: {e}，{delay:.1f}s 后重试 ({attempt}/{retry_max_attempts})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                log.error(f"OpenAI API 网络错误: {e}")
+                return None
+            except Exception as e:
+                log.error(f"OpenAI 格式生成图像时发生错误: {e}", exc_info=True)
+                return None
+
+        return None
 
     async def _generate_image_openai_format_streaming(
         self,
@@ -785,7 +850,7 @@ class GeminiImagenService:
                     f"{base_url}/chat/completions",
                     headers=headers,
                     json=payload,
-                    timeout=aiohttp.ClientTimeout(total=180)  # 流式请求可能需要更长时间
+                    timeout=self._build_openai_timeout(streaming=True)
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -1527,85 +1592,116 @@ class GeminiImagenService:
         使用 OpenAI 兼容的 chat/completions API 进行图像编辑
         支持多张参考图。
         """
-        try:
-            base_url = self._client["base_url"].rstrip("/")
-            api_key = self._client["api_key"]
-            
-            # 构建提示词
-            img_count = len(reference_images)
-            if img_count == 1:
-                full_prompt = f"请根据以下指令修改这张图片：{edit_prompt}"
-            else:
-                full_prompt = f"以下是{img_count}张参考图片，请根据指令进行创作：{edit_prompt}"
-            if aspect_ratio != "1:1":
-                full_prompt += f"\n输出图片的宽高比应为：{aspect_ratio}"
-            
-            log.info(f"[OpenAI格式 图生图] 正在使用 {model_name} 编辑图像 ({img_count}张参考图), 指令: {edit_prompt[:100]}...")
-            
-            # 构建请求
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            
-            # 构建 content 数组：先放所有参考图，最后放文字提示
-            content_parts = []
-            for img_info in reference_images:
-                image_b64 = base64.b64encode(img_info["data"]).decode('utf-8')
-                mime_type = img_info.get("mime_type", "image/png")
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{image_b64}"
-                    }
-                })
+        base_url = self._client["base_url"].rstrip("/")
+        api_key = self._client["api_key"]
+        
+        # 构建提示词
+        img_count = len(reference_images)
+        if img_count == 1:
+            full_prompt = f"请根据以下指令修改这张图片：{edit_prompt}"
+        else:
+            full_prompt = f"以下是{img_count}张参考图片，请根据指令进行创作：{edit_prompt}"
+        if aspect_ratio != "1:1":
+            full_prompt += f"\n输出图片的宽高比应为：{aspect_ratio}"
+        
+        log.info(f"[OpenAI格式 图生图] 正在使用 {model_name} 编辑图像 ({img_count}张参考图), 指令: {edit_prompt[:100]}...")
+        
+        # 构建请求
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        # 构建 content 数组：先放所有参考图，最后放文字提示
+        content_parts = []
+        for img_info in reference_images:
+            image_b64 = base64.b64encode(img_info["data"]).decode('utf-8')
+            mime_type = img_info.get("mime_type", "image/png")
             content_parts.append({
-                "type": "text",
-                "text": full_prompt
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{image_b64}"
+                }
             })
-            
-            payload = {
-                "model": model_name,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": content_parts
-                    }
-                ],
-                "max_tokens": 4096,
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=180)
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        log.error(f"OpenAI 图生图 API 返回错误 {response.status}: {error_text[:500]}")
-                        return None
-                    
-                    data = await response.json()
-                    
-                    # 解析响应，提取图像（复用通用提取方法）
-                    images = await self._extract_images_from_openai_response(data)
-                    
-                    if images:
-                        log.info(f"图生图成功，生成了 {len(images)} 张图像")
-                        return images[-1]
-                    else:
+        content_parts.append({
+            "type": "text",
+            "text": full_prompt
+        })
+        
+        payload = {
+            "model": model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": content_parts
+                }
+            ],
+            "max_tokens": 4096,
+        }
+
+        retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
+        timeout = self._build_openai_timeout(streaming=True)
+
+        for attempt in range(1, retry_max_attempts + 1):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{base_url}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=timeout
+                    ) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            if self._is_retryable_status(response.status) and attempt < retry_max_attempts:
+                                delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                                log.warning(
+                                    f"OpenAI 图生图 API 返回可重试错误 {response.status}，将在 {delay:.1f}s 后重试 "
+                                    f"({attempt}/{retry_max_attempts})"
+                                )
+                                await asyncio.sleep(delay)
+                                continue
+                            log.error(f"OpenAI 图生图 API 返回错误 {response.status}: {error_text[:500]}")
+                            return None
+                        
+                        data = await response.json()
+                        
+                        # 解析响应，提取图像（复用通用提取方法）
+                        images = await self._extract_images_from_openai_response(data)
+                        
+                        if images:
+                            log.info(f"图生图成功，生成了 {len(images)} 张图像")
+                            return images[-1]
+
                         log.warning("OpenAI 图生图 API 返回成功但没有找到图像数据")
                         log.debug(f"响应内容: {json.dumps(data, ensure_ascii=False)[:1000]}")
                         return None
-        
-        except asyncio.TimeoutError:
-            log.error("OpenAI 图生图 API 请求超时")
-            return None
-        except Exception as e:
-            log.error(f"OpenAI 格式图生图时发生错误: {e}", exc_info=True)
-            return None
+            
+            except asyncio.TimeoutError:
+                if attempt < retry_max_attempts:
+                    delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                    log.warning(
+                        f"OpenAI 图生图 API 请求超时，{delay:.1f}s 后重试 ({attempt}/{retry_max_attempts})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                log.error("OpenAI 图生图 API 请求超时")
+                return None
+            except aiohttp.ClientError as e:
+                if attempt < retry_max_attempts:
+                    delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                    log.warning(
+                        f"OpenAI 图生图 API 网络错误: {e}，{delay:.1f}s 后重试 ({attempt}/{retry_max_attempts})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                log.error(f"OpenAI 图生图 API 网络错误: {e}")
+                return None
+            except Exception as e:
+                log.error(f"OpenAI 格式图生图时发生错误: {e}", exc_info=True)
+                return None
+
+        return None
 
 
 # 全局单例实例

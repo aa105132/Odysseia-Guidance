@@ -1065,7 +1065,22 @@ class GeminiService:
         disabled_payload_fields: set[str],
         log_prefix: str,
     ) -> Dict[str, Any]:
-        max_attempts = 3
+        retry_config = app_config.API_RETRY_CONFIG
+        max_attempts = max(
+            1, int(retry_config.get("OPENAI_COMPAT_MAX_ATTEMPTS", 3))
+        )
+        retry_base_delay = max(
+            0.2,
+            float(retry_config.get("OPENAI_COMPAT_RETRY_BASE_DELAY_SECONDS", 1.0)),
+        )
+        retryable_status_codes = {
+            int(str(code).strip())
+            for code in retry_config.get(
+                "OPENAI_COMPAT_RETRYABLE_STATUS_CODES",
+                ["408", "425", "429", "500", "502", "503", "504", "520", "522", "524"],
+            )
+            if str(code).strip().isdigit()
+        }
         protected_fields = {"model", "messages", "tools", "tool_choice"}
         last_error_text = ""
 
@@ -1125,7 +1140,18 @@ class GeminiService:
 
                         error_text = response_text
                         last_error_text = error_text
-                        log.error(f"{log_prefix} returned {response.status}: {error_text}")
+                        status_code = int(response.status)
+
+                        if status_code in retryable_status_codes and attempt < max_attempts - 1:
+                            delay = min(retry_base_delay * (2 ** attempt), 8.0)
+                            log.warning(
+                                f"{log_prefix} returned retryable status {status_code} "
+                                f"(attempt {attempt + 1}/{max_attempts}), retry after {delay:.1f}s"
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+
+                        log.error(f"{log_prefix} returned {status_code}: {error_text}")
 
                         unsupported_param = self._extract_unsupported_param_from_error(
                             error_text
@@ -1165,7 +1191,8 @@ class GeminiService:
                     f"(attempt {attempt + 1}/{max_attempts}): {request_error_repr}"
                 )
                 if attempt < max_attempts - 1:
-                    await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+                    delay = min(retry_base_delay * (2 ** attempt), 8.0)
+                    await asyncio.sleep(delay)
                     continue
                 raise Exception(f"{log_prefix} request failed: {request_error_repr}")
 
@@ -2561,7 +2588,14 @@ class GeminiService:
                     api_url=base_api_url,
                     headers=headers,
                     payload=payload,
-                    timeout_seconds=180,
+                    timeout_seconds=max(
+                        30,
+                        int(
+                            app_config.API_RETRY_CONFIG.get(
+                                "OPENAI_COMPAT_CHAT_TIMEOUT_SECONDS", 180
+                            )
+                        ),
+                    ),
                     disabled_payload_fields=disabled_payload_fields,
                     log_prefix=(
                         f"OpenAI 兼容 API chat.completions "
@@ -3441,7 +3475,14 @@ class GeminiService:
                 api_url=api_url,
                 headers=headers,
                 payload=payload,
-                timeout_seconds=120,
+                timeout_seconds=max(
+                    20,
+                    int(
+                        app_config.API_RETRY_CONFIG.get(
+                            "OPENAI_COMPAT_SIMPLE_TIMEOUT_SECONDS", 120
+                        )
+                    ),
+                ),
                 disabled_payload_fields=disabled_payload_fields,
                 log_prefix="OpenAI 兼容 API (简单响应)",
             )

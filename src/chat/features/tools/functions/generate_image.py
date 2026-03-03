@@ -262,14 +262,23 @@ async def generate_image(
                 images_list = [result]
         else:
             # 多张图：每张图一个请求，全部并发执行
+            max_concurrent_tasks = max(
+                1, int(GEMINI_IMAGEN_CONFIG.get("MAX_CONCURRENT_IMAGE_TASKS", 3))
+            )
+            semaphore = asyncio.Semaphore(max_concurrent_tasks)
+
+            async def _generate_one_image() -> Optional[bytes]:
+                async with semaphore:
+                    return await gemini_imagen_service.generate_single_image(
+                        prompt=prompt,
+                        negative_prompt=negative_prompt,
+                        aspect_ratio=aspect_ratio,
+                        resolution=resolution,
+                        content_rating=content_rating,
+                    )
+
             tasks = [
-                gemini_imagen_service.generate_single_image(
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    aspect_ratio=aspect_ratio,
-                    resolution=resolution,
-                    content_rating=content_rating,
-                )
+                _generate_one_image()
                 for _ in range(number_of_images)
             ]
             
@@ -621,14 +630,23 @@ async def generate_images_batch(
         batch_content_rating = "sfw"
         
         # 为每个提示词创建一个生成任务
+        max_concurrent_tasks = max(
+            1, int(GEMINI_IMAGEN_CONFIG.get("MAX_CONCURRENT_IMAGE_TASKS", 3))
+        )
+        semaphore = asyncio.Semaphore(max_concurrent_tasks)
+
+        async def _generate_one_prompt(prompt_item: str) -> Optional[bytes]:
+            async with semaphore:
+                return await gemini_imagen_service.generate_single_image(
+                    prompt=prompt_item,
+                    negative_prompt=negative_prompt,
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution,
+                    content_rating=batch_content_rating,
+                )
+
         tasks = [
-            gemini_imagen_service.generate_single_image(
-                prompt=p,
-                negative_prompt=negative_prompt,
-                aspect_ratio=aspect_ratio,
-                resolution=resolution,
-                content_rating=batch_content_rating,
-            )
+            _generate_one_prompt(p)
             for p in prompts
         ]
         

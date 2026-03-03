@@ -497,6 +497,15 @@ def _get_imagen_config():
         # 空回自动重试次数（图片/视频全局共用）
         # 仅在上游成功响应但未返回图片/视频时触发重试
         "EMPTY_RESULT_MAX_RETRIES": _parse_int_env("GENERATION_EMPTY_RESULT_MAX_RETRIES", 3),
+        # 网络请求超时配置（OpenAI 兼容接口）
+        "REQUEST_TIMEOUT_SECONDS": _parse_int_env("GEMINI_IMAGEN_TIMEOUT_SECONDS", 120),
+        "STREAMING_TIMEOUT_SECONDS": _parse_int_env("GEMINI_IMAGEN_STREAMING_TIMEOUT_SECONDS", 180),
+        "CONNECT_TIMEOUT_SECONDS": _parse_int_env("GEMINI_IMAGEN_CONNECT_TIMEOUT_SECONDS", 15),
+        # 多图并发限流，避免一次性打满上游导致 504
+        "MAX_CONCURRENT_IMAGE_TASKS": _parse_int_env("GEMINI_IMAGEN_MAX_CONCURRENT_TASKS", 3),
+        # 瞬态错误（如 502/503/504/超时）重试配置
+        "TRANSIENT_MAX_RETRIES": _parse_int_env("GEMINI_IMAGEN_TRANSIENT_MAX_RETRIES", 2),
+        "TRANSIENT_RETRY_BASE_DELAY_SECONDS": _parse_float_env("GEMINI_IMAGEN_TRANSIENT_RETRY_BASE_DELAY_SECONDS", 1.0),
     }
 
 GEMINI_IMAGEN_CONFIG = _get_imagen_config()
@@ -912,6 +921,16 @@ API_RETRY_CONFIG = {
     "RETRY_DELAY_SECONDS": 1,  # 对同一个密钥进行重试前的延迟（秒）
     "EMPTY_RESPONSE_MAX_ATTEMPTS": 2,  # 当API返回空回复（可能因安全设置）时，使用同一个密钥进行重试的最大次数
     "MAX_KEY_ROTATION_RETRIES": 3,  # 外层密钥轮换的最大重试次数，防止持续性API错误导致无限循环
+    # OpenAI 兼容对话链路重试（用于处理 429/5xx/网关错误）
+    "OPENAI_COMPAT_MAX_ATTEMPTS": _parse_int_env("OPENAI_COMPAT_MAX_ATTEMPTS", 3),
+    "OPENAI_COMPAT_RETRY_BASE_DELAY_SECONDS": _parse_float_env("OPENAI_COMPAT_RETRY_BASE_DELAY_SECONDS", 1.0),
+    "OPENAI_COMPAT_RETRYABLE_STATUS_CODES": _parse_str_list_env(
+        "OPENAI_COMPAT_RETRYABLE_STATUS_CODES",
+        ["408", "425", "429", "500", "502", "503", "504", "520", "522", "524"],
+    ),
+    # OpenAI 兼容对话链路超时（秒）
+    "OPENAI_COMPAT_CHAT_TIMEOUT_SECONDS": _parse_int_env("OPENAI_COMPAT_CHAT_TIMEOUT_SECONDS", 180),
+    "OPENAI_COMPAT_SIMPLE_TIMEOUT_SECONDS": _parse_int_env("OPENAI_COMPAT_SIMPLE_TIMEOUT_SECONDS", 120),
 }
 
 # 定义不同安全风险等级对应的信誉惩罚值
