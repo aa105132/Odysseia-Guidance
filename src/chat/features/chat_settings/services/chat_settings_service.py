@@ -349,6 +349,27 @@ class ChatSettingsService:
             except (TypeError, ValueError):
                 log.warning(f"视频并发上限解析失败: {db_video_max_concurrent_tasks}")
 
+        db_history_fallback_limit = await self.db_manager.get_global_setting(
+            "search_history_fallback_fetch_limit"
+        )
+        if db_history_fallback_limit is not None:
+            try:
+                parsed_history_fallback_limit = int(db_history_fallback_limit)
+                if parsed_history_fallback_limit >= 0:
+                    chat_config.SEARCH_HISTORY_CONFIG["FALLBACK_FETCH_LIMIT"] = (
+                        parsed_history_fallback_limit
+                    )
+                    log.info(
+                        "  ✅ 历史消息回退扫描条数: "
+                        f"{parsed_history_fallback_limit} (0=自动)"
+                    )
+                else:
+                    log.warning(
+                        f"历史消息回退扫描条数小于 0，忽略: {db_history_fallback_limit}"
+                    )
+            except (TypeError, ValueError):
+                log.warning(f"历史消息回退扫描条数解析失败: {db_history_fallback_limit}")
+
         # --- 投喂/忏悔/借贷图片配置 ---
         db_feeding_response_image_url = await self.db_manager.get_global_setting(
             "feeding_response_image_url"

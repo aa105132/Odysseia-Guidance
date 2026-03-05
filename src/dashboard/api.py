@@ -4733,6 +4733,7 @@ class WebSearchConfigUpdate(BaseModel):
     grok_model: Optional[str] = None
     tavily_api_url: Optional[str] = None
     tavily_api_key: Optional[str] = None
+    search_history_fallback_fetch_limit: Optional[int] = None
 
 
 @app.get("/api/config/web-search")
@@ -4746,6 +4747,9 @@ async def get_web_search_config(token: str = Depends(verify_token)):
     db_grok_model = await chat_db_manager.get_global_setting("web_search_grok_model")
     db_tavily_api_url = await chat_db_manager.get_global_setting("web_search_tavily_api_url")
     db_tavily_api_key = await chat_db_manager.get_global_setting("web_search_tavily_api_key")
+    db_search_history_fallback_fetch_limit = await chat_db_manager.get_global_setting(
+        "search_history_fallback_fetch_limit"
+    )
 
     # 回退到环境变量
     grok_api_url = db_grok_api_url or os.getenv("GROK_API_URL", "")
@@ -4753,6 +4757,10 @@ async def get_web_search_config(token: str = Depends(verify_token)):
     grok_model = db_grok_model or os.getenv("GROK_MODEL", "grok-3-mini")
     tavily_api_url = db_tavily_api_url or os.getenv("TAVILY_API_URL", "https://api.tavily.com")
     tavily_api_key = db_tavily_api_key or os.getenv("TAVILY_API_KEY", "")
+    search_history_fallback_fetch_limit = _safe_int(
+        db_search_history_fallback_fetch_limit,
+        chat_config.SEARCH_HISTORY_CONFIG.get("FALLBACK_FETCH_LIMIT", 1000),
+    )
 
     # Key 脱敏
     grok_masked = grok_api_key[:8] + "..." + grok_api_key[-4:] if len(grok_api_key) > 12 else ("***" if grok_api_key else "")
@@ -4768,6 +4776,7 @@ async def get_web_search_config(token: str = Depends(verify_token)):
         "has_tavily_api_key": bool(tavily_api_key),
         "grok_configured": bool(grok_api_url and grok_api_key),
         "tavily_configured": bool(tavily_api_key),
+        "search_history_fallback_fetch_limit": search_history_fallback_fetch_limit,
     }
 
 
@@ -4807,6 +4816,26 @@ async def update_web_search_config(config: WebSearchConfigUpdate, token: str = D
         chat_config.WEB_SEARCH_CONFIG["tavily_api_key"] = config.tavily_api_key
         updated["tavily_api_key"] = "已更新"
         log.info(f"✅ 网络搜索 Tavily API Key 已更新")
+
+    if config.search_history_fallback_fetch_limit is not None:
+        if config.search_history_fallback_fetch_limit < 0:
+            raise HTTPException(400, "历史消息回退扫描条数不能小于 0")
+        if config.search_history_fallback_fetch_limit > 50000:
+            raise HTTPException(400, "历史消息回退扫描条数不能超过 50000")
+        await chat_db_manager.set_global_setting(
+            "search_history_fallback_fetch_limit",
+            str(config.search_history_fallback_fetch_limit),
+        )
+        chat_config.SEARCH_HISTORY_CONFIG["FALLBACK_FETCH_LIMIT"] = (
+            config.search_history_fallback_fetch_limit
+        )
+        updated["search_history_fallback_fetch_limit"] = (
+            config.search_history_fallback_fetch_limit
+        )
+        log.info(
+            "✅ 历史消息回退扫描条数已更新: "
+            f"{config.search_history_fallback_fetch_limit} (0=自动)"
+        )
 
     if not updated:
         return {"success": True, "message": "没有需要更新的配置"}

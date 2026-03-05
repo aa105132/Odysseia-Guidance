@@ -355,6 +355,14 @@ WEB_SEARCH_CONFIG = {
     "tavily_api_key": os.getenv("TAVILY_API_KEY", ""),
 }
 
+# --- 历史消息搜索配置 ---
+# 回退扫描条数（当 Discord /messages/search API 返回 403 时）
+# - >0: 固定扫描条数
+# - 0: 自动模式（按请求规模动态估算）
+SEARCH_HISTORY_CONFIG = {
+    "FALLBACK_FETCH_LIMIT": _parse_int_env("SEARCH_HISTORY_FALLBACK_FETCH_LIMIT", 1000),
+}
+
 # --- 年度总结配置 ---
 # 这些值作为默认值，可通过 Dashboard 动态修改
 SUMMARY_CONFIG = {

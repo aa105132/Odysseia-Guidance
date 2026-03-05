@@ -2108,6 +2108,27 @@
                     </div>
                 </div>
 
+                <div class="bg-slate-800/50 backdrop-blur rounded-xl p-6 border border-slate-700/50 max-w-2xl mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <i data-lucide="history" class="w-5 h-5 text-amber-400"></i>
+                        历史消息搜索回退
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">
+                        当 Discord 搜索 API 返回 403 时，自动回退到 history 扫描（覆盖机器人可访问频道，不限当前频道）。
+                    </p>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                            回退扫描条数（0 = 自动）
+                        </label>
+                        <input type="number" min="0" step="1"
+                               x-model.number="webSearchForm.search_history_fallback_fetch_limit"
+                               class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        <p class="text-xs text-slate-500 mt-1">
+                            建议 300-2000。设置为 0 时由 Bot 按请求规模动态决定扫描条数。
+                        </p>
+                    </div>
+                </div>
+
                 <!-- 操作按钮 -->
                 <div class="max-w-2xl flex gap-4">
                     <button @click="saveWebSearchConfig()"
@@ -3969,7 +3990,14 @@
                 },
 
                 // 网络搜索数据
-                webSearchForm: { grok_api_url: '', grok_api_key: '', grok_model: 'grok-3-mini', tavily_api_url: '', tavily_api_key: '' },
+                webSearchForm: {
+                    grok_api_url: '',
+                    grok_api_key: '',
+                    grok_model: 'grok-3-mini',
+                    tavily_api_url: '',
+                    tavily_api_key: '',
+                    search_history_fallback_fetch_limit: 1000,
+                },
                 webSearchConfig: { grok_configured: false, tavily_configured: false, has_grok_key: false, has_tavily_key: false },
                 showWebSearchGrokKey: false,
                 showWebSearchTavilyKey: false,
@@ -6708,6 +6736,9 @@
                             this.webSearchForm.grok_api_url = data.grok_api_url || '';
                             this.webSearchForm.grok_model = data.grok_model || 'grok-3-mini';
                             this.webSearchForm.tavily_api_url = data.tavily_api_url || '';
+                            this.webSearchForm.search_history_fallback_fetch_limit = Number.isInteger(data.search_history_fallback_fetch_limit)
+                                ? data.search_history_fallback_fetch_limit
+                                : 1000;
                             // 不回填 API Key（安全考虑）
                             this.webSearchForm.grok_api_key = '';
                             this.webSearchForm.tavily_api_key = '';
@@ -6727,6 +6758,10 @@
                         if (this.webSearchForm.grok_model) payload.grok_model = this.webSearchForm.grok_model;
                         if (this.webSearchForm.tavily_api_url) payload.tavily_api_url = this.webSearchForm.tavily_api_url;
                         if (this.webSearchForm.tavily_api_key) payload.tavily_api_key = this.webSearchForm.tavily_api_key;
+                        const fallbackLimit = Number(this.webSearchForm.search_history_fallback_fetch_limit);
+                        if (!Number.isNaN(fallbackLimit) && fallbackLimit >= 0) {
+                            payload.search_history_fallback_fetch_limit = Math.floor(fallbackLimit);
+                        }
 
                         const response = await fetch('/api/config/web-search', {
                             method: 'PUT',

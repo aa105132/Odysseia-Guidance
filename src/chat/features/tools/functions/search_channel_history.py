@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import discord
 from discord.http import Route
+from src.chat.config import chat_config
 from src.chat.utils.time_utils import BEIJING_TZ
 from src.chat.features.tools.tool_metadata import tool_metadata
 
@@ -244,6 +245,250 @@ def _format_search_results(messages: List[Dict]) -> List[Dict[str, Any]]:
     return results
 
 
+def _normalize_match_text(value: Optional[str]) -> str:
+    return str(value or "").strip().lstrip("@").casefold()
+
+
+def _resolve_history_scan_limit(
+    max_results: Optional[int],
+    is_guild_scope: bool,
+) -> int:
+    """计算回退 history 扫描条数：配置优先，0 表示自动。"""
+    configured_limit = chat_config.SEARCH_HISTORY_CONFIG.get("FALLBACK_FETCH_LIMIT", 1000)
+    try:
+        configured_limit_int = int(configured_limit)
+    except (TypeError, ValueError):
+        configured_limit_int = 1000
+
+    if configured_limit_int > 0:
+        return configured_limit_int
+
+    # 自动模式：按请求规模估算，保证在可控上限内。
+    base = max_results if max_results is not None else 500
+    if base <= 0:
+        base = 500
+    multiplier = 20 if is_guild_scope else 8
+    return max(200, min(base * multiplier, 5000))
+
+
+def _build_history_result(
+    message: discord.Message,
+    guild_id: Optional[int],
+) -> Dict[str, Any]:
+    author = getattr(message, "author", None)
+    author_name = "N/A"
+    author_discriminator = "0000"
+    author_id = None
+    if author is not None:
+        author_name = getattr(author, "name", None) or "N/A"
+        author_discriminator = getattr(author, "discriminator", None) or "0000"
+        raw_author_id = getattr(author, "id", None)
+        if raw_author_id is not None:
+            author_id = str(raw_author_id)
+
+    created_at = getattr(message, "created_at", None)
+    if created_at is None:
+        beijing_dt = datetime.now(BEIJING_TZ)
+    else:
+        beijing_dt = created_at.astimezone(BEIJING_TZ)
+
+    return {
+        "id": str(getattr(message, "id", "")),
+        "author": f"{author_name}#{author_discriminator}",
+        "author_id": author_id,
+        "content": getattr(message, "content", "") or "",
+        "timestamp": beijing_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "channel_id": str(getattr(message, "channel", None).id) if getattr(message, "channel", None) else None,
+        "guild_id": str(guild_id) if guild_id is not None else None,
+        "_sort_ts": beijing_dt.timestamp(),
+    }
+
+
+def _history_message_match(
+    message: discord.Message,
+    query: str,
+    author_id: Optional[str],
+    target_user_keyword: str,
+) -> bool:
+    if author_id:
+        message_author_id = getattr(getattr(message, "author", None), "id", None)
+        if str(message_author_id) != str(author_id):
+            return False
+    elif target_user_keyword:
+        author = getattr(message, "author", None)
+        normalized_target = _normalize_match_text(target_user_keyword)
+        candidates = [
+            _normalize_match_text(getattr(author, "display_name", None)),
+            _normalize_match_text(getattr(author, "global_name", None)),
+            _normalize_match_text(getattr(author, "name", None)),
+        ]
+        if normalized_target and normalized_target not in candidates and not any(
+            normalized_target in candidate for candidate in candidates if candidate
+        ):
+            return False
+
+    normalized_query = _normalize_match_text(query)
+    if normalized_query:
+        content = _normalize_match_text(getattr(message, "content", ""))
+        if normalized_query not in content:
+            return False
+
+    return True
+
+
+async def _scan_history_channel(
+    channel: Any,
+    guild_id: Optional[int],
+    query: str,
+    author_id: Optional[str],
+    target_user_keyword: str,
+    fetch_limit: int,
+    max_results: Optional[int],
+    semaphore: asyncio.Semaphore,
+) -> List[Dict[str, Any]]:
+    """从单个频道 history 回退扫描命中消息。"""
+    if fetch_limit <= 0:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    try:
+        async with semaphore:
+            async for msg in channel.history(limit=fetch_limit):
+                msg_id = str(getattr(msg, "id", ""))
+                if not msg_id or msg_id in seen_ids:
+                    continue
+                if not _history_message_match(msg, query, author_id, target_user_keyword):
+                    continue
+
+                seen_ids.add(msg_id)
+                results.append(_build_history_result(msg, guild_id))
+
+                if max_results is not None and len(results) >= max_results:
+                    break
+    except discord.Forbidden:
+        logging.debug(f"history 回退扫描无权限，跳过频道: {getattr(channel, 'id', 'unknown')}")
+    except Exception as e:
+        logging.debug(f"history 回退扫描频道失败 {getattr(channel, 'id', 'unknown')}: {e}")
+
+    return results
+
+
+def _collect_guild_history_channels(guild: discord.Guild) -> List[Any]:
+    """收集服务器内可扫描历史消息的频道。"""
+    channels: List[Any] = []
+    seen_ids = set()
+
+    for channel in list(getattr(guild, "text_channels", []) or []) + list(
+        getattr(guild, "threads", []) or []
+    ):
+        channel_id = getattr(channel, "id", None)
+        if channel_id is None or channel_id in seen_ids:
+            continue
+        seen_ids.add(channel_id)
+        channels.append(channel)
+
+    return channels
+
+
+async def _fallback_search_with_history(
+    bot: Any,
+    guild_id: int,
+    query: str,
+    author_id: Optional[str],
+    channel_id: Optional[int],
+    max_results: Optional[int],
+    target_user_keyword: str,
+) -> List[Dict[str, Any]]:
+    """当 API 搜索不可用（403）时，回退到 history 扫描。"""
+    semaphore = asyncio.Semaphore(6)
+
+    if channel_id:
+        channel = bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(channel_id)
+            except Exception:
+                channel = None
+
+        if channel is None:
+            return []
+
+        fetch_limit = _resolve_history_scan_limit(max_results, is_guild_scope=False)
+        logging.info(
+            f"搜索 API 403，回退频道 history 扫描: channel={channel_id}, fetch_limit={fetch_limit}"
+        )
+        results = await _scan_history_channel(
+            channel=channel,
+            guild_id=guild_id,
+            query=query,
+            author_id=author_id,
+            target_user_keyword=target_user_keyword,
+            fetch_limit=fetch_limit,
+            max_results=max_results,
+            semaphore=semaphore,
+        )
+        results.sort(key=lambda x: x.get("_sort_ts", 0), reverse=True)
+        for item in results:
+            item.pop("_sort_ts", None)
+        return results
+
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        return []
+
+    channels = _collect_guild_history_channels(guild)
+    if not channels:
+        return []
+
+    fetch_limit_total = _resolve_history_scan_limit(max_results, is_guild_scope=True)
+    per_channel_limit = max(1, (fetch_limit_total + len(channels) - 1) // len(channels))
+
+    logging.info(
+        "搜索 API 403，回退服务器 history 扫描: "
+        f"guild={guild_id}, channels={len(channels)}, total_fetch_limit={fetch_limit_total}, "
+        f"per_channel_limit={per_channel_limit}"
+    )
+
+    scan_tasks = [
+        asyncio.create_task(
+            _scan_history_channel(
+                channel=channel,
+                guild_id=guild_id,
+                query=query,
+                author_id=author_id,
+                target_user_keyword=target_user_keyword,
+                fetch_limit=per_channel_limit,
+                max_results=max_results,
+                semaphore=semaphore,
+            )
+        )
+        for channel in channels
+    ]
+
+    scan_batches = await asyncio.gather(*scan_tasks, return_exceptions=True)
+    merged: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    for batch in scan_batches:
+        if isinstance(batch, Exception):
+            continue
+        for item in batch:
+            item_id = item.get("id")
+            if not item_id or item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+            merged.append(item)
+
+    merged.sort(key=lambda x: x.get("_sort_ts", 0), reverse=True)
+    if max_results is not None:
+        merged = merged[:max_results]
+    for item in merged:
+        item.pop("_sort_ts", None)
+    return merged
+
+
 @tool_metadata(
     name="历史消息",
     description="翻翻之前的聊天记录～默认会获取500条，并可按用户名/ID检索月月所在所有服务器里的发言！",
@@ -323,7 +568,9 @@ async def search_channel_history(
 
     # --- 并行执行频道和服务器搜索 ---
     # 仅当 channel_id 可用时，才执行频道搜索
-    channel_scope_guild_id = search_guild_ids[0] if search_guild_ids else 0
+    channel_scope_guild_id = int(getattr(guild, "id", 0) or 0)
+    if channel_scope_guild_id == 0 and search_guild_ids:
+        channel_scope_guild_id = search_guild_ids[0]
     if channel_id:
         channel_search_task = asyncio.create_task(
             _execute_search(
@@ -332,6 +579,7 @@ async def search_channel_history(
                 search_params,
                 channel_id,
                 normalized_max_results,
+                normalized_target_user,
             )
         )
     else:
@@ -341,7 +589,14 @@ async def search_channel_history(
 
     guild_search_tasks = [
         asyncio.create_task(
-            _execute_search(bot, gid, search_params, None, normalized_max_results)
+            _execute_search(
+                bot,
+                gid,
+                search_params,
+                None,
+                normalized_max_results,
+                normalized_target_user,
+            )
         )
         for gid in search_guild_ids
     ]
@@ -373,6 +628,7 @@ async def _execute_search(
     search_params: Dict[str, str],
     channel_id: Optional[int] = None,
     max_results: Optional[int] = 500,
+    target_user_keyword: str = "",
 ) -> List[Dict[str, Any]]:
     """执行单次或分页消息搜索请求。"""
     try:
@@ -420,8 +676,22 @@ async def _execute_search(
 
     except discord.Forbidden:
         scope = f"频道 {channel_id}" if channel_id else f"服务器 {guild_id}"
-        logging.error(f"没有在 {scope} 中搜索消息的权限。")
-        return []
+        logging.warning(f"在 {scope} 使用搜索 API 无权限，尝试回退 history 扫描。")
+        query = search_params.get("content", "")
+        author_id = search_params.get("author_id")
+        try:
+            return await _fallback_search_with_history(
+                bot=bot,
+                guild_id=guild_id,
+                query=query,
+                author_id=author_id,
+                channel_id=channel_id,
+                max_results=max_results,
+                target_user_keyword=target_user_keyword,
+            )
+        except Exception as fallback_error:
+            logging.error(f"{scope} 回退 history 扫描失败: {fallback_error}")
+            return []
     except Exception as e:
         scope = f"频道 {channel_id}" if channel_id else f"服务器 {guild_id}"
         logging.error(f"在 {scope} 中搜索时发生未知错误: {e}")
