@@ -552,6 +552,11 @@ class VideoGenerationCog(commands.Cog):
             original_params = {
                 "prompt": prompt_text,
                 "duration": duration,
+                "post_id": result.post_id,
+                "video_model_name": model_name,
+                "aspect_ratio": "16:9",
+                "resolution": "720p",
+                "stream": False,
             }
             if reference_image_data:
                 original_params["reference_image_data"] = reference_image_data

@@ -85,6 +85,94 @@ class EditPromptModal(discord.ui.Modal):
                 pass
 
 
+def _parse_bool_text(value: str, default: bool = True) -> bool:
+    """将中文/英文布尔文本解析为 bool。"""
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "yes", "y", "是", "开", "开启"}:
+        return True
+    if text in {"0", "false", "no", "n", "否", "关", "关闭"}:
+        return False
+    return default
+
+
+class ExtendVideoModal(discord.ui.Modal):
+    """视频延长参数弹窗（用于结果下直接延长）。"""
+
+    def __init__(self, parent_view: "RegenerateView"):
+        super().__init__(title="延长视频参数")
+        self.parent_view = parent_view
+
+        current_prompt = str(parent_view.original_params.get("prompt", "") or "").strip()
+        self.prompt_input = discord.ui.TextInput(
+            label="延长提示词",
+            style=discord.TextStyle.paragraph,
+            placeholder="例如：让镜头继续向前推进",
+            default=current_prompt[:1200] if current_prompt else "",
+            required=True,
+            max_length=1200,
+        )
+        self.length_input = discord.ui.TextInput(
+            label="延长时长（秒）",
+            style=discord.TextStyle.short,
+            placeholder="例如：10",
+            default="10",
+            required=True,
+            max_length=3,
+        )
+        self.start_time_input = discord.ui.TextInput(
+            label="延长起始时间（秒，可留空）",
+            style=discord.TextStyle.short,
+            placeholder="留空表示自动衔接",
+            required=False,
+            max_length=20,
+        )
+        self.stitch_input = discord.ui.TextInput(
+            label="是否拼接（是/否）",
+            style=discord.TextStyle.short,
+            default="是",
+            required=False,
+            max_length=8,
+        )
+
+        self.add_item(self.prompt_input)
+        self.add_item(self.length_input)
+        self.add_item(self.start_time_input)
+        self.add_item(self.stitch_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        prompt_text = str(self.prompt_input.value or "").strip()
+        if not prompt_text:
+            await interaction.response.send_message("延长提示词不能为空。", ephemeral=True)
+            return
+
+        try:
+            length = int(float(str(self.length_input.value).strip()))
+        except (TypeError, ValueError):
+            await interaction.response.send_message("延长时长必须是数字。", ephemeral=True)
+            return
+
+        start_time_text = str(self.start_time_input.value or "").strip()
+        start_time: Optional[float] = None
+        if start_time_text:
+            try:
+                start_time = float(start_time_text)
+            except (TypeError, ValueError):
+                await interaction.response.send_message("延长起始时间必须是数字。", ephemeral=True)
+                return
+
+        stitch_with_extend = _parse_bool_text(self.stitch_input.value, default=True)
+        await interaction.response.defer(thinking=True)
+        await self.parent_view._do_extend_video(
+            interaction=interaction,
+            extend_prompt=prompt_text,
+            extend_length=max(1, min(60, length)),
+            extend_start_time=start_time,
+            stitch_with_extend=stitch_with_extend,
+        )
+
+
 class RegenerateView(discord.ui.View):
     """
     重新生成交互视图（对话工具调用版本）
@@ -134,6 +222,10 @@ class RegenerateView(discord.ui.View):
                 self.model_select.callback = self._on_model_select
                 self.add_item(self.model_select)
 
+        # 非视频类型不显示“延长视频”按钮
+        if generation_type != "video":
+            self.remove_item(self.extend_video)
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """任何用户都可以使用按钮"""
         return True
@@ -179,6 +271,20 @@ class RegenerateView(discord.ui.View):
             current_prompt=current_prompt,
             regenerate_callback=self._do_regenerate,
         )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(
+        label="延长视频",
+        style=discord.ButtonStyle.success,
+        emoji="⏩",
+        row=0,
+    )
+    async def extend_video(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """弹出视频延长参数弹窗（仅视频类型有效）。"""
+        if self.generation_type != "video":
+            await interaction.response.send_message("当前仅视频结果支持延长。", ephemeral=True)
+            return
+        modal = ExtendVideoModal(self)
         await interaction.response.send_modal(modal)
 
     async def _on_model_select(self, interaction: discord.Interaction):
@@ -285,6 +391,146 @@ class RegenerateView(discord.ui.View):
                 await interaction.followup.send(hint, ephemeral=True)
             except Exception:
                 pass
+
+    async def _do_extend_video(
+        self,
+        interaction: discord.Interaction,
+        extend_prompt: str,
+        extend_length: int,
+        extend_start_time: Optional[float],
+        stitch_with_extend: bool,
+    ):
+        """执行视频延长。"""
+        if self.generation_type != "video":
+            await interaction.followup.send("当前仅视频结果支持延长。", ephemeral=True)
+            return
+
+        post_id = str(self.original_params.get("post_id", "") or "").strip()
+        if not post_id:
+            await interaction.followup.send("缺少 post_id，当前视频不支持直接延长。", ephemeral=True)
+            return
+
+        channel = interaction.channel
+        if not channel:
+            await interaction.followup.send("无法获取当前频道，延长失败。", ephemeral=True)
+            return
+
+        from src.chat.config.chat_config import VIDEO_GEN_CONFIG
+        from src.chat.features.odysseia_coin.service.coin_service import coin_service
+        from src.chat.features.video_generation.services.video_service import video_service
+        from src.chat.utils.prompt_utils import replace_emojis
+        import aiohttp
+        import io
+
+        clicker_user_id = interaction.user.id
+        cost = int(VIDEO_GEN_CONFIG.get("VIDEO_GENERATION_COST", 10))
+
+        try:
+            balance = await coin_service.get_balance(clicker_user_id)
+            if balance < cost:
+                await interaction.followup.send(
+                    f"月光币不足（需要 {cost}，当前 {balance}）。",
+                    ephemeral=True,
+                )
+                return
+        except Exception as e:
+            log.warning(f"检查延长余额失败: {e}")
+
+        result = await video_service.extend_video(
+            post_id=post_id,
+            prompt=extend_prompt,
+            video_length=extend_length,
+            model=self.original_params.get("video_model_name"),
+            aspect_ratio=self.original_params.get("aspect_ratio", "16:9"),
+            resolution=self.original_params.get("resolution", "720p"),
+            stream=bool(self.original_params.get("stream", False)),
+            video_extension_start_time=extend_start_time,
+            stitch_with_extend=stitch_with_extend,
+        )
+        if result is None:
+            await interaction.followup.send("视频延长失败，请稍后重试或调整参数。", ephemeral=True)
+            return
+
+        if cost > 0:
+            try:
+                await coin_service.remove_coins(
+                    clicker_user_id,
+                    cost,
+                    f"AI视频延长: {extend_prompt[:25]}...",
+                )
+            except Exception as e:
+                log.error(f"视频延长扣费失败: {e}")
+
+        embed = discord.Embed(title="AI 视频延长", color=0x2b2d31)
+        embed.set_author(
+            name=interaction.user.display_name,
+            icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+        )
+        embed.add_field(name="延长提示词", value=f"```\n{extend_prompt[:1016]}\n```", inline=False)
+
+        success_message = self.original_params.get("original_success_message")
+        if success_message:
+            processed_success = replace_emojis(str(success_message))
+            embed.add_field(name="\u200b", value=processed_success[:1024], inline=False)
+
+        model_name = self.original_params.get("video_model_name") or VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
+        new_post_id = result.post_id or post_id
+        embed.set_footer(
+            text=(
+                f"模型: {model_name} | 延长时长: {extend_length}s"
+                f" | post_id: {new_post_id}"
+            )
+        )
+
+        next_params = self.original_params.copy()
+        next_params["prompt"] = extend_prompt
+        next_params["post_id"] = new_post_id
+        next_view = RegenerateView(
+            generation_type="video",
+            original_params=next_params,
+            user_id=clicker_user_id,
+        )
+
+        if result.url:
+            video_sent = False
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        result.url,
+                        timeout=aiohttp.ClientTimeout(total=120),
+                    ) as resp:
+                        if resp.status == 200:
+                            video_data = await resp.read()
+                            if len(video_data) <= 25 * 1024 * 1024:
+                                video_file = discord.File(
+                                    io.BytesIO(video_data),
+                                    filename="extended_video.mp4",
+                                    spoiler=True,
+                                )
+                                await channel.send(embed=embed, file=video_file, view=next_view)
+                                video_sent = True
+            except Exception as e:
+                log.warning(f"下载延长视频失败，将发送URL: {e}")
+
+            if not video_sent:
+                embed.add_field(name="视频链接", value=f"[点击观看]({result.url})", inline=False)
+                await channel.send(embed=embed, view=next_view)
+            return
+
+        if result.html_content:
+            html_file = discord.File(
+                io.BytesIO(result.html_content.encode("utf-8")),
+                filename="extended_video.html",
+            )
+            await channel.send(embed=embed, file=html_file, view=next_view)
+            return
+
+        if result.text_response:
+            embed.add_field(name="响应", value=result.text_response[:1024], inline=False)
+            await channel.send(embed=embed, view=next_view)
+            return
+
+        await interaction.followup.send("视频延长完成，但未返回可发送内容。", ephemeral=True)
 
     async def _regenerate_edit_image(
         self,
@@ -532,6 +778,7 @@ class SlashCommandRegenerateView(discord.ui.View):
     提供：
     1. 重新生成按钮
     2. 修改提示词按钮
+    3. 延长视频按钮（仅视频）
     3. 切换到 NovelAI 按钮（仅图片类型）
     4. 更换模型下拉菜单（仅图片类型）
     """
@@ -574,6 +821,10 @@ class SlashCommandRegenerateView(discord.ui.View):
                 self.model_select.callback = self._on_model_select
                 self.add_item(self.model_select)
 
+        # 非视频类型不显示“延长视频”按钮
+        if generation_type != "video":
+            self.remove_item(self.extend_video)
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """任何用户都可以使用按钮"""
         return True
@@ -612,6 +863,19 @@ class SlashCommandRegenerateView(discord.ui.View):
             current_prompt=current_prompt,
             regenerate_callback=self._do_slash_regenerate,
         )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(
+        label="延长视频",
+        style=discord.ButtonStyle.success,
+        emoji="⏩",
+        row=0,
+    )
+    async def extend_video(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.generation_type != "video":
+            await interaction.response.send_message("当前仅视频结果支持延长。", ephemeral=True)
+            return
+        modal = ExtendVideoModal(self)
         await interaction.response.send_modal(modal)
 
     async def _on_model_select(self, interaction: discord.Interaction):
@@ -943,6 +1207,140 @@ class SlashCommandRegenerateView(discord.ui.View):
                 await interaction.followup.send(hint, ephemeral=True)
             except Exception:
                 pass
+
+    async def _do_extend_video(
+        self,
+        interaction: discord.Interaction,
+        extend_prompt: str,
+        extend_length: int,
+        extend_start_time: Optional[float],
+        stitch_with_extend: bool,
+    ):
+        """执行斜杠结果的视频延长。"""
+        if self.generation_type != "video":
+            await interaction.followup.send("当前仅视频结果支持延长。", ephemeral=True)
+            return
+
+        post_id = str(self.original_params.get("post_id", "") or "").strip()
+        if not post_id:
+            await interaction.followup.send("缺少 post_id，当前视频不支持直接延长。", ephemeral=True)
+            return
+
+        channel = interaction.channel
+        if not channel:
+            await interaction.followup.send("无法获取当前频道，延长失败。", ephemeral=True)
+            return
+
+        from src.chat.config.chat_config import VIDEO_GEN_CONFIG
+        from src.chat.features.odysseia_coin.service.coin_service import coin_service
+        from src.chat.features.video_generation.services.video_service import video_service
+        import aiohttp
+        import io
+
+        clicker_user_id = interaction.user.id
+        cost = int(VIDEO_GEN_CONFIG.get("VIDEO_GENERATION_COST", 10))
+
+        try:
+            balance = await coin_service.get_balance(clicker_user_id)
+            if balance < cost:
+                await interaction.followup.send(
+                    f"月光币不足（需要 {cost}，当前 {balance}）。",
+                    ephemeral=True,
+                )
+                return
+        except Exception as e:
+            log.warning(f"检查延长余额失败: {e}")
+
+        result = await video_service.extend_video(
+            post_id=post_id,
+            prompt=extend_prompt,
+            video_length=extend_length,
+            model=self.original_params.get("video_model_name"),
+            aspect_ratio=self.original_params.get("aspect_ratio", "16:9"),
+            resolution=self.original_params.get("resolution", "720p"),
+            stream=bool(self.original_params.get("stream", False)),
+            video_extension_start_time=extend_start_time,
+            stitch_with_extend=stitch_with_extend,
+        )
+        if result is None:
+            await interaction.followup.send("视频延长失败，请稍后重试或调整参数。", ephemeral=True)
+            return
+
+        if cost > 0:
+            try:
+                await coin_service.remove_coins(
+                    clicker_user_id,
+                    cost,
+                    f"AI视频延长: {extend_prompt[:25]}...",
+                )
+            except Exception as e:
+                log.error(f"斜杠视频延长扣费失败: {e}")
+
+        embed = discord.Embed(title="AI 视频延长", color=0x2b2d31)
+        embed.set_author(
+            name=interaction.user.display_name,
+            icon_url=interaction.user.display_avatar.url if interaction.user.display_avatar else None,
+        )
+        embed.add_field(name="延长提示词", value=f"```\n{extend_prompt[:1016]}\n```", inline=False)
+
+        model_name = self.original_params.get("video_model_name") or VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
+        new_post_id = result.post_id or post_id
+        embed.set_footer(
+            text=(
+                f"模型: {model_name} | 延长时长: {extend_length}s"
+                f" | post_id: {new_post_id}"
+            )
+        )
+
+        next_params = self.original_params.copy()
+        next_params["prompt"] = extend_prompt
+        next_params["post_id"] = new_post_id
+        next_view = SlashCommandRegenerateView(
+            generation_type="video",
+            original_params=next_params,
+            user_id=clicker_user_id,
+        )
+
+        if result.url:
+            video_sent = False
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        result.url,
+                        timeout=aiohttp.ClientTimeout(total=120),
+                    ) as resp:
+                        if resp.status == 200:
+                            video_data = await resp.read()
+                            if len(video_data) <= 25 * 1024 * 1024:
+                                video_file = discord.File(
+                                    io.BytesIO(video_data),
+                                    filename="extended_video.mp4",
+                                    spoiler=True,
+                                )
+                                await channel.send(embed=embed, file=video_file, view=next_view)
+                                video_sent = True
+            except Exception as e:
+                log.warning(f"下载斜杠延长视频失败，将发送URL: {e}")
+
+            if not video_sent:
+                embed.add_field(name="视频链接", value=f"[点击观看]({result.url})", inline=False)
+                await channel.send(embed=embed, view=next_view)
+            return
+
+        if result.html_content:
+            html_file = discord.File(
+                io.BytesIO(result.html_content.encode("utf-8")),
+                filename="extended_video.html",
+            )
+            await channel.send(embed=embed, file=html_file, view=next_view)
+            return
+
+        if result.text_response:
+            embed.add_field(name="响应", value=result.text_response[:1024], inline=False)
+            await channel.send(embed=embed, view=next_view)
+            return
+
+        await interaction.followup.send("视频延长完成，但未返回可发送内容。", ephemeral=True)
 
 
 # ==================== 切换到 NovelAI 的共享逻辑 ====================

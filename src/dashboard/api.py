@@ -5867,7 +5867,14 @@ async def serve_frontend():
     """提供前端页面"""
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
+        return FileResponse(
+            index_path,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
     return {"message": "Dashboard API 正在运行。前端尚未构建。"}
 
 

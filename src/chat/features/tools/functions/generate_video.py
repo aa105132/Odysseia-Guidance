@@ -544,38 +544,39 @@ async def generate_video(
                 from src.chat.config.chat_config import VIDEO_GEN_CONFIG
                 video_model_name = VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
 
-                # 创建重新生成按钮视图（仅第一条消息带按钮）
-                regenerate_view = None
-                if user_id:
-                    try:
-                        user_id_int = int(user_id)
-                        params_dict = {
-                            "prompt": prompt,
-                            "duration": duration,
-                            "use_reference_image": bool(reference_image or reference_images),
-                            "original_success_message": success_message or "",
-                        }
-                        if reference_image:
-                            params_dict["reference_image_data"] = reference_image["data"]
-                            params_dict["reference_image_mime_type"] = reference_image["mime_type"]
-                        if reference_images and len(reference_images) > 1:
-                            params_dict["reference_images_data"] = [
-                                ref["data"] for ref in reference_images if ref.get("data")
-                            ]
-                            params_dict["reference_images_mime_types"] = [
-                                ref.get("mime_type", "image/png") for ref in reference_images if ref.get("data")
-                            ]
-
-                        regenerate_view = RegenerateView(
-                            generation_type="video",
-                            original_params=params_dict,
-                            user_id=user_id_int,
-                        )
-                    except (ValueError, TypeError):
-                        pass
-
                 async with aiohttp.ClientSession() as session:
                     for idx, result in enumerate(success_results, 1):
+                        regenerate_view = None
+                        if user_id:
+                            try:
+                                user_id_int = int(user_id)
+                                params_dict = {
+                                    "prompt": prompt,
+                                    "duration": duration,
+                                    "use_reference_image": bool(reference_image or reference_images),
+                                    "original_success_message": success_message or "",
+                                    "post_id": result.post_id,
+                                    "video_model_name": video_model_name,
+                                }
+                                if reference_image:
+                                    params_dict["reference_image_data"] = reference_image["data"]
+                                    params_dict["reference_image_mime_type"] = reference_image["mime_type"]
+                                if reference_images and len(reference_images) > 1:
+                                    params_dict["reference_images_data"] = [
+                                        ref["data"] for ref in reference_images if ref.get("data")
+                                    ]
+                                    params_dict["reference_images_mime_types"] = [
+                                        ref.get("mime_type", "image/png") for ref in reference_images if ref.get("data")
+                                    ]
+
+                                regenerate_view = RegenerateView(
+                                    generation_type="video",
+                                    original_params=params_dict,
+                                    user_id=user_id_int,
+                                )
+                            except (ValueError, TypeError):
+                                pass
+
                         prompt_embed = discord.Embed(
                             title=f"AI 视频生成 {idx}/{actual_count}" if actual_count > 1 else "AI 视频生成",
                             color=0x2b2d31,
@@ -614,7 +615,7 @@ async def generate_video(
                                                 "embed": prompt_embed,
                                                 "files": [video_file],
                                             }
-                                            if regenerate_view and idx == 1:
+                                            if regenerate_view:
                                                 send_kwargs["view"] = regenerate_view
                                             await channel.send(**send_kwargs)
                                             video_sent = True
@@ -630,7 +631,7 @@ async def generate_video(
                                     inline=False,
                                 )
                                 send_kwargs = {"embed": prompt_embed}
-                                if regenerate_view and idx == 1:
+                                if regenerate_view:
                                     send_kwargs["view"] = regenerate_view
                                 await channel.send(**send_kwargs)
 
@@ -640,7 +641,7 @@ async def generate_video(
                                 filename=f"video_player_{idx}.html"
                             )
                             send_kwargs = {"embed": prompt_embed, "files": [html_file]}
-                            if regenerate_view and idx == 1:
+                            if regenerate_view:
                                 send_kwargs["view"] = regenerate_view
                             await channel.send(**send_kwargs)
 
@@ -651,7 +652,7 @@ async def generate_video(
                                 inline=False,
                             )
                             send_kwargs = {"embed": prompt_embed}
-                            if regenerate_view and idx == 1:
+                            if regenerate_view:
                                 send_kwargs["view"] = regenerate_view
                             await channel.send(**send_kwargs)
 
