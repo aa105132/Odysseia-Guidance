@@ -206,8 +206,11 @@ async def generate_image(
             "hint": "图片生成服务当前不可用。请用自己的语气告诉用户这个功能暂时用不了。"
         }
     
-    # 验证并限制图片数量（从配置读取最大值）
+    # 默认按配置生成多张：即使用户只说“生成一张”，后端也可统一走多并发产出
+    default_images = max(1, int(GEMINI_IMAGEN_CONFIG.get("DEFAULT_NUMBER_OF_IMAGES", 1)))
     max_images = GEMINI_IMAGEN_CONFIG.get("MAX_IMAGES_PER_REQUEST", 10)
+    if number_of_images <= 1:
+        number_of_images = default_images
     number_of_images = min(max(1, number_of_images), max_images)
     
     # 获取用户ID（如果提供）用于扣费

@@ -158,6 +158,14 @@ class ChatSettingsService:
         if db_imagen_format:
             chat_config.GEMINI_IMAGEN_CONFIG["API_FORMAT"] = db_imagen_format
             log.info(f"  ✅ Imagen API 格式: {db_imagen_format}")
+
+        db_imagen_default_images = await self.db_manager.get_global_setting("imagen_default_images")
+        if db_imagen_default_images:
+            try:
+                chat_config.GEMINI_IMAGEN_CONFIG["DEFAULT_NUMBER_OF_IMAGES"] = int(db_imagen_default_images)
+                log.info(f"  ✅ Imagen 默认图片数量: {db_imagen_default_images}")
+            except (TypeError, ValueError):
+                log.warning(f"Imagen 默认图片数量解析失败: {db_imagen_default_images}")
         
         db_imagen_response_format = await self.db_manager.get_global_setting("imagen_image_response_format")
         if db_imagen_response_format:
@@ -324,6 +332,22 @@ class ChatSettingsService:
         if db_video_duration:
             chat_config.VIDEO_GEN_CONFIG["MAX_DURATION"] = int(db_video_duration)
             log.info(f"  ✅ 视频最大时长: {db_video_duration}s")
+
+        db_video_default_videos = await self.db_manager.get_global_setting("video_default_videos")
+        if db_video_default_videos:
+            try:
+                chat_config.VIDEO_GEN_CONFIG["DEFAULT_NUMBER_OF_VIDEOS"] = int(db_video_default_videos)
+                log.info(f"  ✅ 视频默认生成数量: {db_video_default_videos}")
+            except (TypeError, ValueError):
+                log.warning(f"视频默认生成数量解析失败: {db_video_default_videos}")
+
+        db_video_max_concurrent_tasks = await self.db_manager.get_global_setting("video_max_concurrent_tasks")
+        if db_video_max_concurrent_tasks:
+            try:
+                chat_config.VIDEO_GEN_CONFIG["MAX_CONCURRENT_VIDEO_TASKS"] = int(db_video_max_concurrent_tasks)
+                log.info(f"  ✅ 视频并发上限: {db_video_max_concurrent_tasks}")
+            except (TypeError, ValueError):
+                log.warning(f"视频并发上限解析失败: {db_video_max_concurrent_tasks}")
 
         # --- 投喂/忏悔/借贷图片配置 ---
         db_feeding_response_image_url = await self.db_manager.get_global_setting(

@@ -118,6 +118,8 @@ class VideoConfigUpdate(BaseModel):
     video_format: Optional[str] = None  # 'url' 或 'html'
     generation_cost: Optional[int] = None
     max_duration: Optional[int] = None
+    default_videos: Optional[int] = None  # 默认并发生成视频数量
+    max_concurrent_tasks: Optional[int] = None  # 视频请求并发上限
     empty_result_max_retries: Optional[int] = None  # 空回自动重试次数（全局）
 
 
@@ -1464,6 +1466,7 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     db_api_key = await chat_db_manager.get_global_setting("imagen_api_key")
     db_model = await chat_db_manager.get_global_setting("imagen_model")
     db_edit_model = await chat_db_manager.get_global_setting("imagen_edit_model")
+    db_default_images = await chat_db_manager.get_global_setting("imagen_default_images")
     db_api_format = await chat_db_manager.get_global_setting("imagen_api_format")
     db_generation_cost = await chat_db_manager.get_global_setting("imagen_generation_cost")
     db_edit_cost = await chat_db_manager.get_global_setting("imagen_edit_cost")
@@ -1545,7 +1548,10 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "has_api_key": bool(api_key),
         "model": model,
         "edit_model": edit_model,
-        "default_images": config.get("DEFAULT_NUMBER_OF_IMAGES", 1),
+        "default_images": _safe_int(
+            db_default_images,
+            config.get("DEFAULT_NUMBER_OF_IMAGES", 1),
+        ),
         "aspect_ratios": config.get("ASPECT_RATIOS", {}),
         "api_format": api_format,
         "service_available": service_available,
@@ -1622,7 +1628,10 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         if not 1 <= config.default_images <= 4:
             raise HTTPException(400, "默认图片数量必须在 1 到 4 之间")
         chat_config.GEMINI_IMAGEN_CONFIG["DEFAULT_NUMBER_OF_IMAGES"] = config.default_images
+        os.environ["GEMINI_IMAGEN_DEFAULT_IMAGES"] = str(config.default_images)
+        env_updates["GEMINI_IMAGEN_DEFAULT_IMAGES"] = str(config.default_images)
         updated["default_images"] = config.default_images
+        await chat_db_manager.set_global_setting("imagen_default_images", str(config.default_images))
     
     if config.api_key is not None:
         chat_config.GEMINI_IMAGEN_CONFIG["API_KEY"] = config.api_key
@@ -1867,6 +1876,8 @@ async def get_video_config(token: str = Depends(verify_token)):
     db_video_format = await chat_db_manager.get_global_setting("video_format")
     db_generation_cost = await chat_db_manager.get_global_setting("video_generation_cost")
     db_max_duration = await chat_db_manager.get_global_setting("video_max_duration")
+    db_default_videos = await chat_db_manager.get_global_setting("video_default_videos")
+    db_max_concurrent_tasks = await chat_db_manager.get_global_setting("video_max_concurrent_tasks")
     db_empty_result_max_retries = await chat_db_manager.get_global_setting("generation_empty_result_max_retries")
     
     # 优先使用数据库值
@@ -1878,6 +1889,14 @@ async def get_video_config(token: str = Depends(verify_token)):
     video_format = db_video_format or config.get("VIDEO_FORMAT", "url")
     generation_cost = int(db_generation_cost) if db_generation_cost else config.get("VIDEO_GENERATION_COST", 10)
     max_duration = int(db_max_duration) if db_max_duration else config.get("MAX_DURATION", 8)
+    default_videos = _safe_int(
+        db_default_videos,
+        config.get("DEFAULT_NUMBER_OF_VIDEOS", 1),
+    )
+    max_concurrent_tasks = _safe_int(
+        db_max_concurrent_tasks,
+        config.get("MAX_CONCURRENT_VIDEO_TASKS", 3),
+    )
     empty_result_max_retries = (
         int(db_empty_result_max_retries)
         if db_empty_result_max_retries is not None
@@ -1914,6 +1933,8 @@ async def get_video_config(token: str = Depends(verify_token)):
         "video_format": video_format,
         "generation_cost": generation_cost,
         "max_duration": max_duration,
+        "default_videos": default_videos,
+        "max_concurrent_tasks": max_concurrent_tasks,
         "empty_result_max_retries": empty_result_max_retries,
         "service_available": service_available,
     }
@@ -1986,6 +2007,27 @@ async def update_video_config(config: VideoConfigUpdate, token: str = Depends(ve
         chat_config.VIDEO_GEN_CONFIG["MAX_DURATION"] = config.max_duration
         updated["max_duration"] = config.max_duration
         await chat_db_manager.set_global_setting("video_max_duration", str(config.max_duration))
+
+    if config.default_videos is not None:
+        if not 1 <= config.default_videos <= 8:
+            raise HTTPException(400, "默认视频生成数量必须在 1 到 8 之间")
+        chat_config.VIDEO_GEN_CONFIG["DEFAULT_NUMBER_OF_VIDEOS"] = config.default_videos
+        os.environ["VIDEO_GEN_DEFAULT_VIDEOS"] = str(config.default_videos)
+        env_updates["VIDEO_GEN_DEFAULT_VIDEOS"] = str(config.default_videos)
+        updated["default_videos"] = config.default_videos
+        await chat_db_manager.set_global_setting("video_default_videos", str(config.default_videos))
+
+    if config.max_concurrent_tasks is not None:
+        if not 1 <= config.max_concurrent_tasks <= 8:
+            raise HTTPException(400, "视频并发上限必须在 1 到 8 之间")
+        chat_config.VIDEO_GEN_CONFIG["MAX_CONCURRENT_VIDEO_TASKS"] = config.max_concurrent_tasks
+        os.environ["VIDEO_GEN_MAX_CONCURRENT_TASKS"] = str(config.max_concurrent_tasks)
+        env_updates["VIDEO_GEN_MAX_CONCURRENT_TASKS"] = str(config.max_concurrent_tasks)
+        updated["max_concurrent_tasks"] = config.max_concurrent_tasks
+        await chat_db_manager.set_global_setting(
+            "video_max_concurrent_tasks",
+            str(config.max_concurrent_tasks),
+        )
 
     if config.empty_result_max_retries is not None:
         if not 0 <= config.empty_result_max_retries <= 10:

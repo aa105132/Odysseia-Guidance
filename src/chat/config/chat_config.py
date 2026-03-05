@@ -475,6 +475,7 @@ def _get_imagen_config():
         "IMAGE_GENERATION_COST": _parse_int_env("GEMINI_IMAGEN_COST", 1),  # 生成一张图片的月光币成本
         "IMAGE_EDIT_COST": _parse_int_env("GEMINI_IMAGEN_EDIT_COST", 1),  # 图生图的月光币成本
         "MAX_IMAGES_PER_REQUEST": _parse_int_env("GEMINI_IMAGEN_MAX_IMAGES", 20),  # 单次请求最多生成图片数量
+        "DEFAULT_NUMBER_OF_IMAGES": _parse_int_env("GEMINI_IMAGEN_DEFAULT_IMAGES", 1),  # 对话工具默认生成张数
         "SAFETY_FILTER_LEVEL": os.getenv("GEMINI_IMAGEN_SAFETY_LEVEL", "BLOCK_ONLY_HIGH"),
         "PERSON_GENERATION": os.getenv("GEMINI_IMAGEN_PERSON_GEN", "ALLOW_ADULT"),
         # 支持的宽高比: "1:1", "3:4", "4:3", "9:16", "16:9"
@@ -538,6 +539,8 @@ def _get_video_config():
         "VIDEO_GENERATION_COST": _parse_int_env("VIDEO_GEN_COST", 10),
         # 视频时长限制（秒）
         "MAX_DURATION": _parse_int_env("VIDEO_GEN_MAX_DURATION", 8),
+        "DEFAULT_NUMBER_OF_VIDEOS": _parse_int_env("VIDEO_GEN_DEFAULT_VIDEOS", 1),  # 对话工具默认并发生成视频数量
+        "MAX_CONCURRENT_VIDEO_TASKS": _parse_int_env("VIDEO_GEN_MAX_CONCURRENT_TASKS", 3),  # 视频并发上限
         # 空回自动重试次数（图片/视频全局共用）
         "EMPTY_RESULT_MAX_RETRIES": _parse_int_env("GENERATION_EMPTY_RESULT_MAX_RETRIES", 3),
     }
@@ -1294,3 +1297,4 @@ DEBUG_CONFIG = {
     ).lower()
     == "true",  # 控制是否输出详细的Gemini处理过程日志（工具调用、思考等）
 }
+

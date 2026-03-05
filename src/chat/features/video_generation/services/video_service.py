@@ -28,6 +28,7 @@ class VideoResult:
     url: Optional[str] = None  # 视频直接 URL
     html_content: Optional[str] = None  # HTML 页面内容（包含视频）
     text_response: Optional[str] = None  # AI 的文本回复
+    post_id: Optional[str] = None  # 上游返回的视频 post_id（可用于视频延长）
     format_type: str = "url"  # 结果格式类型: "url" 或 "html"
 
 
@@ -88,6 +89,7 @@ class VideoGenerationService:
         image_data: Optional[bytes] = None,
         image_mime_type: Optional[str] = None,
         reference_images: Optional[List[Dict[str, Any]]] = None,
+        model_override: Optional[str] = None,
     ) -> Optional[VideoResult]:
         """
         生成视频（支持文生视频和图生视频）
@@ -145,6 +147,8 @@ class VideoGenerationService:
             model_name = i2v_model if i2v_model else default_model
         else:
             model_name = default_model
+        if model_override and str(model_override).strip():
+            model_name = str(model_override).strip()
 
         log.info(
             f"使用模型 {model_name} 生成视频 ({mode_str}), "
@@ -291,6 +295,76 @@ class VideoGenerationService:
             log.error(f"视频生成时发生错误: {e}", exc_info=True)
             return None
 
+    async def extend_video(
+        self,
+        *,
+        post_id: str,
+        prompt: str,
+        video_length: int = 10,
+        model: Optional[str] = None,
+        aspect_ratio: str = "16:9",
+        resolution: str = "720p",
+        stream: bool = False,
+        video_extension_start_time: Optional[float] = None,
+        stitch_with_extend: bool = True,
+    ) -> Optional[VideoResult]:
+        """
+        调用 /video/extend 扩展已有视频。
+        """
+        if not self.is_available():
+            log.error("视频延长服务不可用")
+            return None
+
+        if not post_id.strip():
+            log.error("视频延长失败：post_id 为空")
+            return None
+
+        config = app_config.VIDEO_GEN_CONFIG
+        default_model = config.get("MODEL_NAME", "grok-imagine-1.0-video")
+        model_name = model.strip() if isinstance(model, str) and model.strip() else default_model
+
+        payload: Dict[str, Any] = {
+            "model": model_name,
+            "post_id": post_id.strip(),
+            "prompt": prompt,
+            "video_length": int(max(1, min(60, video_length))),
+            "aspect_ratio": aspect_ratio or "16:9",
+            "resolution": resolution or "720p",
+            "stream": bool(stream),
+            "stitch_with_extend": bool(stitch_with_extend),
+        }
+        if video_extension_start_time is not None:
+            payload["video_extension_start_time"] = float(video_extension_start_time)
+
+        base_url = self._client["base_url"].rstrip("/")
+        api_key = self._client["api_key"]
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{base_url}/video/extend",
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=300),
+                ) as response:
+                    if response.status != 200:
+                        err_text = await response.text()
+                        log.error(f"视频延长 API 返回错误 {response.status}: {err_text[:500]}")
+                        return None
+
+                    data = await response.json()
+                    return self._extract_video_from_response(data, config.get("VIDEO_FORMAT", "url"))
+        except asyncio.TimeoutError:
+            log.error("视频延长 API 请求超时")
+            return None
+        except Exception as e:
+            log.error(f"视频延长时发生错误: {e}", exc_info=True)
+            return None
+
     def _extract_video_from_response(self, data: dict, video_format: str) -> Optional[VideoResult]:
         """
         从 API 响应中提取视频数据
@@ -304,6 +378,12 @@ class VideoGenerationService:
         """
         text_content = ""
         video_urls = []
+
+        post_id: Optional[str] = None
+        if isinstance(data, dict):
+            raw_post_id = data.get("post_id") or data.get("id")
+            if raw_post_id is not None:
+                post_id = str(raw_post_id)
 
         if "choices" in data:
             for choice in data["choices"]:
@@ -330,9 +410,13 @@ class VideoGenerationService:
 
         # 根据格式提取视频
         if video_format == "html":
-            return self._extract_video_html(text_content, video_urls)
+            result = self._extract_video_html(text_content, video_urls)
         else:
-            return self._extract_video_url(text_content, video_urls)
+            result = self._extract_video_url(text_content, video_urls)
+
+        if result and post_id and not result.post_id:
+            result.post_id = post_id
+        return result
 
     def _extract_video_url(self, text_content: str, video_urls: list) -> Optional[VideoResult]:
         """从响应中提取视频 URL"""

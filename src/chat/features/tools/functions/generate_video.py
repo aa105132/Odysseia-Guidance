@@ -248,6 +248,8 @@ async def generate_video(
     # 获取配置
     max_duration = VIDEO_GEN_CONFIG.get("MAX_DURATION", 8)
     cost = VIDEO_GEN_CONFIG.get("VIDEO_GENERATION_COST", 10)
+    default_video_count = max(1, int(VIDEO_GEN_CONFIG.get("DEFAULT_NUMBER_OF_VIDEOS", 1)))
+    max_concurrent_video_tasks = max(1, int(VIDEO_GEN_CONFIG.get("MAX_CONCURRENT_VIDEO_TASKS", 3)))
 
     # 限制时长
     duration = min(max(1, duration), max_duration)
@@ -260,13 +262,14 @@ async def generate_video(
         try:
             user_id_int = int(user_id)
             balance = await coin_service.get_balance(user_id_int)
-            if balance < cost:
+            estimated_cost = cost * default_video_count
+            if balance < estimated_cost:
                 return {
                     "generation_failed": True,
                     "reason": "insufficient_balance",
-                    "cost": cost,
+                    "cost": estimated_cost,
                     "balance": balance,
-                    "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点月光币再来。"
+                    "hint": f"用户月光币不足（需要{estimated_cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点月光币再来。"
                 }
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
@@ -440,7 +443,11 @@ async def generate_video(
             }
 
     mode_str = "图生视频" if (reference_image or reference_images) else "文生视频"
-    log.info(f"调用视频生成工具 ({mode_str})，提示词: {prompt[:100]}...，时长: {duration}s")
+    video_count = max(1, default_video_count)
+    log.info(
+        f"调用视频生成工具 ({mode_str})，提示词: {prompt[:100]}...，时长: {duration}s，"
+        f"默认并发生成数量: {video_count}"
+    )
 
     # 添加"正在生成"反应
     await add_reaction(GENERATING_EMOJI)
@@ -456,91 +463,92 @@ async def generate_video(
             log.warning(f"发送预告消息失败: {e}")
 
     try:
-        # 调用视频生成服务（支持多参考图）
-        result = await video_service.generate_video(
-            prompt=prompt,
-            duration=duration,
-            image_data=reference_image["data"] if reference_image else None,
-            image_mime_type=reference_image["mime_type"] if reference_image else None,
-            reference_images=(
-                [
-                    {
-                        "data": ref["data"],
-                        "mime_type": ref.get("mime_type", "image/png"),
-                    }
-                    for ref in reference_images
-                    if ref and ref.get("data")
-                ]
-                if reference_images
-                else None
-            ),
+        import asyncio
+        import aiohttp
+        from src.chat.features.tools.ui.regenerate_view import RegenerateView
+
+        # 调用视频生成服务（同提示词默认并发多次）
+        normalized_reference_images = (
+            [
+                {
+                    "data": ref["data"],
+                    "mime_type": ref.get("mime_type", "image/png"),
+                }
+                for ref in reference_images
+                if ref and ref.get("data")
+            ]
+            if reference_images
+            else None
+        )
+
+        semaphore = asyncio.Semaphore(max_concurrent_video_tasks)
+
+        async def _generate_one_video():
+            async with semaphore:
+                return await video_service.generate_video(
+                    prompt=prompt,
+                    duration=duration,
+                    image_data=reference_image["data"] if reference_image else None,
+                    image_mime_type=reference_image["mime_type"] if reference_image else None,
+                    reference_images=normalized_reference_images,
+                )
+
+        results = await asyncio.gather(
+            *[_generate_one_video() for _ in range(video_count)],
+            return_exceptions=True,
         )
 
         # 移除"正在生成"反应
         await remove_reaction(GENERATING_EMOJI)
 
-        if result is None:
-            # 生成失败
+        success_results = []
+        failed_count = 0
+        for item in results:
+            if isinstance(item, Exception):
+                failed_count += 1
+                log.warning(f"视频生成请求异常: {item}")
+            elif item is None:
+                failed_count += 1
+            else:
+                success_results.append(item)
+
+        if not success_results:
             await add_reaction(FAILED_EMOJI)
-            log.warning(f"视频生成返回空结果。提示词: {prompt}")
-            
+            log.warning(f"视频生成全部失败。提示词: {prompt}")
             return {
                 "generation_failed": True,
                 "reason": "generation_failed",
                 "hint": "视频生成失败了，可能是技术原因或描述不够清晰。请用自己的语气告诉用户生成失败了，建议他们稍微调整一下描述再试试。"
             }
 
-        # 生成成功
         await add_reaction(SUCCESS_EMOJI)
 
-        # 扣除月光币
-        if user_id and cost > 0:
+        actual_count = len(success_results)
+        actual_cost = cost * actual_count
+
+        # 扣除月光币（按实际成功数量）
+        if user_id and actual_cost > 0:
             try:
                 user_id_int = int(user_id)
                 await coin_service.remove_coins(
-                    user_id_int, cost, f"AI视频生成: {prompt[:25]}..."
+                    user_id_int, actual_cost, f"AI视频生成x{actual_count}: {prompt[:25]}..."
                 )
-                log.info(f"用户 {user_id_int} 生成视频成功，扣除 {cost} 月光币")
+                log.info(f"用户 {user_id_int} 生成视频成功 {actual_count} 个，扣除 {actual_cost} 月光币")
             except Exception as e:
                 log.error(f"扣除月光币失败: {e}")
 
         # 发送视频到频道
         if channel:
             try:
-                import aiohttp
-                from src.chat.features.tools.ui.regenerate_view import RegenerateView
-
                 # 获取实际使用的视频模型名称
                 from src.chat.config.chat_config import VIDEO_GEN_CONFIG
                 video_model_name = VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
-                
-                # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
-                prompt_embed = discord.Embed(
-                    title="AI 视频生成",
-                    color=0x2b2d31,
-                )
-                # 设置请求者头像和名称
-                _set_embed_author(prompt_embed, message, kwargs.get("request_user"))
-                prompt_embed.add_field(
-                    name="视频提示词",
-                    value=f"```\n{prompt[:1016]}\n```",
-                    inline=False,
-                )
-                if success_message:
-                    processed_success = replace_emojis(success_message)
-                    prompt_embed.add_field(
-                        name="\u200b",
-                        value=processed_success[:1024],
-                        inline=False,
-                    )
-                prompt_embed.set_footer(text=f"模型: {video_model_name}")
-                
-                # 创建重新生成按钮视图
+
+                # 创建重新生成按钮视图（仅第一条消息带按钮）
                 regenerate_view = None
                 if user_id:
                     try:
                         user_id_int = int(user_id)
-                        # 保存参考图片数据以便重新生成(如果是图生视频模式)
                         params_dict = {
                             "prompt": prompt,
                             "duration": duration,
@@ -551,8 +559,12 @@ async def generate_video(
                             params_dict["reference_image_data"] = reference_image["data"]
                             params_dict["reference_image_mime_type"] = reference_image["mime_type"]
                         if reference_images and len(reference_images) > 1:
-                            params_dict["reference_images_data"] = [ref["data"] for ref in reference_images if ref.get("data")]
-                            params_dict["reference_images_mime_types"] = [ref.get("mime_type", "image/png") for ref in reference_images if ref.get("data")]
+                            params_dict["reference_images_data"] = [
+                                ref["data"] for ref in reference_images if ref.get("data")
+                            ]
+                            params_dict["reference_images_mime_types"] = [
+                                ref.get("mime_type", "image/png") for ref in reference_images if ref.get("data")
+                            ]
 
                         regenerate_view = RegenerateView(
                             generation_type="video",
@@ -562,86 +574,100 @@ async def generate_video(
                     except (ValueError, TypeError):
                         pass
 
-                if result.url:
-                    # 尝试下载视频并作为文件发送
-                    video_sent = False
-                    try:
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(
-                                result.url,
-                                timeout=aiohttp.ClientTimeout(total=120)
-                            ) as resp:
-                                if resp.status == 200:
-                                    video_data = await resp.read()
-                                    if len(video_data) <= 25 * 1024 * 1024:
-                                        video_file = discord.File(
-                                            io.BytesIO(video_data),
-                                            filename="generated_video.mp4",
-                                            spoiler=True
-                                        )
-                                        send_kwargs = {
-                                            "embed": prompt_embed,
-                                            "files": [video_file],
-                                        }
-                                        if regenerate_view:
-                                            send_kwargs["view"] = regenerate_view
-                                        await channel.send(**send_kwargs)
-                                        video_sent = True
-                                        log.info("已发送视频文件到频道")
-                                    else:
-                                        log.warning(f"视频文件过大: {len(video_data)} bytes")
-                    except Exception as e:
-                        log.warning(f"下载视频失败，将发送URL: {e}")
-
-                    # 如果无法作为文件发送，在 Embed 中添加视频链接
-                    if not video_sent:
+                async with aiohttp.ClientSession() as session:
+                    for idx, result in enumerate(success_results, 1):
+                        prompt_embed = discord.Embed(
+                            title=f"AI 视频生成 {idx}/{actual_count}" if actual_count > 1 else "AI 视频生成",
+                            color=0x2b2d31,
+                        )
+                        _set_embed_author(prompt_embed, message, kwargs.get("request_user"))
                         prompt_embed.add_field(
-                            name="视频链接",
-                            value=f"[点击观看]({result.url})",
+                            name="视频提示词",
+                            value=f"```\n{prompt[:1016]}\n```",
                             inline=False,
                         )
-                        send_kwargs = {"embed": prompt_embed}
-                        if regenerate_view:
-                            send_kwargs["view"] = regenerate_view
-                        await channel.send(**send_kwargs)
-                        log.info("已发送视频URL到频道")
+                        if success_message:
+                            processed_success = replace_emojis(success_message)
+                            prompt_embed.add_field(
+                                name="\u200b",
+                                value=processed_success[:1024],
+                                inline=False,
+                            )
+                        prompt_embed.set_footer(text=f"模型: {video_model_name}")
 
-                elif result.html_content:
-                    # HTML 格式：发送 HTML 文件
-                    html_file = discord.File(
-                        io.BytesIO(result.html_content.encode("utf-8")),
-                        filename="video_player.html"
-                    )
-                    send_kwargs = {"embed": prompt_embed, "files": [html_file]}
-                    if regenerate_view:
-                        send_kwargs["view"] = regenerate_view
-                    await channel.send(**send_kwargs)
-                    log.info("已发送视频HTML到频道")
+                        if result.url:
+                            video_sent = False
+                            try:
+                                async with session.get(
+                                    result.url,
+                                    timeout=aiohttp.ClientTimeout(total=120)
+                                ) as resp:
+                                    if resp.status == 200:
+                                        video_data = await resp.read()
+                                        if len(video_data) <= 25 * 1024 * 1024:
+                                            video_file = discord.File(
+                                                io.BytesIO(video_data),
+                                                filename=f"generated_video_{idx}.mp4",
+                                                spoiler=True
+                                            )
+                                            send_kwargs = {
+                                                "embed": prompt_embed,
+                                                "files": [video_file],
+                                            }
+                                            if regenerate_view and idx == 1:
+                                                send_kwargs["view"] = regenerate_view
+                                            await channel.send(**send_kwargs)
+                                            video_sent = True
+                                        else:
+                                            log.warning(f"视频文件过大: {len(video_data)} bytes")
+                            except Exception as e:
+                                log.warning(f"下载视频失败，将发送URL: {e}")
 
-                elif result.text_response:
-                    # 仅文本响应
-                    prompt_embed.add_field(
-                        name="响应",
-                        value=result.text_response[:1024],
-                        inline=False,
-                    )
-                    send_kwargs = {"embed": prompt_embed}
-                    if regenerate_view:
-                        send_kwargs["view"] = regenerate_view
-                    await channel.send(**send_kwargs)
-                    log.info("已发送视频文本响应到频道")
+                            if not video_sent:
+                                prompt_embed.add_field(
+                                    name="视频链接",
+                                    value=f"[点击观看]({result.url})",
+                                    inline=False,
+                                )
+                                send_kwargs = {"embed": prompt_embed}
+                                if regenerate_view and idx == 1:
+                                    send_kwargs["view"] = regenerate_view
+                                await channel.send(**send_kwargs)
 
+                        elif result.html_content:
+                            html_file = discord.File(
+                                io.BytesIO(result.html_content.encode("utf-8")),
+                                filename=f"video_player_{idx}.html"
+                            )
+                            send_kwargs = {"embed": prompt_embed, "files": [html_file]}
+                            if regenerate_view and idx == 1:
+                                send_kwargs["view"] = regenerate_view
+                            await channel.send(**send_kwargs)
+
+                        elif result.text_response:
+                            prompt_embed.add_field(
+                                name="响应",
+                                value=result.text_response[:1024],
+                                inline=False,
+                            )
+                            send_kwargs = {"embed": prompt_embed}
+                            if regenerate_view and idx == 1:
+                                send_kwargs["view"] = regenerate_view
+                            await channel.send(**send_kwargs)
+
+                if failed_count > 0:
+                    log.warning(f"视频并发生成共 {video_count} 个请求，失败 {failed_count} 个")
             except Exception as e:
                 log.error(f"发送视频到频道失败: {e}", exc_info=True)
 
-        # 返回成功信息给 AI（标记跳过后续AI回复）
         return {
             "success": True,
             "skip_ai_response": True,
             "duration": duration,
-            "cost": cost,
+            "cost": actual_cost,
+            "videos_generated": actual_count,
             "mode": mode_str,
-            "message": "视频已成功生成并发送给用户，预告消息已发送，无需再回复。"
+            "message": "视频已成功批量生成并发送给用户，预告消息已发送，无需再回复。"
         }
 
     except Exception as e:
