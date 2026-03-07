@@ -737,11 +737,11 @@ async def generate_images_batch(
             # 发送图片到频道（一条消息包含所有图片和提示词）
             if channel:
                 try:
-                    from src.chat.features.tools.ui.regenerate_view import RegenerateView
-                    
                     # 获取实际使用的模型名称
                     batch_model_name = gemini_imagen_service._get_model_for_resolution(
-                        resolution=resolution, is_edit=False, content_rating=content_rating
+                        resolution=resolution,
+                        is_edit=False,
+                        content_rating=batch_content_rating,
                     )
                     
                     # 构建 Discord Embed（批量生成：标题+多个提示词+成功回复）

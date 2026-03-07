@@ -1,4 +1,5 @@
 import asyncio
+from PIL import ImageDraw
 from pathlib import Path
 import sys
 
@@ -42,3 +43,25 @@ def test_text_to_newspaper_brief_image_returns_png_bytes():
 
     assert image_bytes is not None
     assert image_bytes.startswith(b"\x89PNG")
+
+
+def test_text_to_newspaper_brief_image_does_not_pass_raw_newlines_to_draw(monkeypatch):
+    drawn_texts = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def tracking_text(self, xy, text, *args, **kwargs):
+        if isinstance(text, str):
+            drawn_texts.append(text)
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", tracking_text)
+
+    image_bytes = text_to_newspaper_brief_image(
+        body="第一段内容。\n\n第二段内容。\n第三段内容。",
+        title="月月简报",
+        subtitle="测试副标题",
+        section_name="频道纪要",
+    )
+
+    assert image_bytes is not None
+    assert all("\n" not in text and "\r" not in text for text in drawn_texts)

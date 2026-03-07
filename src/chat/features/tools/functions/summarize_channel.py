@@ -354,7 +354,8 @@ def text_to_newspaper_brief_image(
 
         def wrap_text(text: str, font, max_width: int) -> list[str]:
             lines: list[str] = []
-            for paragraph in (text or "").split("\\n"):
+            normalized_text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+            for paragraph in normalized_text.split("\n"):
                 stripped = paragraph.strip()
                 if not stripped:
                     lines.append("")
@@ -371,6 +372,30 @@ def text_to_newspaper_brief_image(
                 if current_line:
                     lines.append(current_line)
             return lines
+
+        def choose_column_split_index(lines: list[str]) -> int:
+            if len(lines) <= 14:
+                return len(lines)
+
+            midpoint = math.ceil(len(lines) / 2)
+            max_offset = min(6, len(lines) // 3)
+
+            for offset in range(max_offset + 1):
+                left_candidate = midpoint - offset
+                if (
+                    0 < left_candidate < len(lines)
+                    and not (lines[left_candidate - 1] or "").strip()
+                ):
+                    return left_candidate
+
+                right_candidate = midpoint + offset
+                if (
+                    0 < right_candidate < len(lines)
+                    and not (lines[right_candidate - 1] or "").strip()
+                ):
+                    return right_candidate
+
+            return midpoint
 
         def line_height(font, extra_spacing: int = line_spacing) -> int:
             bbox = font.getbbox("测试A")
@@ -426,7 +451,7 @@ def text_to_newspaper_brief_image(
             current_y += 24
 
         body_lines = wrap_text(clean_body, body_font, left_column_width)
-        split_index = len(body_lines) if len(body_lines) <= 14 else math.ceil(len(body_lines) / 2)
+        split_index = choose_column_split_index(body_lines)
         first_column_lines = body_lines[:split_index]
         second_column_lines = body_lines[split_index:]
         body_line_height = line_height(body_font)
