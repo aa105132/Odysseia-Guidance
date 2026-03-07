@@ -257,6 +257,10 @@ class GeminiService:
             bot=self.bot, tool_map=self.tool_map, tool_declarations=self.available_tools
         )
 
+        self.last_called_tools: List[str] = []
+        self.last_tool_image_data: Optional[Dict[str, Any]] = None
+        self.last_tool_source_links: List[tuple] = []
+
         log.info("--- 工具加载完成 (模块化) ---")
         log.info(
             f"已加载 {len(self.available_tools)} 个工具: {list(self.tool_map.keys())}"
@@ -269,7 +273,9 @@ class GeminiService:
         log.info("Discord Bot 实例已成功注入 GeminiService。")
         # 关键：同时将 bot 实例注入到 ToolService 中
         self.tool_service.bot = bot
-        self.last_called_tools: List[str] = []
+        self.last_called_tools = []
+        self.last_tool_image_data = None
+        self.last_tool_source_links = []
         log.info("Discord Bot 实例已成功注入 ToolService。")
     
     def reload_api_keys(self, new_keys_str: str = None) -> dict:
@@ -525,6 +531,50 @@ class GeminiService:
         return links
 
     @staticmethod
+    def _extract_source_links_from_response_text(response_text: str) -> List[tuple]:
+        """从最终回复中的来源区块提取 (title, url) 列表。"""
+        if not response_text:
+            return []
+
+        patterns = [
+            r"(?:^|\n)消息源：\s*(.*)$",
+            r"(?:^|\n)##\s*信息来源\s*(.*)$",
+        ]
+
+        matched_block = ""
+        for pattern in patterns:
+            match = re.search(pattern, response_text, flags=re.DOTALL)
+            if match:
+                matched_block = match.group(1).strip()
+                break
+
+        target_text = matched_block or response_text
+        links: List[tuple] = []
+        seen: set[str] = set()
+        markdown_link_pattern = re.compile(r"\[([^\]]+)\]\(<?(https?://[^\s>\)]+)>?\)")
+        bare_url_pattern = re.compile(r"(https?://[^\s<>\]\)]+)")
+
+        for title, url in markdown_link_pattern.findall(target_text):
+            clean_url = (url or "").strip().rstrip(".,;:!?")
+            if not clean_url or clean_url in seen:
+                continue
+            if GeminiService._is_private_or_local_url(clean_url):
+                continue
+            seen.add(clean_url)
+            links.append((title.strip() or "来源链接", clean_url))
+
+        for match in bare_url_pattern.finditer(target_text):
+            clean_url = (match.group(1) or "").strip().rstrip(".,;:!?")
+            if not clean_url or clean_url in seen:
+                continue
+            if GeminiService._is_private_or_local_url(clean_url):
+                continue
+            seen.add(clean_url)
+            links.append(("来源链接", clean_url))
+
+        return links
+
+    @staticmethod
     def _is_private_or_local_url(url: str) -> bool:
         """判断 URL 是否为本地/内网地址。"""
         if not url:
@@ -628,6 +678,11 @@ class GeminiService:
             "直接基于当前已返回的搜索结果组织最终回答；"
             "若信息不足，明确说明缺失点并请用户补充关键词。"
         )
+
+    def _reset_last_tool_outputs(self) -> None:
+        self.last_tool_image_data = None
+        self.last_tool_source_links = []
+
     @staticmethod
     def _is_summary_or_search_tool(tool_name: str) -> bool:
         normalized = str(tool_name or "").strip().lower()
@@ -1222,6 +1277,8 @@ class GeminiService:
         AI 回复生成的分发器。
         如果选择了自定义模型，则优先尝试自定义端点；如果失败，则自动回退到官方 API。
         """
+        self._reset_last_tool_outputs()
+
         # 判断是否应该使用自定义端点：
         # 1. 模型名在预定义的 CUSTOM_GEMINI_ENDPOINTS 中
         # 2. 或者 Dashboard 配置了全局 API URL（存储在 _db_api_url）
@@ -2095,12 +2152,24 @@ class GeminiService:
                     # 这是图片工具返回的图片数据，直接添加到结果中
                     log.info(f"检测到工具 '{actual_tool_name}' 返回的 inline_data，已添加到工具结果。")
                     tool_result_parts.append(result)
+                    inline_data = getattr(result, "inline_data", None)
+                    if actual_tool_name == "render_newspaper_brief" and inline_data:
+                        self.last_tool_image_data = {
+                            "mime_type": inline_data.mime_type or "image/png",
+                            "data": inline_data.data,
+                            "tool_name": actual_tool_name,
+                        }
                     # 根据工具类型生成不同的提示信息
                     if actual_tool_name == "get_user_avatar":
                         response_hint = (
                             "已获取用户头像图片。上面的图片就是该用户的 Discord 头像。"
                             "请仔细分析图中的外观特征（发色、发型、瞳色、服饰风格等），"
                             "以便在后续为用户生成图片时参考这些视觉特征。"
+                        )
+                    elif actual_tool_name == "render_newspaper_brief":
+                        response_hint = (
+                            "报纸摘要图已生成。"
+                            "不要把消息源链接画进图片里；若需要出处，请在最终回复末尾单独列出消息源。"
                         )
                     else:
                         response_hint = "图片已成功生成并展示给用户。请用自己的语气告诉用户图片已经画好了。"
@@ -2331,6 +2400,9 @@ class GeminiService:
                 log.info("--------------------------")
 
                 self.last_called_tools = called_tool_names
+                self.last_tool_source_links = self._extract_source_links_from_response_text(
+                    formatted_response
+                )
                 return formatted_response
 
         self.last_called_tools = called_tool_names
@@ -2742,17 +2814,45 @@ class GeminiService:
                                     web_search_source_links.append((title, url))
 
                         # 将工具结果添加到对话历史
+                        tool_result_for_history = tool_result
+                        if (
+                            isinstance(tool_result, dict)
+                            and tool_result.get("image_data")
+                            and tool_name == "render_newspaper_brief"
+                        ):
+                            image_info = tool_result.get("image_data") or {}
+                            raw_image_bytes = image_info.get("data") or b""
+                            if raw_image_bytes:
+                                self.last_tool_image_data = {
+                                    "mime_type": image_info.get("mime_type", "image/png"),
+                                    "data": raw_image_bytes,
+                                    "tool_name": tool_name,
+                                }
+                            sanitized_result = dict(tool_result)
+                            sanitized_image = dict(image_info)
+                            if "data" in sanitized_image:
+                                sanitized_image["data"] = "<binary-image-data>"
+                            sanitized_result["image_data"] = sanitized_image
+                            tool_result_for_history = sanitized_result
+
                         messages.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
                                 "content": (
-                                    json.dumps(tool_result, ensure_ascii=False)
-                                    if isinstance(tool_result, (dict, list))
-                                    else str(tool_result)
+                                    json.dumps(tool_result_for_history, ensure_ascii=False)
+                                    if isinstance(tool_result_for_history, (dict, list))
+                                    else str(tool_result_for_history)
                                 ),
                             }
                         )
+
+                        if (
+                            isinstance(tool_result, dict)
+                            and tool_name == "render_newspaper_brief"
+                            and tool_result.get("image_data")
+                        ):
+                            tool_result["image_data"] = "<binary-image-data>"
 
                         # 检查是否有工具标记了 skip_ai_response（本轮工具执行完后统一处理）
                         if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
@@ -2764,6 +2864,7 @@ class GeminiService:
 
                     if skip_ai_response_requested:
                         self.last_called_tools = called_tool_names
+                        self.last_tool_source_links = list(web_search_source_links)
                         return None
 
                     # 继续循环以获取最终响应
@@ -2788,6 +2889,9 @@ class GeminiService:
                     final_response = self._append_message_sources_if_needed(
                         final_response, web_search_source_links
                     )
+                self.last_tool_source_links = self._extract_source_links_from_response_text(
+                    final_response
+                )
                 return final_response
 
             except Exception as e:

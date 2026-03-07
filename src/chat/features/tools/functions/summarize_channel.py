@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import math
 from typing import Optional
 from pydantic import BaseModel, Field
 import discord
@@ -127,6 +128,37 @@ async def summarize_channel(
         return f"错误：处理消息时发生未知错误: {e}"
 
 
+def _load_summary_image_assets(
+    title_font_size: int,
+    body_font_size: int,
+    logo_max_size: tuple[int, int] = (250, 250),
+):
+    """加载总结图片共用资源。"""
+    logo_path = "src/chat/assets/logo.png"
+    font_path = "src/chat/assets/font.TTF"
+
+    try:
+        title_font = ImageFont.truetype(font_path, size=title_font_size)
+        body_font = ImageFont.truetype(font_path, size=body_font_size)
+    except IOError:
+        log.error(f"字体文件在 '{font_path}' 未找到！无法生成图片。")
+        return None
+
+    logo_img = None
+    if os.path.exists(logo_path):
+        logo_img = Image.open(logo_path).convert("RGBA")
+        logo_img.thumbnail(logo_max_size, Image.Resampling.LANCZOS)
+    else:
+        log.warning(f"Logo 文件未找到: {logo_path}")
+
+    return title_font, body_font, logo_img
+
+
+def _strip_custom_emojis(text: str) -> str:
+    emoji_pattern = r"<a?:.+?:\d+>"
+    return re.sub(emoji_pattern, "", text or "").strip()
+
+
 def text_to_summary_image(
     text: str, title: str = "月月的总结时间到!"
 ) -> Optional[bytes]:
@@ -147,24 +179,20 @@ def text_to_summary_image(
 
     try:
         # --- 2. 资源加载和预处理 ---
-        try:
-            title_font = ImageFont.truetype(FONT_PATH, size=TITLE_FONT_SIZE)
-            body_font = ImageFont.truetype(FONT_PATH, size=BODY_FONT_SIZE)
-        except IOError:
-            log.error(f"字体文件在 '{FONT_PATH}' 未找到！无法生成图片。")
+        loaded_assets = _load_summary_image_assets(
+            title_font_size=TITLE_FONT_SIZE,
+            body_font_size=BODY_FONT_SIZE,
+            logo_max_size=LOGO_MAX_SIZE,
+        )
+        if not loaded_assets:
             return None
+        title_font, body_font, logo_img = loaded_assets
+        logo_w, logo_h = logo_img.size if logo_img else (0, 0)
 
-        logo_img = None
-        logo_w, logo_h = 0, 0
-        if os.path.exists(LOGO_PATH):
-            logo_img = Image.open(LOGO_PATH).convert("RGBA")
-            logo_img.thumbnail(LOGO_MAX_SIZE, Image.Resampling.LANCZOS)
-            logo_w, logo_h = logo_img.size
-        else:
-            log.warning(f"Logo 文件未找到: {LOGO_PATH}")
+        clean_text = _strip_custom_emojis(text)
 
-        emoji_pattern = r"<a?:.+?:\d+>"
-        clean_text = re.sub(emoji_pattern, "", text).strip()
+        if not clean_text:
+            return None
 
         # --- 3. 精确排版与高度计算 ---
         lines = []
@@ -259,3 +287,197 @@ def text_to_summary_image(
     except Exception as e:
         log.error(f"创建文本转图片时发生严重错误: {e}", exc_info=True)
         return None
+
+
+def text_to_newspaper_brief_image(
+    body: str,
+    title: str,
+    subtitle: Optional[str] = None,
+    section_name: str = "月月简报",
+    issue_date: Optional[str] = None,
+    dek: Optional[str] = None,
+) -> Optional[bytes]:
+    """将摘要正文渲染为轻量报纸风图片。"""
+    img_width = 1400
+    margin = 80
+    top_padding = 50
+    bottom_padding = 80
+    section_font_size = 28
+    title_font_size = 66
+    subtitle_font_size = 34
+    dek_font_size = 32
+    body_font_size = 30
+    line_spacing = 14
+    gutter = 60
+    bg_color = (245, 238, 224, 255)
+    paper_shadow = (221, 208, 182, 255)
+    header_color = (42, 37, 29, 255)
+    body_color = (53, 46, 37, 255)
+    accent_color = (122, 59, 42, 255)
+    divider_color = (151, 136, 110, 255)
+    font_path = "src/chat/assets/font.TTF"
+
+    try:
+        clean_title = _strip_custom_emojis(title)
+        clean_subtitle = _strip_custom_emojis(subtitle or "")
+        clean_body = _strip_custom_emojis(body)
+        clean_dek = _strip_custom_emojis(dek or "")
+        clean_section_name = _strip_custom_emojis(section_name or "月月简报") or "月月简报"
+        clean_issue_date = _strip_custom_emojis(issue_date or "") or datetime.now().strftime(
+            "%Y-%m-%d"
+        )
+
+        if not clean_title or not clean_body:
+            return None
+
+        loaded_assets = _load_summary_image_assets(
+            title_font_size=title_font_size,
+            body_font_size=body_font_size,
+            logo_max_size=(180, 180),
+        )
+        if not loaded_assets:
+            return None
+        title_font, body_font, logo_img = loaded_assets
+        try:
+            section_font = ImageFont.truetype(font_path, size=section_font_size)
+            subtitle_font = ImageFont.truetype(font_path, size=subtitle_font_size)
+            dek_font = ImageFont.truetype(font_path, size=dek_font_size)
+        except IOError:
+            log.error(f"字体文件在 '{font_path}' 未找到！无法生成报纸摘要图。")
+            return None
+
+        temp_canvas = Image.new("RGBA", (img_width, 4000), bg_color)
+        draw = ImageDraw.Draw(temp_canvas)
+
+        content_width = img_width - margin * 2
+        left_column_width = math.floor((content_width - gutter) / 2)
+
+        def wrap_text(text: str, font, max_width: int) -> list[str]:
+            lines: list[str] = []
+            for paragraph in (text or "").split("\\n"):
+                stripped = paragraph.strip()
+                if not stripped:
+                    lines.append("")
+                    continue
+                current_line = ""
+                for char in stripped:
+                    test_line = f"{current_line}{char}"
+                    if font.getlength(test_line) <= max_width:
+                        current_line = test_line
+                    else:
+                        if current_line:
+                            lines.append(current_line)
+                        current_line = char
+                if current_line:
+                    lines.append(current_line)
+            return lines
+
+        def line_height(font, extra_spacing: int = line_spacing) -> int:
+            bbox = font.getbbox("测试A")
+            return (bbox[3] - bbox[1]) + extra_spacing
+
+        current_y = top_padding
+        section_text = f"{clean_section_name}  ·  {clean_issue_date}"
+        draw.text((margin, current_y), section_text, font=section_font, fill=accent_color)
+        current_y += line_height(section_font, 18)
+
+        title_lines = wrap_text(clean_title, title_font, content_width - 240)
+        title_line_height = line_height(title_font, 10)
+        for line in title_lines:
+            draw.text((margin, current_y), line, font=title_font, fill=header_color)
+            current_y += title_line_height
+
+        if logo_img:
+            logo_w, logo_h = logo_img.size
+            temp_canvas.paste(
+                logo_img,
+                (img_width - margin - logo_w, top_padding),
+                logo_img,
+            )
+
+        if clean_subtitle:
+            current_y += 10
+            subtitle_lines = wrap_text(clean_subtitle, subtitle_font, content_width)
+            subtitle_line_height = line_height(subtitle_font, 8)
+            for line in subtitle_lines:
+                draw.text((margin, current_y), line, font=subtitle_font, fill=body_color)
+                current_y += subtitle_line_height
+
+        current_y += 14
+        draw.line(
+            (margin, current_y, img_width - margin, current_y),
+            fill=divider_color,
+            width=3,
+        )
+        current_y += 26
+
+        if clean_dek:
+            dek_lines = wrap_text(clean_dek, dek_font, content_width)
+            dek_line_height = line_height(dek_font, 10)
+            for line in dek_lines:
+                draw.text((margin, current_y), line, font=dek_font, fill=accent_color)
+                current_y += dek_line_height
+            current_y += 12
+            draw.line(
+                (margin, current_y, img_width - margin, current_y),
+                fill=divider_color,
+                width=2,
+            )
+            current_y += 24
+
+        body_lines = wrap_text(clean_body, body_font, left_column_width)
+        split_index = len(body_lines) if len(body_lines) <= 14 else math.ceil(len(body_lines) / 2)
+        first_column_lines = body_lines[:split_index]
+        second_column_lines = body_lines[split_index:]
+        body_line_height = line_height(body_font)
+        left_x = margin
+        right_x = margin + left_column_width + gutter
+        left_y = current_y
+        right_y = current_y
+
+        for line in first_column_lines:
+            if not line:
+                left_y += body_line_height
+                continue
+            draw.text((left_x, left_y), line, font=body_font, fill=body_color)
+            left_y += body_line_height
+
+        if second_column_lines:
+            divider_x = margin + left_column_width + gutter // 2
+            max_column_height = max(len(first_column_lines), len(second_column_lines)) * body_line_height
+            draw.line(
+                (divider_x, current_y - 8, divider_x, current_y + max_column_height),
+                fill=divider_color,
+                width=2,
+            )
+            for line in second_column_lines:
+                if not line:
+                    right_y += body_line_height
+                    continue
+                draw.text((right_x, right_y), line, font=body_font, fill=body_color)
+                right_y += body_line_height
+
+        total_height = int(max(left_y, right_y) + bottom_padding)
+        image = Image.new("RGBA", (img_width, total_height), paper_shadow)
+        paper = Image.new("RGBA", (img_width - 24, total_height - 24), bg_color)
+        image.paste(paper, (12, 12))
+        image.alpha_composite(temp_canvas.crop((0, 0, img_width, total_height)), (0, 0))
+
+        output_buffer = io.BytesIO()
+        image.save(output_buffer, format="PNG")
+        image_bytes = output_buffer.getvalue()
+        log.info(
+            f"成功创建报纸摘要图，尺寸: {img_width}x{total_height}，大小: {len(image_bytes) / 1024:.2f} KB"
+        )
+        return image_bytes
+    except Exception as e:
+        log.error(f"创建报纸摘要图时发生严重错误: {e}", exc_info=True)
+        return None
+
+
+__all__ = [
+    "SummarizeChannelParams",
+    "summarize_channel",
+    "text_to_summary_image",
+    "text_to_newspaper_brief_image",
+]

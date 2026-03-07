@@ -873,6 +873,9 @@ COIN_CONFIG = {
 # --- 消息设置 ---
 MESSAGE_SETTINGS = {
     "DM_THRESHOLD": 300,  # 当消息长度超过此值时，通过私信发送
+    "NEWSPAPER_BRIEF_THRESHOLD": _parse_int_env(
+        "NEWSPAPER_BRIEF_THRESHOLD", 250
+    ),  # 搜索/总结场景改用报纸摘要图的正文长度阈值
 }
 
 GEMINI_TEXT_GEN_CONFIG = {

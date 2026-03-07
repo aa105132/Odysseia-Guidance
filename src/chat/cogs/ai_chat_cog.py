@@ -11,7 +11,9 @@ import io
 from src.chat.services.chat_service import chat_service
 from src.chat.services.message_processor import message_processor
 from src.chat.services.gemini_service import gemini_service
-from src.chat.features.tools.functions.summarize_channel import text_to_summary_image
+from src.chat.features.tools.functions.summarize_channel import (
+    text_to_newspaper_brief_image,
+)
 
 # 导入上下文服务
 
@@ -80,6 +82,102 @@ class AIChatCog(commands.Cog):
             except Exception:
                 pass
 
+    @staticmethod
+    def _is_newspaper_info_tool(tool_name: str) -> bool:
+        normalized = str(tool_name or "").strip()
+        if not normalized:
+            return False
+        if normalized == "render_newspaper_brief":
+            return True
+        if normalized == "summarize_channel":
+            return True
+        return (
+            gemini_service._is_summary_or_search_tool(normalized)
+            and normalized != "generate_voice"
+        )
+
+    def _is_newspaper_info_context(self, last_tools: List[str]) -> bool:
+        return any(self._is_newspaper_info_tool(tool_name) for tool_name in last_tools)
+
+    @staticmethod
+    def _extract_source_block(response_text: str) -> tuple[str, str]:
+        text = str(response_text or "").strip()
+        if not text:
+            return "", ""
+
+        patterns = [r"\n##\s*信息来源\s*", r"\n消息源：\s*"]
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            body = text[: match.start()].rstrip()
+            source_text = text[match.end() :].strip()
+            return body, source_text
+
+        return text, ""
+
+    @staticmethod
+    def _format_source_links(source_links: List[tuple]) -> str:
+        lines = []
+        seen_urls = set()
+        for title, url in source_links or []:
+            clean_title = str(title or "来源链接").strip() or "来源链接"
+            clean_url = str(url or "").strip()
+            if not clean_url or clean_url in seen_urls:
+                continue
+            seen_urls.add(clean_url)
+            lines.append(f"- {clean_title}: {clean_url}")
+        if not lines:
+            return ""
+        return "信息来源：\n" + "\n".join(lines)
+
+    async def _reply_sources_below_image(
+        self, message: discord.Message, source_text: str, source_links: List[tuple]
+    ) -> None:
+        formatted_sources = self._format_source_links(source_links)
+        final_source_text = formatted_sources or str(source_text or "").strip()
+        if not final_source_text:
+            return
+        sent_messages = await self._reply_text_safely(
+            message, final_source_text, mention_author=False
+        )
+        await self._suppress_link_previews(sent_messages)
+
+    async def _send_newspaper_brief_reply(
+        self,
+        message: discord.Message,
+        body_text: str,
+        source_text: str,
+        source_links: List[tuple],
+        provided_image_data: Optional[dict] = None,
+        title: str = "月月简报",
+        section_name: str = "搜索 / 总结",
+    ) -> bool:
+        image_data = provided_image_data or getattr(gemini_service, "last_tool_image_data", None)
+        image_filename = "newspaper-brief.png"
+        image_bytes = None
+
+        if image_data and image_data.get("data"):
+            image_bytes = image_data.get("data")
+        else:
+            image_bytes = text_to_newspaper_brief_image(
+                body=body_text,
+                title=title,
+                section_name=section_name,
+            )
+
+        if not image_bytes:
+            return False
+
+        with io.BytesIO(image_bytes) as image_file:
+            await message.reply(
+                file=discord.File(image_file, image_filename),
+                mention_author=True,
+            )
+
+        await self._reply_sources_below_image(message, source_text, source_links)
+        return True
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """
@@ -138,42 +236,69 @@ class AIChatCog(commands.Cog):
         if response_text:
             try:
                 # --- 响应发送逻辑 ---
-                # 动态获取上次调用的工具列表，如果不存在则为空列表
-                last_tools = getattr(gemini_service, "last_called_tools", [])
-                # 判断是否使用了搜索工具，用于后续抑制链接预览
+                last_tools = list(getattr(gemini_service, "last_called_tools", []) or [])
                 used_web_search = "web_search" in last_tools
+                tool_image_data = getattr(gemini_service, "last_tool_image_data", None)
+                source_links = list(getattr(gemini_service, "last_tool_source_links", []) or [])
+                body_text, source_text = self._extract_source_block(response_text)
+                body_length = self._get_text_length_without_emojis(body_text or response_text)
+                is_info_context = self._is_newspaper_info_context(last_tools)
+                newspaper_threshold = int(
+                    MESSAGE_SETTINGS.get("NEWSPAPER_BRIEF_THRESHOLD", 250)
+                )
 
-                # 1. 如果调用了总结工具，总是转换为图片发送
-                if "summarize_channel" in last_tools:
-                    log.info("调用了总结工具, 尝试转为图片发送。")
-                    image_bytes = text_to_summary_image(response_text)
-                    if image_bytes:
-                        with io.BytesIO(image_bytes) as image_file:
-                            await message.reply(
-                                file=discord.File(image_file, "summary.png"),
-                                mention_author=True,
-                            )
-                        # 发送成功后直接返回，不再执行后续逻辑
+                if tool_image_data and "render_newspaper_brief" in last_tools:
+                    sent = await self._send_newspaper_brief_reply(
+                        message,
+                        body_text=body_text or response_text,
+                        source_text=source_text,
+                        source_links=source_links,
+                        provided_image_data=tool_image_data,
+                    )
+                    if sent:
                         return
-                    else:
-                        log.error("总结图片生成失败，将作为文本尝试发送。")
 
-                # 2. 如果不是长篇总结，则检查是否在豁免频道或帖子 (常规长消息可直接发送)
+                if "summarize_channel" in last_tools:
+                    log.info("调用了总结工具, 尝试转为报纸摘要图发送。")
+                    sent = await self._send_newspaper_brief_reply(
+                        message,
+                        body_text=body_text or response_text,
+                        source_text=source_text,
+                        source_links=source_links,
+                        title="月月频道简报",
+                        section_name="频道总结",
+                    )
+                    if sent:
+                        return
+                    log.error("频道总结报纸摘要图片生成失败，将作为文本尝试发送。")
+
+                if is_info_context and body_length > newspaper_threshold:
+                    sent = await self._send_newspaper_brief_reply(
+                        message,
+                        body_text=body_text or response_text,
+                        source_text=source_text,
+                        source_links=source_links,
+                    )
+                    if sent:
+                        return
+                    log.error("报纸摘要图片生成失败，将回退为文本发送。")
+                    response_text = body_text or response_text
+
                 is_unrestricted = (
                     message.channel.id in chat_config.UNRESTRICTED_CHANNEL_IDS
                     or isinstance(message.channel, discord.Thread)
                 )
                 if is_unrestricted:
                     sent_messages = await self._reply_text_safely(
-                        message, response_text, mention_author=True
+                        message, body_text or response_text, mention_author=True
                     )
                     if used_web_search:
                         await self._suppress_link_previews(sent_messages)
+                    await self._reply_sources_below_image(message, source_text, source_links)
                     return
 
-                # 3. 如果以上都不是，则检查是否为需要发送私信的普通长消息
                 if (
-                    self._get_text_length_without_emojis(response_text)
+                    self._get_text_length_without_emojis(body_text or response_text)
                     > MESSAGE_SETTINGS["DM_THRESHOLD"]
                 ):
                     try:
@@ -185,13 +310,13 @@ class AIChatCog(commands.Cog):
                             else "你们的私信"
                         )
 
-                        if len(response_text) > 1800:
+                        if len(body_text or response_text) > 1800:
                             await self._send_dm_text_safely(
-                                message.author, 'Long reply split in DM:', response_text
+                                message.author, 'Long reply split in DM:', body_text or response_text
                             )
                             return
                         await message.author.send(
-                            f"刚刚在 {channel_mention} 频道里，你想听我说的话有点多，在这里悄悄告诉你哦：\n\n{response_text}"
+                            f"刚刚在 {channel_mention} 频道里，你想听我说的话有点多，在这里悄悄告诉你哦：\n\n{body_text or response_text}"
                         )
                         log.info(
                             f"回复因过长已通过私信发送给 {message.author.display_name}"
@@ -201,23 +326,20 @@ class AIChatCog(commands.Cog):
                             f"无法通过私信发送给 {message.author.display_name}，将在原频道回复提示信息。"
                         )
                         sent_messages = await self._reply_text_safely(
-                            message, response_text, mention_author=True
+                            message, body_text or response_text, mention_author=True
                         )
                         if used_web_search:
                             await self._suppress_link_previews(sent_messages)
+                        await self._reply_sources_below_image(message, source_text, source_links)
                         return
-                        await message.reply(
-                            "字太多啦，我不要刷屏。你的私信又关了，我就不给你讲啦！",
-                            mention_author=True,
-                        )
                     return
 
-                # 4. 默认情况：直接在频道回复短消息
                 sent_messages = await self._reply_text_safely(
-                    message, response_text, mention_author=True
+                    message, body_text or response_text, mention_author=True
                 )
                 if used_web_search:
                     await self._suppress_link_previews(sent_messages)
+                await self._reply_sources_below_image(message, source_text, source_links)
 
             except discord.errors.HTTPException as e:
                 log.warning(f"发送回复时发生HTTP错误: {e}")

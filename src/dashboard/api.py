@@ -280,6 +280,7 @@ class AIConfigUpdate(BaseModel):
     query_model: Optional[str] = None  # 查询重写模型
     available_models: Optional[List[str]] = None
     channel_history_limit: Optional[int] = None  # 频道消息上下文条数
+    newspaper_brief_threshold: Optional[int] = None  # 报纸摘要图触发阈值
     max_attempts_per_key: Optional[int] = None  # 主聊天单密钥最大重试次数
     retry_delay_seconds: Optional[int] = None  # 主聊天重试延迟（秒）
     max_key_rotation_retries: Optional[int] = None  # 主聊天密钥轮换重试次数
@@ -1013,6 +1014,7 @@ async def get_ai_config(token: str = Depends(verify_token)):
     db_api_url = await chat_db_manager.get_global_setting("gemini_api_url")
     db_api_key = await chat_db_manager.get_global_setting("gemini_api_key")
     db_api_format = await chat_db_manager.get_global_setting("ai_api_format")
+    db_newspaper_brief_threshold = await chat_db_manager.get_global_setting("newspaper_brief_threshold")
     db_max_attempts_per_key = await chat_db_manager.get_global_setting("ai_max_attempts_per_key")
     db_retry_delay_seconds = await chat_db_manager.get_global_setting("ai_retry_delay_seconds")
     db_max_key_rotation_retries = await chat_db_manager.get_global_setting("ai_max_key_rotation_retries")
@@ -1031,6 +1033,15 @@ async def get_ai_config(token: str = Depends(verify_token)):
     api_url = db_api_url or os.getenv("GEMINI_API_BASE_URL", "")
     api_key = db_api_key or os.getenv("GEMINI_API_KEYS", "")
     api_format = db_api_format or "gemini"
+    try:
+        newspaper_brief_threshold = (
+            int(db_newspaper_brief_threshold)
+            if db_newspaper_brief_threshold is not None
+            else int(chat_config.MESSAGE_SETTINGS.get("NEWSPAPER_BRIEF_THRESHOLD", 250))
+        )
+    except (TypeError, ValueError):
+        newspaper_brief_threshold = int(chat_config.MESSAGE_SETTINGS.get("NEWSPAPER_BRIEF_THRESHOLD", 250))
+
     try:
         max_attempts_per_key = (
             int(db_max_attempts_per_key)
@@ -1100,6 +1111,7 @@ async def get_ai_config(token: str = Depends(verify_token)):
         "api_format": api_format,
         "available_models": available_models,
         "channel_history_limit": chat_config.CHANNEL_MEMORY_CONFIG.get("formatted_history_limit", 35),
+        "newspaper_brief_threshold": newspaper_brief_threshold,
         "max_attempts_per_key": max_attempts_per_key,
         "retry_delay_seconds": retry_delay_seconds,
         "max_key_rotation_retries": max_key_rotation_retries,
@@ -1219,6 +1231,18 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         # 写入数据库持久化
         await chat_db_manager.set_global_setting("channel_formatted_history_limit", str(limit_val))
         log.info(f"✅ 频道消息上下文条数已更新为: {limit_val}")
+
+    if config.newspaper_brief_threshold is not None:
+        if not 50 <= config.newspaper_brief_threshold <= 5000:
+            raise HTTPException(400, "报纸摘要阈值必须在 50 到 5000 之间")
+        threshold_val = int(config.newspaper_brief_threshold)
+        chat_config.MESSAGE_SETTINGS["NEWSPAPER_BRIEF_THRESHOLD"] = threshold_val
+        env_updates["NEWSPAPER_BRIEF_THRESHOLD"] = str(threshold_val)
+        updated["newspaper_brief_threshold"] = threshold_val
+        await chat_db_manager.set_global_setting(
+            "newspaper_brief_threshold", str(threshold_val)
+        )
+        log.info(f"✅ 报纸摘要阈值已更新为: {threshold_val}")
 
     if config.max_attempts_per_key is not None:
         if not 1 <= config.max_attempts_per_key <= 10:

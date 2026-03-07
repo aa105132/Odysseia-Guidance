@@ -378,6 +378,16 @@
                                    class="w-full max-w-xs bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                         </div>
 
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                报纸摘要阈值
+                                <span class="text-xs text-slate-500 ml-2">搜索/总结正文超过该字数时优先转报纸图（50-5000）</span>
+                            </label>
+                            <input type="number" x-model.number="aiForm.newspaper_brief_threshold"
+                                   min="50" max="5000"
+                                   class="w-full max-w-xs bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-slate-300 mb-2">
@@ -3795,7 +3805,7 @@
                 toast: { show: false, message: '', type: 'success' },
                 
                 // 表单数据
-                aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '', channel_history_limit: 35, max_attempts_per_key: 1, retry_delay_seconds: 1, max_key_rotation_retries: 3 },
+                aiForm: { model: '', temperature: 1.0, max_tokens: 8192, api_url: '', api_key: '', custom_model: '', api_format: 'gemini', summary_model: '', query_model: '', channel_history_limit: 35, newspaper_brief_threshold: 250, max_attempts_per_key: 1, retry_delay_seconds: 1, max_key_rotation_retries: 3 },
                 imagenForm: { enabled: false, api_url: '', model: '', edit_model: '', default_images: 1, api_key: '', api_format: 'gemini', custom_model: '', generation_cost: 1, edit_cost: 1, max_images: 20, model_2k: '', model_4k: '', edit_model_2k: '', edit_model_4k: '', streaming_enabled: false, image_response_format: 'auto', sfw_model: '', sfw_edit_model: '', sfw_model_2k: '', sfw_edit_model_2k: '', sfw_model_4k: '', sfw_edit_model_4k: '', nsfw_model: '', nsfw_edit_model: '', nsfw_model_2k: '', nsfw_edit_model_2k: '', nsfw_model_4k: '', nsfw_edit_model_4k: '' },
                 videoForm: { enabled: false, api_url: '', api_key: '', model: '', i2v_model: '', video_format: 'url', generation_cost: 10, max_duration: 8, default_videos: 1, max_concurrent_tasks: 3, empty_result_max_retries: 3 },
                 videoConfig: {},
@@ -4061,6 +4071,7 @@
                         this.aiForm.summary_model = this.config.ai.summary_model || '';
                         this.aiForm.query_model = this.config.ai.query_model || '';
                         this.aiForm.channel_history_limit = this.config.ai.channel_history_limit ?? 35;
+                        this.aiForm.newspaper_brief_threshold = this.config.ai.newspaper_brief_threshold ?? 250;
                         this.aiForm.max_attempts_per_key = this.config.ai.max_attempts_per_key ?? 1;
                         this.aiForm.retry_delay_seconds = this.config.ai.retry_delay_seconds ?? 1;
                         this.aiForm.max_key_rotation_retries = this.config.ai.max_key_rotation_retries ?? 3;
@@ -5207,6 +5218,10 @@
                         // 发送频道消息上下文条数
                         if (this.aiForm.channel_history_limit != null) {
                             payload.channel_history_limit = parseInt(this.aiForm.channel_history_limit);
+                        }
+
+                        if (this.aiForm.newspaper_brief_threshold != null) {
+                            payload.newspaper_brief_threshold = parseInt(this.aiForm.newspaper_brief_threshold);
                         }
 
                         if (this.aiForm.max_attempts_per_key != null) {
