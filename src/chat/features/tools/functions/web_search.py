@@ -23,6 +23,10 @@ from urllib.parse import urlparse
 import aiohttp
 
 from src.chat.features.tools.tool_metadata import tool_metadata
+from src.chat.features.tools.utils.web_search_url_utils import (
+    DEFAULT_TAVILY_API_URL,
+    sanitize_tavily_api_url,
+)
 
 log = logging.getLogger(__name__)
 
@@ -104,7 +108,10 @@ class WebSearchConfig:
         return await self._get_setting("grok_model") or "grok-3-mini"
 
     async def get_tavily_api_url(self) -> str:
-        return await self._get_setting("tavily_api_url") or "https://api.tavily.com"
+        return sanitize_tavily_api_url(
+            await self._get_setting("tavily_api_url"),
+            logger=log,
+        ) or DEFAULT_TAVILY_API_URL
 
     async def get_tavily_api_key(self) -> str:
         return await self._get_setting("tavily_api_key") or ""
@@ -420,13 +427,6 @@ async def _tavily_search(query: str, max_results: int = 5) -> list:
     if not api_key:
         return []
 
-    # 检测 Tavily URL 是否合理
-    normalized_url = api_url.lower().rstrip("/")
-    if normalized_url and "tavily" not in normalized_url and normalized_url != "https://api.tavily.com":
-        log.warning(
-            f"Tavily API URL 可能配置错误: '{api_url}'，标准 URL 应为 https://api.tavily.com"
-        )
-
     endpoint = f"{api_url.rstrip('/')}/search"
     headers = {
         "Content-Type": "application/json",
@@ -473,15 +473,6 @@ async def _tavily_extract(url: str) -> Optional[str]:
     if not api_key:
         log.warning("Tavily Extract 跳过：API Key 为空，请检查数据库或环境变量配置")
         return None
-
-    # 检测 Tavily URL 是否合理（防止误配置为其他服务的 URL）
-    normalized_url = api_url.lower().rstrip("/")
-    if normalized_url and "tavily" not in normalized_url and normalized_url != "https://api.tavily.com":
-        log.warning(
-            f"Tavily API URL 可能配置错误: '{api_url}' 不包含 'tavily'，"
-            f"请检查是否将 Grok 或其他服务的 URL 误填为 Tavily URL。"
-            f"标准 Tavily URL 应为 https://api.tavily.com"
-        )
 
     endpoint = f"{api_url.rstrip('/')}/extract"
     headers = {

@@ -2,6 +2,10 @@ import asyncio
 from unittest.mock import AsyncMock
 
 from src.chat.features.tools.functions import web_search as web_search_tool
+from src.chat.features.tools.utils.web_search_url_utils import (
+    DEFAULT_TAVILY_API_URL,
+    sanitize_tavily_api_url,
+)
 
 
 def test_parse_query_flags_deep_and_batch():
@@ -80,3 +84,24 @@ def test_web_search_batch_runs_multiple_queries(monkeypatch):
 
     assert '网络批量搜索结果' in result
     assert grok_mock.await_count == 3
+
+
+def test_sanitize_tavily_api_url_rejects_openai_compatible_url():
+    assert sanitize_tavily_api_url("https://bufan.live/grok/v1") == DEFAULT_TAVILY_API_URL
+
+
+def test_sanitize_tavily_api_url_accepts_valid_custom_proxy():
+    assert (
+        sanitize_tavily_api_url("https://proxy.example.com/tavily")
+        == "https://proxy.example.com/tavily"
+    )
+
+
+def test_get_tavily_api_url_falls_back_when_setting_is_grok_url(monkeypatch):
+    monkeypatch.setattr(
+        web_search_tool._config,
+        "_get_setting",
+        AsyncMock(return_value="https://bufan.live/grok/v1"),
+    )
+
+    assert asyncio.run(web_search_tool._config.get_tavily_api_url()) == DEFAULT_TAVILY_API_URL

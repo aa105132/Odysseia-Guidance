@@ -26,6 +26,10 @@ from psycopg2.extras import DictCursor
 from src.chat.config import chat_config
 from src.chat.config import emoji_config
 from src.chat.features.admin_panel.services.db_services import get_parade_db_connection
+from src.chat.features.tools.utils.web_search_url_utils import (
+    is_suspicious_tavily_api_url,
+    sanitize_tavily_api_url,
+)
 from src.dashboard.service_registry import service_registry
 from src.chat.features.games.config.text_config import (
     apply_ghost_card_image_urls,
@@ -4779,7 +4783,10 @@ async def get_web_search_config(token: str = Depends(verify_token)):
     grok_api_url = db_grok_api_url or os.getenv("GROK_API_URL", "")
     grok_api_key = db_grok_api_key or os.getenv("GROK_API_KEY", "")
     grok_model = db_grok_model or os.getenv("GROK_MODEL", "grok-3-mini")
-    tavily_api_url = db_tavily_api_url or os.getenv("TAVILY_API_URL", "https://api.tavily.com")
+    tavily_api_url = sanitize_tavily_api_url(
+        db_tavily_api_url or os.getenv("TAVILY_API_URL", "https://api.tavily.com"),
+        logger=log,
+    )
     tavily_api_key = db_tavily_api_key or os.getenv("TAVILY_API_KEY", "")
     search_history_fallback_fetch_limit = _safe_int(
         db_search_history_fallback_fetch_limit,
@@ -4830,9 +4837,16 @@ async def update_web_search_config(config: WebSearchConfigUpdate, token: str = D
         log.info(f"✅ 网络搜索 Grok 模型已设置为: {config.grok_model}")
 
     if config.tavily_api_url is not None:
-        await chat_db_manager.set_global_setting("web_search_tavily_api_url", config.tavily_api_url)
-        chat_config.WEB_SEARCH_CONFIG["tavily_api_url"] = config.tavily_api_url
-        updated["tavily_api_url"] = config.tavily_api_url[:30] + "..." if len(config.tavily_api_url) > 30 else config.tavily_api_url
+        tavily_api_url = str(config.tavily_api_url).strip()
+        if tavily_api_url and is_suspicious_tavily_api_url(tavily_api_url):
+            raise HTTPException(
+                400,
+                "Tavily API URL 看起来像 OpenAI/Grok 兼容端点，请填写 Tavily Search/Extract 的基础地址，例如 https://api.tavily.com",
+            )
+        tavily_api_url = sanitize_tavily_api_url(tavily_api_url)
+        await chat_db_manager.set_global_setting("web_search_tavily_api_url", tavily_api_url)
+        chat_config.WEB_SEARCH_CONFIG["tavily_api_url"] = tavily_api_url
+        updated["tavily_api_url"] = tavily_api_url[:30] + "..." if len(tavily_api_url) > 30 else tavily_api_url
         log.info(f"✅ 网络搜索 Tavily API URL 已更新")
 
     if config.tavily_api_key is not None:
@@ -4930,7 +4944,10 @@ async def test_web_search_connection(token: str = Depends(verify_token)):
     # 测试 Tavily API（简单的搜索测试，api_key 在请求体中传递）
     db_tavily_url = await chat_db_manager.get_global_setting("web_search_tavily_api_url")
     db_tavily_key = await chat_db_manager.get_global_setting("web_search_tavily_api_key")
-    tavily_url = db_tavily_url or os.getenv("TAVILY_API_URL", "https://api.tavily.com")
+    tavily_url = sanitize_tavily_api_url(
+        db_tavily_url or os.getenv("TAVILY_API_URL", "https://api.tavily.com"),
+        logger=log,
+    )
     tavily_key = db_tavily_key or os.getenv("TAVILY_API_KEY", "")
 
     if tavily_key:
