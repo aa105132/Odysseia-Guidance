@@ -289,6 +289,45 @@ def text_to_summary_image(
         return None
 
 
+def _clean_newspaper_text(text: str) -> str:
+    if not text:
+        return ""
+
+    cleaned = str(text)
+    cleaned = re.sub(r"<a?:[^:]+:\d+>", "", cleaned)
+    cleaned = re.sub(r"\[\s*citation\s*:\s*\d+\s*\]", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"(?<![A-Za-z])citation\s*:\s*\d+(?![A-Za-z])",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\[\^?\d+\]", "", cleaned)
+    cleaned = re.sub(r"^\s*\[\^?\d+\]:.*$", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", cleaned)
+    cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
+    cleaned = re.sub(r"<https?://[^>]+>", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"```(?:[\w+-]+)?\s*\n?(.*?)```",
+        r"\1",
+        cleaned,
+        flags=re.DOTALL,
+    )
+    cleaned = re.sub(r"`([^`]*)`", r"\1", cleaned)
+    cleaned = re.sub(r"^\s*>\s?", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"^\s*#{1,6}\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"^\s*[-*+]\s+", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"^\s*\d+\.\s+", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"__(.*?)__", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", cleaned)
+    cleaned = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def text_to_newspaper_brief_image(
     body: str,
     title: str,
@@ -297,204 +336,292 @@ def text_to_newspaper_brief_image(
     issue_date: Optional[str] = None,
     dek: Optional[str] = None,
 ) -> Optional[bytes]:
-    """将摘要正文渲染为轻量报纸风图片。"""
-    img_width = 1400
-    margin = 80
-    top_padding = 50
-    bottom_padding = 80
-    section_font_size = 28
-    title_font_size = 66
-    subtitle_font_size = 34
-    dek_font_size = 32
-    body_font_size = 30
-    line_spacing = 14
-    gutter = 60
-    bg_color = (245, 238, 224, 255)
-    paper_shadow = (221, 208, 182, 255)
-    header_color = (42, 37, 29, 255)
-    body_color = (53, 46, 37, 255)
-    accent_color = (122, 59, 42, 255)
-    divider_color = (151, 136, 110, 255)
-    font_path = "src/chat/assets/font.TTF"
+    """将摘要正文渲染为报纸风排版图片。"""
+    IMG_WIDTH = 1400
+    MARGIN = 64
+    MASTHEAD_H = 110
+    META_H = 44
+    SECTION_LABEL_H = 36
+    FOOTER_H = 44
+    TOP_PAD = 28
+    COL_GUTTER = 52
+    THICK_DIV = 3
+    THIN_DIV = 1
+    FONT_PATH = "src/chat/assets/font.TTF"
+    LOGO_PATH = "src/chat/assets/logo.png"
+
+    BG = (245, 243, 237)
+    MASTHEAD_BG = (25, 22, 18)
+    MASTHEAD_FG = (255, 255, 255)
+    META_BG = (50, 44, 34)
+    META_FG = (189, 178, 155)
+    LABEL_BG = (25, 22, 18)
+    LABEL_FG = (255, 255, 255)
+    HEADLINE_C = (22, 20, 16)
+    BODY_C = (58, 52, 40)
+    DEK_C = (80, 70, 52)
+    SECTION_H_C = (22, 20, 16)
+    DIV_C = (158, 146, 122)
+
+    PUB_FS = 54
+    META_FS = 21
+    LABEL_FS = 17
+    HEADLINE_FS = 50
+    DEK_FS = 27
+    BODY_FS = 25
+    SHEAD_FS = 23
+    SBODY_FS = 21
+    FOOTER_FS = 17
+
+    def _lf(size: int):
+        try:
+            return ImageFont.truetype(FONT_PATH, size=size)
+        except IOError:
+            return ImageFont.load_default()
 
     try:
-        clean_title = _strip_custom_emojis(title)
-        clean_subtitle = _strip_custom_emojis(subtitle or "")
-        clean_body = _strip_custom_emojis(body)
-        clean_dek = _strip_custom_emojis(dek or "")
-        clean_section_name = _strip_custom_emojis(section_name or "月月简报") or "月月简报"
-        clean_issue_date = _strip_custom_emojis(issue_date or "") or datetime.now().strftime(
+        c_title = _clean_newspaper_text(title) or "月月简报"
+        c_section = _clean_newspaper_text(section_name) or "月月简报"
+        c_date = _clean_newspaper_text(issue_date or "") or datetime.now().strftime(
             "%Y-%m-%d"
         )
+        c_subtitle = _clean_newspaper_text(subtitle or "")
+        c_dek = _clean_newspaper_text(dek or "")
+        c_body = _clean_newspaper_text(body)
 
-        if not clean_title or not clean_body:
+        if not c_body:
             return None
 
-        loaded_assets = _load_summary_image_assets(
-            title_font_size=title_font_size,
-            body_font_size=body_font_size,
-            logo_max_size=(180, 180),
-        )
-        if not loaded_assets:
-            return None
-        title_font, body_font, logo_img = loaded_assets
-        try:
-            section_font = ImageFont.truetype(font_path, size=section_font_size)
-            subtitle_font = ImageFont.truetype(font_path, size=subtitle_font_size)
-            dek_font = ImageFont.truetype(font_path, size=dek_font_size)
-        except IOError:
-            log.error(f"字体文件在 '{font_path}' 未找到！无法生成报纸摘要图。")
-            return None
+        fp = _lf(PUB_FS)
+        fm = _lf(META_FS)
+        fl = _lf(LABEL_FS)
+        fh = _lf(HEADLINE_FS)
+        fd = _lf(DEK_FS)
+        fb = _lf(BODY_FS)
+        fsh = _lf(SHEAD_FS)
+        fsb = _lf(SBODY_FS)
+        ff = _lf(FOOTER_FS)
 
-        temp_canvas = Image.new("RGBA", (img_width, 4000), bg_color)
-        draw = ImageDraw.Draw(temp_canvas)
+        content_w = IMG_WIDTH - MARGIN * 2
 
-        content_width = img_width - margin * 2
-        left_column_width = math.floor((content_width - gutter) / 2)
+        def _tw(text: str, font) -> float:
+            try:
+                return font.getbbox(text)[2]
+            except Exception:
+                return len(text) * font.size * 0.66
 
-        def wrap_text(text: str, font, max_width: int) -> list[str]:
-            lines: list[str] = []
-            normalized_text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
-            for paragraph in normalized_text.split("\n"):
-                stripped = paragraph.strip()
-                if not stripped:
+        def _lh(font, sp: int = 10) -> int:
+            try:
+                bb = font.getbbox("测A")
+                return bb[3] - bb[1] + sp
+            except Exception:
+                return font.size + sp
+
+        def _wrap(text: str, font, max_w: int) -> list:
+            lines = []
+            for para in text.split("\n"):
+                para = para.strip()
+                if not para:
                     lines.append("")
                     continue
-                current_line = ""
-                for char in stripped:
-                    test_line = f"{current_line}{char}"
-                    if font.getlength(test_line) <= max_width:
-                        current_line = test_line
+                cur = ""
+                for ch in para:
+                    if _tw(cur + ch, font) <= max_w:
+                        cur += ch
                     else:
-                        if current_line:
-                            lines.append(current_line)
-                        current_line = char
-                if current_line:
-                    lines.append(current_line)
+                        if cur:
+                            lines.append(cur)
+                        cur = ch
+                if cur:
+                    lines.append(cur)
             return lines
 
-        def choose_column_split_index(lines: list[str]) -> int:
-            if len(lines) <= 14:
-                return len(lines)
+        def _bh(lines: list, font, sp: int = 10) -> int:
+            return max(1, len(lines)) * _lh(font, sp)
 
-            midpoint = math.ceil(len(lines) / 2)
-            max_offset = min(6, len(lines) // 3)
+        def _parse_sections(text: str) -> list:
+            sections = []
+            cur_head = ""
+            cur_body = []
+            for line in text.split("\n"):
+                raw = line.strip()
+                m = re.match(r"^#{1,3}\s+(.+)", raw)
+                if m:
+                    if cur_body or cur_head:
+                        sections.append((cur_head, "\n".join(cur_body).strip()))
+                    cur_head = m.group(1).strip()
+                    cur_body = []
+                else:
+                    cur_body.append(raw)
+            if cur_body or cur_head:
+                sections.append((cur_head, "\n".join(cur_body).strip()))
+            return sections
 
-            for offset in range(max_offset + 1):
-                left_candidate = midpoint - offset
-                if (
-                    0 < left_candidate < len(lines)
-                    and not (lines[left_candidate - 1] or "").strip()
-                ):
-                    return left_candidate
+        sections = _parse_sections(c_body)
+        has_sections = len(sections) > 1 or (len(sections) == 1 and sections[0][0])
 
-                right_candidate = midpoint + offset
-                if (
-                    0 < right_candidate < len(lines)
-                    and not (lines[right_candidate - 1] or "").strip()
-                ):
-                    return right_candidate
+        if has_sections:
+            main_head_raw, main_body_raw = sections[0]
+            sub_sections = sections[1:]
+        else:
+            main_head_raw = ""
+            main_body_raw = c_body
+            sub_sections = []
 
-            return midpoint
+        headline_text = c_subtitle or main_head_raw or c_title
+        dek_text = c_dek
+        main_body_text = main_body_raw
 
-        def line_height(font, extra_spacing: int = line_spacing) -> int:
-            bbox = font.getbbox("测试A")
-            return (bbox[3] - bbox[1]) + extra_spacing
+        pub_lines = _wrap(c_title, fp, content_w - 210)
+        pub_h = _bh(pub_lines, fp, 8)
 
-        current_y = top_padding
-        section_text = f"{clean_section_name}  ·  {clean_issue_date}"
-        draw.text((margin, current_y), section_text, font=section_font, fill=accent_color)
-        current_y += line_height(section_font, 18)
+        hl_lines = _wrap(headline_text, fh, content_w) if headline_text else []
+        hl_h = _bh(hl_lines, fh, 8) if hl_lines else 0
+        headline_section_h = (SECTION_LABEL_H + 14 + hl_h + 8) if hl_lines else 0
 
-        title_lines = wrap_text(clean_title, title_font, content_width - 240)
-        title_line_height = line_height(title_font, 10)
-        for line in title_lines:
-            draw.text((margin, current_y), line, font=title_font, fill=header_color)
-            current_y += title_line_height
+        dek_lines = _wrap(dek_text, fd, content_w) if dek_text else []
+        dek_h = (_bh(dek_lines, fd, 8) + 14) if dek_lines else 0
 
+        col_w = (content_w - COL_GUTTER) // 2
+        body_lines = _wrap(main_body_text, fb, col_w) if main_body_text else []
+        half = math.ceil(len(body_lines) / 2)
+        left_lines = body_lines[:half]
+        right_lines = body_lines[half:]
+        body_h = max(_bh(left_lines, fb), _bh(right_lines, fb)) if body_lines else 0
+        body_section_h = (THICK_DIV + 16 + body_h + 24) if body_h else 0
+
+        grid_h = 0
+        if sub_sections:
+            gc_w = (content_w - COL_GUTTER) // 2
+            col_hts = [0, 0]
+            for i, (sh, sb) in enumerate(sub_sections):
+                ci = i % 2
+                sh_lines = _wrap(sh, fsh, gc_w - 8) if sh else []
+                sb_lines = _wrap(sb, fsb, gc_w - 8) if sb else []
+                sh_h = _bh(sh_lines, fsh, 6) if sh_lines else 0
+                sb_h = _bh(sb_lines, fsb, 5) if sb_lines else 0
+                col_hts[ci] += sh_h + sb_h + 24
+            grid_h = THICK_DIV + 20 + max(col_hts) + 20
+
+        total_h = (
+            MASTHEAD_H + META_H + THICK_DIV + TOP_PAD
+            + headline_section_h + dek_h
+            + body_section_h + grid_h
+            + FOOTER_H + 20
+        )
+        total_h = max(total_h, 700)
+
+        img = Image.new("RGB", (IMG_WIDTH, total_h), BG)
+        draw = ImageDraw.Draw(img)
+
+        logo_img = None
+        if os.path.exists(LOGO_PATH):
+            try:
+                logo_img = Image.open(LOGO_PATH).convert("RGBA")
+                logo_img.thumbnail((86, 86), Image.Resampling.LANCZOS)
+            except Exception:
+                logo_img = None
+
+        # 1. 报头
+        draw.rectangle([0, 0, IMG_WIDTH, MASTHEAD_H], fill=MASTHEAD_BG)
+        py = max(14, (MASTHEAD_H - pub_h) // 2)
+        for line in pub_lines:
+            draw.text((MARGIN, py), line, font=fp, fill=MASTHEAD_FG)
+            py += _lh(fp, 8)
         if logo_img:
-            logo_w, logo_h = logo_img.size
-            temp_canvas.paste(
-                logo_img,
-                (img_width - margin - logo_w, top_padding),
-                logo_img,
-            )
+            lw, lhv = logo_img.size
+            img.paste(logo_img, (IMG_WIDTH - MARGIN - lw, (MASTHEAD_H - lhv) // 2), logo_img)
 
-        if clean_subtitle:
-            current_y += 10
-            subtitle_lines = wrap_text(clean_subtitle, subtitle_font, content_width)
-            subtitle_line_height = line_height(subtitle_font, 8)
-            for line in subtitle_lines:
-                draw.text((margin, current_y), line, font=subtitle_font, fill=body_color)
-                current_y += subtitle_line_height
+        # 2. 元数据栏
+        draw.rectangle([0, MASTHEAD_H, IMG_WIDTH, MASTHEAD_H + META_H], fill=META_BG)
+        my = MASTHEAD_H + (META_H - _lh(fm, 0)) // 2
+        draw.text((MARGIN, my), c_section, font=fm, fill=META_FG)
+        rw = _tw(c_date, fm)
+        draw.text((IMG_WIDTH - MARGIN - rw, my), c_date, font=fm, fill=META_FG)
 
-        current_y += 14
-        draw.line(
-            (margin, current_y, img_width - margin, current_y),
-            fill=divider_color,
-            width=3,
-        )
-        current_y += 26
+        # 3. 分割线
+        dv_y = MASTHEAD_H + META_H
+        draw.rectangle([0, dv_y, IMG_WIDTH, dv_y + THICK_DIV], fill=HEADLINE_C)
+        cur_y = dv_y + THICK_DIV + TOP_PAD
 
-        if clean_dek:
-            dek_lines = wrap_text(clean_dek, dek_font, content_width)
-            dek_line_height = line_height(dek_font, 10)
+        # 4. 大标题
+        if hl_lines:
+            lx2 = MARGIN + 124
+            draw.rectangle([MARGIN, cur_y, lx2, cur_y + SECTION_LABEL_H], fill=LABEL_BG)
+            lby = cur_y + (SECTION_LABEL_H - _lh(fl, 0)) // 2
+            draw.text((MARGIN + 10, lby), "TOP STORY", font=fl, fill=LABEL_FG)
+            cur_y += SECTION_LABEL_H + 12
+            for line in hl_lines:
+                draw.text((MARGIN, cur_y), line, font=fh, fill=HEADLINE_C)
+                cur_y += _lh(fh, 8)
+            cur_y += 8
+
+        # 5. Dek
+        if dek_lines:
             for line in dek_lines:
-                draw.text((margin, current_y), line, font=dek_font, fill=accent_color)
-                current_y += dek_line_height
-            current_y += 12
-            draw.line(
-                (margin, current_y, img_width - margin, current_y),
-                fill=divider_color,
-                width=2,
-            )
-            current_y += 24
+                draw.text((MARGIN, cur_y), line, font=fd, fill=DEK_C)
+                cur_y += _lh(fd, 8)
+            cur_y += 12
 
-        body_lines = wrap_text(clean_body, body_font, left_column_width)
-        split_index = choose_column_split_index(body_lines)
-        first_column_lines = body_lines[:split_index]
-        second_column_lines = body_lines[split_index:]
-        body_line_height = line_height(body_font)
-        left_x = margin
-        right_x = margin + left_column_width + gutter
-        left_y = current_y
-        right_y = current_y
+        # 6. 正文双栏
+        if body_lines:
+            draw.line([(MARGIN, cur_y), (IMG_WIDTH - MARGIN, cur_y)], fill=DIV_C, width=THICK_DIV)
+            cur_y += THICK_DIV + 16
+            ly = cur_y
+            ry = cur_y
+            rx = MARGIN + col_w + COL_GUTTER
+            for line in left_lines:
+                if line:
+                    draw.text((MARGIN, ly), line, font=fb, fill=BODY_C)
+                ly += _lh(fb)
+            mid_x = MARGIN + col_w + COL_GUTTER // 2
+            bottom_col = max(ly, ry + _bh(right_lines, fb))
+            draw.line([(mid_x, cur_y), (mid_x, bottom_col)], fill=DIV_C, width=THIN_DIV)
+            for line in right_lines:
+                if line:
+                    draw.text((rx, ry), line, font=fb, fill=BODY_C)
+                ry += _lh(fb)
+            cur_y = max(ly, ry) + 24
 
-        for line in first_column_lines:
-            if not line:
-                left_y += body_line_height
-                continue
-            draw.text((left_x, left_y), line, font=body_font, fill=body_color)
-            left_y += body_line_height
+        # 7. 子分节网格
+        if sub_sections:
+            draw.line([(MARGIN, cur_y), (IMG_WIDTH - MARGIN, cur_y)], fill=HEADLINE_C, width=2)
+            cur_y += 20
+            gc_w = (content_w - COL_GUTTER) // 2
+            col_xs = [MARGIN, MARGIN + gc_w + COL_GUTTER]
+            col_ys = [cur_y, cur_y]
+            for i, (sh, sb) in enumerate(sub_sections):
+                ci = i % 2
+                gx = col_xs[ci]
+                gy = col_ys[ci]
+                if sh:
+                    draw.line([(gx, gy), (gx + 3, gy)], fill=HEADLINE_C, width=4)
+                    for sl in _wrap(sh, fsh, gc_w - 10):
+                        draw.text((gx + 6, gy), sl, font=fsh, fill=SECTION_H_C)
+                        gy += _lh(fsh, 6)
+                if sb:
+                    for sl in _wrap(sb, fsb, gc_w - 10):
+                        draw.text((gx + 6, gy), sl, font=fsb, fill=BODY_C)
+                        gy += _lh(fsb, 5)
+                col_ys[ci] = gy + 20
+            mid_gx = MARGIN + gc_w + COL_GUTTER // 2
+            draw.line([(mid_gx, cur_y), (mid_gx, max(col_ys))], fill=DIV_C, width=THIN_DIV)
+            cur_y = max(col_ys) + 16
 
-        if second_column_lines:
-            divider_x = margin + left_column_width + gutter // 2
-            max_column_height = max(len(first_column_lines), len(second_column_lines)) * body_line_height
-            draw.line(
-                (divider_x, current_y - 8, divider_x, current_y + max_column_height),
-                fill=divider_color,
-                width=2,
-            )
-            for line in second_column_lines:
-                if not line:
-                    right_y += body_line_height
-                    continue
-                draw.text((right_x, right_y), line, font=body_font, fill=body_color)
-                right_y += body_line_height
+        # 8. 底栏
+        ft_y_start = total_h - FOOTER_H
+        draw.rectangle([0, ft_y_start, IMG_WIDTH, total_h], fill=MASTHEAD_BG)
+        ft_text = f"月月简报  ·  {c_date}"
+        ftw = _tw(ft_text, ff)
+        fty = ft_y_start + (FOOTER_H - _lh(ff, 0)) // 2
+        draw.text(((IMG_WIDTH - ftw) // 2, fty), ft_text, font=ff, fill=META_FG)
 
-        total_height = int(max(left_y, right_y) + bottom_padding)
-        image = Image.new("RGBA", (img_width, total_height), paper_shadow)
-        paper = Image.new("RGBA", (img_width - 24, total_height - 24), bg_color)
-        image.paste(paper, (12, 12))
-        image.alpha_composite(temp_canvas.crop((0, 0, img_width, total_height)), (0, 0))
-
-        output_buffer = io.BytesIO()
-        image.save(output_buffer, format="PNG")
-        image_bytes = output_buffer.getvalue()
-        log.info(
-            f"成功创建报纸摘要图，尺寸: {img_width}x{total_height}，大小: {len(image_bytes) / 1024:.2f} KB"
-        )
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+        log.info(f"成功创建报纸摘要图，尺寸: {IMG_WIDTH}x{total_h}，大小: {len(image_bytes)/1024:.1f} KB")
         return image_bytes
+
     except Exception as e:
         log.error(f"创建报纸摘要图时发生严重错误: {e}", exc_info=True)
         return None

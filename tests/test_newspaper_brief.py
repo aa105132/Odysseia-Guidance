@@ -65,3 +65,38 @@ def test_text_to_newspaper_brief_image_does_not_pass_raw_newlines_to_draw(monkey
 
     assert image_bytes is not None
     assert all("\n" not in text and "\r" not in text for text in drawn_texts)
+
+
+def test_text_to_newspaper_brief_image_filters_citation_and_markdown(monkeypatch):
+    drawn_texts = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def tracking_text(self, xy, text, *args, **kwargs):
+        if isinstance(text, str):
+            drawn_texts.append(text)
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", tracking_text)
+
+    image_bytes = text_to_newspaper_brief_image(
+        body=(
+            "根据预测，价格还会涨[citation:1][citation:6]。\n\n"
+            "**重点**：参考[来源](https://example.com)和`DDR5`。\n"
+            "> 引用内容"
+        ),
+        title="月月简报",
+        subtitle="### 搜索 / 总结",
+        section_name="搜索 / 总结",
+    )
+
+    rendered_text = "\n".join(drawn_texts)
+
+    assert image_bytes is not None
+    assert "citation:" not in rendered_text.lower()
+    assert "https://example.com" not in rendered_text
+    assert "**" not in rendered_text
+    assert "`" not in rendered_text
+    assert "重点" in rendered_text
+    assert "来源" in rendered_text
+    assert "DDR5" in rendered_text
+    assert "引用内容" in rendered_text
