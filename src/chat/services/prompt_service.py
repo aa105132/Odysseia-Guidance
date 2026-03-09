@@ -460,26 +460,26 @@ class PromptService:
 
         voice_lines = [
             "语音工具规则：",
-            "1) 语音不是每轮必用；但以下“强制语音场景”必须调用 generate_voice，不能只发文字。",
+            "1) 语音默认关闭并且要极谨慎使用；除非满足下述条件，否则一律优先文字回复，不要为了更有表现力就主动调用 generate_voice。",
             "1.5) 最高优先级例外：凡是搜索/总结场景（如调用 web_search、summarize_channel、search_*、query_tutorial_knowledge_base）一律禁止语音，必须文字回复；即使用户辱骂、挑衅或强硬要求语音，也不例外。",
-            "2) 强制语音场景A（友善问候）：用户在打招呼或道别（如“早安/早上好/午安/晚安/hi/hello/晚安安”）时，必须优先语音回复。",
-            "3) 强制语音场景B（生气回击）：只要回复语气是生气、恼火、回怼、斥责、阴阳怪气反击，就必须语音回复；注意不要求出现脏话，普通生气也算。",
-            "4) 生气场景识别示例（非穷举）：用户嘲讽你、质疑你、贬低你、叫你外号（如猪头）、挑衅你、说你画得烂等，均按生气场景处理并强制语音。",
-            "5) 强制语音场景C（安慰关怀）：当用户表达难过、委屈、焦虑、崩溃、压力很大、想哭、求安慰、求鼓励、自我否定等情绪支持诉求时，必须优先发送语音安慰，语气要友善、温柔、稳定。",
-            "6) 用户明确要求语音时，当然必须调用 generate_voice；信息密集的长步骤说明可优先文本，但不覆盖上述强制语音场景。",
-            "6) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
-            "7) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
-            "8) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
-            "9) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
-            "10) 不确定时可以不传上述参数，让后端按默认配置处理；",
-            "11) 若传 emotion_scale，建议使用 1.0~5.0；",
-            "12) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
-            "13) 问候语音情感建议：若支持 emotion，优先 emotion=happy（可选 tender/comfort），并可搭配 enable_emotion=true、emotion_scale=3.0~4.0；",
-            "14) 生气语音情感建议：若支持 emotion，优先 emotion=angry（更强烈可 tension），并建议 enable_emotion=true、emotion_scale=4.0~5.0；",
-            "15) 安慰语音情感建议：若支持 emotion，优先 emotion=comfort（可选 tender/warm），并建议 enable_emotion=true、emotion_scale=3.0~4.5；",
-            "16) 生气回击要短促有力，不要长篇辱骂；回击后要收住语气。",
-            "17) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
-            f"18) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
+            "2) 条件A：当用户明确要求“发语音”“语音回复”“念出来”等时，必须调用 generate_voice。",
+            "3) 条件B：只有当你这次回复确实处于“极度愤怒 / 怒气爆发 / 压不住火”的强烈回击状态时，才允许你主动调用 generate_voice。",
+            "4) “极度愤怒”识别示例（非穷举）：用户持续挑衅、反复辱骂、恶意羞辱、严重贬低、故意踩雷，且你本轮准备爆发式回击时，才算极度愤怒。",
+            "5) 以下场景默认都不要主动发语音：普通生气、轻微不爽、阴阳怪气、吐槽、日常拌嘴、问候/道别、安慰关怀、撒娇、闲聊、普通画图反馈。",
+            "6) 如果你拿不准是否已经达到“极度愤怒”，一律按未达到处理，继续文字回复。",
+            "7) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
+            "8) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
+            "9) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
+            "10) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
+            "11) 不确定时可以不传上述参数，让后端按默认配置处理；",
+            "12) 若传 emotion_scale，建议使用 1.0~5.0；",
+            "13) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
+            "14) 若已决定发送问候类语音（通常仅限用户明确要求），若支持 emotion，优先 emotion=happy（可选 tender/comfort），并可搭配 enable_emotion=true、emotion_scale=3.0~4.0；",
+            "15) 若已决定发送极度愤怒回击语音，若支持 emotion，优先 emotion=angry（更强烈可 tension），并建议 enable_emotion=true、emotion_scale=4.0~5.0；",
+            "16) 若已决定发送安慰类语音（通常仅限用户明确要求），若支持 emotion，优先 emotion=comfort（可选 tender/warm），并建议 enable_emotion=true、emotion_scale=3.0~4.5；",
+            "17) 极度愤怒回击要短促有力，不要长篇辱骂；回击后要收住语气。",
+            "18) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
+            f"19) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
         ]
         if available_voice_types:
             voice_lines.append(
@@ -514,7 +514,7 @@ class PromptService:
                 "20) 英文音色情感枚举：neutral,happy,angry,sad,excited,chat,asmr,warm,affectionate,authoritative。"
             )
             voice_lines.append(
-                "21) 情感选择要贴合语义：问候/寒暄必须优先 happy（可选 tender/comfort）；生气/回击（即使无脏字）必须优先 angry（更强烈可 tension）；安慰优先 comfort/tender；撒娇优先 lovey-dovey/shy；讲故事优先 storytelling。"
+                "21) 情感选择要贴合语义：若已决定发送问候/寒暄语音，优先 happy（可选 tender/comfort）；若已决定发送极度愤怒回击语音，优先 angry（更强烈可 tension）；若已决定发送安慰语音，优先 comfort/tender；撒娇优先 lovey-dovey/shy；讲故事优先 storytelling。"
             )
             voice_lines.append(
                 "22) 若使用复刻音色（如 S_ 开头或非官方音色），后端会强制走该音色绑定的 APP_ID；未绑定或绑定不可用会失败。"
@@ -536,7 +536,7 @@ class PromptService:
         final_conversation.append(
             {
                 "role": "model",
-                "parts": ["收到，我会严格执行：问候/道别场景必须友善语音，生气回击场景（包含普通生气且不含脏字）必须愤怒语音，安慰关怀场景必须温柔语音；其他场景再灵活选择文字或语音；调用语音时显式传 send_text_after_voice=true，失败则立刻改为文字继续回复。"],
+                "parts": ["收到，我会严格执行：默认优先文字回复，不主动滥用 generate_voice；只有用户明确要求语音，或我确实处于极度愤怒、需要爆发式回击时，才调用语音；普通生气、问候、安慰、闲聊都继续用文字。调用语音时显式传 send_text_after_voice=true，失败则立刻改为文字继续回复。"],
             }
         )
 
