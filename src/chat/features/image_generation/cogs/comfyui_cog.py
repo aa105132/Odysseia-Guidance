@@ -617,7 +617,17 @@ class ComfyLoraSelect(discord.ui.Select):
         options, value_map = self.panel_view.build_lora_select_options()
         self.panel_view.lora_value_map = value_map
         self.options = options
-        self.max_values = max(1, min(len(options), 10))
+        # Discord 要求默认选中的数量不能超过 max_values。
+        # 当用户历史 LoRA 默认值超过 10 个时，面板会在发送阶段直接报错。
+        default_count = sum(1 for option in options if option.default)
+        self.max_values = min(
+            25,
+            max(
+                1,
+                min(len(options), 10),
+                default_count,
+            ),
+        )
 
     async def callback(self, interaction: discord.Interaction):
         selected_values = list(self.values)
