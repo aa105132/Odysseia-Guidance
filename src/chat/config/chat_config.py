@@ -339,6 +339,11 @@ UNRESTRICTED_CHANNEL_IDS = _parse_ids("UNRESTRICTED_CHANNEL_IDS")
 _disabled_tools_raw = _strip_wrapping_quotes(os.getenv("DISABLED_TOOLS", ""))
 DISABLED_TOOLS = [item.strip() for item in _disabled_tools_raw.split(",") if item.strip()]
 
+# Discord 未授予消息搜索权限时，该工具会持续 403，因此默认禁用。
+for tool_name in ["search_channel_history"]:
+    if tool_name not in DISABLED_TOOLS:
+        DISABLED_TOOLS.append(tool_name)
+
 # 隐藏的工具列表（用户在UI中看不到，也无法禁用的工具）
 # 这些工具是系统必须保留的，不应该让用户控制
 HIDDEN_TOOLS = ["issue_user_warning"]
