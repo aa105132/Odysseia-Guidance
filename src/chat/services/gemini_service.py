@@ -670,6 +670,75 @@ class GeminiService:
         return f"{tool_name}:{normalized_args}"
 
     @staticmethod
+    def _extract_tool_image_payload(
+        tool_result: Any, tool_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """从工具结果中提取原始图片字节，供后续链路复用。"""
+        if not isinstance(tool_result, dict):
+            return None
+
+        image_info = tool_result.get("image_data")
+        if not isinstance(image_info, dict):
+            return None
+
+        raw_image_bytes = image_info.get("data")
+        if isinstance(raw_image_bytes, memoryview):
+            raw_image_bytes = raw_image_bytes.tobytes()
+        elif isinstance(raw_image_bytes, bytearray):
+            raw_image_bytes = bytes(raw_image_bytes)
+
+        if not isinstance(raw_image_bytes, bytes) or not raw_image_bytes:
+            return None
+
+        return {
+            "mime_type": image_info.get("mime_type", "image/png"),
+            "data": raw_image_bytes,
+            "tool_name": tool_name,
+        }
+
+    @classmethod
+    def _sanitize_tool_result_for_history(
+        cls, value: Any, *, field_name: Optional[str] = None
+    ) -> Any:
+        """将工具结果转换为可安全写入 JSON 历史记录的结构。"""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            binary_bytes = bytes(value)
+            if field_name == "data":
+                return "<binary-image-data>"
+            return f"<binary-bytes:{len(binary_bytes)}>"
+
+        if isinstance(value, dict):
+            return {
+                key: cls._sanitize_tool_result_for_history(
+                    nested_value, field_name=str(key)
+                )
+                for key, nested_value in value.items()
+            }
+
+        if isinstance(value, list):
+            return [
+                cls._sanitize_tool_result_for_history(item)
+                for item in value
+            ]
+
+        if isinstance(value, tuple):
+            return tuple(
+                cls._sanitize_tool_result_for_history(item)
+                for item in value
+            )
+
+        if isinstance(value, set):
+            return [
+                cls._sanitize_tool_result_for_history(item)
+                for item in value
+            ]
+
+        return str(value)
+
+    @staticmethod
     def _build_web_search_skip_message(reason: str) -> str:
         """当检测到 web_search 循环时，返回给模型的强约束提示。"""
         return (
@@ -1138,6 +1207,17 @@ class GeminiService:
         }
         protected_fields = {"model", "messages", "tools", "tool_choice"}
         last_error_text = ""
+        retryable_request_error_types = (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            OSError,
+        )
+
+        if max_attempts == 1:
+            log.warning(
+                f"{log_prefix} 当前仅配置 1 次尝试，"
+                "遇到连接失败/超时将不会自动重试。"
+            )
 
         for attempt in range(max_attempts):
             effective_payload = payload.copy()
@@ -1167,10 +1247,17 @@ class GeminiService:
                                 f"(attempt {attempt + 1}/{max_attempts}): {read_error_repr}"
                             )
                             if attempt < max_attempts - 1:
-                                await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+                                delay = min(2.0, 0.5 * (attempt + 1))
+                                log.warning(
+                                    f"{log_prefix} 将在 {delay:.1f}s 后重试读取响应体 "
+                                    f"(next attempt {attempt + 2}/{max_attempts})"
+                                )
+                                await asyncio.sleep(delay)
                                 continue
                             raise Exception(
-                                f"{log_prefix} failed to read response body: {read_error_repr}"
+                                f"{log_prefix} failed to read response body "
+                                f"after {attempt + 1}/{max_attempts} attempts: "
+                                f"{read_error_repr}"
                             )
 
                         if response.status == 200:
@@ -1187,10 +1274,17 @@ class GeminiService:
                                     f"body_preview={body_preview}"
                                 )
                                 if attempt < max_attempts - 1:
-                                    await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+                                    delay = min(2.0, 0.5 * (attempt + 1))
+                                    log.warning(
+                                        f"{log_prefix} 将在 {delay:.1f}s 后重试解析 JSON "
+                                        f"(next attempt {attempt + 2}/{max_attempts})"
+                                    )
+                                    await asyncio.sleep(delay)
                                     continue
                                 raise Exception(
-                                    f"{log_prefix} returned invalid json: {decode_error}"
+                                    f"{log_prefix} returned invalid json "
+                                    f"after {attempt + 1}/{max_attempts} attempts: "
+                                    f"{decode_error}"
                                 )
 
                         error_text = response_text
@@ -1233,7 +1327,7 @@ class GeminiService:
 
                         raise Exception(f"API returned {response.status}: {error_msg}")
 
-            except (aiohttp.ClientError, asyncio.TimeoutError) as request_error:
+            except retryable_request_error_types as request_error:
                 request_error_text = str(request_error).strip()
                 request_error_repr = (
                     f"{type(request_error).__name__}: {request_error_text}"
@@ -1247,11 +1341,21 @@ class GeminiService:
                 )
                 if attempt < max_attempts - 1:
                     delay = min(retry_base_delay * (2 ** attempt), 8.0)
+                    log.warning(
+                        f"{log_prefix} 将在 {delay:.1f}s 后重试请求 "
+                        f"(next attempt {attempt + 2}/{max_attempts})"
+                    )
                     await asyncio.sleep(delay)
                     continue
-                raise Exception(f"{log_prefix} request failed: {request_error_repr}")
+                raise Exception(
+                    f"{log_prefix} request failed after "
+                    f"{attempt + 1}/{max_attempts} attempts: {request_error_repr}"
+                )
 
-        raise Exception(f"{log_prefix} retries exhausted: {last_error_text}")
+        raise Exception(
+            f"{log_prefix} retries exhausted after {max_attempts} attempts: "
+            f"{last_error_text}"
+        )
 
     async def generate_response(
         self,
@@ -2814,26 +2918,15 @@ class GeminiService:
                                     web_search_source_links.append((title, url))
 
                         # 将工具结果添加到对话历史
-                        tool_result_for_history = tool_result
-                        if (
-                            isinstance(tool_result, dict)
-                            and tool_result.get("image_data")
-                            and tool_name == "render_newspaper_brief"
-                        ):
-                            image_info = tool_result.get("image_data") or {}
-                            raw_image_bytes = image_info.get("data") or b""
-                            if raw_image_bytes:
-                                self.last_tool_image_data = {
-                                    "mime_type": image_info.get("mime_type", "image/png"),
-                                    "data": raw_image_bytes,
-                                    "tool_name": tool_name,
-                                }
-                            sanitized_result = dict(tool_result)
-                            sanitized_image = dict(image_info)
-                            if "data" in sanitized_image:
-                                sanitized_image["data"] = "<binary-image-data>"
-                            sanitized_result["image_data"] = sanitized_image
-                            tool_result_for_history = sanitized_result
+                        extracted_tool_image = self._extract_tool_image_payload(
+                            tool_result, tool_name
+                        )
+                        if extracted_tool_image:
+                            self.last_tool_image_data = extracted_tool_image
+
+                        tool_result_for_history = self._sanitize_tool_result_for_history(
+                            tool_result
+                        )
 
                         messages.append(
                             {
@@ -2846,13 +2939,6 @@ class GeminiService:
                                 ),
                             }
                         )
-
-                        if (
-                            isinstance(tool_result, dict)
-                            and tool_name == "render_newspaper_brief"
-                            and tool_result.get("image_data")
-                        ):
-                            tool_result["image_data"] = "<binary-image-data>"
 
                         # 检查是否有工具标记了 skip_ai_response（本轮工具执行完后统一处理）
                         if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
