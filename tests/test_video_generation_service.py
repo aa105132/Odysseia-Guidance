@@ -139,3 +139,29 @@ def test_generate_video_uses_v1_videos_payload(monkeypatch):
     assert recorder["json"]["seconds"] == 18
     assert recorder["json"]["quality"] == "standard"
     assert recorder["json"]["image_reference"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected_endpoint"),
+    [
+        ("http://localhost:8000", "http://localhost:8000/v1/videos"),
+        ("http://localhost:8000/v1", "http://localhost:8000/v1/videos"),
+        ("http://localhost:8000/v1/videos", "http://localhost:8000/v1/videos"),
+        (
+            "http://localhost:8000/v1/chat/completions",
+            "http://localhost:8000/v1/videos",
+        ),
+        ("http://localhost:8000/v1/responses", "http://localhost:8000/v1/videos"),
+        (
+            "http://localhost:8000/v1/images/generations",
+            "http://localhost:8000/v1/videos",
+        ),
+    ],
+)
+def test_resolve_videos_endpoint_forces_dedicated_v1_videos_route(
+    base_url, expected_endpoint
+):
+    service = VideoGenerationService()
+    service._client = {"api_key": "test-key", "base_url": base_url}
+
+    assert service._resolve_videos_endpoint() == expected_endpoint

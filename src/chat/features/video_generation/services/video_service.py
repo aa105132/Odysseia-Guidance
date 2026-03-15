@@ -2,7 +2,7 @@
 
 """
 视频生成服务
-使用 OpenAI 兼容的 /v1/videos API 生成视频
+使用专用的 /v1/videos API 生成视频
 
 支持两种视频格式:
 1. URL: 直接从 API 响应中提取视频 URL
@@ -22,6 +22,17 @@ import aiohttp
 from src.chat.config import chat_config as app_config
 
 log = logging.getLogger(__name__)
+
+LEGACY_VIDEO_ENDPOINT_SUFFIXES = (
+    "/v1/chat/completions",
+    "/chat/completions",
+    "/v1/responses",
+    "/responses",
+    "/v1/images/generations",
+    "/images/generations",
+    "/v1/images/edits",
+    "/images/edits",
+)
 
 
 @dataclass
@@ -80,10 +91,26 @@ class VideoGenerationService:
         self._initialize_client()
 
     def _resolve_videos_endpoint(self) -> str:
-        """根据 BASE_URL 推导 /v1/videos 地址。"""
-        base_url = self._client["base_url"].rstrip("/")
+        """根据 BASE_URL 推导最终的视频生成端点，强制走 /v1/videos。"""
+        raw_base_url = str(self._client["base_url"]).strip().rstrip("/")
+        if not raw_base_url:
+            raise ValueError("视频生成 BASE_URL 为空")
+
+        base_url = raw_base_url
         if base_url.endswith("/v1/videos") or base_url.endswith("/videos"):
             return base_url
+
+        for legacy_suffix in LEGACY_VIDEO_ENDPOINT_SUFFIXES:
+            if base_url.endswith(legacy_suffix):
+                normalized_root = base_url[: -len(legacy_suffix)].rstrip("/")
+                normalized_endpoint = f"{normalized_root}/v1/videos"
+                log.warning(
+                    "视频生成 BASE_URL 指向旧兼容端点，已自动改为 /v1/videos: %s -> %s",
+                    raw_base_url,
+                    normalized_endpoint,
+                )
+                return normalized_endpoint
+
         if base_url.endswith("/v1"):
             return f"{base_url}/videos"
         return f"{base_url}/v1/videos"
@@ -227,13 +254,15 @@ class VideoGenerationService:
         if model_override and str(model_override).strip():
             model_name = str(model_override).strip()
 
+        endpoint = self._resolve_videos_endpoint()
         log.info(
-            "使用模型 %s 生成视频 (%s), 时长: %ss, size: %s, quality: %s",
+            "使用模型 %s 生成视频 (%s), 时长: %ss, size: %s, quality: %s, endpoint: %s",
             model_name,
             mode_str,
             normalized_duration,
             normalized_size,
             normalized_quality,
+            endpoint,
         )
 
         payload: Dict[str, Any] = {
@@ -268,7 +297,7 @@ class VideoGenerationService:
 
                     for attempt in range(retry_502_max_attempts):
                         async with session.post(
-                            self._resolve_videos_endpoint(),
+                            endpoint,
                             headers=headers,
                             json=payload,
                             timeout=aiohttp.ClientTimeout(total=300),
@@ -320,8 +349,10 @@ class VideoGenerationService:
                                 continue
 
                             log.error(
-                                "视频生成 API 返回错误 %s: %s",
+                                "视频生成 API 返回错误 %s, endpoint=%s, base_url=%s: %s",
                                 response.status,
+                                endpoint,
+                                self._client["base_url"],
                                 error_text[:500],
                             )
                             return None
