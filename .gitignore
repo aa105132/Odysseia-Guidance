@@ -267,6 +267,9 @@ dist/
 !.vscode/extensions.json
 *.code-workspace
 
+### JetBrains IDE ###
+.idea/
+
 # Local History for Visual Studio Code
 .history/
 

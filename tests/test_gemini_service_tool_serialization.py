@@ -110,6 +110,104 @@ def test_extract_tool_image_payload_accepts_bytearray_and_memoryview():
     }
 
 
+def test_build_openai_tool_image_followup_message_for_avatar():
+    message = GeminiService._build_openai_tool_image_followup_message(
+        "get_user_avatar",
+        {
+            "mime_type": "image/png",
+            "data": b"avatar-bytes",
+            "tool_name": "get_user_avatar",
+        },
+    )
+
+    assert message is not None
+    assert message["role"] == "user"
+    assert isinstance(message["content"], list)
+    assert message["content"][0]["type"] == "text"
+    assert "头像参考图" in message["content"][0]["text"]
+    assert message["content"][1]["type"] == "image_url"
+    assert message["content"][1]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )
+
+
+def test_build_openai_tool_image_followup_message_ignores_other_tools():
+    message = GeminiService._build_openai_tool_image_followup_message(
+        "render_newspaper_brief",
+        {
+            "mime_type": "image/png",
+            "data": b"brief-bytes",
+            "tool_name": "render_newspaper_brief",
+        },
+    )
+
+    assert message is None
+
+
+def test_execute_openai_tool_call_injects_avatar_reference_for_novelai():
+    service = GeminiService()
+    captured_kwargs = {}
+
+    async def _fake_generate_image_novelai(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"ok": True}
+
+    service.tool_map["generate_image_novelai"] = _fake_generate_image_novelai
+    service.last_tool_image_data = {
+        "mime_type": "image/png",
+        "data": b"avatar-ref",
+        "tool_name": "get_user_avatar",
+    }
+
+    result = asyncio.run(
+        service._execute_openai_tool_call(
+            tool_name="generate_image_novelai",
+            tool_args={"prompt": "1girl, solo"},
+            current_turn_tool_names=["get_user_avatar", "generate_image_novelai"],
+        )
+    )
+
+    assert result == {"ok": True}
+    assert captured_kwargs["reference_image_index"] == 1
+    assert len(captured_kwargs["_prepared_reference_images"]) == 1
+    assert captured_kwargs["_prepared_reference_images"][0]["data"] == b"avatar-ref"
+    assert (
+        captured_kwargs["_prepared_reference_images"][0]["source"]
+        == "tool:get_user_avatar"
+    )
+
+
+def test_execute_openai_tool_call_keeps_explicit_reference_index():
+    service = GeminiService()
+    captured_kwargs = {}
+
+    async def _fake_generate_image_novelai(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"ok": True}
+
+    service.tool_map["generate_image_novelai"] = _fake_generate_image_novelai
+    service.last_tool_image_data = {
+        "mime_type": "image/png",
+        "data": b"avatar-ref",
+        "tool_name": "get_user_avatar",
+    }
+
+    result = asyncio.run(
+        service._execute_openai_tool_call(
+            tool_name="generate_image_novelai",
+            tool_args={
+                "prompt": "1girl, solo",
+                "reference_image_index": 2,
+            },
+            current_turn_tool_names=["generate_image_novelai"],
+        )
+    )
+
+    assert result == {"ok": True}
+    assert captured_kwargs["reference_image_index"] == 2
+    assert "_prepared_reference_images" not in captured_kwargs
+
+
 class _FakeResponseContext:
     def __init__(self, event):
         self._event = event

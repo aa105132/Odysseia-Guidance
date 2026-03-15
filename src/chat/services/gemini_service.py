@@ -738,6 +738,35 @@ class GeminiService:
 
         return str(value)
 
+    @classmethod
+    def _build_openai_tool_image_followup_message(
+        cls, tool_name: str, image_payload: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """为 OpenAI 兼容链路构造包含工具参考图的后续用户消息。"""
+        normalized_tool_name = str(tool_name or "").strip()
+        if normalized_tool_name != "get_user_avatar" or not image_payload:
+            return None
+
+        image_parts = cls._build_openai_image_content_parts([image_payload])
+        if not image_parts:
+            return None
+
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "这是刚刚通过 get_user_avatar 获取到的用户头像参考图。"
+                        "请先仔细观察这张头像中的人物外观特征，"
+                        "并在后续的人物描述、外观分析、绘图提示词生成中"
+                        "把这张图当作最高优先级的视觉参考。"
+                    ),
+                },
+                *image_parts,
+            ],
+        }
+
     @staticmethod
     def _build_web_search_skip_message(reason: str) -> str:
         """当检测到 web_search 循环时，返回给模型的强约束提示。"""
@@ -2940,6 +2969,18 @@ class GeminiService:
                             }
                         )
 
+                        followup_image_message = (
+                            self._build_openai_tool_image_followup_message(
+                                tool_name, extracted_tool_image
+                            )
+                        )
+                        if followup_image_message:
+                            messages.append(followup_image_message)
+                            log.info(
+                                f"已将工具 '{tool_name}' 的参考图追加到 OpenAI 消息上下文，"
+                                "供后续模型继续视觉分析。"
+                            )
+
                         # 检查是否有工具标记了 skip_ai_response（本轮工具执行完后统一处理）
                         if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
                             log.info(
@@ -3083,6 +3124,39 @@ class GeminiService:
             return {"error": f"Tool '{tool_name}' not found."}
         
         try:
+            normalized_tool_name = str(tool_name or "").strip()
+            cached_tool_image = self.last_tool_image_data or {}
+            cached_image_bytes = cached_tool_image.get("data")
+            if isinstance(cached_image_bytes, memoryview):
+                cached_image_bytes = cached_image_bytes.tobytes()
+            elif isinstance(cached_image_bytes, bytearray):
+                cached_image_bytes = bytes(cached_image_bytes)
+
+            if (
+                normalized_tool_name == "generate_image_novelai"
+                and tool_args.get("reference_image_index") in (None, "")
+                and not tool_args.get("_prepared_reference_images")
+                and not tool_args.get("_prepared_reference_image")
+                and cached_tool_image.get("tool_name") == "get_user_avatar"
+                and isinstance(cached_image_bytes, bytes)
+                and cached_image_bytes
+            ):
+                tool_args["_prepared_reference_images"] = [
+                    {
+                        "data": cached_image_bytes,
+                        "mime_type": str(
+                            cached_tool_image.get("mime_type") or "image/png"
+                        ).strip()
+                        or "image/png",
+                        "source": "tool:get_user_avatar",
+                    }
+                ]
+                tool_args["reference_image_index"] = 1
+                log.info(
+                    "已为 generate_image_novelai 自动注入用户头像参考图，"
+                    "提示词AI将基于头像生成更匹配的人物外观。"
+                )
+
             # 注入上下文
             tool_args["bot"] = self.bot
             if user_id is not None:
