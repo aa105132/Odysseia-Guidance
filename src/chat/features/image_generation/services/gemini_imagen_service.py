@@ -14,7 +14,7 @@ import asyncio
 import aiohttp
 import json
 import re
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from concurrent.futures import ThreadPoolExecutor
 import base64
 
@@ -117,6 +117,172 @@ class GeminiImagenService:
         return max_attempts, base_delay
 
     @staticmethod
+    def _normalize_openai_image_api_mode(raw_mode: Optional[str]) -> str:
+        """规范化 OpenAI 兼容图片接口模式。"""
+        mode = str(raw_mode or "").strip().lower()
+        if mode in {"images", "image", "images_api", "image_api"}:
+            return "images_api"
+        if mode in {"chat", "chat_completion", "chat_completions"}:
+            return "chat_completions"
+        return "auto"
+
+    @staticmethod
+    def _looks_like_images_api_model(model_name: str) -> bool:
+        """判断模型是否更适合走 /images/* 接口。"""
+        normalized = str(model_name or "").strip().lower()
+        if not normalized:
+            return False
+        return normalized.startswith("grok-imagine") or normalized.startswith("gpt-image")
+
+    def _resolve_openai_image_api_mode(
+        self,
+        model_name: str,
+        mode_override: Optional[str] = None,
+    ) -> str:
+        """根据模型和覆盖参数决定 OpenAI 兼容图片路由。"""
+        configured_mode = self._normalize_openai_image_api_mode(
+            mode_override or app_config.GEMINI_IMAGEN_CONFIG.get("OPENAI_IMAGE_API_MODE")
+        )
+        if configured_mode != "auto":
+            return configured_mode
+        if self._looks_like_images_api_model(model_name):
+            return "images_api"
+        return "chat_completions"
+
+    @staticmethod
+    def _coerce_optional_bool(value: Any) -> Optional[bool]:
+        """把 bool / 文本 / 数字统一转成可选布尔值。"""
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+        return None
+
+    @staticmethod
+    def _build_openai_image_prompt(
+        prompt: str,
+        negative_prompt: Optional[str] = None,
+        aspect_ratio: Optional[str] = None,
+    ) -> str:
+        """把现有提示词语义压到图片接口支持的 prompt 文本里。"""
+        lines = [str(prompt or "").strip()]
+        if negative_prompt:
+            lines.append(f"请避免：{str(negative_prompt).strip()}")
+        if aspect_ratio and aspect_ratio != "1:1":
+            lines.append(f"画面宽高比偏好：{aspect_ratio}")
+        return "\n".join(line for line in lines if line)
+
+    @staticmethod
+    def _resolve_request_response_format(
+        response_format: Optional[str],
+    ) -> Optional[str]:
+        """把内部响应格式映射成上游图片接口参数。"""
+        normalized = str(response_format or "").strip().lower()
+        if not normalized or normalized == "auto":
+            return None
+        if normalized == "base64":
+            return "b64_json"
+        if normalized in {"b64_json", "base64", "url"}:
+            return normalized
+        return None
+
+    async def _parse_json_or_sse_payload(self, response: aiohttp.ClientResponse) -> Optional[dict]:
+        """兼容普通 JSON 和 SSE 文本响应。"""
+        response_text = await response.text()
+        if not response_text:
+            return None
+
+        content_type = str(response.headers.get("Content-Type", "")).lower()
+        stripped_text = response_text.lstrip()
+        if "text/event-stream" in content_type or stripped_text.startswith("data: "):
+            return await self._parse_sse_payload_text(response_text)
+
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError as error:
+            log.warning(
+                f"解析 OpenAI 兼容图片响应失败: {error}; body_preview={response_text[:500]}"
+            )
+            return None
+
+    async def _parse_sse_payload_text(self, raw_text: str) -> Optional[dict]:
+        """解析 SSE 文本，尽量还原为可提图的统一结构。"""
+        collected_parts: List[Dict[str, Any]] = []
+        collected_content: List[str] = []
+        collected_data_items: List[Dict[str, Any]] = []
+        last_payload: Optional[dict] = None
+
+        for raw_line in str(raw_text or "").splitlines():
+            line = raw_line.strip()
+            if not line or not line.startswith("data: "):
+                continue
+
+            data_str = line[6:].strip()
+            if not data_str or data_str == "[DONE]":
+                continue
+
+            try:
+                payload = json.loads(data_str)
+            except json.JSONDecodeError:
+                log.debug(f"SSE 片段不是合法 JSON，已跳过: {data_str[:200]}")
+                continue
+
+            if not isinstance(payload, dict):
+                continue
+
+            last_payload = payload
+
+            if isinstance(payload.get("data"), list):
+                for item in payload["data"]:
+                    if isinstance(item, dict):
+                        collected_data_items.append(item)
+
+            for choice in payload.get("choices", []):
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta", {})
+                if not isinstance(delta, dict):
+                    continue
+
+                content = delta.get("content")
+                if isinstance(content, str):
+                    collected_content.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict):
+                            collected_parts.append(part)
+
+                if isinstance(delta.get("parts"), list):
+                    for part in delta["parts"]:
+                        if isinstance(part, dict):
+                            collected_parts.append(part)
+
+        if collected_data_items:
+            return {"data": collected_data_items}
+
+        if collected_parts or collected_content:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                collected_parts
+                                if collected_parts
+                                else "".join(collected_content)
+                            )
+                        }
+                    }
+                ]
+            }
+
+        return last_payload
+
+    @staticmethod
     def _is_retryable_status(status_code: int) -> bool:
         """判断 HTTP 状态码是否属于可重试的瞬态错误。"""
         return status_code in {408, 425, 429, 500, 502, 503, 504, 520, 522, 524}
@@ -147,6 +313,9 @@ class GeminiImagenService:
             app_config.GEMINI_IMAGEN_CONFIG["API_KEY"] = os.getenv("GEMINI_IMAGEN_API_KEY")
             app_config.GEMINI_IMAGEN_CONFIG["BASE_URL"] = os.getenv("GEMINI_IMAGEN_BASE_URL")
             app_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = os.getenv("GEMINI_IMAGEN_MODEL", "imagen-3.0-generate-002")
+            app_config.GEMINI_IMAGEN_CONFIG["OPENAI_IMAGE_API_MODE"] = os.getenv(
+                "GEMINI_IMAGEN_OPENAI_IMAGE_API_MODE", "auto"
+            )
             
             # 重新初始化客户端
             self._client = None
@@ -162,7 +331,14 @@ class GeminiImagenService:
             log.error(f"热重载 Imagen 配置失败: {e}")
             return {"success": False, "error": str(e)}
     
-    def update_config(self, enabled: bool = None, api_key: str = None, base_url: str = None, model_name: str = None) -> dict:
+    def update_config(
+        self,
+        enabled: bool = None,
+        api_key: str = None,
+        base_url: str = None,
+        model_name: str = None,
+        openai_image_api_mode: str = None,
+    ) -> dict:
         """
         更新配置并重新初始化
         
@@ -193,6 +369,11 @@ class GeminiImagenService:
             if model_name is not None:
                 app_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = model_name
                 os.environ["GEMINI_IMAGEN_MODEL"] = model_name
+
+            if openai_image_api_mode is not None:
+                normalized_mode = self._normalize_openai_image_api_mode(openai_image_api_mode)
+                app_config.GEMINI_IMAGEN_CONFIG["OPENAI_IMAGE_API_MODE"] = normalized_mode
+                os.environ["GEMINI_IMAGEN_OPENAI_IMAGE_API_MODE"] = normalized_mode
             
             # 重新初始化客户端
             self._client = None
@@ -218,6 +399,13 @@ class GeminiImagenService:
         number_of_images: int = 1,
         resolution: str = "default",
         content_rating: str = "sfw",
+        model_name_override: Optional[str] = None,
+        openai_image_size: Optional[str] = None,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+        openai_quality: Optional[str] = None,
+        openai_style: Optional[str] = None,
+        openai_image_api_mode: Optional[str] = None,
     ) -> Optional[List[bytes]]:
         """
         使用 Gemini Imagen 生成图像
@@ -239,7 +427,15 @@ class GeminiImagenService:
 
         config = app_config.GEMINI_IMAGEN_CONFIG
         # 根据分辨率和内容分级选择模型
-        model_name = self._get_model_for_resolution(resolution=resolution, is_edit=False, content_rating=content_rating)
+        model_name = (
+            str(model_name_override).strip()
+            if model_name_override is not None and str(model_name_override).strip()
+            else self._get_model_for_resolution(
+                resolution=resolution,
+                is_edit=False,
+                content_rating=content_rating,
+            )
+        )
         log.info(f"使用模型 {model_name} 生成图像 (分辨率: {resolution}, 内容分级: {content_rating})")
 
         # 根据 API 格式选择不同的生成方法
@@ -253,6 +449,12 @@ class GeminiImagenService:
                 aspect_ratio=aspect_ratio,
                 number_of_images=number_of_images,
                 model_name=model_name,
+                openai_image_size=openai_image_size,
+                openai_response_format=openai_response_format,
+                openai_stream=openai_stream,
+                openai_quality=openai_quality,
+                openai_style=openai_style,
+                openai_image_api_mode=openai_image_api_mode,
             )
         elif self._api_format == "gemini_chat":
             # 使用 Gemini 多模态聊天接口生成图像
@@ -688,26 +890,69 @@ class GeminiImagenService:
         aspect_ratio: str,
         number_of_images: int,
         model_name: str,
+        openai_image_size: Optional[str] = None,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+        openai_quality: Optional[str] = None,
+        openai_style: Optional[str] = None,
+        openai_image_api_mode: Optional[str] = None,
     ) -> Optional[List[bytes]]:
         """
-        使用 OpenAI 兼容的 chat/completions API 生成图像
-        适用于支持图像生成的聊天模型（如 Gemini 2.0 通过代理）
-        支持流式请求 (SSE) 以更快获取响应
+        根据模型和配置决定走 OpenAI 兼容的 chat/completions 还是 /images/generations。
         """
-        config = app_config.GEMINI_IMAGEN_CONFIG
-        streaming_enabled = config.get("STREAMING_ENABLED", False)
-        
-        if streaming_enabled:
-            return await self._generate_image_openai_format_streaming(
+        resolved_mode = self._resolve_openai_image_api_mode(
+            model_name=model_name,
+            mode_override=openai_image_api_mode,
+        )
+        if resolved_mode == "images_api":
+            images = await self._generate_image_openai_images_api_format(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
                 aspect_ratio=aspect_ratio,
                 number_of_images=number_of_images,
                 model_name=model_name,
+                openai_image_size=openai_image_size,
+                openai_response_format=openai_response_format,
+                openai_stream=openai_stream,
+                openai_quality=openai_quality,
+                openai_style=openai_style,
             )
-        
+            if images or self._normalize_openai_image_api_mode(openai_image_api_mode) != "auto":
+                return images
+            log.warning(
+                "OpenAI 图片接口 auto 路由未拿到结果，回退到 chat/completions 再试一次。"
+            )
+
+        return await self._generate_image_openai_chat_completions_format(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            aspect_ratio=aspect_ratio,
+            number_of_images=number_of_images,
+            model_name=model_name,
+            openai_response_format=openai_response_format,
+            openai_stream=openai_stream,
+        )
+
+    async def _generate_image_openai_chat_completions_format(
+        self,
+        prompt: str,
+        negative_prompt: Optional[str],
+        aspect_ratio: str,
+        number_of_images: int,
+        model_name: str,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+    ) -> Optional[List[bytes]]:
+        """使用 chat/completions 兼容接口生成图像。"""
         base_url = self._client["base_url"].rstrip("/")
         api_key = self._client["api_key"]
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        stream_override = self._coerce_optional_bool(openai_stream)
+        streaming_enabled = (
+            config.get("STREAMING_ENABLED", False)
+            if stream_override is None
+            else stream_override
+        )
 
         # 构建提示词
         full_prompt = f"请生成一张图片：{prompt}"
@@ -717,6 +962,15 @@ class GeminiImagenService:
             full_prompt += f"\n宽高比：{aspect_ratio}"
 
         log.info(f"[OpenAI格式] 正在使用 {model_name} 生成图像, 提示词: {prompt[:100]}...")
+
+        if streaming_enabled:
+            return await self._generate_image_openai_format_streaming(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                aspect_ratio=aspect_ratio,
+                number_of_images=number_of_images,
+                model_name=model_name,
+            )
 
         # 构建请求
         headers = {
@@ -760,10 +1014,16 @@ class GeminiImagenService:
                             log.error(f"OpenAI API 返回错误 {response.status}: {error_text[:500]}")
                             return None
 
-                        data = await response.json()
+                        data = await self._parse_json_or_sse_payload(response)
+                        if not data:
+                            log.warning("OpenAI chat/completions 返回空响应")
+                            return None
 
                         # 解析响应，提取图像
-                        images = await self._extract_images_from_openai_response(data)
+                        images = await self._extract_images_from_openai_response(
+                            data,
+                            response_format_override=openai_response_format,
+                        )
 
                         if images:
                             log.info(f"成功生成 {len(images)} 张图像")
@@ -795,6 +1055,129 @@ class GeminiImagenService:
                 return None
             except Exception as e:
                 log.error(f"OpenAI 格式生成图像时发生错误: {e}", exc_info=True)
+                return None
+
+        return None
+
+    async def _generate_image_openai_images_api_format(
+        self,
+        prompt: str,
+        negative_prompt: Optional[str],
+        aspect_ratio: str,
+        number_of_images: int,
+        model_name: str,
+        openai_image_size: Optional[str] = None,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+        openai_quality: Optional[str] = None,
+        openai_style: Optional[str] = None,
+    ) -> Optional[List[bytes]]:
+        """使用 /images/generations 接口生成图像。"""
+        base_url = self._client["base_url"].rstrip("/")
+        api_key = self._client["api_key"]
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        stream_override = self._coerce_optional_bool(openai_stream)
+        streaming_enabled = (
+            config.get("STREAMING_ENABLED", False)
+            if stream_override is None
+            else stream_override
+        )
+        request_response_format = self._resolve_request_response_format(
+            openai_response_format or config.get("IMAGE_RESPONSE_FORMAT")
+        )
+
+        payload: Dict[str, Any] = {
+            "model": model_name,
+            "prompt": self._build_openai_image_prompt(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                aspect_ratio=aspect_ratio,
+            ),
+            "n": min(max(1, int(number_of_images or 1)), 10),
+        }
+
+        if openai_image_size:
+            payload["size"] = str(openai_image_size).strip()
+        if request_response_format:
+            payload["response_format"] = request_response_format
+        if streaming_enabled:
+            payload["stream"] = True
+        if openai_quality:
+            payload["quality"] = str(openai_quality).strip()
+        if openai_style:
+            payload["style"] = str(openai_style).strip()
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        if streaming_enabled:
+            headers["Accept"] = "text/event-stream"
+
+        retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
+        timeout = self._build_openai_timeout(streaming=streaming_enabled)
+
+        for attempt in range(1, retry_max_attempts + 1):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{base_url}/images/generations",
+                        headers=headers,
+                        json=payload,
+                        timeout=timeout,
+                    ) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            if self._is_retryable_status(response.status) and attempt < retry_max_attempts:
+                                delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                                log.warning(
+                                    f"OpenAI 图片接口返回可重试错误 {response.status}，将在 {delay:.1f}s 后重试 "
+                                    f"({attempt}/{retry_max_attempts})"
+                                )
+                                await asyncio.sleep(delay)
+                                continue
+                            log.error(f"OpenAI 图片接口返回错误 {response.status}: {error_text[:500]}")
+                            return None
+
+                        data = await self._parse_json_or_sse_payload(response)
+                        if not data:
+                            log.warning("OpenAI 图片接口返回空响应")
+                            return None
+
+                        images = await self._extract_images_from_openai_response(
+                            data,
+                            response_format_override=openai_response_format,
+                        )
+                        if images:
+                            log.info(f"通过 /images/generations 成功生成 {len(images)} 张图像")
+                            return images
+
+                        log.warning("OpenAI 图片接口返回成功但没有找到图像数据")
+                        log.debug(f"响应内容: {json.dumps(data, ensure_ascii=False)[:1000]}")
+                        return None
+
+            except asyncio.TimeoutError:
+                if attempt < retry_max_attempts:
+                    delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                    log.warning(
+                        f"OpenAI 图片接口请求超时，{delay:.1f}s 后重试 ({attempt}/{retry_max_attempts})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                log.error("OpenAI 图片接口请求超时")
+                return None
+            except aiohttp.ClientError as error:
+                if attempt < retry_max_attempts:
+                    delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                    log.warning(
+                        f"OpenAI 图片接口网络错误: {error}，{delay:.1f}s 后重试 ({attempt}/{retry_max_attempts})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                log.error(f"OpenAI 图片接口网络错误: {error}")
+                return None
+            except Exception as error:
+                log.error(f"调用 /images/generations 时发生错误: {error}", exc_info=True)
                 return None
 
         return None
@@ -1153,7 +1536,11 @@ class GeminiImagenService:
 
         return images
 
-    async def _extract_images_from_openai_response(self, data: dict) -> List[bytes]:
+    async def _extract_images_from_openai_response(
+        self,
+        data: dict,
+        response_format_override: Optional[str] = None,
+    ) -> List[bytes]:
         """
         从 OpenAI 格式的响应中提取图像数据
         根据 IMAGE_RESPONSE_FORMAT 配置决定处理策略:
@@ -1162,7 +1549,11 @@ class GeminiImagenService:
         - "url": 优先从 URL 下载图片，忽略 base64 数据
         """
         config = app_config.GEMINI_IMAGEN_CONFIG
-        response_format = config.get("IMAGE_RESPONSE_FORMAT", "auto")
+        response_format = (
+            str(response_format_override).strip().lower()
+            if response_format_override is not None and str(response_format_override).strip()
+            else config.get("IMAGE_RESPONSE_FORMAT", "auto")
+        )
 
         images = []
         url_images_pending = []
@@ -1172,6 +1563,37 @@ class GeminiImagenService:
         accept_url = response_format in ("auto", "url")
 
         log.debug(f"图片响应格式策略: {response_format} (base64={accept_base64}, url={accept_url})")
+
+        if isinstance(data.get("data"), list):
+            for item in data["data"]:
+                if not isinstance(item, dict):
+                    continue
+
+                image_b64 = item.get("b64_json") or item.get("base64")
+                if image_b64 and accept_base64:
+                    try:
+                        normalized_b64 = re.sub(r"\s+", "", str(image_b64))
+                        images.append(base64.b64decode(normalized_b64))
+                    except Exception as e:
+                        log.warning(f"解码 images API base64 失败: {e}")
+
+                image_url = str(item.get("url") or "").strip()
+                if image_url:
+                    if image_url.startswith("data:image") and accept_base64:
+                        try:
+                            b64_data = image_url.split(",", 1)[1]
+                            normalized_b64 = re.sub(r"\s+", "", b64_data)
+                            images.append(base64.b64decode(normalized_b64))
+                        except Exception as e:
+                            log.warning(f"解码 images API data URL 失败: {e}")
+                    elif (
+                        image_url.startswith("http://") or image_url.startswith("https://")
+                    ) and accept_url:
+                        url_images_pending.append(image_url)
+
+                revised_prompt = item.get("revised_prompt")
+                if revised_prompt:
+                    text_contents.append(str(revised_prompt))
 
         if "choices" in data:
             for choice in data["choices"]:
@@ -1384,6 +1806,13 @@ class GeminiImagenService:
         aspect_ratio: str = "1:1",
         resolution: str = "default",
         content_rating: str = "sfw",
+        model_name_override: Optional[str] = None,
+        openai_image_size: Optional[str] = None,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+        openai_quality: Optional[str] = None,
+        openai_style: Optional[str] = None,
+        openai_image_api_mode: Optional[str] = None,
     ) -> Optional[bytes]:
         """
         生成单张图像的便捷方法（内置空回自动重试）
@@ -1410,6 +1839,13 @@ class GeminiImagenService:
                 number_of_images=1,
                 resolution=resolution,
                 content_rating=content_rating,
+                model_name_override=model_name_override,
+                openai_image_size=openai_image_size,
+                openai_response_format=openai_response_format,
+                openai_stream=openai_stream,
+                openai_quality=openai_quality,
+                openai_style=openai_style,
+                openai_image_api_mode=openai_image_api_mode,
             )
 
             if images and len(images) > 0:
@@ -1438,6 +1874,13 @@ class GeminiImagenService:
         resolution: str = "default",
         content_rating: str = "sfw",
         reference_images: Optional[List[dict]] = None,
+        model_name_override: Optional[str] = None,
+        openai_image_size: Optional[str] = None,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+        openai_quality: Optional[str] = None,
+        openai_style: Optional[str] = None,
+        openai_image_api_mode: Optional[str] = None,
     ) -> Optional[bytes]:
         """
         使用 Gemini 多模态接口进行图生图（图像编辑）
@@ -1475,7 +1918,15 @@ class GeminiImagenService:
         log.info(f"图生图参考图数量: {len(images_list)}")
         
         # 根据分辨率和内容分级选择编辑模型
-        model_name = self._get_model_for_resolution(resolution=resolution, is_edit=True, content_rating=content_rating)
+        model_name = (
+            str(model_name_override).strip()
+            if model_name_override is not None and str(model_name_override).strip()
+            else self._get_model_for_resolution(
+                resolution=resolution,
+                is_edit=True,
+                content_rating=content_rating,
+            )
+        )
         log.info(f"图生图使用模型: {model_name} (分辨率: {resolution}, 内容分级: {content_rating})")
         
         retry_max_attempts = max(
@@ -1490,6 +1941,12 @@ class GeminiImagenService:
                     edit_prompt=edit_prompt,
                     aspect_ratio=aspect_ratio,
                     model_name=model_name,
+                    openai_image_size=openai_image_size,
+                    openai_response_format=openai_response_format,
+                    openai_stream=openai_stream,
+                    openai_quality=openai_quality,
+                    openai_style=openai_style,
+                    openai_image_api_mode=openai_image_api_mode,
                 )
             else:
                 # 使用 Gemini 多模态聊天接口（gemini 或 gemini_chat 格式都使用这个）
@@ -1621,11 +2078,55 @@ class GeminiImagenService:
         edit_prompt: str,
         aspect_ratio: str,
         model_name: str,
+        openai_image_size: Optional[str] = None,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+        openai_quality: Optional[str] = None,
+        openai_style: Optional[str] = None,
+        openai_image_api_mode: Optional[str] = None,
     ) -> Optional[bytes]:
         """
-        使用 OpenAI 兼容的 chat/completions API 进行图像编辑
-        支持多张参考图。
+        根据模型和配置决定走 OpenAI 兼容的 chat/completions 还是 /images/edits。
         """
+        resolved_mode = self._resolve_openai_image_api_mode(
+            model_name=model_name,
+            mode_override=openai_image_api_mode,
+        )
+        if resolved_mode == "images_api":
+            edited_image = await self._edit_image_openai_images_api_format(
+                reference_images=reference_images,
+                edit_prompt=edit_prompt,
+                aspect_ratio=aspect_ratio,
+                model_name=model_name,
+                openai_image_size=openai_image_size,
+                openai_response_format=openai_response_format,
+                openai_stream=openai_stream,
+                openai_quality=openai_quality,
+                openai_style=openai_style,
+            )
+            if edited_image or self._normalize_openai_image_api_mode(openai_image_api_mode) != "auto":
+                return edited_image
+            log.warning(
+                "OpenAI 图生图 images_api auto 路由未拿到结果，回退到 chat/completions 再试一次。"
+            )
+
+        return await self._edit_image_openai_chat_completions_format(
+            reference_images=reference_images,
+            edit_prompt=edit_prompt,
+            aspect_ratio=aspect_ratio,
+            model_name=model_name,
+            openai_response_format=openai_response_format,
+        )
+
+    async def _edit_image_openai_chat_completions_format(
+        self,
+        reference_images: List[dict],
+        edit_prompt: str,
+        aspect_ratio: str,
+        model_name: str,
+        openai_response_format: Optional[str] = None,
+    ) -> Optional[bytes]:
+        """使用 chat/completions 接口做图生图。"""
         base_url = self._client["base_url"].rstrip("/")
         api_key = self._client["api_key"]
         
@@ -1698,10 +2199,16 @@ class GeminiImagenService:
                             log.error(f"OpenAI 图生图 API 返回错误 {response.status}: {error_text[:500]}")
                             return None
                         
-                        data = await response.json()
+                        data = await self._parse_json_or_sse_payload(response)
+                        if not data:
+                            log.warning("OpenAI 图生图 chat/completions 返回空响应")
+                            return None
                         
                         # 解析响应，提取图像（复用通用提取方法）
-                        images = await self._extract_images_from_openai_response(data)
+                        images = await self._extract_images_from_openai_response(
+                            data,
+                            response_format_override=openai_response_format,
+                        )
                         
                         if images:
                             log.info(f"图生图成功，生成了 {len(images)} 张图像")
@@ -1733,6 +2240,140 @@ class GeminiImagenService:
                 return None
             except Exception as e:
                 log.error(f"OpenAI 格式图生图时发生错误: {e}", exc_info=True)
+                return None
+
+        return None
+
+    async def _edit_image_openai_images_api_format(
+        self,
+        reference_images: List[dict],
+        edit_prompt: str,
+        aspect_ratio: str,
+        model_name: str,
+        openai_image_size: Optional[str] = None,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+        openai_quality: Optional[str] = None,
+        openai_style: Optional[str] = None,
+    ) -> Optional[bytes]:
+        """使用 multipart /images/edits 接口做图生图。"""
+        base_url = self._client["base_url"].rstrip("/")
+        api_key = self._client["api_key"]
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        stream_override = self._coerce_optional_bool(openai_stream)
+        streaming_enabled = (
+            config.get("STREAMING_ENABLED", False)
+            if stream_override is None
+            else stream_override
+        )
+        request_response_format = self._resolve_request_response_format(
+            openai_response_format or config.get("IMAGE_RESPONSE_FORMAT")
+        )
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+        }
+        if streaming_enabled:
+            headers["Accept"] = "text/event-stream"
+
+        retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
+        timeout = self._build_openai_timeout(streaming=streaming_enabled)
+
+        for attempt in range(1, retry_max_attempts + 1):
+            try:
+                form = aiohttp.FormData()
+                form.add_field("model", model_name)
+                form.add_field(
+                    "prompt",
+                    self._build_openai_image_prompt(
+                        prompt=edit_prompt,
+                        negative_prompt=None,
+                        aspect_ratio=aspect_ratio,
+                    ),
+                )
+                if openai_image_size:
+                    form.add_field("size", str(openai_image_size).strip())
+                if request_response_format:
+                    form.add_field("response_format", request_response_format)
+                if streaming_enabled:
+                    form.add_field("stream", "true")
+                if openai_quality:
+                    form.add_field("quality", str(openai_quality).strip())
+                if openai_style:
+                    form.add_field("style", str(openai_style).strip())
+
+                for index, image_info in enumerate(reference_images[-3:], start=1):
+                    image_bytes = image_info.get("data")
+                    if not image_bytes:
+                        continue
+                    mime_type = str(image_info.get("mime_type") or "image/png").strip() or "image/png"
+                    extension = mime_type.split("/")[-1] if "/" in mime_type else "png"
+                    form.add_field(
+                        "image",
+                        image_bytes,
+                        filename=f"reference_{index}.{extension}",
+                        content_type=mime_type,
+                    )
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{base_url}/images/edits",
+                        headers=headers,
+                        data=form,
+                        timeout=timeout,
+                    ) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            if self._is_retryable_status(response.status) and attempt < retry_max_attempts:
+                                delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                                log.warning(
+                                    f"OpenAI 图生图图片接口返回可重试错误 {response.status}，将在 {delay:.1f}s 后重试 "
+                                    f"({attempt}/{retry_max_attempts})"
+                                )
+                                await asyncio.sleep(delay)
+                                continue
+                            log.error(f"OpenAI 图生图图片接口返回错误 {response.status}: {error_text[:500]}")
+                            return None
+
+                        data = await self._parse_json_or_sse_payload(response)
+                        if not data:
+                            log.warning("OpenAI 图生图图片接口返回空响应")
+                            return None
+
+                        images = await self._extract_images_from_openai_response(
+                            data,
+                            response_format_override=openai_response_format,
+                        )
+                        if images:
+                            log.info(f"通过 /images/edits 成功生成 {len(images)} 张图像")
+                            return images[-1]
+
+                        log.warning("OpenAI 图生图图片接口返回成功但没有找到图像数据")
+                        log.debug(f"响应内容: {json.dumps(data, ensure_ascii=False)[:1000]}")
+                        return None
+
+            except asyncio.TimeoutError:
+                if attempt < retry_max_attempts:
+                    delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                    log.warning(
+                        f"OpenAI 图生图图片接口请求超时，{delay:.1f}s 后重试 ({attempt}/{retry_max_attempts})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                log.error("OpenAI 图生图图片接口请求超时")
+                return None
+            except aiohttp.ClientError as error:
+                if attempt < retry_max_attempts:
+                    delay = min(retry_base_delay * (2 ** (attempt - 1)), 8.0)
+                    log.warning(
+                        f"OpenAI 图生图图片接口网络错误: {error}，{delay:.1f}s 后重试 ({attempt}/{retry_max_attempts})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                log.error(f"OpenAI 图生图图片接口网络错误: {error}")
+                return None
+            except Exception as error:
+                log.error(f"调用 /images/edits 时发生错误: {error}", exc_info=True)
                 return None
 
         return None

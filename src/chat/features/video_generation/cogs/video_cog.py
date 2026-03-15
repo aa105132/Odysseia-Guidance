@@ -5,7 +5,6 @@
 
 提供：
 1) /视频生成（总是弹出视频专用参数面板）
-2) /视频面板（兼容入口，打开同一套视频参数面板）
 """
 
 import io
@@ -356,33 +355,6 @@ class VideoGenerationCog(commands.Cog):
             image=图片,
         )
 
-    @app_commands.command(name="视频面板", description="打开视频生成专用参数面板")
-    @app_commands.describe(
-        描述="可选：预填到面板中的视频描述",
-        时长="可选：预填到面板中的目标时长（6~30秒）",
-        图片="可选：预载到面板中的参考图",
-    )
-    async def 视频面板(
-        self,
-        interaction: discord.Interaction,
-        描述: Optional[str] = None,
-        时长: Optional[int] = None,
-        图片: Optional[discord.Attachment] = None,
-    ):
-        if not video_service.is_available():
-            await interaction.response.send_message(
-                "视频生成服务当前未启用，请联系管理员在 Dashboard 中配置。",
-                ephemeral=True,
-            )
-            return
-
-        await self._open_video_panel(
-            interaction,
-            initial_prompt=str(描述 or "").strip(),
-            initial_duration=时长,
-            image=图片,
-        )
-
     async def _open_video_panel(
         self,
         interaction: discord.Interaction,
@@ -417,7 +389,11 @@ class VideoGenerationCog(commands.Cog):
             image_data=image_data,
             image_mime_type=image_mime_type,
         )
-        await interaction.response.send_message(embed=view.build_embed(), view=view)
+        await interaction.response.send_message(
+            embed=view.build_embed(),
+            view=view,
+            ephemeral=True,
+        )
         try:
             view.panel_message = await interaction.original_response()
         except Exception:

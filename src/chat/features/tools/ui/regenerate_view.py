@@ -13,6 +13,16 @@ from typing import Optional, Dict, Any, Callable, Awaitable, List
 
 log = logging.getLogger(__name__)
 
+OPENAI_IMAGE_PARAM_KEYS = (
+    "model_name_override",
+    "openai_image_size",
+    "openai_response_format",
+    "openai_stream",
+    "openai_quality",
+    "openai_style",
+    "openai_image_api_mode",
+)
+
 
 def _build_model_options(generation_type: str, current_resolution: str = "default", current_rating: str = "sfw") -> List[discord.SelectOption]:
     """
@@ -272,6 +282,9 @@ class RegenerateView(discord.ui.View):
         if hasattr(interaction, "client"):
             params["bot"] = interaction.client
         params["request_user"] = interaction.user
+        for key in OPENAI_IMAGE_PARAM_KEYS:
+            if key in self.original_params:
+                params[key] = self.original_params.get(key)
         
         # 不传入 message（因为这是按钮交互，不是原始消息）
         params.pop("message", None)
@@ -343,6 +356,9 @@ class RegenerateView(discord.ui.View):
                 "bot": interaction.client if hasattr(interaction, "client") else None,
                 "request_user": interaction.user,
             }
+            for key in OPENAI_IMAGE_PARAM_KEYS:
+                if key in self.original_params:
+                    params[key] = self.original_params.get(key)
             result = await generate_image(**params)
         else:
             # 使用保存的参考图片进行图生图
@@ -387,6 +403,13 @@ class RegenerateView(discord.ui.View):
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
                     content_rating=content_rating,
+                    model_name_override=self.original_params.get("model_name_override"),
+                    openai_image_size=self.original_params.get("openai_image_size"),
+                    openai_response_format=self.original_params.get("openai_response_format"),
+                    openai_stream=self.original_params.get("openai_stream"),
+                    openai_quality=self.original_params.get("openai_quality"),
+                    openai_style=self.original_params.get("openai_style"),
+                    openai_image_api_mode=self.original_params.get("openai_image_api_mode"),
                 )
 
                 if edited_image_bytes:
@@ -704,6 +727,9 @@ class SlashCommandRegenerateView(discord.ui.View):
             "bot": interaction.client if hasattr(interaction, "client") else None,
             "request_user": interaction.user,
         }
+        for key in OPENAI_IMAGE_PARAM_KEYS:
+            if key in self.original_params:
+                params[key] = self.original_params.get(key)
         
         result = await generate_image(**params)
         
@@ -771,6 +797,9 @@ class SlashCommandRegenerateView(discord.ui.View):
                 "bot": interaction.client if hasattr(interaction, "client") else None,
                 "request_user": interaction.user,
             }
+            for key in OPENAI_IMAGE_PARAM_KEYS:
+                if key in self.original_params:
+                    params[key] = self.original_params.get(key)
             result = await generate_image(**params)
         else:
             # 使用保存的参考图片进行图生图
@@ -815,6 +844,13 @@ class SlashCommandRegenerateView(discord.ui.View):
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
                     content_rating=content_rating,
+                    model_name_override=self.original_params.get("model_name_override"),
+                    openai_image_size=self.original_params.get("openai_image_size"),
+                    openai_response_format=self.original_params.get("openai_response_format"),
+                    openai_stream=self.original_params.get("openai_stream"),
+                    openai_quality=self.original_params.get("openai_quality"),
+                    openai_style=self.original_params.get("openai_style"),
+                    openai_image_api_mode=self.original_params.get("openai_image_api_mode"),
                 )
 
                 if edited_image_bytes:

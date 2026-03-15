@@ -46,6 +46,13 @@ async def generate_image(
     content_rating: str = "sfw",
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
+    model_name_override: Optional[str] = None,
+    openai_image_size: Optional[str] = None,
+    openai_response_format: Optional[str] = None,
+    openai_stream: Optional[bool] = None,
+    openai_quality: Optional[str] = None,
+    openai_style: Optional[str] = None,
+    openai_image_api_mode: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
@@ -302,6 +309,13 @@ async def generate_image(
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
                 content_rating=content_rating,
+                model_name_override=model_name_override,
+                openai_image_size=openai_image_size,
+                openai_response_format=openai_response_format,
+                openai_stream=openai_stream,
+                openai_quality=openai_quality,
+                openai_style=openai_style,
+                openai_image_api_mode=openai_image_api_mode,
             )
             if result:
                 images_list = [result]
@@ -320,6 +334,13 @@ async def generate_image(
                         aspect_ratio=aspect_ratio,
                         resolution=resolution,
                         content_rating=content_rating,
+                        model_name_override=model_name_override,
+                        openai_image_size=openai_image_size,
+                        openai_response_format=openai_response_format,
+                        openai_stream=openai_stream,
+                        openai_quality=openai_quality,
+                        openai_style=openai_style,
+                        openai_image_api_mode=openai_image_api_mode,
                     )
 
             tasks = [
@@ -370,8 +391,14 @@ async def generate_image(
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
                     
                     # 获取实际使用的模型名称
-                    imagen_model_name = gemini_imagen_service._get_model_for_resolution(
-                        resolution=resolution, is_edit=False, content_rating=content_rating
+                    imagen_model_name = (
+                        str(model_name_override).strip()
+                        if model_name_override is not None and str(model_name_override).strip()
+                        else gemini_imagen_service._get_model_for_resolution(
+                            resolution=resolution,
+                            is_edit=False,
+                            content_rating=content_rating,
+                        )
                     )
                     
                     # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
@@ -408,6 +435,13 @@ async def generate_image(
                                 "resolution": resolution,
                                 "content_rating": content_rating,
                                 "original_success_message": success_message or "",
+                                "model_name_override": model_name_override,
+                                "openai_image_size": openai_image_size,
+                                "openai_response_format": openai_response_format,
+                                "openai_stream": openai_stream,
+                                "openai_quality": openai_quality,
+                                "openai_style": openai_style,
+                                "openai_image_api_mode": openai_image_api_mode,
                             },
                             user_id=parsed_user_id,
                         )
@@ -490,6 +524,13 @@ async def generate_images_batch(
     resolution: str = "default",
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
+    model_name_override: Optional[str] = None,
+    openai_image_size: Optional[str] = None,
+    openai_response_format: Optional[str] = None,
+    openai_stream: Optional[bool] = None,
+    openai_quality: Optional[str] = None,
+    openai_style: Optional[str] = None,
+    openai_image_api_mode: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
@@ -688,6 +729,13 @@ async def generate_images_batch(
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
                     content_rating=batch_content_rating,
+                    model_name_override=model_name_override,
+                    openai_image_size=openai_image_size,
+                    openai_response_format=openai_response_format,
+                    openai_stream=openai_stream,
+                    openai_quality=openai_quality,
+                    openai_style=openai_style,
+                    openai_image_api_mode=openai_image_api_mode,
                 )
 
         tasks = [
@@ -738,10 +786,14 @@ async def generate_images_batch(
             if channel:
                 try:
                     # 获取实际使用的模型名称
-                    batch_model_name = gemini_imagen_service._get_model_for_resolution(
-                        resolution=resolution,
-                        is_edit=False,
-                        content_rating=batch_content_rating,
+                    batch_model_name = (
+                        str(model_name_override).strip()
+                        if model_name_override is not None and str(model_name_override).strip()
+                        else gemini_imagen_service._get_model_for_resolution(
+                            resolution=resolution,
+                            is_edit=False,
+                            content_rating=batch_content_rating,
+                        )
                     )
                     
                     # 构建 Discord Embed（批量生成：标题+多个提示词+成功回复）

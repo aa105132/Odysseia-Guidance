@@ -35,6 +35,13 @@ async def edit_image(
     max_reference_images: int = 4,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
+    model_name_override: Optional[str] = None,
+    openai_image_size: Optional[str] = None,
+    openai_response_format: Optional[str] = None,
+    openai_stream: Optional[bool] = None,
+    openai_quality: Optional[str] = None,
+    openai_style: Optional[str] = None,
+    openai_image_api_mode: Optional[str] = None,
     **kwargs
 ) -> dict:
     """
@@ -234,6 +241,8 @@ async def edit_image(
     reference_image = None
     reference_images = []
     user_id = kwargs.get("user_id")  # 获取当前用户ID
+    prepared_reference_images = kwargs.get("_prepared_reference_images") or kwargs.get("prepared_reference_images")
+    prepared_reference_image = kwargs.get("_prepared_reference_image") or kwargs.get("prepared_reference_image")
 
     # 由 AI 控制参考图策略（single / multi / auto）
     reference_image_mode = (reference_image_mode or "auto").strip().lower()
@@ -259,6 +268,16 @@ async def edit_image(
             return [valid[0]]
         # auto / multi: 允许多图
         return valid[:max_reference_images]
+
+    prepared_candidates = _select_reference_images(prepared_reference_images)
+    if prepared_candidates:
+        reference_images = prepared_candidates
+        reference_image = prepared_candidates[0]
+        log.info(f"已使用预处理参考图 {len(prepared_candidates)} 张")
+    elif isinstance(prepared_reference_image, dict) and prepared_reference_image.get("data"):
+        reference_image = prepared_reference_image
+        reference_images = [prepared_reference_image]
+        log.info("已使用预处理单张参考图")
     
     # 优先提取自定义表情图片（自动解析消息内容 + 显式 emoji_id）
     if not reference_image:
@@ -555,6 +574,13 @@ async def edit_image(
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             content_rating=content_rating,
+            model_name_override=model_name_override,
+            openai_image_size=openai_image_size,
+            openai_response_format=openai_response_format,
+            openai_stream=openai_stream,
+            openai_quality=openai_quality,
+            openai_style=openai_style,
+            openai_image_api_mode=openai_image_api_mode,
         )
         
         # 移除"正在生成"反应
@@ -581,8 +607,14 @@ async def edit_image(
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
                     
                     # 获取实际使用的模型名称
-                    edit_model_name = gemini_imagen_service._get_model_for_resolution(
-                        resolution=resolution, is_edit=True, content_rating=content_rating
+                    edit_model_name = (
+                        str(model_name_override).strip()
+                        if model_name_override is not None and str(model_name_override).strip()
+                        else gemini_imagen_service._get_model_for_resolution(
+                            resolution=resolution,
+                            is_edit=True,
+                            content_rating=content_rating,
+                        )
                     )
                     
                     # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
@@ -621,6 +653,13 @@ async def edit_image(
                                 "resolution": resolution,
                                 "content_rating": content_rating,
                                 "original_success_message": success_message or "",
+                                "model_name_override": model_name_override,
+                                "openai_image_size": openai_image_size,
+                                "openai_response_format": openai_response_format,
+                                "openai_stream": openai_stream,
+                                "openai_quality": openai_quality,
+                                "openai_style": openai_style,
+                                "openai_image_api_mode": openai_image_api_mode,
                                 # 保存参考图片数据以便重新生成
                                 "reference_image_data": reference_image["data"],
                                 "reference_image_mime_type": reference_image["mime_type"],

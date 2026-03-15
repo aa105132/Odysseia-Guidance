@@ -7,6 +7,8 @@ Gemini Imagen 图像生成命令 Cog
 
 import logging
 import io
+from typing import Optional
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -15,6 +17,7 @@ from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG, PROMPT_CONFIG
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
 from src.chat.config.emoji_config import replace_emotion_tags
 from ..services.gemini_imagen_service import gemini_imagen_service
+from ..ui.imagen_panel_view import open_imagen_generation_panel
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +30,7 @@ class GeminiImagenCog(commands.Cog):
         self.image_cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_GENERATION_COST", 1)
         self.edit_cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 1)
 
-    @app_commands.command(name="画图", description="使用 Gemini Imagen AI 生成图片")
+    @app_commands.command(name="画图", description="打开图片生成面板")
     @app_commands.describe(
         prompt="描述你想要生成的图片内容",
         negative_prompt="你不希望在图片中出现的内容(可选)",
@@ -65,7 +68,7 @@ class GeminiImagenCog(commands.Cog):
     async def paint(
         self,
         interaction: discord.Interaction,
-        prompt: str,
+        prompt: str = "",
         negative_prompt: str = "",
         aspect_ratio: str = None,
         count: int = 1,
@@ -73,6 +76,19 @@ class GeminiImagenCog(commands.Cog):
         content_rating: str = "sfw",
     ):
         """/paint 命令的实现"""
+        await open_imagen_generation_panel(
+            interaction=interaction,
+            bot=self.bot,
+            mode="image",
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            aspect_ratio=aspect_ratio or GEMINI_IMAGEN_CONFIG.get("DEFAULT_ASPECT_RATIO", "1:1"),
+            count=count,
+            resolution=resolution,
+            content_rating=content_rating,
+        )
+        return
+
         # 检查服务是否可用
         if not gemini_imagen_service.is_available():
             await interaction.response.send_message(
@@ -269,7 +285,7 @@ class GeminiImagenCog(commands.Cog):
                 "处理你的请求时发生了一个意料之外的错误。"
             )
 
-    @app_commands.command(name="图生图", description="上传一张或两张图片，让 AI 根据你的指令修改它")
+    @app_commands.command(name="图生图", description="打开图生图面板")
     @app_commands.describe(
         image="要修改的参考图片（图一）",
         image2="第二张参考图片（可选，图二）",
@@ -309,15 +325,33 @@ class GeminiImagenCog(commands.Cog):
     async def image_to_image(
         self,
         interaction: discord.Interaction,
-        image: discord.Attachment,
-        edit_prompt: str,
-        image2: discord.Attachment = None,
+        image: Optional[discord.Attachment] = None,
+        edit_prompt: str = "",
+        image2: Optional[discord.Attachment] = None,
         aspect_ratio: str = None,
         count: int = 1,
         resolution: str = "default",
         content_rating: str = "sfw",
     ):
         """/图生图 命令的实现"""
+        reference_attachments = [
+            attachment
+            for attachment in (image, image2)
+            if attachment is not None
+        ]
+        await open_imagen_generation_panel(
+            interaction=interaction,
+            bot=self.bot,
+            mode="image_edit",
+            prompt=edit_prompt,
+            aspect_ratio=aspect_ratio or GEMINI_IMAGEN_CONFIG.get("DEFAULT_ASPECT_RATIO", "1:1"),
+            count=count,
+            resolution=resolution,
+            content_rating=content_rating,
+            reference_attachments=reference_attachments,
+        )
+        return
+
         # 检查附件是否是图片（支持 1~2 张参考图）
         reference_attachments = [image]
         if image2:
