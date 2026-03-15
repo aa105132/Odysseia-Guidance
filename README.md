@@ -79,15 +79,16 @@ Odysseia 是一个为 Discord 社区“类脑”量身打造的、功能丰富�
 - **`/类脑商店`**: 打开商店，使用奥德赛币购买礼物和道具。
 - **`/blackjack`**: 开始一局刺激的21点游戏。
 - **`/抽鬼牌`**: 和月月或朋友们玩一局抽鬼牌。
-- **`/画图`**: 使用 Gemini Imagen 生成图片，支持设置提示词、排除内容、宽高比、数量、分辨率、内容分级。
-- **`/图生图`**: 上传 1～2 张参考图并填写修改指令，支持设置宽高比、数量、分辨率、内容分级。
+- **`/画图`**: 打开 Grok / Imagen 图片生成面板，支持提示词、排除内容、宽高比、数量、分辨率、内容分级，以及模型、尺寸、返回格式、质量、风格、流式和接口路由。
+- **`/图生图`**: 打开 Grok / Imagen 图生图面板，支持上传 1～2 张参考图、填写修改指令，也支持直接使用自己的 Discord 头像做参考。
 - **`/comfy`**: 打开弹出式生成面板，适合需要更细粒度控制的场景，可填写正/负提示词、分辨率、步数、CFG，并通过额外参数覆盖 `seed`、`LoRA`、`workflow`、`sampler`、`scheduler` 等。
 
 ### AI 绘图参数说明
-- **对话中的 Imagen 文生图**: 月月在对话里调用 Imagen 时，当前主要会使用 `prompt`、`negative_prompt`、`aspect_ratio`、`number_of_images`、`resolution`、`content_rating` 这些参数。
-- **对话中的 Imagen 图生图**: 除了编辑指令本身，还支持 `aspect_ratio`、`resolution`、`content_rating`、`reference_image_mode`、`max_reference_images`；回复图片、附件图片、表情、贴纸、用户头像都可以作为参考图来源。
-- **斜杠命令的参数映射**: `/画图` 对应“提示词 / 排除内容 / 宽高比 / 数量 / 分辨率 / 内容分级”；`/图生图` 对应“参考图 / 修改指令 / 宽高比 / 数量 / 分辨率 / 内容分级”。
-- **弹出式生成面板**: 当前仓库内已实现的是 `/comfy` 弹出式生成面板，适合把常用参数一次性填完后再生成。
+- **月月对话工具**: 现在支持 `model_name_override`、`openai_image_size`、`openai_response_format`、`openai_stream`、`openai_quality`、`openai_style`、`openai_image_api_mode`。
+- **对话中的图像参考**: 回复图片、附件图片、表情、贴纸、用户头像都可以作为参考图来源；当用户明确说“按我的头像 / 用我的头像 / 根据我的头像来画”时，会优先按头像参考链路处理。
+- **斜杠命令与面板**: `/画图` 与 `/图生图` 都会打开 Grok / Imagen 面板；面板支持上传参考图、使用自己的 Discord 头像、以及手动切换 `auto` / `images_api` / `chat_completions`。
+- **Grok 路由规则**: 当模型名是 `grok-imagine-*` / `gpt-image-*` 时，`auto` 会优先走 `/v1/images/generations` 与 `/v1/images/edits`。
+- **弹出式生成面板**: 当前仓库内已实现的是 `/画图`、`/图生图` 与 `/comfy` 三套面板化生成入口。
 
 ### 管理与配置
 - **`/新人引导管理面板`**: 打开集成的多功能新人引导管理面板。这是配置新成员引导流程的核心工具。
