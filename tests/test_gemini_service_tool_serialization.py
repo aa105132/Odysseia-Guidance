@@ -208,6 +208,72 @@ def test_execute_openai_tool_call_keeps_explicit_reference_index():
     assert "_prepared_reference_images" not in captured_kwargs
 
 
+def test_execute_openai_tool_call_autofills_self_avatar_for_edit_image():
+    service = GeminiService()
+    captured_kwargs = {}
+
+    async def _fake_edit_image(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"ok": True}
+
+    service.tool_map["edit_image"] = _fake_edit_image
+    fake_message = types.SimpleNamespace(
+        author=types.SimpleNamespace(id=123456789),
+        guild=None,
+    )
+
+    result = asyncio.run(
+        service._execute_openai_tool_call(
+            tool_name="edit_image",
+            tool_args={"edit_prompt": "按我的头像画成成熟人妻版本"},
+            discord_message=fake_message,
+        )
+    )
+
+    assert result == {"ok": True}
+    assert captured_kwargs["avatar_user_id"] == "123456789"
+
+
+def test_execute_openai_tool_call_autofills_self_avatar_for_novelai(monkeypatch):
+    service = GeminiService()
+    captured_kwargs = {}
+
+    async def _fake_generate_image_novelai(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"ok": True}
+
+    async def _fake_fetch_avatar_image(*args, **kwargs):
+        return {
+            "data": b"avatar-ref",
+            "mime_type": "image/png",
+            "filename": "avatar.png",
+        }
+
+    service.tool_map["generate_image_novelai"] = _fake_generate_image_novelai
+    monkeypatch.setattr(
+        sys.modules["src.chat.services.gemini_service"],
+        "fetch_avatar_image",
+        _fake_fetch_avatar_image,
+    )
+    fake_message = types.SimpleNamespace(
+        author=types.SimpleNamespace(id=987654321),
+        guild=None,
+    )
+
+    result = asyncio.run(
+        service._execute_openai_tool_call(
+            tool_name="generate_image_novelai",
+            tool_args={"prompt": "按我的头像画成熟人妻版本"},
+            discord_message=fake_message,
+        )
+    )
+
+    assert result == {"ok": True}
+    assert captured_kwargs["reference_image_index"] == 1
+    assert captured_kwargs["_prepared_reference_images"][0]["data"] == b"avatar-ref"
+    assert captured_kwargs["_prepared_reference_images"][0]["source"] == "auto:self_avatar"
+
+
 class _FakeResponseContext:
     def __init__(self, event):
         self._event = event

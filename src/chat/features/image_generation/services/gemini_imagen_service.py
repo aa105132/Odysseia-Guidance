@@ -149,6 +149,25 @@ class GeminiImagenService:
             return "images_api"
         return "chat_completions"
 
+    def _should_keep_images_api_route(
+        self,
+        model_name: str,
+        mode_override: Optional[str] = None,
+    ) -> bool:
+        """判断当前模型是否应固定停留在 `/images/*` 路由。"""
+        resolved_mode = self._resolve_openai_image_api_mode(
+            model_name=model_name,
+            mode_override=mode_override,
+        )
+        if resolved_mode != "images_api":
+            return False
+
+        normalized_override = self._normalize_openai_image_api_mode(mode_override)
+        if normalized_override == "images_api":
+            return True
+
+        return self._looks_like_images_api_model(model_name)
+
     @staticmethod
     def _coerce_optional_bool(value: Any) -> Optional[bool]:
         """把 bool / 文本 / 数字统一转成可选布尔值。"""
@@ -919,6 +938,15 @@ class GeminiImagenService:
             )
             if images or self._normalize_openai_image_api_mode(openai_image_api_mode) != "auto":
                 return images
+            if self._should_keep_images_api_route(
+                model_name=model_name,
+                mode_override=openai_image_api_mode,
+            ):
+                log.warning(
+                    "检测到 Grok / GPT Image 模型，文生图将固定使用 /images/generations；"
+                    "本次未回收到图像结果，已跳过 chat/completions 回退。"
+                )
+                return None
             log.warning(
                 "OpenAI 图片接口 auto 路由未拿到结果，回退到 chat/completions 再试一次。"
             )
@@ -2106,6 +2134,15 @@ class GeminiImagenService:
             )
             if edited_image or self._normalize_openai_image_api_mode(openai_image_api_mode) != "auto":
                 return edited_image
+            if self._should_keep_images_api_route(
+                model_name=model_name,
+                mode_override=openai_image_api_mode,
+            ):
+                log.warning(
+                    "检测到 Grok / GPT Image 编辑模型，图生图将固定使用 /images/edits；"
+                    "本次未回收到图像结果，已跳过 chat/completions 回退。"
+                )
+                return None
             log.warning(
                 "OpenAI 图生图 images_api auto 路由未拿到结果，回退到 chat/completions 再试一次。"
             )

@@ -17,6 +17,7 @@ from src.chat.features.tools.functions.edit_image import edit_image as edit_imag
 from src.chat.features.tools.functions.generate_image import (
     generate_image as generate_image_tool,
 )
+from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
 from ..services.gemini_imagen_service import gemini_imagen_service
 
 log = logging.getLogger(__name__)
@@ -521,6 +522,34 @@ class ImagenGenerationPanelView(discord.ui.View):
         self._refresh_buttons()
         return len(self.reference_images)
 
+    async def load_avatar_reference(
+        self,
+        *,
+        target_user_id: str,
+        guild: Optional[discord.Guild] = None,
+    ) -> bool:
+        avatar_image = await fetch_avatar_image(
+            user_id=target_user_id,
+            bot=self.bot,
+            guild=guild,
+        )
+        if not avatar_image or not avatar_image.get("data"):
+            return False
+
+        loaded_images = list(self.reference_images)
+        loaded_images.append(
+            {
+                "data": avatar_image["data"],
+                "mime_type": avatar_image.get("mime_type") or "image/png",
+                "filename": avatar_image.get("filename") or f"avatar_{target_user_id}.png",
+                "source": "discord_avatar",
+            }
+        )
+        self.reference_images = loaded_images[-MAX_REFERENCE_IMAGES:]
+        self.mode = "image_edit"
+        self._refresh_buttons()
+        return True
+
     @discord.ui.button(label="编辑提示词", style=discord.ButtonStyle.primary, row=0)
     async def edit_prompt_button(
         self,
@@ -567,6 +596,29 @@ class ImagenGenerationPanelView(discord.ui.View):
 
         loaded_count = await self.load_reference_attachments(image_attachments)
         await interaction.followup.send(f"已载入 {loaded_count} 张参考图，并切到图生图模式。", ephemeral=True)
+        await self.refresh_panel_message()
+
+    @discord.ui.button(label="使用我的头像", style=discord.ButtonStyle.secondary, row=1)
+    async def use_avatar_button(
+        self,
+        interaction: discord.Interaction,
+        _: discord.ui.Button,
+    ) -> None:
+        loaded = await self.load_avatar_reference(
+            target_user_id=str(interaction.user.id),
+            guild=interaction.guild,
+        )
+        if not loaded:
+            await interaction.response.send_message(
+                "暂时读取不到你的 Discord 头像，请稍后重试，或直接上传参考图。",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            "已载入你的 Discord 头像作为参考图，并切换到图生图模式。",
+            ephemeral=True,
+        )
         await self.refresh_panel_message()
 
     @discord.ui.button(label="清空参考图", style=discord.ButtonStyle.secondary, row=1)

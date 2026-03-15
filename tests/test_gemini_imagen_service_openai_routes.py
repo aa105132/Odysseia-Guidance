@@ -52,6 +52,69 @@ def test_resolve_openai_image_api_mode_routes_regular_models_to_chat(monkeypatch
     assert service._resolve_openai_image_api_mode("imagen-3.0-generate-002") == "chat_completions"
 
 
+def test_generate_openai_format_keeps_grok_on_images_api(monkeypatch):
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
+    service = GeminiImagenService()
+
+    async def _fake_images_api(**kwargs):
+        return None
+
+    async def _unexpected_chat_fallback(**kwargs):
+        raise AssertionError("grok-imagine-* 不应回退到 chat/completions")
+
+    monkeypatch.setattr(
+        service, "_generate_image_openai_images_api_format", _fake_images_api
+    )
+    monkeypatch.setattr(
+        service,
+        "_generate_image_openai_chat_completions_format",
+        _unexpected_chat_fallback,
+    )
+
+    result = asyncio.run(
+        service._generate_image_openai_format(
+            prompt="test",
+            negative_prompt=None,
+            aspect_ratio="1:1",
+            number_of_images=1,
+            model_name="grok-imagine-1.0",
+        )
+    )
+
+    assert result is None
+
+
+def test_edit_openai_format_keeps_grok_on_images_api(monkeypatch):
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
+    service = GeminiImagenService()
+
+    async def _fake_images_api(**kwargs):
+        return None
+
+    async def _unexpected_chat_fallback(**kwargs):
+        raise AssertionError("grok-imagine-* 编辑模型不应回退到 chat/completions")
+
+    monkeypatch.setattr(
+        service, "_edit_image_openai_images_api_format", _fake_images_api
+    )
+    monkeypatch.setattr(
+        service,
+        "_edit_image_openai_chat_completions_format",
+        _unexpected_chat_fallback,
+    )
+
+    result = asyncio.run(
+        service._edit_image_openai_format(
+            reference_images=[{"data": b"avatar", "mime_type": "image/png"}],
+            edit_prompt="test",
+            aspect_ratio="1:1",
+            model_name="grok-imagine-1.0-edit",
+        )
+    )
+
+    assert result is None
+
+
 def test_parse_sse_payload_text_extracts_data_items():
     service = GeminiImagenService()
     raw_text = (

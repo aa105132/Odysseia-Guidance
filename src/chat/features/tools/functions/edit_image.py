@@ -46,6 +46,22 @@ async def edit_image(
 ) -> dict:
     """
     修改用户发送的图片，或基于已有图片（包括自定义表情、贴纸、用户头像）进行再创作。
+
+    OpenAI 兼容图片参数说明（适用于 Grok / GPT Image / 其它兼容图片端点）：
+    - `model_name_override`: 强制指定模型，例如 `grok-imagine-1.0-edit`
+    - `openai_image_size`: 透传 `size`
+    - `openai_response_format`: 透传 `response_format`
+    - `openai_stream`: 透传 `stream`
+    - `openai_quality`: 透传 `quality`
+    - `openai_style`: 透传 `style`
+    - `openai_image_api_mode`: 透传图片路由，支持 `auto` / `images_api` / `chat_completions`
+      - 当模型名是 `grok-imagine-*` / `gpt-image-*` 时，`auto` 会优先走 `/v1/images/edits`
+      - 如需强制指定，可显式传 `openai_image_api_mode="images_api"`
+
+    当用户说“画一下我的头像”“按我头像来一个成熟版”“把 A 和 B 的头像画在一起”时，这个工具就是首选：
+    - 当前用户头像：传 `avatar_user_id`
+    - 多个用户头像：传 `avatar_user_ids`
+    - 发送了附件图 / 回复了图片：工具会自动把它们作为参考图
     
     **重要：当用户消息中包含自定义表情（如 <:name:123456>）或贴纸（Sticker），并且要求基于它画图、改图、
     做成头像等操作时，必须调用此工具！工具会自动从用户消息中提取表情/贴纸图片，你不需要手动提取。**

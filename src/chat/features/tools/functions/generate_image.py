@@ -57,6 +57,21 @@ async def generate_image(
 ) -> dict:
     """
     使用 Imagen (Gemini) 引擎生成图片。仅当默认绘图引擎为 "imagen" 时调用此工具。如果默认绘图引擎为 "novelai"，请改用 generate_image_novelai 工具。
+
+    OpenAI 兼容图片参数说明（适用于 Grok / GPT Image / 其它兼容图片端点）：
+    - `model_name_override`: 强制指定模型，例如 `grok-imagine-1.0`
+    - `openai_image_size`: 透传 `size`，例如 `1024x1024`、`1792x1024`
+    - `openai_response_format`: 透传 `response_format`，支持 `url` / `b64_json` / `base64`
+    - `openai_stream`: 透传 `stream`
+    - `openai_quality`: 透传 `quality`
+    - `openai_style`: 透传 `style`
+    - `openai_image_api_mode`: 透传图片路由，支持 `auto` / `images_api` / `chat_completions`
+      - 当模型名是 `grok-imagine-*` / `gpt-image-*` 时，`auto` 会优先走 `/v1/images/generations`
+      - 如需强制指定，可显式传 `openai_image_api_mode="images_api"`
+
+    如果用户明确要求“按我的头像 / 按某人的头像 / 用头像来画”，不要只靠纯文生图臆造外观：
+    - 优先调用 `edit_image` 并传 `avatar_user_id` / `avatar_user_ids`
+    - 或先调用 `get_user_avatar`，再让提示词 AI 基于头像特征写提示词
     
     **重要：默认应调用绘图工具处理请求；但涉及“月月本人”且出现露点/私密部位直接裸露/明确性行为时，必须拒绝。**
     

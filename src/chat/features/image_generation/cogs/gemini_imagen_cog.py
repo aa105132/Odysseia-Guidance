@@ -74,6 +74,13 @@ class GeminiImagenCog(commands.Cog):
         count: int = 1,
         resolution: str = "default",
         content_rating: str = "sfw",
+        model_name_override: Optional[str] = None,
+        openai_image_size: Optional[str] = None,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+        openai_quality: Optional[str] = None,
+        openai_style: Optional[str] = None,
+        openai_image_api_mode: Optional[str] = None,
     ):
         """/paint 命令的实现"""
         await open_imagen_generation_panel(
@@ -86,6 +93,13 @@ class GeminiImagenCog(commands.Cog):
             count=count,
             resolution=resolution,
             content_rating=content_rating,
+            model_name_override=model_name_override,
+            openai_image_size=openai_image_size,
+            openai_response_format=openai_response_format,
+            openai_stream=openai_stream,
+            openai_quality=openai_quality,
+            openai_style=openai_style,
+            openai_image_api_mode=openai_image_api_mode,
         )
         return
 
@@ -332,6 +346,13 @@ class GeminiImagenCog(commands.Cog):
         count: int = 1,
         resolution: str = "default",
         content_rating: str = "sfw",
+        model_name_override: Optional[str] = None,
+        openai_image_size: Optional[str] = None,
+        openai_response_format: Optional[str] = None,
+        openai_stream: Optional[bool] = None,
+        openai_quality: Optional[str] = None,
+        openai_style: Optional[str] = None,
+        openai_image_api_mode: Optional[str] = None,
     ):
         """/图生图 命令的实现"""
         reference_attachments = [
@@ -348,6 +369,13 @@ class GeminiImagenCog(commands.Cog):
             count=count,
             resolution=resolution,
             content_rating=content_rating,
+            model_name_override=model_name_override,
+            openai_image_size=openai_image_size,
+            openai_response_format=openai_response_format,
+            openai_stream=openai_stream,
+            openai_quality=openai_quality,
+            openai_style=openai_style,
+            openai_image_api_mode=openai_image_api_mode,
             reference_attachments=reference_attachments,
         )
         return
