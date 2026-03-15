@@ -40,40 +40,119 @@ class AIChatCog(commands.Cog):
         text_without_emojis = re.sub(emoji_pattern, "", text)
         return len(text_without_emojis)
 
+    @staticmethod
+    def _build_log_preview(text: str, limit: int = 120) -> str:
+        normalized_text = str(text or "").replace("\r", "\\r").replace("\n", "\\n")
+        return normalized_text[:limit]
+
     def _split_text_for_discord(self, text: str, max_length: int = 2000) -> List[str]:
-        if len(text) <= max_length:
-            return [text]
-        return [text[i:i + max_length] for i in range(0, len(text), max_length)]
+        normalized_text = str(text or "")
+        if not normalized_text.strip():
+            return []
+        if len(normalized_text) <= max_length:
+            return [normalized_text]
+        return [
+            normalized_text[i:i + max_length]
+            for i in range(0, len(normalized_text), max_length)
+        ]
 
     async def _reply_text_safely(
         self, message: discord.Message, text: str, mention_author: bool = True
     ) -> List[discord.Message]:
-        chunks = self._split_text_for_discord(text)
+        raw_text = str(text or "")
+        chunks = self._split_text_for_discord(raw_text)
+        if not chunks:
+            log.warning(
+                "跳过发送空频道回复: "
+                f"message_id={getattr(message, 'id', 'unknown')}, "
+                f"channel_id={getattr(getattr(message, 'channel', None), 'id', 'unknown')}, "
+                f"author_id={getattr(getattr(message, 'author', None), 'id', 'unknown')}, "
+                f"raw_len={len(raw_text)}"
+            )
+            return []
+
         sent_messages: List[discord.Message] = []
+        total_chunks = len(chunks)
         for index, chunk in enumerate(chunks):
-            if index == 0:
-                sent_msg = await message.reply(chunk, mention_author=mention_author)
-            else:
-                sent_msg = await message.channel.send(chunk)
+            action = "reply" if index == 0 else "channel.send"
+            try:
+                if index == 0:
+                    sent_msg = await message.reply(chunk, mention_author=mention_author)
+                else:
+                    sent_msg = await message.channel.send(chunk)
+            except discord.HTTPException as error:
+                log.warning(
+                    "发送 Discord 文本失败: "
+                    f"action={action}, "
+                    f"message_id={getattr(message, 'id', 'unknown')}, "
+                    f"channel_id={getattr(getattr(message, 'channel', None), 'id', 'unknown')}, "
+                    f"author_id={getattr(getattr(message, 'author', None), 'id', 'unknown')}, "
+                    f"chunk_index={index + 1}/{total_chunks}, "
+                    f"chunk_len={len(chunk)}, "
+                    f"mention_author={mention_author if index == 0 else False}, "
+                    f"chunk_preview={self._build_log_preview(chunk)}, "
+                    f"error={error}"
+                )
+                raise
             sent_messages.append(sent_msg)
         return sent_messages
 
     async def _send_dm_text_safely(
         self, user: discord.abc.User, intro_text: str, text: str
     ) -> None:
-        chunks = self._split_text_for_discord(text)
+        raw_text = str(text or "")
+        chunks = self._split_text_for_discord(raw_text)
         if not chunks:
+            log.warning(
+                "跳过发送空私信回复: "
+                f"user_id={getattr(user, 'id', 'unknown')}, raw_len={len(raw_text)}"
+            )
             return
 
         first_with_intro = f'{intro_text}\\n\\n{chunks[0]}'
         if len(first_with_intro) <= 2000:
-            await user.send(first_with_intro)
+            try:
+                await user.send(first_with_intro)
+            except discord.HTTPException as error:
+                log.warning(
+                    "发送 Discord 私信失败: "
+                    f"action=dm.send_intro_and_chunk, "
+                    f"user_id={getattr(user, 'id', 'unknown')}, "
+                    f"chunk_len={len(first_with_intro)}, "
+                    f"chunk_preview={self._build_log_preview(first_with_intro)}, "
+                    f"error={error}"
+                )
+                raise
             chunks = chunks[1:]
         else:
-            await user.send(intro_text)
+            try:
+                await user.send(intro_text)
+            except discord.HTTPException as error:
+                log.warning(
+                    "发送 Discord 私信失败: "
+                    f"action=dm.send_intro_only, "
+                    f"user_id={getattr(user, 'id', 'unknown')}, "
+                    f"chunk_len={len(intro_text)}, "
+                    f"chunk_preview={self._build_log_preview(intro_text)}, "
+                    f"error={error}"
+                )
+                raise
 
-        for chunk in chunks:
-            await user.send(chunk)
+        total_chunks = len(chunks)
+        for index, chunk in enumerate(chunks):
+            try:
+                await user.send(chunk)
+            except discord.HTTPException as error:
+                log.warning(
+                    "发送 Discord 私信失败: "
+                    f"action=dm.send_chunk, "
+                    f"user_id={getattr(user, 'id', 'unknown')}, "
+                    f"chunk_index={index + 1}/{total_chunks}, "
+                    f"chunk_len={len(chunk)}, "
+                    f"chunk_preview={self._build_log_preview(chunk)}, "
+                    f"error={error}"
+                )
+                raise
 
     async def _suppress_link_previews(self, sent_messages: List[discord.Message]) -> None:
         for sent_msg in sent_messages:
@@ -170,10 +249,23 @@ class AIChatCog(commands.Cog):
             return False
 
         with io.BytesIO(image_bytes) as image_file:
-            await message.reply(
-                file=discord.File(image_file, image_filename),
-                mention_author=True,
-            )
+            try:
+                await message.reply(
+                    file=discord.File(image_file, image_filename),
+                    mention_author=True,
+                )
+            except discord.HTTPException as error:
+                log.warning(
+                    "发送 Discord 简报图片失败: "
+                    f"message_id={getattr(message, 'id', 'unknown')}, "
+                    f"channel_id={getattr(getattr(message, 'channel', None), 'id', 'unknown')}, "
+                    f"author_id={getattr(getattr(message, 'author', None), 'id', 'unknown')}, "
+                    f"image_filename={image_filename}, "
+                    f"body_len={len(str(body_text or ''))}, "
+                    f"source_len={len(str(source_text or ''))}, "
+                    f"error={error}"
+                )
+                raise
 
         await self._reply_sources_below_image(message, source_text, source_links)
         return True
@@ -342,7 +434,21 @@ class AIChatCog(commands.Cog):
                 await self._reply_sources_below_image(message, source_text, source_links)
 
             except discord.errors.HTTPException as e:
-                log.warning(f"发送回复时发生HTTP错误: {e}")
+                final_body_text = str(body_text or response_text or "")
+                final_source_text = str(source_text or "")
+                log.warning(
+                    "发送回复时发生HTTP错误: "
+                    f"message_id={getattr(message, 'id', 'unknown')}, "
+                    f"channel_id={getattr(getattr(message, 'channel', None), 'id', 'unknown')}, "
+                    f"author_id={getattr(getattr(message, 'author', None), 'id', 'unknown')}, "
+                    f"body_len={len(final_body_text)}, "
+                    f"source_len={len(final_source_text)}, "
+                    f"used_web_search={used_web_search}, "
+                    f"last_tools={last_tools}, "
+                    f"body_preview={self._build_log_preview(final_body_text)}, "
+                    f"source_preview={self._build_log_preview(final_source_text)}, "
+                    f"error={e}"
+                )
             except Exception as e:
                 log.error(f"发送回复时发生未知错误: {e}", exc_info=True)
 

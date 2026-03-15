@@ -40,6 +40,7 @@ from src.chat.features.tools.tool_loader import load_tools_from_directory
 from src.chat.features.chat_settings.services.chat_settings_service import (
     chat_settings_service,
 )
+from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
 from src.chat.utils.image_utils import sanitize_image, extract_image_frames_for_ai
 from src.database.services.token_usage_service import token_usage_service
 from src.database.database import AsyncSessionLocal
@@ -69,6 +70,47 @@ fh.setFormatter(formatter)
 # 防止重复添加处理器
 if not invalid_key_logger.handlers:
     invalid_key_logger.addHandler(fh)
+
+
+SELF_AVATAR_REFERENCE_KEYWORDS = (
+    "我的头像",
+    "我头像",
+    "按我的头像",
+    "按我头像",
+    "用我的头像",
+    "用我头像",
+    "根据我的头像",
+    "根据我头像",
+    "拿我的头像",
+    "拿我头像",
+    "照我的头像",
+    "照我头像",
+    "以我的头像",
+    "以我头像",
+    "my avatar",
+    "use my avatar",
+    "based on my avatar",
+)
+
+
+def _extract_tool_prompt_text(tool_args: Dict[str, Any]) -> str:
+    """从工具参数里提取最核心的提示词文本。"""
+    for key in ("edit_prompt", "prompt", "description", "instruction"):
+        value = tool_args.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _requests_self_avatar_reference(tool_args: Dict[str, Any]) -> bool:
+    """判断当前工具调用是否在请求“按我的头像来画”。"""
+    prompt_text = _extract_tool_prompt_text(tool_args).lower()
+    if not prompt_text:
+        return False
+    return any(keyword in prompt_text for keyword in SELF_AVATAR_REFERENCE_KEYWORDS)
 
 
 def _api_key_handler(func: Callable) -> Callable:
@@ -1218,6 +1260,14 @@ class GeminiService:
         disabled_payload_fields: set[str],
         log_prefix: str,
     ) -> Dict[str, Any]:
+        def _normalize_content_type(raw_headers: Any) -> str:
+            if hasattr(raw_headers, "get"):
+                return str(
+                    raw_headers.get("Content-Type", raw_headers.get("content-type", ""))
+                    or ""
+                ).lower()
+            return ""
+
         retry_config = app_config.API_RETRY_CONFIG
         max_attempts = max(
             1, int(retry_config.get("OPENAI_COMPAT_MAX_ATTEMPTS", 3))
@@ -1261,6 +1311,9 @@ class GeminiService:
                         json=effective_payload,
                         timeout=aiohttp.ClientTimeout(total=timeout_seconds),
                     ) as response:
+                        response_content_type = _normalize_content_type(
+                            getattr(response, "headers", None)
+                        )
                         try:
                             response_text = await response.text()
                         except (aiohttp.ClientError, asyncio.TimeoutError) as read_error:
@@ -1291,15 +1344,22 @@ class GeminiService:
 
                         if response.status == 200:
                             try:
-                                return json.loads(response_text)
+                                return self._decode_openai_chat_completion_response(
+                                    response_text=response_text,
+                                    content_type=response_content_type,
+                                    log_prefix=log_prefix,
+                                )
                             except json.JSONDecodeError as decode_error:
                                 body_preview = response_text[:500].replace("\n", "\\n")
                                 last_error_text = (
-                                    f"invalid json: {decode_error}; body={body_preview}"
+                                    f"invalid json: {decode_error}; "
+                                    f"content_type={response_content_type}; "
+                                    f"body={body_preview}"
                                 )
                                 log.warning(
                                     f"{log_prefix} returned invalid json "
                                     f"(attempt {attempt + 1}/{max_attempts}): {decode_error}; "
+                                    f"content_type={response_content_type}; "
                                     f"body_preview={body_preview}"
                                 )
                                 if attempt < max_attempts - 1:
@@ -1385,6 +1445,192 @@ class GeminiService:
             f"{log_prefix} retries exhausted after {max_attempts} attempts: "
             f"{last_error_text}"
         )
+
+    @staticmethod
+    def _looks_like_sse_response(response_text: str, content_type: str = "") -> bool:
+        normalized_text = str(response_text or "").lstrip()
+        normalized_type = str(content_type or "").lower()
+        return "text/event-stream" in normalized_type or normalized_text.startswith(
+            "data:"
+        )
+
+    @staticmethod
+    def _merge_openai_stream_tool_call_fragment(
+        target: Dict[str, Any], fragment: Dict[str, Any]
+    ) -> None:
+        if not isinstance(fragment, dict):
+            return
+
+        fragment_id = str(fragment.get("id") or "").strip()
+        if fragment_id:
+            target["id"] = fragment_id
+
+        fragment_type = str(fragment.get("type") or "").strip()
+        if fragment_type:
+            target["type"] = fragment_type
+
+        function_payload = fragment.get("function")
+        if not isinstance(function_payload, dict):
+            return
+
+        name_part = function_payload.get("name")
+        if isinstance(name_part, str):
+            target["function"]["name"] += name_part
+
+        arguments_part = function_payload.get("arguments")
+        if isinstance(arguments_part, str):
+            target["function"]["arguments"] += arguments_part
+
+    @classmethod
+    def _parse_openai_chat_sse_payload(cls, raw_text: str) -> Dict[str, Any]:
+        choice_map: Dict[int, Dict[str, Any]] = {}
+        last_payload: Optional[Dict[str, Any]] = None
+        usage_payload: Optional[Dict[str, Any]] = None
+        parsed_chunk_count = 0
+
+        for raw_line in str(raw_text or "").splitlines():
+            line = raw_line.strip()
+            if not line or not line.startswith("data:"):
+                continue
+
+            data_str = line[5:].strip()
+            if not data_str or data_str == "[DONE]":
+                continue
+
+            try:
+                payload = json.loads(data_str)
+            except json.JSONDecodeError:
+                log.debug(f"OpenAI SSE 片段不是合法 JSON，已跳过: {data_str[:200]}")
+                continue
+
+            if not isinstance(payload, dict):
+                continue
+
+            parsed_chunk_count += 1
+            last_payload = payload
+
+            if isinstance(payload.get("usage"), dict):
+                usage_payload = payload["usage"]
+
+            for choice in payload.get("choices", []):
+                if not isinstance(choice, dict):
+                    continue
+
+                choice_index = int(choice.get("index", 0) or 0)
+                aggregate = choice_map.setdefault(
+                    choice_index,
+                    {
+                        "index": choice_index,
+                        "message": {"role": "assistant", "content": ""},
+                        "finish_reason": None,
+                        "logprobs": None,
+                        "_tool_calls": {},
+                    },
+                )
+
+                message_payload = aggregate["message"]
+
+                delta_payload = choice.get("delta")
+                if not isinstance(delta_payload, dict):
+                    delta_payload = {}
+
+                role_value = delta_payload.get("role")
+                if isinstance(role_value, str) and role_value.strip():
+                    message_payload["role"] = role_value
+
+                content_value = delta_payload.get("content")
+                if isinstance(content_value, str):
+                    message_payload["content"] += content_value
+                elif isinstance(content_value, list):
+                    for part in content_value:
+                        if not isinstance(part, dict):
+                            continue
+                        text_value = part.get("text")
+                        if isinstance(text_value, str):
+                            message_payload["content"] += text_value
+
+                tool_call_fragments = delta_payload.get("tool_calls")
+                if isinstance(tool_call_fragments, list):
+                    for fragment in tool_call_fragments:
+                        if not isinstance(fragment, dict):
+                            continue
+                        fragment_index = int(
+                            fragment.get("index", len(aggregate["_tool_calls"])) or 0
+                        )
+                        tool_call_target = aggregate["_tool_calls"].setdefault(
+                            fragment_index,
+                            {
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            },
+                        )
+                        cls._merge_openai_stream_tool_call_fragment(
+                            tool_call_target, fragment
+                        )
+
+                finish_reason = choice.get("finish_reason")
+                if finish_reason is not None:
+                    aggregate["finish_reason"] = finish_reason
+
+                if "logprobs" in choice:
+                    aggregate["logprobs"] = choice.get("logprobs")
+
+        if parsed_chunk_count == 0:
+            raise ValueError("未从 SSE 响应中解析出任何有效 JSON 片段")
+
+        if not choice_map and isinstance(last_payload, dict):
+            return last_payload
+
+        choices: List[Dict[str, Any]] = []
+        for choice_index in sorted(choice_map):
+            aggregate = choice_map[choice_index]
+            tool_call_map = aggregate.pop("_tool_calls", {})
+            if tool_call_map:
+                aggregate["message"]["tool_calls"] = [
+                    tool_call_map[index] for index in sorted(tool_call_map)
+                ]
+            choices.append(aggregate)
+
+        result: Dict[str, Any] = {
+            "id": (last_payload or {}).get("id", ""),
+            "object": "chat.completion",
+            "created": (last_payload or {}).get("created"),
+            "model": (last_payload or {}).get("model", ""),
+            "choices": choices,
+        }
+
+        system_fingerprint = (last_payload or {}).get("system_fingerprint")
+        if system_fingerprint:
+            result["system_fingerprint"] = system_fingerprint
+
+        if usage_payload:
+            result["usage"] = usage_payload
+
+        return result
+
+    def _decode_openai_chat_completion_response(
+        self, response_text: str, content_type: str, log_prefix: str
+    ) -> Dict[str, Any]:
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError as decode_error:
+            if not self._looks_like_sse_response(response_text, content_type):
+                raise
+
+            try:
+                parsed_response = self._parse_openai_chat_sse_payload(response_text)
+            except Exception as sse_error:
+                raise json.JSONDecodeError(
+                    f"{decode_error.msg}; SSE parse failed: {sse_error}",
+                    response_text,
+                    decode_error.pos,
+                ) from sse_error
+
+            log.info(
+                f"{log_prefix} 检测到 SSE 响应，已自动聚合为标准 chat.completions 结果"
+            )
+            return parsed_response
 
     async def generate_response(
         self,
@@ -3156,6 +3402,54 @@ class GeminiService:
                     "已为 generate_image_novelai 自动注入用户头像参考图，"
                     "提示词AI将基于头像生成更匹配的人物外观。"
                 )
+
+            wants_self_avatar_reference = _requests_self_avatar_reference(tool_args)
+            has_prepared_reference = bool(
+                tool_args.get("_prepared_reference_images")
+                or tool_args.get("_prepared_reference_image")
+            )
+
+            if (
+                normalized_tool_name == "edit_image"
+                and wants_self_avatar_reference
+                and not tool_args.get("avatar_user_id")
+                and not tool_args.get("avatar_user_ids")
+                and not has_prepared_reference
+                and discord_message is not None
+                and getattr(discord_message, "author", None) is not None
+            ):
+                tool_args["avatar_user_id"] = str(discord_message.author.id)
+                log.info("检测到“我的头像”类请求，已为 edit_image 自动注入当前用户头像。")
+
+            if (
+                normalized_tool_name == "generate_image_novelai"
+                and wants_self_avatar_reference
+                and tool_args.get("reference_image_index") in (None, "")
+                and not has_prepared_reference
+                and discord_message is not None
+                and getattr(discord_message, "author", None) is not None
+            ):
+                avatar_image = await fetch_avatar_image(
+                    user_id=str(discord_message.author.id),
+                    bot=self.bot,
+                    guild=getattr(discord_message, "guild", None),
+                )
+                if avatar_image and avatar_image.get("data"):
+                    tool_args["_prepared_reference_images"] = [
+                        {
+                            "data": avatar_image["data"],
+                            "mime_type": str(
+                                avatar_image.get("mime_type") or "image/png"
+                            ).strip()
+                            or "image/png",
+                            "source": "auto:self_avatar",
+                            "filename": avatar_image.get("filename") or "self_avatar.png",
+                        }
+                    ]
+                    tool_args["reference_image_index"] = 1
+                    log.info(
+                        "检测到“我的头像”类请求，已为 generate_image_novelai 自动注入当前用户头像参考图。"
+                    )
 
             # 注入上下文
             tool_args["bot"] = self.bot

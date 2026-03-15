@@ -239,9 +239,10 @@ class _FakeClientSession:
 
 
 class _SuccessResponse:
-    def __init__(self, body):
+    def __init__(self, body, headers=None):
         self.status = 200
         self._body = body
+        self.headers = headers or {}
 
     async def text(self):
         return self._body
@@ -328,3 +329,92 @@ def test_openai_compat_request_failure_message_contains_attempts(monkeypatch):
         )
 
     assert "after 1/1 attempts" in str(exc_info.value)
+
+
+def test_openai_compat_request_auto_parses_sse_text_chunks(monkeypatch):
+    service = GeminiService()
+    fake_session = _FakeClientSession(
+        [
+            _SuccessResponse(
+                (
+                    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk",'
+                    '"created":1,"model":"grok-4.20-beta","choices":[{"index":0,'
+                    '"delta":{"role":"assistant","content":"你好"},"finish_reason":null}]}\n\n'
+                    'data: {"id":"chatcmpl-1","object":"chat.completion.chunk",'
+                    '"created":1,"model":"grok-4.20-beta","choices":[{"index":0,'
+                    '"delta":{"content":"世界"},"finish_reason":"stop"}],'
+                    '"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}\n\n'
+                    "data: [DONE]\n"
+                ),
+                headers={"Content-Type": "text/event-stream"},
+            )
+        ]
+    )
+
+    monkeypatch.setattr(
+        sys.modules["src.chat.services.gemini_service"].aiohttp,
+        "ClientSession",
+        lambda: fake_session,
+    )
+
+    result = asyncio.run(
+        service._post_openai_chat_completion_with_fallback(
+            api_url="http://example.com/v1/chat/completions",
+            headers={},
+            payload={"model": "test", "messages": []},
+            timeout_seconds=30,
+            disabled_payload_fields=set(),
+            log_prefix="OpenAI compat SSE parse test",
+        )
+    )
+
+    assert result["choices"][0]["message"]["role"] == "assistant"
+    assert result["choices"][0]["message"]["content"] == "你好世界"
+    assert result["choices"][0]["finish_reason"] == "stop"
+    assert result["usage"]["completion_tokens"] == 2
+
+
+def test_openai_compat_request_auto_parses_sse_tool_calls(monkeypatch):
+    service = GeminiService()
+    fake_session = _FakeClientSession(
+        [
+            _SuccessResponse(
+                (
+                    'data: {"id":"chatcmpl-2","object":"chat.completion.chunk",'
+                    '"created":2,"model":"grok-4.20-beta","choices":[{"index":0,'
+                    '"delta":{"role":"assistant","tool_calls":[{"index":0,'
+                    '"id":"call_1","type":"function","function":{"name":"web_search",'
+                    '"arguments":"{\\"q\\":"}}]},"finish_reason":null}]}\n\n'
+                    'data: {"id":"chatcmpl-2","object":"chat.completion.chunk",'
+                    '"created":2,"model":"grok-4.20-beta","choices":[{"index":0,'
+                    '"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"hello\\"}"}}],'
+                    '"content":""},"finish_reason":"tool_calls"}]}\n\n'
+                    "data: [DONE]\n"
+                ),
+                headers={"Content-Type": "text/event-stream"},
+            )
+        ]
+    )
+
+    monkeypatch.setattr(
+        sys.modules["src.chat.services.gemini_service"].aiohttp,
+        "ClientSession",
+        lambda: fake_session,
+    )
+
+    result = asyncio.run(
+        service._post_openai_chat_completion_with_fallback(
+            api_url="http://example.com/v1/chat/completions",
+            headers={},
+            payload={"model": "test", "messages": []},
+            timeout_seconds=30,
+            disabled_payload_fields=set(),
+            log_prefix="OpenAI compat SSE tool-call parse test",
+        )
+    )
+
+    tool_call = result["choices"][0]["message"]["tool_calls"][0]
+    assert tool_call["id"] == "call_1"
+    assert tool_call["function"]["name"] == "web_search"
+    assert tool_call["function"]["arguments"] == '{"q":"hello"}'
+    assert result["choices"][0]["finish_reason"] == "tool_calls"
