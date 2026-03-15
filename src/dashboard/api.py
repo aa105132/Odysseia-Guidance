@@ -1912,11 +1912,11 @@ async def get_video_config(token: str = Depends(verify_token)):
     enabled = db_enabled == "true" if db_enabled else config.get("ENABLED", False)
     api_url = db_api_url or config.get("BASE_URL", "")
     api_key = db_api_key or config.get("API_KEY", "")
-    model = db_model or config.get("MODEL_NAME", "veo-2.0-generate-001")
+    model = db_model or config.get("MODEL_NAME", "grok-imagine-1.0-video")
     i2v_model = db_i2v_model or config.get("I2V_MODEL_NAME", "")
     video_format = db_video_format or config.get("VIDEO_FORMAT", "url")
     generation_cost = int(db_generation_cost) if db_generation_cost else config.get("VIDEO_GENERATION_COST", 10)
-    max_duration = int(db_max_duration) if db_max_duration else config.get("MAX_DURATION", 8)
+    max_duration = int(db_max_duration) if db_max_duration else config.get("MAX_DURATION", 30)
     default_videos = _safe_int(
         db_default_videos,
         config.get("DEFAULT_NUMBER_OF_VIDEOS", 1),
@@ -2030,8 +2030,8 @@ async def update_video_config(config: VideoConfigUpdate, token: str = Depends(ve
         await chat_db_manager.set_global_setting("video_generation_cost", str(config.generation_cost))
     
     if config.max_duration is not None:
-        if not 1 <= config.max_duration <= 60:
-            raise HTTPException(400, "最大视频时长必须在 1 到 60 秒之间")
+        if not 6 <= config.max_duration <= 30:
+            raise HTTPException(400, "最大视频时长必须在 6 到 30 秒之间")
         chat_config.VIDEO_GEN_CONFIG["MAX_DURATION"] = config.max_duration
         updated["max_duration"] = config.max_duration
         await chat_db_manager.set_global_setting("video_max_duration", str(config.max_duration))

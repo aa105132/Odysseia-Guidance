@@ -539,7 +539,7 @@ def _get_video_config():
         "ENABLED": _parse_bool_env("VIDEO_GEN_ENABLED", "False"),
         "API_KEY": os.getenv("VIDEO_GEN_API_KEY"),  # 如果为空则使用 Imagen 的 API Key
         "BASE_URL": os.getenv("VIDEO_GEN_BASE_URL"),  # 自定义端点 URL
-        "MODEL_NAME": os.getenv("VIDEO_GEN_MODEL", "veo-2.0-generate-001"),
+        "MODEL_NAME": os.getenv("VIDEO_GEN_MODEL", "grok-imagine-1.0-video"),
         # 图生视频专用模型（留空则使用 MODEL_NAME）
         "I2V_MODEL_NAME": os.getenv("VIDEO_GEN_I2V_MODEL", ""),
         # API 格式: "openai" 使用 OpenAI 兼容的 chat/completions 接口
@@ -551,7 +551,9 @@ def _get_video_config():
         # 月光币成本
         "VIDEO_GENERATION_COST": _parse_int_env("VIDEO_GEN_COST", 10),
         # 视频时长限制（秒）
-        "MAX_DURATION": _parse_int_env("VIDEO_GEN_MAX_DURATION", 8),
+        "MAX_DURATION": _parse_int_env("VIDEO_GEN_MAX_DURATION", 30),
+        "DEFAULT_SIZE": os.getenv("VIDEO_GEN_DEFAULT_SIZE", "1280x720"),
+        "DEFAULT_QUALITY": os.getenv("VIDEO_GEN_DEFAULT_QUALITY", "high"),
         "DEFAULT_NUMBER_OF_VIDEOS": _parse_int_env("VIDEO_GEN_DEFAULT_VIDEOS", 1),  # 对话工具默认并发生成视频数量
         "MAX_CONCURRENT_VIDEO_TASKS": _parse_int_env("VIDEO_GEN_MAX_CONCURRENT_TASKS", 3),  # 视频并发上限
         # 空回自动重试次数（图片/视频全局共用）
@@ -566,6 +568,22 @@ def reload_video_config():
     global VIDEO_GEN_CONFIG
     VIDEO_GEN_CONFIG.update(_get_video_config())
     return VIDEO_GEN_CONFIG
+
+
+VIDEO_GEN_MIN_SECONDS = 6
+VIDEO_GEN_MAX_SECONDS = 30
+VIDEO_GEN_ALLOWED_SIZES = (
+    "1280x720",
+    "720x1280",
+    "1792x1024",
+    "1024x1792",
+    "1024x1024",
+)
+VIDEO_GEN_ALLOWED_QUALITIES = ("standard", "high")
+VIDEO_GEN_QUALITY_TO_RESOLUTION = {
+    "standard": "480p",
+    "high": "720p",
+}
 
 
 # --- 语音合成配置 ---

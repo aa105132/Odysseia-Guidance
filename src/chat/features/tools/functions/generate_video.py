@@ -38,8 +38,12 @@ def _set_embed_author(embed: discord.Embed, message: Optional[discord.Message], 
 
 async def generate_video(
     prompt: str,
-    duration: int = 5,
+    duration: int = 6,
     use_reference_image: bool = False,
+    size: str = "1280x720",
+    quality: str = "high",
+    model: Optional[str] = None,
+    reference_image_url: Optional[str] = None,
     emoji_id: Optional[str] = None,
     avatar_user_id: Optional[str] = None,
     avatar_user_ids: Optional[List[str]] = None,
@@ -129,12 +133,12 @@ async def generate_video(
                 任何解剖学名词、性行为动词、体液名词、生殖器官名词。
                 违反此规则会导致生成失败。
                 
-        duration: 视频时长（秒），默认5秒。
+        duration: 视频时长（秒），默认6秒，支持 6-30 秒。
                 根据用户需求选择合适的时长：
-                - 1-3秒：适合简短的动态效果、表情动画
-                - 4-6秒：适合一般的场景展示（推荐默认值）
-                - 7-8秒：适合需要更多展示时间的复杂场景
-                如果用户没有特别要求时长，使用默认值5秒。
+                - 6秒：适合短动作、轻镜头运动
+                - 10-18秒：适合一般场景展示（推荐区间）
+                - 20-30秒：适合需要更完整节奏的复杂场景
+                如果用户没有特别要求时长，默认使用 6 秒。
                 
         use_reference_image: 是否使用图片作为参考（图生视频模式）。
                 设置为 True 时，工具会自动按以下优先级获取图片：
@@ -152,6 +156,20 @@ async def generate_video(
                 - 用户消息中有贴纸且要求做成视频 → True（工具自动提取贴纸图片）
                 - 用户说"用xxx的头像做视频" → True + avatar_user_id
                 - 用户纯文字描述要求生成视频 → False
+
+        size: （可选）视频画幅尺寸。
+                可用值：`1280x720`、`720x1280`、`1792x1024`、`1024x1792`、`1024x1024`。
+                默认 `1280x720`。
+
+        quality: （可选）视频质量。
+                可用值：`standard`、`high`。
+                `standard` 对应 480p，`high` 对应 720p；默认 `high`。
+
+        model: （可选）视频模型名。
+                一般保持默认模型 `grok-imagine-1.0-video` 即可，只有用户明确指定时再传。
+
+        reference_image_url: （可选）参考图 URL 或 Data URI。
+                如果已经通过附件、回复图、表情、贴纸、头像拿到了参考图，通常不需要再填写。
         
         emoji_id: （可选，通常不需要填写）Discord自定义表情的数字ID。
                 **注意：工具会自动从用户消息中检测和提取自定义表情图片，所以大多数情况下不需要填写此参数。**
@@ -184,6 +202,7 @@ async def generate_video(
     """
     from src.chat.features.video_generation.services.video_service import video_service
     from src.chat.config.chat_config import VIDEO_GEN_CONFIG
+    from src.chat.config import chat_config as app_config
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
 
     # 获取消息对象（用于添加反应和提取图片）
@@ -246,13 +265,28 @@ async def generate_video(
         }
 
     # 获取配置
-    max_duration = VIDEO_GEN_CONFIG.get("MAX_DURATION", 8)
+    max_duration = min(
+        app_config.VIDEO_GEN_MAX_SECONDS,
+        max(
+            app_config.VIDEO_GEN_MIN_SECONDS,
+            int(VIDEO_GEN_CONFIG.get("MAX_DURATION", app_config.VIDEO_GEN_MAX_SECONDS)),
+        ),
+    )
     cost = VIDEO_GEN_CONFIG.get("VIDEO_GENERATION_COST", 10)
     default_video_count = max(1, int(VIDEO_GEN_CONFIG.get("DEFAULT_NUMBER_OF_VIDEOS", 1)))
     max_concurrent_video_tasks = max(1, int(VIDEO_GEN_CONFIG.get("MAX_CONCURRENT_VIDEO_TASKS", 3)))
 
     # 限制时长
-    duration = min(max(1, duration), max_duration)
+    duration = min(max(app_config.VIDEO_GEN_MIN_SECONDS, duration), max_duration)
+    size = str(size or VIDEO_GEN_CONFIG.get("DEFAULT_SIZE", "1280x720")).strip()
+    if size not in app_config.VIDEO_GEN_ALLOWED_SIZES:
+        log.warning(f"视频工具收到不支持的尺寸 `{size}`，已回退默认值")
+        size = str(VIDEO_GEN_CONFIG.get("DEFAULT_SIZE", "1280x720"))
+    quality = str(quality or VIDEO_GEN_CONFIG.get("DEFAULT_QUALITY", "high")).strip().lower()
+    if quality not in app_config.VIDEO_GEN_ALLOWED_QUALITIES:
+        log.warning(f"视频工具收到不支持的质量 `{quality}`，已回退默认值")
+        quality = str(VIDEO_GEN_CONFIG.get("DEFAULT_QUALITY", "high")).strip().lower()
+    selected_model = str(model or "").strip()
 
     # 获取用户ID（如果提供）用于扣费
     user_id = kwargs.get("user_id")
@@ -446,7 +480,7 @@ async def generate_video(
     video_count = max(1, default_video_count)
     log.info(
         f"调用视频生成工具 ({mode_str})，提示词: {prompt[:100]}...，时长: {duration}s，"
-        f"默认并发生成数量: {video_count}"
+        f"尺寸: {size}，质量: {quality}，模型: {selected_model or 'auto'}，默认并发生成数量: {video_count}"
     )
 
     # 添加"正在生成"反应
@@ -491,6 +525,10 @@ async def generate_video(
                     image_data=reference_image["data"] if reference_image else None,
                     image_mime_type=reference_image["mime_type"] if reference_image else None,
                     reference_images=normalized_reference_images,
+                    model_override=selected_model or None,
+                    size=size,
+                    quality=quality,
+                    reference_image_url=reference_image_url,
                 )
 
         results = await asyncio.gather(
@@ -542,7 +580,7 @@ async def generate_video(
             try:
                 # 获取实际使用的视频模型名称
                 from src.chat.config.chat_config import VIDEO_GEN_CONFIG
-                video_model_name = VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
+                video_model_name = selected_model or VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
 
                 async with aiohttp.ClientSession() as session:
                     for idx, result in enumerate(success_results, 1):
@@ -553,11 +591,16 @@ async def generate_video(
                                 params_dict = {
                                     "prompt": prompt,
                                     "duration": duration,
+                                    "size": size,
+                                    "quality": quality,
+                                    "model": video_model_name,
                                     "use_reference_image": bool(reference_image or reference_images),
                                     "original_success_message": success_message or "",
                                     "post_id": result.post_id,
                                     "video_model_name": video_model_name,
                                 }
+                                if reference_image_url:
+                                    params_dict["reference_image_url"] = reference_image_url
                                 if reference_image:
                                     params_dict["reference_image_data"] = reference_image["data"]
                                     params_dict["reference_image_mime_type"] = reference_image["mime_type"]
@@ -594,7 +637,13 @@ async def generate_video(
                                 value=processed_success[:1024],
                                 inline=False,
                             )
-                        prompt_embed.set_footer(text=f"模型: {video_model_name}")
+                        resolution_text = app_config.VIDEO_GEN_QUALITY_TO_RESOLUTION.get(
+                            quality,
+                            app_config.VIDEO_GEN_QUALITY_TO_RESOLUTION["high"],
+                        )
+                        prompt_embed.set_footer(
+                            text=f"模型: {video_model_name} | 时长: {duration}s | 画幅: {size} | 质量: {quality}({resolution_text})"
+                        )
 
                         if result.url:
                             video_sent = False
@@ -665,6 +714,8 @@ async def generate_video(
             "success": True,
             "skip_ai_response": True,
             "duration": duration,
+            "size": size,
+            "quality": quality,
             "cost": actual_cost,
             "videos_generated": actual_count,
             "mode": mode_str,
