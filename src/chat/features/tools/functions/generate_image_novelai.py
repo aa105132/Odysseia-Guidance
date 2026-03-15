@@ -419,8 +419,9 @@ async def _build_prompt_summary_for_embed(
     artist_string: Optional[str],
     use_ai_conversion: bool = True,
 ) -> str:
-    """构建主体外貌展示文本：直接使用 AI 提供的提示词，不做代码规则提取。"""
+    """构建主体外貌展示文本：直接预填最终提示词，不再额外调用 AI 转中文。"""
     _ = negative_prompt  # 保留参数签名，避免影响现有调用方
+    _ = use_ai_conversion  # 历史参数保留，当前统一走本地预填逻辑
 
     normalized_prompt = str(prompt or "").strip()
     normalized_artist = str(artist_string or "").strip()
@@ -432,27 +433,9 @@ async def _build_prompt_summary_for_embed(
     if not compact_prompt:
         return "（AI未提供主体外貌标签）"
 
-    if not use_ai_conversion:
-        if len(compact_prompt) > 980:
-            return compact_prompt[:977] + "..."
-        return compact_prompt
-
-    converted_prompt = ""
-    try:
-        converted_prompt = await _convert_tag_prompt_to_imagen_prompt(
-            compact_prompt,
-            force_rewrite=True,
-        )
-    except Exception as e:
-        log.warning(f"Failed to build Chinese appearance summary: {e}")
-
-    compact_converted = re.sub(r"\s+", " ", str(converted_prompt or "")).strip()
-    if (not compact_converted) or _is_probably_tag_prompt(compact_converted):
-        compact_converted = "\uff08AI\u672a\u80fd\u751f\u6210\u4e2d\u6587\u4e3b\u4f53\u5916\u8c8c\u63cf\u8ff0\uff09"
-
-    if len(compact_converted) > 980:
-        return compact_converted[:977] + "..."
-    return compact_converted
+    if len(compact_prompt) > 980:
+        return compact_prompt[:977] + "..."
+    return compact_prompt
 
 
 def _build_artist_summary_for_embed(artist_string: Optional[str]) -> str:
