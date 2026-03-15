@@ -11,11 +11,217 @@ import asyncio
 from typing import Optional
 
 from src.chat.features.games.services.blackjack_game import (
-    BlackjackGame, GameState, GameResult, blackjack_sessions
+    BlackjackGame, GameState, GameResult, Hand, blackjack_sessions
 )
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
 
 log = logging.getLogger(__name__)
+
+
+def _get_total_payout(game: BlackjackGame) -> int:
+    """获取本局总赔付（普通赔付 + 保险赔付）。"""
+    return game.payout + game.insurance_payout
+
+
+async def _settle_game_payout(game: BlackjackGame, reason: str) -> int:
+    """按本局最终赔付结算余额并返回最新余额。"""
+    balance = await coin_service.get_balance(game.player_id)
+    total_payout = _get_total_payout(game)
+    if total_payout > 0:
+        balance = await coin_service.add_coins(game.player_id, total_payout, reason)
+    return balance
+
+
+def _get_active_view_cls(game: BlackjackGame):
+    """根据当前状态选择应展示的操作视图类。"""
+    if game.state == GameState.WAITING_INSURANCE:
+        return InsuranceDecisionView
+    return GamePlayView
+
+
+def _create_active_view(game: BlackjackGame) -> ui.View:
+    """根据当前状态创建对应的操作视图。"""
+    return _get_active_view_cls(game)(game)
+
+
+def _build_action_embed(
+    game: BlackjackGame,
+    balance: int,
+    stage_text: str,
+    *,
+    dealer_cards=None,
+    player_cards=None,
+    hide_dealer_first: bool = False,
+    hide_last_player_card: bool = False,
+    footer_text: str = "动画演出中，请稍候..."
+) -> discord.Embed:
+    """创建动画阶段使用的过渡 Embed。"""
+    current_dealer_cards = list(
+        dealer_cards if dealer_cards is not None else game.dealer_hand.cards
+    )
+    current_player_cards = list(
+        player_cards if player_cards is not None else game.player_hand.cards
+    )
+
+    dealer_hand = Hand(cards=current_dealer_cards)
+    player_hand = Hand(cards=current_player_cards)
+
+    if hide_dealer_first and current_dealer_cards:
+        dealer_value_text = "?点"
+        dealer_display = "🂠"
+        if len(current_dealer_cards) > 1:
+            dealer_display += " " + " ".join(
+                card.to_emoji() for card in current_dealer_cards[1:]
+            )
+    else:
+        dealer_value_text = f"{dealer_hand.get_value()}点"
+        dealer_display = dealer_hand.to_display()
+
+    player_display_cards = current_player_cards
+    if hide_last_player_card and len(player_display_cards) > 1:
+        player_display_cards = player_display_cards[:-1]
+    display_player_hand = Hand(cards=list(player_display_cards))
+    player_value_text = f"{display_player_hand.get_value()}点"
+    player_display = display_player_hand.to_display()
+
+    embed = discord.Embed(
+        title="🎰 21点 - 动画演出中",
+        description=stage_text,
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name=f"🎰 月月的手牌 [{dealer_value_text}]",
+        value=f"```{dealer_display}```",
+        inline=False,
+    )
+    embed.add_field(
+        name=f"👤 你的手牌 [{player_value_text}]",
+        value=f"```{player_display}```",
+        inline=False,
+    )
+    embed.add_field(
+        name="💰 当前下注",
+        value=f"**{game.bet}** 月光币",
+        inline=True,
+    )
+    embed.add_field(
+        name="💳 你的余额",
+        value=f"**{balance}** 月光币",
+        inline=True,
+    )
+    if game.has_insurance:
+        embed.add_field(
+            name="🛡️ 当前保险",
+            value=f"**{game.insurance_bet}** 月光币",
+            inline=True,
+        )
+    embed.set_footer(text=footer_text)
+    return embed
+
+
+async def _edit_game_message(
+    interaction: discord.Interaction,
+    *,
+    embed: discord.Embed,
+    view: Optional[ui.View],
+) -> None:
+    """统一处理首次和后续消息编辑。"""
+    if not interaction.response.is_done():
+        await interaction.response.edit_message(embed=embed, view=view)
+    else:
+        await interaction.edit_original_response(embed=embed, view=view)
+
+
+async def _animate_hit_feedback(
+    interaction: discord.Interaction,
+    game: BlackjackGame,
+    balance: int,
+    action_text: str,
+    result_text: str,
+) -> None:
+    """播放玩家要牌动画。"""
+    preview_embed = _build_action_embed(
+        game,
+        balance,
+        action_text,
+        hide_dealer_first=True,
+        hide_last_player_card=True,
+    )
+    await _edit_game_message(interaction, embed=preview_embed, view=None)
+    await asyncio.sleep(1.2)
+
+    if game.is_finished():
+        balance = await _settle_game_payout(
+            game,
+            f"21点结算 ({game.result.value if game.result else 'unknown'})"
+        )
+        final_embed = create_result_embed(game, balance)
+        await _edit_game_message(
+            interaction,
+            embed=final_embed,
+            view=GameEndView(game),
+        )
+        return
+
+    result_embed = _build_action_embed(
+        game,
+        balance,
+        result_text,
+        hide_dealer_first=True,
+        footer_text="你可以继续操作。",
+    )
+    self_view = _create_active_view(game)
+    await _edit_game_message(interaction, embed=result_embed, view=self_view)
+
+
+async def _animate_dealer_turn(
+    interaction: discord.Interaction,
+    game: BlackjackGame,
+    balance: int,
+    dealer_cards_before,
+    settlement_reason: str,
+    *,
+    prefix_text: Optional[str] = None,
+) -> None:
+    """播放庄家翻底牌和逐张补牌动画。"""
+    final_dealer_cards = list(game.dealer_hand.cards)
+    stages = []
+
+    reveal_text = "月月亮出了底牌..."
+    if dealer_cards_before:
+        reveal_text = f"月月亮出了底牌：{dealer_cards_before[0].to_emoji()}"
+    if prefix_text:
+        reveal_text = f"{prefix_text}\n{reveal_text}"
+    stages.append((reveal_text, final_dealer_cards[: min(2, len(final_dealer_cards))]))
+
+    for index in range(2, len(final_dealer_cards)):
+        stages.append(
+            (
+                f"月月补到 {final_dealer_cards[index].to_emoji()}...",
+                final_dealer_cards[: index + 1],
+            )
+        )
+
+    for stage_index, (text, dealer_cards) in enumerate(stages):
+        stage_embed = _build_action_embed(
+            game,
+            balance,
+            text,
+            dealer_cards=dealer_cards,
+            footer_text="月月正在补牌...",
+        )
+        await _edit_game_message(interaction, embed=stage_embed, view=None)
+        if stage_index != len(stages) - 1:
+            await asyncio.sleep(1.1)
+
+    await asyncio.sleep(0.8)
+    final_balance = await _settle_game_payout(game, settlement_reason)
+    final_embed = create_result_embed(game, final_balance)
+    await _edit_game_message(
+        interaction,
+        embed=final_embed,
+        view=GameEndView(game),
+    )
 
 
 class BetModal(ui.Modal, title="下注金额"):
@@ -89,14 +295,13 @@ class BetModal(ui.Modal, title="下注金额"):
             # 检查游戏是否已经结束（如黑杰克）
             if game.is_finished():
                 view = GameEndView(game)
-                # 处理赔付
-                if game.payout > 0:
-                    new_balance = await coin_service.add_coins(
-                        user_id, game.payout, f"21点获胜 ({game.result.value})"
-                    )
+                new_balance = await _settle_game_payout(
+                    game,
+                    f"21点结算 ({game.result.value if game.result else 'unknown'})"
+                )
                 embed = create_result_embed(game, new_balance)
             else:
-                view = GamePlayView(game)
+                view = _create_active_view(game)
             
             # 如果有原始交互（从"再来一局"来的），编辑那条消息
             if self.original_interaction:
@@ -124,6 +329,98 @@ class BetModal(ui.Modal, title="下注金额"):
             )
 
 
+class InsuranceDecisionView(ui.View):
+    """保险决策阶段的按钮视图。"""
+
+    def __init__(self, game: BlackjackGame):
+        super().__init__(timeout=300)
+        self.game = game
+
+    @ui.button(label="买保险", style=discord.ButtonStyle.success, emoji="🛡️")
+    async def buy_insurance_button(self, interaction: discord.Interaction, button: ui.Button):
+        """购买保险按钮。"""
+        if interaction.user.id != self.game.player_id:
+            await interaction.response.send_message(
+                "❌ 这不是你的游戏！", ephemeral=True
+            )
+            return
+
+        async with blackjack_sessions.get_lock(self.game.player_id):
+            if not self.game.can_buy_insurance():
+                await interaction.response.send_message(
+                    "❌ 现在无法购买保险！", ephemeral=True
+                )
+                return
+
+            insurance_cost = self.game.get_insurance_cost()
+            balance = await coin_service.get_balance(self.game.player_id)
+            if balance < insurance_cost:
+                await interaction.response.send_message(
+                    f"❌ 余额不足购买保险！需要 **{insurance_cost}** 月光币，你只有 **{balance}**。",
+                    ephemeral=True
+                )
+                return
+
+            await coin_service.remove_coins(
+                self.game.player_id, insurance_cost, "21点购买保险"
+            )
+
+            success, message = self.game.buy_insurance()
+            if not success:
+                await coin_service.add_coins(
+                    self.game.player_id, insurance_cost, "21点保险失败返还"
+                )
+                await interaction.response.send_message(
+                    f"❌ {message}", ephemeral=True
+                )
+                return
+
+            if self.game.is_finished():
+                balance = await _settle_game_payout(
+                    self.game,
+                    f"21点结算 ({self.game.result.value if self.game.result else 'unknown'})"
+                )
+                embed = create_result_embed(self.game, balance)
+                view = GameEndView(self.game)
+            else:
+                balance = await coin_service.get_balance(self.game.player_id)
+                embed = create_game_embed(self.game, balance)
+                view = _create_active_view(self.game)
+
+            await interaction.response.edit_message(embed=embed, view=view)
+
+    @ui.button(label="不买保险", style=discord.ButtonStyle.secondary, emoji="➡️")
+    async def skip_insurance_button(self, interaction: discord.Interaction, button: ui.Button):
+        """跳过保险按钮。"""
+        if interaction.user.id != self.game.player_id:
+            await interaction.response.send_message(
+                "❌ 这不是你的游戏！", ephemeral=True
+            )
+            return
+
+        async with blackjack_sessions.get_lock(self.game.player_id):
+            success, message = self.game.skip_insurance()
+            if not success:
+                await interaction.response.send_message(
+                    f"❌ {message}", ephemeral=True
+                )
+                return
+
+            if self.game.is_finished():
+                balance = await _settle_game_payout(
+                    self.game,
+                    f"21点结算 ({self.game.result.value if self.game.result else 'unknown'})"
+                )
+                embed = create_result_embed(self.game, balance)
+                view = GameEndView(self.game)
+            else:
+                balance = await coin_service.get_balance(self.game.player_id)
+                embed = create_game_embed(self.game, balance)
+                view = _create_active_view(self.game)
+
+            await interaction.response.edit_message(embed=embed, view=view)
+
+
 class GamePlayView(ui.View):
     """游戏进行中的按钮视图"""
     
@@ -134,10 +431,11 @@ class GamePlayView(ui.View):
     
     def _update_buttons(self):
         """根据游戏状态更新按钮"""
-        # 加倍按钮只在前两张牌时可用
-        self.double_button.disabled = not self.game.can_double()
-        # 投降按钮只在前两张牌时可用
-        self.surrender_button.disabled = not self.game.can_surrender()
+        is_player_turn = self.game.state == GameState.PLAYER_TURN
+        self.hit_button.disabled = not is_player_turn
+        self.stand_button.disabled = not is_player_turn
+        self.double_button.disabled = not (is_player_turn and self.game.can_double())
+        self.surrender_button.disabled = not (is_player_turn and self.game.can_surrender())
     
     @ui.button(label="要牌", style=discord.ButtonStyle.primary, emoji="🃏")
     async def hit_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -150,25 +448,20 @@ class GamePlayView(ui.View):
         
         async with blackjack_sessions.get_lock(self.game.player_id):
             response = self.game.player_hit()
-            
+            if not response.success:
+                await interaction.response.send_message(
+                    f"❌ {response.result_text}", ephemeral=True
+                )
+                return
+
             balance = await coin_service.get_balance(self.game.player_id)
-            
-            if self.game.is_finished():
-                # 处理赔付
-                if self.game.payout > 0:
-                    balance = await coin_service.add_coins(
-                        self.game.player_id, 
-                        self.game.payout, 
-                        f"21点获胜 ({self.game.result.value})"
-                    )
-                embed = create_result_embed(self.game, balance)
-                view = GameEndView(self.game)
-            else:
-                embed = create_game_embed(self.game, balance)
-                self._update_buttons()
-                view = self
-            
-            await interaction.response.edit_message(embed=embed, view=view)
+            await _animate_hit_feedback(
+                interaction,
+                self.game,
+                balance,
+                response.action_text,
+                response.result_text,
+            )
     
     @ui.button(label="停牌", style=discord.ButtonStyle.secondary, emoji="✋")
     async def stand_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -180,22 +473,23 @@ class GamePlayView(ui.View):
             return
         
         async with blackjack_sessions.get_lock(self.game.player_id):
+            dealer_cards_before = list(self.game.dealer_hand.cards)
             success, message = self.game.player_stand()
-            
-            balance = await coin_service.get_balance(self.game.player_id)
-            
-            # 处理赔付
-            if self.game.payout > 0:
-                balance = await coin_service.add_coins(
-                    self.game.player_id, 
-                    self.game.payout, 
-                    f"21点获胜 ({self.game.result.value})"
+            if not success:
+                await interaction.response.send_message(
+                    f"❌ {message}", ephemeral=True
                 )
-            
-            embed = create_result_embed(self.game, balance)
-            view = GameEndView(self.game)
-            
-            await interaction.response.edit_message(embed=embed, view=view)
+                return
+
+            balance = await coin_service.get_balance(self.game.player_id)
+            await _animate_dealer_turn(
+                interaction,
+                self.game,
+                balance,
+                dealer_cards_before,
+                f"21点结算 ({self.game.result.value if self.game.result else 'unknown'})",
+                prefix_text="你选择了停牌，轮到月月行动了...",
+            )
     
     @ui.button(label="加倍", style=discord.ButtonStyle.success, emoji="💰")
     async def double_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -207,8 +501,16 @@ class GamePlayView(ui.View):
             return
         
         async with blackjack_sessions.get_lock(self.game.player_id):
+            if not self.game.can_double():
+                await interaction.response.send_message(
+                    "❌ 现在不能加倍！", ephemeral=True
+                )
+                return
+
             # 检查余额是否足够加倍
             original_bet = self.game.bet
+            player_cards_before = list(self.game.player_hand.cards)
+            dealer_cards_before = list(self.game.dealer_hand.cards)
             balance = await coin_service.get_balance(self.game.player_id)
             
             if balance < original_bet:
@@ -224,21 +526,70 @@ class GamePlayView(ui.View):
             )
             
             response = self.game.player_double()
-            
-            balance = await coin_service.get_balance(self.game.player_id)
-            
-            # 处理赔付
-            if self.game.payout > 0:
-                balance = await coin_service.add_coins(
-                    self.game.player_id, 
-                    self.game.payout, 
-                    f"21点加倍获胜 ({self.game.result.value})"
+            if not response.success:
+                await coin_service.add_coins(
+                    self.game.player_id, original_bet, "21点加倍失败返还"
                 )
-            
-            embed = create_result_embed(self.game, balance)
-            view = GameEndView(self.game)
-            
-            await interaction.response.edit_message(embed=embed, view=view)
+                await interaction.response.send_message(
+                    f"❌ {response.result_text}", ephemeral=True
+                )
+                return
+
+            current_balance = await coin_service.get_balance(self.game.player_id)
+
+            if response.secondary_action_text:
+                stage_one_embed = _build_action_embed(
+                    self.game,
+                    current_balance,
+                    response.secondary_action_text,
+                    dealer_cards=dealer_cards_before,
+                    player_cards=player_cards_before,
+                )
+                await _edit_game_message(
+                    interaction,
+                    embed=stage_one_embed,
+                    view=None,
+                )
+                await asyncio.sleep(max(response.secondary_delay_seconds, 0.6))
+            else:
+                await interaction.response.defer()
+
+            stage_two_embed = _build_action_embed(
+                self.game,
+                current_balance,
+                response.action_text,
+                dealer_cards=dealer_cards_before,
+                hide_dealer_first=True,
+                hide_last_player_card=True,
+            )
+            await _edit_game_message(
+                interaction,
+                embed=stage_two_embed,
+                view=None,
+            )
+            await asyncio.sleep(1.0)
+
+            if self.game.result == GameResult.PLAYER_BUST:
+                final_balance = await _settle_game_payout(
+                    self.game,
+                    f"21点加倍结算 ({self.game.result.value if self.game.result else 'unknown'})"
+                )
+                final_embed = create_result_embed(self.game, final_balance)
+                await _edit_game_message(
+                    interaction,
+                    embed=final_embed,
+                    view=GameEndView(self.game),
+                )
+                return
+
+            await _animate_dealer_turn(
+                interaction,
+                self.game,
+                current_balance,
+                dealer_cards_before,
+                f"21点加倍结算 ({self.game.result.value if self.game.result else 'unknown'})",
+                prefix_text=f"加倍！抽到 {self.game.player_hand.cards[-1].to_emoji()}，轮到月月行动了...",
+            )
     
     @ui.button(label="投降", style=discord.ButtonStyle.danger, emoji="🏳️")
     async def surrender_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -258,15 +609,10 @@ class GamePlayView(ui.View):
                 )
                 return
             
-            balance = await coin_service.get_balance(self.game.player_id)
-            
-            # 处理投降返还（一半赌注）
-            if self.game.payout > 0:
-                balance = await coin_service.add_coins(
-                    self.game.player_id, 
-                    self.game.payout, 
-                    "21点投降返还"
-                )
+            balance = await _settle_game_payout(
+                self.game,
+                "21点投降结算"
+            )
             
             embed = create_result_embed(self.game, balance)
             view = GameEndView(self.game)
@@ -388,7 +734,19 @@ def create_game_embed(game: BlackjackGame, balance: int) -> discord.Embed:
         inline=True
     )
     
-    embed.set_footer(text="选择 要牌/停牌/加倍/投降")
+    if game.state == GameState.WAITING_INSURANCE:
+        insurance_cost = game.get_insurance_cost()
+        embed.add_field(
+            name="🛡️ 保险选择",
+            value=(
+                f"月月明牌是 **A**，现在可以选择是否购买保险。\n"
+                f"保险费用：**{insurance_cost}** 月光币（原注一半）"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="请先选择：买保险 / 不买保险")
+    else:
+        embed.set_footer(text="选择 要牌/停牌/加倍/投降")
     
     return embed
 
