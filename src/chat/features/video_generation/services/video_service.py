@@ -338,25 +338,6 @@ class VideoGenerationService:
             log.error("视频生成时发生错误: %s", e, exc_info=True)
             return None
 
-    async def extend_video(
-        self,
-        *,
-        post_id: str,
-        prompt: str,
-        video_length: int = 10,
-        model: Optional[str] = None,
-        aspect_ratio: str = "16:9",
-        resolution: str = "720p",
-        stream: bool = False,
-        video_extension_start_time: Optional[float] = None,
-        stitch_with_extend: bool = True,
-    ) -> Optional[VideoResult]:
-        """旧视频延长接口已废弃。"""
-        log.warning(
-            "当前上游已支持 6~30 秒服务端自动链式扩展，不再调用旧的 /video/extend 接口。"
-        )
-        return None
-
     def _extract_video_from_response(
         self, data: dict, video_format: str
     ) -> Optional[VideoResult]:
