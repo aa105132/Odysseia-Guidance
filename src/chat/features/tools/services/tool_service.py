@@ -6,6 +6,7 @@ from typing import Optional, Dict, Callable, Any, List
 import logging
 
 from src.chat.config.chat_config import HIDDEN_TOOLS
+from src.chat.features.tools.tool_availability import filter_tool_declarations
 from src.chat.features.tools.services.user_tool_settings_service import (
     user_tool_settings_service,
 )
@@ -43,6 +44,16 @@ class ToolService:
             f"ToolService 已使用 {len(tool_map)} 个工具进行初始化: {list(tool_map.keys())}"
         )
 
+    def get_visible_tool_declarations(self) -> List[Callable]:
+        """返回当前应暴露给模型的工具声明列表。"""
+        visible_tools = filter_tool_declarations(self.tool_declarations)
+        if len(visible_tools) != len(self.tool_declarations):
+            log.info(
+                "根据活动状态过滤工具后，剩余 %s 个工具。",
+                len(visible_tools),
+            )
+        return visible_tools
+
     async def get_dynamic_tools_for_context(
         self, user_id_for_settings: Optional[str] = None
     ) -> List[Callable]:
@@ -58,16 +69,16 @@ class ToolService:
         Returns:
             所有工具函数列表（包括被用户禁用的工具）。
         """
-        # 总是返回所有工具，让AI可以看到它们
-        # 工具执行时会检查是否被禁用
+        visible_tools = self.get_visible_tool_declarations()
+
         if not user_id_for_settings:
             log.info("未提供 user_id_for_settings，使用默认工具集。")
-            return self.tool_declarations
+            return visible_tools
 
         log.info(
-            f"为用户 {user_id_for_settings} 返回所有工具声明（共 {len(self.tool_declarations)} 个）"
+            f"为用户 {user_id_for_settings} 返回可见工具声明（共 {len(visible_tools)} 个）"
         )
-        return self.tool_declarations
+        return visible_tools
 
     async def execute_tool_call(
         self,

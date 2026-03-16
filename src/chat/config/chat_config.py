@@ -384,6 +384,8 @@ SPRING_FESTIVAL_CONFIG = {
     "daily_limit_enabled": _parse_bool_env("SPRING_FESTIVAL_DAILY_LIMIT", "true"),
     "min_reward": _parse_int_env("SPRING_FESTIVAL_MIN_REWARD", 500),
     "max_reward": _parse_int_env("SPRING_FESTIVAL_MAX_REWARD", 1000),
+    "start_date": os.getenv("SPRING_FESTIVAL_START_DATE", "").strip(),
+    "end_date": os.getenv("SPRING_FESTIVAL_END_DATE", "").strip(),
     "dm_title": os.getenv("SPRING_FESTIVAL_DM_TITLE", "新春红包"),
     "dm_description": os.getenv(
         "SPRING_FESTIVAL_DM_DESCRIPTION", "你收到了一份新春祝福，点击按钮开启吧。"

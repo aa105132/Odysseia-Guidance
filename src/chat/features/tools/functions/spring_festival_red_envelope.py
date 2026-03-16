@@ -13,6 +13,7 @@ from discord import ui
 
 from src.chat.config.chat_config import SPRING_FESTIVAL_CONFIG
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
+from src.chat.features.tools.tool_availability import is_spring_festival_in_date_window
 from src.chat.features.tools.tool_metadata import tool_metadata
 from src.chat.utils.database import chat_db_manager, get_beijing_today_str
 from src.chat.utils.prompt_utils import replace_emojis
@@ -153,6 +154,14 @@ async def spring_festival_red_envelope(
         return {
             "success": False,
             "message": "新春活动当前未启用。",
+            "is_daily_limit": False,
+            "amount": 0,
+        }
+
+    if not is_spring_festival_in_date_window():
+        return {
+            "success": False,
+            "message": "当前不在新春红包活动期间。",
             "is_daily_limit": False,
             "amount": 0,
         }

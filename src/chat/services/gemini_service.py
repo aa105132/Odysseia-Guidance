@@ -3,6 +3,7 @@
 import os
 import copy
 import logging
+import inspect
 from typing import Optional, Dict, List, Callable, Any
 import asyncio
 from functools import wraps
@@ -817,6 +818,18 @@ class GeminiService:
             "请不要再次调用 web_search。"
             "直接基于当前已返回的搜索结果组织最终回答；"
             "若信息不足，明确说明缺失点并请用户补充关键词。"
+        )
+
+    @staticmethod
+    def _build_duplicate_tool_call_skip_message(tool_name: str, reason: str) -> str:
+        """当检测到同参数重复工具调用时，返回给模型的强约束提示。"""
+        normalized_tool_name = str(tool_name or "").strip() or "该工具"
+        return (
+            f"[{normalized_tool_name} 已跳过] {reason}\n"
+            f"请不要再次调用 {normalized_tool_name}。"
+            "如果当前上下文中已经有该工具的返回结果，"
+            "请直接基于已有结果继续分析并给出最终回答；"
+            "如果结果仍不足，请明确说明还缺少哪些信息。"
         )
 
     def _reset_last_tool_outputs(self) -> None:
@@ -2312,7 +2325,7 @@ class GeminiService:
         max_calls = 5
         max_web_search_calls = 1
         web_search_call_count = 0
-        executed_web_search_signatures: set[str] = set()
+        executed_tool_signatures: set[str] = set()
         web_search_source_links: List[tuple] = []
         for i in range(max_calls):
             log_detailed = app_config.DEBUG_CONFIG.get(
@@ -2415,6 +2428,12 @@ class GeminiService:
             coroutine_indices: List[int] = []
             web_search_executed_in_current_turn = False
             for call in function_calls:
+                raw_call_args = getattr(call, "args", {}) or {}
+                try:
+                    parsed_call_args = dict(raw_call_args)
+                except Exception:
+                    parsed_call_args = raw_call_args
+
                 if (
                     call.name == "generate_voice"
                     and self._should_block_generate_voice_for_info_context(
@@ -2433,17 +2452,11 @@ class GeminiService:
                     )
                     continue
 
+                call_signature = self._build_tool_call_signature(
+                    call.name, parsed_call_args
+                )
+
                 if call.name == "web_search":
-                    raw_call_args = getattr(call, "args", {}) or {}
-                    try:
-                        parsed_call_args = dict(raw_call_args)
-                    except Exception:
-                        parsed_call_args = raw_call_args
-
-                    call_signature = self._build_tool_call_signature(
-                        "web_search", parsed_call_args
-                    )
-
                     if web_search_call_count >= max_web_search_calls:
                         log.warning(
                             "检测到 web_search 超过调用上限，已拦截重复搜索请求。"
@@ -2460,7 +2473,7 @@ class GeminiService:
                         )
                         continue
 
-                    if call_signature in executed_web_search_signatures:
+                    if call_signature in executed_tool_signatures:
                         log.warning(
                             "检测到重复的 web_search 参数，已拦截本次重复搜索请求。"
                         )
@@ -2476,9 +2489,27 @@ class GeminiService:
                         )
                         continue
 
-                    executed_web_search_signatures.add(call_signature)
+                    executed_tool_signatures.add(call_signature)
                     web_search_call_count += 1
                     web_search_executed_in_current_turn = True
+                elif call_signature in executed_tool_signatures:
+                    log.warning(
+                        f"检测到重复的工具参数，已拦截本次重复工具请求：{call.name}"
+                    )
+                    prepared_results.append(
+                        types.Part.from_function_response(
+                            name=call.name,
+                            response={
+                                "result": self._build_duplicate_tool_call_skip_message(
+                                    call.name,
+                                    "检测到相同参数的重复工具请求。",
+                                )
+                            },
+                        )
+                    )
+                    continue
+                else:
+                    executed_tool_signatures.add(call_signature)
                 prepared_results.append(
                     self.tool_service.execute_tool_call(
                         tool_call=call,
@@ -2813,7 +2844,9 @@ class GeminiService:
             return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？✨"
         return "哎呀，我好像没太明白你的意思呢～可以再说清楚一点吗？✨"
 
-    def _convert_tools_to_openai_format(self) -> List[Dict]:
+    def _convert_tools_to_openai_format(
+        self, tool_functions: Optional[List[Callable]] = None
+    ) -> List[Dict]:
         """
         将 Gemini 格式的工具转换为 OpenAI 格式。
         使用函数的签名和文档字符串自动生成 OpenAI 工具定义。
@@ -2824,7 +2857,9 @@ class GeminiService:
         
         openai_tools = []
         
-        for func in self.available_tools:
+        functions_to_convert = tool_functions or self.available_tools
+
+        for func in functions_to_convert:
             try:
                 # 获取函数签名和文档字符串
                 sig = inspect.signature(func)
@@ -2979,7 +3014,23 @@ class GeminiService:
         max_tokens = gen_config.get("max_output_tokens", 8192)
         
         # 转换工具定义
-        openai_tools = self._convert_tools_to_openai_format()
+        visible_tool_declarations = self.available_tools
+        if (
+            hasattr(self, "tool_service")
+            and self.tool_service
+            and hasattr(self.tool_service, "get_visible_tool_declarations")
+        ):
+            candidate_tools = self.tool_service.get_visible_tool_declarations()
+            if isinstance(candidate_tools, list):
+                visible_tool_declarations = candidate_tools
+
+        convert_signature = inspect.signature(self._convert_tools_to_openai_format)
+        if len(convert_signature.parameters) == 0:
+            openai_tools = self._convert_tools_to_openai_format()
+        else:
+            openai_tools = self._convert_tools_to_openai_format(
+                visible_tool_declarations
+            )
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -3000,7 +3051,7 @@ class GeminiService:
         max_tool_calls = 5
         max_web_search_calls = 1
         web_search_call_count = 0
-        executed_web_search_signatures: set[str] = set()
+        executed_tool_signatures: set[str] = set()
         called_tool_names = []
         web_search_source_links: List[tuple] = []
         disabled_payload_fields: set[str] = set()
@@ -3109,6 +3160,9 @@ class GeminiService:
                         except json.JSONDecodeError:
                             tool_args = {}
 
+                        call_signature = self._build_tool_call_signature(
+                            tool_name, tool_args
+                        )
                         web_search_executed = False
 
                         if (
@@ -3133,7 +3187,7 @@ class GeminiService:
                                 tool_result = self._build_web_search_skip_message(
                                     f"本轮对话中 web_search 调用已达到上限 ({max_web_search_calls} 次)。"
                                 )
-                            elif call_signature in executed_web_search_signatures:
+                            elif call_signature in executed_tool_signatures:
                                 log.warning(
                                     "OpenAI 工具循环中检测到重复 web_search 参数，已拦截。"
                                 )
@@ -3141,7 +3195,7 @@ class GeminiService:
                                     "检测到相同参数的重复 web_search 请求。"
                                 )
                             else:
-                                executed_web_search_signatures.add(call_signature)
+                                executed_tool_signatures.add(call_signature)
                                 web_search_call_count += 1
                                 web_search_executed = True
                                 if discord_message:
@@ -3157,7 +3211,16 @@ class GeminiService:
                                     discord_message=discord_message,
                                     current_turn_tool_names=current_turn_tool_names,
                                 )
+                        elif call_signature in executed_tool_signatures:
+                            log.warning(
+                                f"OpenAI 工具循环中检测到重复 {tool_name} 参数，已拦截。"
+                            )
+                            tool_result = self._build_duplicate_tool_call_skip_message(
+                                tool_name,
+                                "检测到相同参数的重复工具请求。",
+                            )
                         else:
+                            executed_tool_signatures.add(call_signature)
                             tool_result = await self._execute_openai_tool_call(
                                 tool_name=tool_name,
                                 tool_args=tool_args,
