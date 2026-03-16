@@ -162,21 +162,8 @@ class AIChatCog(commands.Cog):
                 pass
 
     @staticmethod
-    def _is_newspaper_info_tool(tool_name: str) -> bool:
-        normalized = str(tool_name or "").strip()
-        if not normalized:
-            return False
-        if normalized == "render_newspaper_brief":
-            return True
-        if normalized == "summarize_channel":
-            return True
-        return (
-            gemini_service._is_summary_or_search_tool(normalized)
-            and normalized != "generate_voice"
-        )
-
-    def _is_newspaper_info_context(self, last_tools: List[str]) -> bool:
-        return any(self._is_newspaper_info_tool(tool_name) for tool_name in last_tools)
+    def _should_send_newspaper_brief(last_tools: List[str]) -> bool:
+        return "summarize_channel" in [str(tool_name or "").strip() for tool_name in last_tools]
 
     @staticmethod
     def _extract_source_block(response_text: str) -> tuple[str, str]:
@@ -333,13 +320,15 @@ class AIChatCog(commands.Cog):
                 tool_image_data = getattr(gemini_service, "last_tool_image_data", None)
                 source_links = list(getattr(gemini_service, "last_tool_source_links", []) or [])
                 body_text, source_text = self._extract_source_block(response_text)
-                body_length = self._get_text_length_without_emojis(body_text or response_text)
-                is_info_context = self._is_newspaper_info_context(last_tools)
-                newspaper_threshold = int(
-                    MESSAGE_SETTINGS.get("NEWSPAPER_BRIEF_THRESHOLD", 250)
+                should_send_newspaper_brief = self._should_send_newspaper_brief(
+                    last_tools
                 )
 
-                if tool_image_data and "render_newspaper_brief" in last_tools:
+                if (
+                    should_send_newspaper_brief
+                    and tool_image_data
+                    and "render_newspaper_brief" in last_tools
+                ):
                     sent = await self._send_newspaper_brief_reply(
                         message,
                         body_text=body_text or response_text,
@@ -350,7 +339,7 @@ class AIChatCog(commands.Cog):
                     if sent:
                         return
 
-                if "summarize_channel" in last_tools:
+                if should_send_newspaper_brief:
                     log.info("调用了总结工具, 尝试转为报纸摘要图发送。")
                     sent = await self._send_newspaper_brief_reply(
                         message,
@@ -363,18 +352,6 @@ class AIChatCog(commands.Cog):
                     if sent:
                         return
                     log.error("频道总结报纸摘要图片生成失败，将作为文本尝试发送。")
-
-                if is_info_context and body_length > newspaper_threshold:
-                    sent = await self._send_newspaper_brief_reply(
-                        message,
-                        body_text=body_text or response_text,
-                        source_text=source_text,
-                        source_links=source_links,
-                    )
-                    if sent:
-                        return
-                    log.error("报纸摘要图片生成失败，将回退为文本发送。")
-                    response_text = body_text or response_text
 
                 is_unrestricted = (
                     message.channel.id in chat_config.UNRESTRICTED_CHANNEL_IDS

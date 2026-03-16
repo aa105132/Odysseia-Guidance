@@ -117,3 +117,18 @@ def test_reply_text_safely_skips_blank_text():
     assert result == []
     message.reply.assert_not_called()
     message.channel.send.assert_not_called()
+
+
+def test_should_send_newspaper_brief_only_for_channel_summary():
+    cog = AIChatCog(bot=MagicMock())
+
+    assert cog._should_send_newspaper_brief([]) is False
+    assert cog._should_send_newspaper_brief(["web_search"]) is False
+    assert cog._should_send_newspaper_brief(["render_newspaper_brief"]) is False
+    assert cog._should_send_newspaper_brief(["summarize_channel"]) is True
+    assert (
+        cog._should_send_newspaper_brief(
+            ["web_search", "summarize_channel", "render_newspaper_brief"]
+        )
+        is True
+    )
