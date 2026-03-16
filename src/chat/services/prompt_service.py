@@ -246,25 +246,64 @@ class PromptService:
         )
 
         # --- NovelAI 提示词分工注入（主AI vs 提示词AI）---
-        final_conversation.append(
-            {
-                "role": "user",
-                "parts": [
-                    "NovelAI 提示词分工规则（双串策略）："
-                    "1) 调用 generate_image_novelai 时，prompt 优先传你写的 Danbooru 草稿串（英文标签、逗号分隔）；"
-                    "2) 工具会基于该草稿再调用提示词 AI 生成一版优化串；"
-                    "3) 若提示词 AI 未返回合格 Danbooru，会回退使用你传入的草稿串；"
-                    "4) 禁止在 prompt 中混入 artist:xxx 画师串（画师串必须走 artist_string）；"
-                    "5) 你只需负责草稿串质量与消息文案，并按需传 preview_message / success_message。"
-                ],
-            }
+        use_prompt_model_raw = chat_config.NOVELAI_CONFIG.get(
+            "USE_PROMPT_MODEL_IN_CHAT_TOOL", True
         )
-        final_conversation.append(
-            {
-                "role": "model",
-                "parts": ["收到，NovelAI 绘图时我会先给 Danbooru 草稿串，再交给提示词AI优化；若优化失败就回退用我的草稿串，并按需传预告和成功消息。"],
+        if isinstance(use_prompt_model_raw, str):
+            use_prompt_model_enabled = use_prompt_model_raw.strip().lower() not in {
+                "0",
+                "false",
+                "off",
+                "no",
+                "n",
             }
-        )
+        else:
+            use_prompt_model_enabled = bool(use_prompt_model_raw)
+
+        if use_prompt_model_enabled:
+            final_conversation.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        "NovelAI 提示词分工规则（当前提示词模型已开启，使用双串策略）："
+                        "1) 调用 generate_image_novelai 时，prompt 必须传英文 Danbooru 标签串（逗号分隔），禁止自然语言摘要；"
+                        "2) 你优先负责写覆盖关键信息的 Danbooru 草稿串；工具会基于该草稿再调用提示词 AI 生成优化串；"
+                        "3) 若提示词 AI 未返回合格 Danbooru，会回退使用你传入的草稿串；"
+                        "4) 禁止在 prompt 中混入 artist:xxx 画师串（画师串必须走 artist_string）；"
+                        "5) 你只需负责草稿串质量与消息文案，并按需传 preview_message / success_message。"
+                    ],
+                }
+            )
+            final_conversation.append(
+                {
+                    "role": "model",
+                    "parts": [
+                        "收到，当前 NovelAI 提示词模型已开启；我会先给英文 Danbooru 草稿串，不写摘要式 prompt，再交给提示词AI优化；若优化失败就回退用我的草稿串。"
+                    ],
+                }
+            )
+        else:
+            final_conversation.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        "NovelAI 提示词分工规则（当前提示词模型已关闭）："
+                        "1) 调用 generate_image_novelai 时，prompt 必须直接传最终可用的英文 Danbooru 标签串（逗号分隔），不要写自然语言摘要、解释、段落或“待优化草稿”；"
+                        "2) 工具不会再帮你调用提示词 AI 改写格式；若用户只给自然语言，你必须先自行细化并转成最终 Danbooru 标签后再调用；"
+                        "3) 如有需要，可显式传 use_prompt_model=False；"
+                        "4) 禁止在 prompt 中混入 artist:xxx 画师串（画师串必须走 artist_string）；"
+                        "5) 你只需负责最终标签串质量与消息文案，并按需传 preview_message / success_message。"
+                    ],
+                }
+            )
+            final_conversation.append(
+                {
+                    "role": "model",
+                    "parts": [
+                        "收到，当前 NovelAI 提示词模型已关闭；我会直接写最终可用的英文 Danbooru 标签串，不写摘要式 prompt，也不依赖工具二次改写。"
+                    ],
+                }
+            )
 
         # --- 默认绘图引擎路由覆盖注入（高优先级）---
         default_image_engine = str(chat_config.DEFAULT_IMAGE_ENGINE or 'novelai').strip().lower()
