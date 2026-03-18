@@ -1082,6 +1082,18 @@ class VoiceGenerationService:
 
             return [{"role": "user", "content": " ".join(prefill_parts)}]
 
+        def _build_xiaomi_retry_messages(assistant_message: str) -> list[Dict[str, str]]:
+            return [
+                {
+                    "role": "user",
+                    "content": (
+                        "请直接把最后一条 assistant 消息转换成自然语音，不要改写 assistant 文本。"
+                        " 优先遵循 <style> 风格标签和括号里的情绪/动作/停顿提示。"
+                    ),
+                },
+                {"role": "assistant", "content": assistant_message},
+            ]
+
         def _build_xiaomi_style_terms(
             *,
             normalized_emotion_style: str,
@@ -1297,70 +1309,100 @@ class VoiceGenerationService:
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(endpoint, headers=headers, json=payload) as response:
-                    status_code = response.status
-                    body = await response.read()
+                async def request_audio_data(
+                    request_payload: Dict[str, Any], *, attempt_name: str
+                ) -> Optional[tuple[str, Dict[str, Any]]]:
+                    async with session.post(endpoint, headers=headers, json=request_payload) as response:
+                        status_code = response.status
+                        body = await response.read()
 
-                    if status_code != 200:
-                        error_text = body.decode("utf-8", errors="ignore")
-                        log.error(
-                            f"语音 API（{provider}）返回错误 {status_code}: {error_text[:500]}"
+                        if status_code != 200:
+                            error_text = body.decode("utf-8", errors="ignore")
+                            log.error(
+                                f"语音 API（{provider}）返回错误 {status_code}: {error_text[:500]}"
+                            )
+                            return None
+
+                        if not body:
+                            log.error(f"语音 API（{provider}）返回空响应")
+                            return None
+
+                        try:
+                            response_json = json.loads(body.decode("utf-8"))
+                        except Exception:
+                            log.error(
+                                f"语音 API（{provider}）返回了无法解析的 JSON 响应: {body[:200]!r}"
+                            )
+                            return None
+
+                        choices = response_json.get("choices") or []
+                        if not choices:
+                            log.error(f"语音 API（{provider}）返回缺少 choices")
+                            return None
+
+                        message = (choices[0] or {}).get("message") or {}
+                        audio_payload = message.get("audio") or {}
+                        audio_data = str(audio_payload.get("data") or "").strip()
+                        if audio_data:
+                            return audio_data, response_json
+
+                        message_content = str(message.get("content") or "").strip()
+                        log.warning(
+                            "语音 API（%s）%s 返回缺少 audio.data，message.content=%r，response=%s",
+                            provider,
+                            attempt_name,
+                            message_content[:120],
+                            json.dumps(response_json, ensure_ascii=False)[:500],
                         )
                         return None
 
-                    if not body:
-                        log.error(f"语音 API（{provider}）返回空响应")
-                        return None
-
-                    try:
-                        response_json = json.loads(body.decode("utf-8"))
-                    except Exception:
-                        log.error(
-                            f"语音 API（{provider}）返回了无法解析的 JSON 响应: {body[:200]!r}"
-                        )
-                        return None
-
-                    choices = response_json.get("choices") or []
-                    if not choices:
-                        log.error(f"语音 API（{provider}）返回缺少 choices")
-                        return None
-
-                    message = (choices[0] or {}).get("message") or {}
-                    audio_payload = message.get("audio") or {}
-                    audio_data = str(audio_payload.get("data") or "").strip()
-                    if not audio_data:
+                audio_result = await request_audio_data(payload, attempt_name="首次请求")
+                if audio_result is None:
+                    retry_payload = {
+                        "model": model_name,
+                        "messages": _build_xiaomi_retry_messages(assistant_content),
+                        "audio": {
+                            "format": actual_request_format,
+                            "voice": selected_voice,
+                        },
+                    }
+                    log.info("小米 TTS 首次请求未返回 audio.data，开始使用最小消息结构重试。")
+                    audio_result = await request_audio_data(retry_payload, attempt_name="最小结构重试")
+                    if audio_result is None:
                         log.error(f"语音 API（{provider}）返回缺少 audio.data")
                         return None
 
-                    try:
-                        audio_bytes = base64.b64decode(audio_data)
-                    except Exception as exc:
-                        log.error(f"语音 API（{provider}）返回的音频 base64 解码失败: {exc}")
-                        return None
+                audio_data, _response_json = audio_result
 
-                    if not audio_bytes:
-                        log.error(f"语音 API（{provider}）返回空音频数据")
-                        return None
+                try:
+                    audio_bytes = base64.b64decode(audio_data)
+                except Exception as exc:
+                    log.error(f"语音 API（{provider}）返回的音频 base64 解码失败: {exc}")
+                    return None
 
-                    final_audio_bytes = audio_bytes
-                    final_output_format = actual_output_format
+                if not audio_bytes:
+                    log.error(f"语音 API（{provider}）返回空音频数据")
+                    return None
 
-                    if should_transcode_to_opus:
-                        transcoded_audio = self._transcode_audio_bytes_to_ogg_opus(audio_bytes)
-                        if transcoded_audio:
-                            final_audio_bytes = transcoded_audio
-                            final_output_format = "opus"
-                        else:
-                            final_output_format = actual_request_format
+                final_audio_bytes = audio_bytes
+                final_output_format = actual_output_format
 
-                    return VoiceResult(
-                        audio_bytes=final_audio_bytes,
-                        mime_type=self._mime_type_from_format(final_output_format),
-                        file_ext=self._ext_from_format(final_output_format),
-                        provider=provider,
-                        model_name=model_name,
-                        voice_type=selected_voice,
-                    )
+                if should_transcode_to_opus:
+                    transcoded_audio = self._transcode_audio_bytes_to_ogg_opus(audio_bytes)
+                    if transcoded_audio:
+                        final_audio_bytes = transcoded_audio
+                        final_output_format = "opus"
+                    else:
+                        final_output_format = actual_request_format
+
+                return VoiceResult(
+                    audio_bytes=final_audio_bytes,
+                    mime_type=self._mime_type_from_format(final_output_format),
+                    file_ext=self._ext_from_format(final_output_format),
+                    provider=provider,
+                    model_name=model_name,
+                    voice_type=selected_voice,
+                )
         except aiohttp.ClientError as e:
             log.error(f"请求语音 API（{provider}）失败: {e}")
             return None
