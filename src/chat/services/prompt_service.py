@@ -591,8 +591,8 @@ class PromptService:
                 voice_lines.append("20) 系统已配置硅基流动动态音色 references；当需要动态音色时可不传 voice_type。")
         elif voice_provider == "xiaomi":
             voice_lines.append("18) 你当前在使用小米 MiMo TTS，它通过 chat/completions + audio 生成语音。")
-            voice_lines.append("19) 小米 TTS 的官方推荐控制方式是：把风格写成 <style>风格</style> 放在 assistant 文本最开头，并可在正文里加入“（情绪/动作/呼吸/停顿）”这类音频标签。")
-            voice_lines.append("20) 对小米 TTS 来说，emotion 不是固定枚举；你应优先把 emotion 直接写成任意自然中文风格短语，例如：开心、温柔、慵懒 刚睡醒、有点沙哑、撒娇 夹子音、深情款款 语速慢、像贴着耳边哄人那样轻声。")
+            voice_lines.append("19) 小米 TTS 的控制信息优先全部写进 <style>风格</style> 放在 assistant 文本最开头；不要把“（情绪/动作/呼吸/停顿）”这类说明写进正文，否则很可能被直接念出来。")
+            voice_lines.append("20) 对小米 TTS 来说，emotion 不是固定枚举；你应优先把 emotion 直接写成任意自然中文风格短语并塞进 <style>，例如：开心、温柔、慵懒 刚睡醒、有点沙哑、撒娇 夹子音、深情款款 语速慢、像贴着耳边哄人那样轻声。")
             voice_lines.append("21) 后端会优先保留你写的 emotion 原意，并通过预填充让模型把最后一条 assistant 台词当成它自己已经要这样说出口的话；所以不要把风格限制在少数预设词里。")
             voice_lines.append("22) 默认音色优先使用 mimo_default；如果没有特别需要，优先用默认音色。")
 

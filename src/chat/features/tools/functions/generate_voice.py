@@ -13,6 +13,8 @@ from typing import Optional
 
 import discord
 
+from src.chat.config import chat_config
+
 log = logging.getLogger(__name__)
 
 # 语音生成相关反应
@@ -328,6 +330,11 @@ async def generate_voice(
     should_send_text_after_voice = bool(send_text_after_voice)
 
     try:
+        voice_provider = str(
+            chat_config.VOICE_CONFIG.get("PROVIDER", "") or ""
+        ).strip().lower()
+        preferred_output_format = "opus" if voice_provider == "xiaomi" else None
+
         result = await voice_service.generate_voice(
             text=text,
             voice_type=voice_type,
@@ -337,6 +344,7 @@ async def generate_voice(
             enable_emotion=selected_enable_emotion,
             emotion_scale=selected_emotion_scale,
             user_id=str(parsed_user_id) if parsed_user_id is not None else None,
+            output_format=preferred_output_format,
         )
 
         await remove_reaction(GENERATING_EMOJI)

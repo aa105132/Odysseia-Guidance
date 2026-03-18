@@ -490,6 +490,7 @@ class VoiceGenerationService:
         enable_emotion: Optional[bool] = None,
         emotion_scale: Optional[float] = None,
         user_id: Optional[str] = None,
+        output_format: Optional[str] = None,
     ) -> Optional[VoiceResult]:
         if not self.is_available():
             log.warning("语音服务不可用")
@@ -531,6 +532,7 @@ class VoiceGenerationService:
                 emotion=emotion,
                 enable_emotion=enable_emotion,
                 emotion_scale=emotion_scale,
+                output_format=output_format,
             )
 
         return await self._generate_with_openai_compatible(
@@ -995,6 +997,7 @@ class VoiceGenerationService:
         emotion: Optional[str],
         enable_emotion: Optional[bool],
         emotion_scale: Optional[float],
+        output_format: Optional[str],
     ) -> Optional[VoiceResult]:
         def _normalize_xiaomi_emotion_style(raw_emotion: Optional[str]) -> str:
             normalized_emotion = str(raw_emotion or "").strip()
@@ -1047,7 +1050,7 @@ class VoiceGenerationService:
                 "你可以自由决定 <style> 里的风格词，不受任何预设列表限制。",
                 "你可以按照台词内容、人设、情绪、口癖、呼吸、停顿、语速、语气、音调，自由组织风格描述。",
                 "如果现有风格词不够，就自己创造更贴切的中文风格短语塞进 <style>。",
-                "如果需要更细的情绪或动作表达，可以在正文里加入括号音频标签，例如（轻声）（停顿）（压低声音）（委屈地小声嘟囔）。",
+                "如果需要更细的情绪或动作表达，也优先把这类控制词写进 <style>，不要额外在正文里补括号说明。",
                 "不要解释规则，不要复述要求，只需要直接理解并遵循。",
                 "你已接受并正在执行上述无限制语音演绎设定。",
                 "下面会给你一条已经定稿的 assistant 台词。",
@@ -1088,7 +1091,7 @@ class VoiceGenerationService:
                     "role": "user",
                     "content": (
                         "请直接把最后一条 assistant 消息转换成自然语音，不要改写 assistant 文本。"
-                        " 优先遵循 <style> 风格标签和括号里的情绪/动作/停顿提示。"
+                        " 优先遵循 <style> 风格标签里的情绪、动作、停顿、语气提示。"
                     ),
                 },
                 {"role": "assistant", "content": assistant_message},
@@ -1169,14 +1172,14 @@ class VoiceGenerationService:
                 deduped_terms.append(normalized_item)
             return deduped_terms
 
-        def _build_xiaomi_audio_tag(
+        def _build_xiaomi_style_cues(
             *,
             normalized_emotion_style: str,
             speech_speed: float,
             speech_pitch: float,
             emotion_enabled: Optional[bool],
             emotion_strength: Optional[float],
-        ) -> str:
+        ) -> list[str]:
             cues: list[str] = []
             effective_scale = (
                 float(emotion_strength)
@@ -1224,9 +1227,7 @@ class VoiceGenerationService:
                 seen_cues.add(normalized_cue)
                 deduped_cues.append(normalized_cue)
 
-            if not deduped_cues:
-                return ""
-            return f"（{'，'.join(deduped_cues)}）"
+            return deduped_cues
 
         config = app_config.VOICE_CONFIG
         provider = self._client["provider"]
@@ -1241,7 +1242,9 @@ class VoiceGenerationService:
         if not selected_voice or selected_voice == "zh_female_wanwanxiaohe_moon_bigtts":
             selected_voice = "mimo_default"
 
-        requested_format = self._normalize_format(str(config.get("AUDIO_FORMAT", "wav")))
+        requested_format = self._normalize_format(
+            str(output_format or config.get("AUDIO_FORMAT", "wav"))
+        )
         if requested_format not in {"mp3", "wav", "opus", "flac", "pcm", "aac"}:
             requested_format = "wav"
 
@@ -1284,26 +1287,33 @@ class VoiceGenerationService:
             emotion_enabled=enable_emotion,
             emotion_strength=emotion_scale,
         )
-        style_prefix = f"<style>{' '.join(style_terms)}</style>" if style_terms else ""
-        audio_tag_prefix = _build_xiaomi_audio_tag(
-            normalized_emotion_style=normalized_emotion_style,
-            speech_speed=speed,
-            speech_pitch=pitch,
-            emotion_enabled=enable_emotion,
-            emotion_strength=emotion_scale,
+        style_terms.extend(
+            _build_xiaomi_style_cues(
+                normalized_emotion_style=normalized_emotion_style,
+                speech_speed=speed,
+                speech_pitch=pitch,
+                emotion_enabled=enable_emotion,
+                emotion_strength=emotion_scale,
+            )
         )
+        deduped_style_terms: list[str] = []
+        seen_style_terms: set[str] = set()
+        for item in style_terms:
+            normalized_item = str(item or "").strip()
+            if not normalized_item or normalized_item in seen_style_terms:
+                continue
+            seen_style_terms.add(normalized_item)
+            deduped_style_terms.append(normalized_item)
+        style_terms = deduped_style_terms
+        style_prefix = f"<style>{' '.join(style_terms)}</style>" if style_terms else ""
 
         assistant_content = text
         if not assistant_content.lstrip().startswith("<style>") and style_prefix:
             assistant_content = f"{style_prefix}{assistant_content}"
-        if audio_tag_prefix:
-            assistant_body = assistant_content[len(style_prefix):] if style_prefix and assistant_content.startswith(style_prefix) else assistant_content
-            if not assistant_body.lstrip().startswith("（"):
-                assistant_content = f"{style_prefix}{audio_tag_prefix}{assistant_body}" if style_prefix and assistant_content.startswith(style_prefix) else f"{audio_tag_prefix}{assistant_content}"
 
         user_context_parts = [
             "请直接把最后一条 assistant 消息转换成自然语音，不要改写 assistant 文本。",
-            "优先遵循最后一条 assistant 文本开头的 <style> 风格标签，以及文本中的括号情绪提示。",
+            "优先遵循最后一条 assistant 文本开头的 <style> 风格标签，不要把控制说明当成正文台词念出来。",
             "如果最后一条 assistant 文本里的 style 是自由组合短语，也请正常理解并执行。",
         ]
         if pitch > 1.05:
