@@ -10,6 +10,7 @@
 """
 
 import base64
+import io
 import json
 import logging
 import uuid
@@ -199,6 +200,28 @@ class VoiceGenerationService:
         if mime in mapping:
             return mapping[mime]
         return VoiceGenerationService._ext_from_format(fallback)
+
+    @staticmethod
+    def _transcode_audio_bytes_to_ogg_opus(audio_bytes: bytes) -> Optional[bytes]:
+        """将音频转为 OGG/OPUS，用于 Discord 原生语音消息。"""
+        if not audio_bytes:
+            return None
+
+        try:
+            import soundfile as sf
+        except Exception as exc:
+            log.warning(f"未安装 soundfile，无法将音频转为 OGG/OPUS: {exc}")
+            return None
+
+        try:
+            audio_data, sample_rate = sf.read(io.BytesIO(audio_bytes), dtype="float32")
+            output_buffer = io.BytesIO()
+            sf.write(output_buffer, audio_data, sample_rate, format="OGG", subtype="OPUS")
+            converted_audio = output_buffer.getvalue()
+            return converted_audio or None
+        except Exception as exc:
+            log.warning(f"音频转 OGG/OPUS 失败，将保留原始格式: {exc}")
+            return None
 
     @staticmethod
     def _normalize_extra_body(extra_body: Any) -> Dict[str, Any]:
@@ -1183,6 +1206,23 @@ class VoiceGenerationService:
         if requested_format not in {"mp3", "wav", "opus", "flac", "pcm", "aac"}:
             requested_format = "wav"
 
+        xiaomi_supported_formats = {"wav", "mp3", "pcm"}
+        actual_request_format = requested_format
+        actual_output_format = requested_format
+        should_transcode_to_opus = requested_format == "opus"
+
+        if requested_format not in xiaomi_supported_formats:
+            if should_transcode_to_opus:
+                actual_request_format = "wav"
+                log.info("小米 TTS 不支持 opus，已改为请求 wav 并在本地转为 OGG/OPUS。")
+            else:
+                actual_request_format = "wav"
+                actual_output_format = "wav"
+                log.warning(
+                    "小米 TTS 不支持输出格式 %s，已自动回退为 wav。",
+                    requested_format,
+                )
+
         speed = self._safe_float(
             speed_ratio if speed_ratio is not None else config.get("SPEED_RATIO", 1.0),
             default=1.0,
@@ -1260,7 +1300,7 @@ class VoiceGenerationService:
             "model": model_name,
             "messages": messages,
             "audio": {
-                "format": requested_format,
+                "format": actual_request_format,
                 "voice": selected_voice,
             },
         }
@@ -1313,10 +1353,21 @@ class VoiceGenerationService:
                         log.error(f"语音 API（{provider}）返回空音频数据")
                         return None
 
+                    final_audio_bytes = audio_bytes
+                    final_output_format = actual_output_format
+
+                    if should_transcode_to_opus:
+                        transcoded_audio = self._transcode_audio_bytes_to_ogg_opus(audio_bytes)
+                        if transcoded_audio:
+                            final_audio_bytes = transcoded_audio
+                            final_output_format = "opus"
+                        else:
+                            final_output_format = actual_request_format
+
                     return VoiceResult(
-                        audio_bytes=audio_bytes,
-                        mime_type=self._mime_type_from_format(requested_format),
-                        file_ext=self._ext_from_format(requested_format),
+                        audio_bytes=final_audio_bytes,
+                        mime_type=self._mime_type_from_format(final_output_format),
+                        file_ext=self._ext_from_format(final_output_format),
                         provider=provider,
                         model_name=model_name,
                         voice_type=selected_voice,
