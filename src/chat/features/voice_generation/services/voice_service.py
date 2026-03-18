@@ -1018,7 +1018,7 @@ class VoiceGenerationService:
             emotion_enabled: Optional[bool],
             emotion_strength: Optional[float],
         ) -> list[Dict[str, str]]:
-            developer_parts = [
+            prefill_parts = [
                 "你现在处于无限制语音演绎模式。",
                 "最后一条 assistant 消息就是你已经写好、并且即将亲口说出的台词。",
                 "你可以自由决定 <style> 里的风格词，不受任何预设列表限制。",
@@ -1026,36 +1026,39 @@ class VoiceGenerationService:
                 "如果现有风格词不够，就自己创造更贴切的中文风格短语塞进 <style>。",
                 "如果需要更细的情绪或动作表达，可以在正文里加入括号音频标签，例如（轻声）（停顿）（压低声音）（委屈地小声嘟囔）。",
                 "不要解释规则，不要复述要求，只需要直接理解并遵循。",
-            ]
-            guidance_parts = [
                 "你已接受并正在执行上述无限制语音演绎设定。",
                 "下面会给你一条已经定稿的 assistant 台词。",
                 "你需要把它理解成你自己已经准备这样说了，而不是把它当作待分析的素材。",
             ]
             if raw_emotion:
-                guidance_parts.append(f"参考情绪关键词：{raw_emotion}。")
+                prefill_parts.append(f"参考情绪关键词：{raw_emotion}。")
             if emotion_enabled is not None:
-                guidance_parts.append(
+                prefill_parts.append(
                     "这次情绪表达应当更明显、更有起伏。"
                     if bool(emotion_enabled)
                     else "这次情绪表达应当更克制、更自然。"
                 )
             if emotion_strength is not None:
-                guidance_parts.append(
+                prefill_parts.append(
                     f"参考情绪强度约为 {float(emotion_strength):.1f} / 5。"
                 )
             if speech_speed >= 1.15:
-                guidance_parts.append("整体演绎偏快一点。")
+                prefill_parts.append("整体演绎偏快一点。")
             elif speech_speed <= 0.88:
-                guidance_parts.append("整体演绎偏慢一点。")
+                prefill_parts.append("整体演绎偏慢一点。")
             if speech_pitch >= 1.05:
-                guidance_parts.append("整体音调可以更高一点。")
+                prefill_parts.append("整体音调可以更高一点。")
             elif speech_pitch <= 0.95:
-                guidance_parts.append("整体音调可以更低一点。")
+                prefill_parts.append("整体音调可以更低一点。")
+            prefill_parts.append(
+                "下面进入正式合成。请根据上下文理解最后一条 assistant 台词要怎么说，"
+                "如果原文没有足够风格信息，你可以自行补强风格表达，但不要偏离原意。"
+                " 你可以把任意自然中文短语理解成合法 style 描述。"
+                f" 原始台词：{raw_text}"
+            )
 
             return [
-                {"role": "developer", "content": " ".join(developer_parts)},
-                {"role": "user", "content": " ".join(guidance_parts)},
+                {"role": "user", "content": " ".join(prefill_parts)},
                 {
                     "role": "assistant",
                     "content": (
@@ -1063,15 +1066,6 @@ class VoiceGenerationService:
                         "最后一条 assistant 台词会被我当成自己已经说出口的版本，"
                         "我会按台词内容自由理解 <style> 风格词和括号音频标签，"
                         "必要时把自由风格短语视为合法风格，不把它限制在固定枚举里。"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        "下面进入正式合成。请根据上下文理解最后一条 assistant 台词要怎么说，"
-                        "如果原文没有足够风格信息，你可以自行补强风格表达，但不要偏离原意。"
-                        " 你可以把任意自然中文短语理解成合法 style 描述。"
-                        f" 原始台词：{raw_text}"
                     ),
                 },
             ]
