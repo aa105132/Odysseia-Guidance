@@ -1094,6 +1094,44 @@ class VoiceGenerationService:
                 {"role": "assistant", "content": assistant_message},
             ]
 
+        def _build_xiaomi_payload(
+            *, messages: list[Dict[str, str]], voice_name: str
+        ) -> Dict[str, Any]:
+            return {
+                "model": model_name,
+                "messages": messages,
+                "audio": {
+                    "format": actual_request_format,
+                    "voice": voice_name,
+                },
+            }
+
+        def _log_xiaomi_payload_summary(
+            *, payload_data: Dict[str, Any], attempt_name: str, level: str = "info"
+        ) -> None:
+            payload_messages = payload_data.get("messages") or []
+            assistant_preview = ""
+            for item in reversed(payload_messages):
+                if str((item or {}).get("role") or "").strip() == "assistant":
+                    assistant_preview = str((item or {}).get("content") or "").strip()
+                    break
+            voice_name = str(((payload_data.get("audio") or {}).get("voice")) or "").strip()
+            request_format = str(((payload_data.get("audio") or {}).get("format")) or "").strip()
+            summary = (
+                "小米 TTS %s 请求摘要：voice=%s, format=%s, message_count=%s, "
+                "assistant_has_style=%s, assistant_preview=%r"
+            )
+            log_func = log.warning if level == "warning" else log.info
+            log_func(
+                summary,
+                attempt_name,
+                voice_name,
+                request_format,
+                len(payload_messages),
+                assistant_preview.lstrip().startswith("<style>"),
+                assistant_preview[:200],
+            )
+
         def _build_xiaomi_style_terms(
             *,
             normalized_emotion_style: str,
@@ -1297,14 +1335,7 @@ class VoiceGenerationService:
         messages.append({"role": "user", "content": " ".join(user_context_parts)})
         messages.append({"role": "assistant", "content": assistant_content})
 
-        payload = {
-            "model": model_name,
-            "messages": messages,
-            "audio": {
-                "format": actual_request_format,
-                "voice": selected_voice,
-            },
-        }
+        payload = _build_xiaomi_payload(messages=messages, voice_name=selected_voice)
 
         timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         try:
@@ -1356,21 +1387,52 @@ class VoiceGenerationService:
                         )
                         return None
 
-                audio_result = await request_audio_data(payload, attempt_name="首次请求")
+                payload_attempts: list[tuple[str, Dict[str, Any]]] = [("首次请求", payload)]
+                payload_attempts.append(
+                    (
+                        "纯文本重试" if assistant_content != text else "最小结构重试",
+                        _build_xiaomi_payload(
+                            messages=_build_xiaomi_retry_messages(text),
+                            voice_name=selected_voice,
+                        ),
+                    )
+                )
+
+                if selected_voice != "mimo_default":
+                    payload_attempts.append(
+                        (
+                            "默认音色纯文本重试",
+                            _build_xiaomi_payload(
+                                messages=_build_xiaomi_retry_messages(text),
+                                voice_name="mimo_default",
+                            ),
+                        )
+                    )
+
+                audio_result: Optional[tuple[str, Dict[str, Any]]] = None
+                for index, (attempt_name, attempt_payload) in enumerate(payload_attempts):
+                    _log_xiaomi_payload_summary(
+                        payload_data=attempt_payload,
+                        attempt_name=attempt_name,
+                        level="info" if index == 0 else "warning",
+                    )
+                    audio_result = await request_audio_data(
+                        attempt_payload,
+                        attempt_name=attempt_name,
+                    )
+                    if audio_result is not None:
+                        break
+                    if index < len(payload_attempts) - 1:
+                        next_attempt_name = payload_attempts[index + 1][0]
+                        log.warning(
+                            "小米 TTS %s 未返回 audio.data，准备继续 %s。",
+                            attempt_name,
+                            next_attempt_name,
+                        )
+
                 if audio_result is None:
-                    retry_payload = {
-                        "model": model_name,
-                        "messages": _build_xiaomi_retry_messages(assistant_content),
-                        "audio": {
-                            "format": actual_request_format,
-                            "voice": selected_voice,
-                        },
-                    }
-                    log.info("小米 TTS 首次请求未返回 audio.data，开始使用最小消息结构重试。")
-                    audio_result = await request_audio_data(retry_payload, attempt_name="最小结构重试")
-                    if audio_result is None:
-                        log.error(f"语音 API（{provider}）返回缺少 audio.data")
-                        return None
+                    log.error(f"语音 API（{provider}）返回缺少 audio.data")
+                    return None
 
                 audio_data, _response_json = audio_result
 
