@@ -1604,7 +1604,7 @@
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">语音提供商</label>
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                                 <label class="flex items-center gap-2 cursor-pointer px-4 py-3 rounded-lg border transition-all"
                                        :class="voiceForm.provider === 'doubao' ? 'border-purple-500 bg-purple-500/20 text-purple-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
                                     <input type="radio" x-model="voiceForm.provider" value="doubao" class="sr-only">
@@ -1623,19 +1623,28 @@
                                     <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>
                                     <span class="text-sm font-medium">自定义兼容</span>
                                 </label>
+                                <label class="flex items-center gap-2 cursor-pointer px-4 py-3 rounded-lg border transition-all"
+                                       :class="voiceForm.provider === 'xiaomi' ? 'border-orange-500 bg-orange-500/20 text-orange-300' : 'border-slate-600 bg-slate-700/30 text-slate-400 hover:border-slate-500'">
+                                    <input type="radio" x-model="voiceForm.provider" value="xiaomi" class="sr-only">
+                                    <i data-lucide="mic" class="w-4 h-4"></i>
+                                    <span class="text-sm font-medium">小米 MiMo</span>
+                                </label>
                             </div>
                         </div>
 
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
                             <input type="url" x-model="voiceForm.base_url"
-                                   :placeholder="voiceForm.provider === 'doubao' ? 'https://openspeech.bytedance.com（留空使用默认）' : (voiceForm.provider === 'siliconflow' ? 'https://api.siliconflow.cn/v1（留空使用默认）' : 'https://your-api.example.com/v1')"
+                                   :placeholder="voiceForm.provider === 'doubao' ? 'https://openspeech.bytedance.com（留空使用默认）' : (voiceForm.provider === 'siliconflow' ? 'https://api.siliconflow.cn/v1（留空使用默认）' : (voiceForm.provider === 'xiaomi' ? 'https://api.xiaomimimo.com/v1（留空使用默认）' : 'https://your-api.example.com/v1'))"
                                    class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500">
                             <p x-show="voiceForm.provider === 'doubao'" class="text-xs text-slate-500 mt-1">
                                 豆包会调用 /api/v1/tts（认证使用 APP ID + Access Token，非 AK/SK）
                             </p>
-                            <p x-show="voiceForm.provider !== 'doubao'" class="text-xs text-slate-500 mt-1">
+                            <p x-show="voiceForm.provider === 'siliconflow' || voiceForm.provider === 'custom'" class="text-xs text-slate-500 mt-1">
                                 兼容提供商会调用 /audio/speech（SiliconFlow 默认地址建议使用 https://api.siliconflow.cn/v1）
+                            </p>
+                            <p x-show="voiceForm.provider === 'xiaomi'" class="text-xs text-slate-500 mt-1">
+                                小米 MiMo TTS 会调用 /chat/completions，并通过请求体里的 <code class="text-slate-300">audio</code> 字段返回 base64 音频。
                             </p>
                             <p x-show="voiceForm.provider === 'doubao'" class="text-xs text-slate-500 mt-1">
                                 参考文档：
@@ -1650,6 +1659,12 @@
                                 <a href="https://docs.siliconflow.cn/cn/api-reference/audio/voice-list" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline">音色列表</a>
                                 ·
                                 <a href="https://docs.siliconflow.cn/cn/api-reference/uploads/audio-voice" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline">上传音色</a>
+                            </p>
+                            <p x-show="voiceForm.provider === 'xiaomi'" class="text-xs text-slate-500 mt-1">
+                                参考文档：
+                                <a href="https://platform.xiaomimimo.com/#/docs/api/chat/openai-api" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline">OpenAI API 兼容</a>
+                                ·
+                                <a href="https://platform.xiaomimimo.com/#/docs/news/v2-tts-release" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline">MiMo-V2-TTS 发布说明</a>
                             </p>
                         </div>
 
@@ -1900,7 +1915,7 @@
                             </div>
                             <div>
                                 <label class="block text-xs text-slate-400 mb-1">最大文本长度</label>
-                                <input type="number" min="20" max="5000" x-model.number="voiceForm.max_text_length"
+                                <input type="number" min="20" max="8000" x-model.number="voiceForm.max_text_length"
                                        class="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500">
                             </div>
                             <div>

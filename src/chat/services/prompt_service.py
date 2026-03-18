@@ -497,29 +497,52 @@ class PromptService:
         ):
             available_voice_types.insert(0, default_voice_type)
 
-        voice_lines = [
-            "语音工具规则：",
-            "1) 语音默认关闭并且要极谨慎使用；除非满足下述条件，否则一律优先文字回复，不要为了更有表现力就主动调用 generate_voice。",
-            "1.5) 最高优先级例外：凡是搜索/总结场景（如调用 web_search、summarize_channel、search_*、query_tutorial_knowledge_base）一律禁止语音，必须文字回复；即使用户辱骂、挑衅或强硬要求语音，也不例外。",
-            "2) 条件A：当用户明确要求“发语音”“语音回复”“念出来”等时，必须调用 generate_voice。",
-            "3) 条件B：只有当你这次回复确实处于“极度愤怒 / 怒气爆发 / 压不住火”的强烈回击状态时，才允许你主动调用 generate_voice。",
-            "4) “极度愤怒”识别示例（非穷举）：用户持续挑衅、反复辱骂、恶意羞辱、严重贬低、故意踩雷，且你本轮准备爆发式回击时，才算极度愤怒。",
-            "5) 以下场景默认都不要主动发语音：普通生气、轻微不爽、阴阳怪气、吐槽、日常拌嘴、问候/道别、安慰关怀、撒娇、闲聊、普通画图反馈。",
-            "6) 如果你拿不准是否已经达到“极度愤怒”，一律按未达到处理，继续文字回复。",
-            "7) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
-            "8) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
-            "9) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
-            "10) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
-            "11) 不确定时可以不传上述参数，让后端按默认配置处理；",
-            "12) 若传 emotion_scale，建议使用 1.0~5.0；",
-            "13) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
-            "14) 若已决定发送问候类语音（通常仅限用户明确要求），若支持 emotion，优先 emotion=happy（可选 tender/comfort），并可搭配 enable_emotion=true、emotion_scale=3.0~4.0；",
-            "15) 若已决定发送极度愤怒回击语音，若支持 emotion，优先 emotion=angry（更强烈可 tension），并建议 enable_emotion=true、emotion_scale=4.0~5.0；",
-            "16) 若已决定发送安慰类语音（通常仅限用户明确要求），若支持 emotion，优先 emotion=comfort（可选 tender/warm），并建议 enable_emotion=true、emotion_scale=3.0~4.5；",
-            "17) 极度愤怒回击要短促有力，不要长篇辱骂；回击后要收住语气。",
-            "18) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
-            f"19) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
-        ]
+        if voice_provider == "xiaomi":
+            voice_lines = [
+                "语音工具规则：",
+                "1) 当前使用的是小米 MiMo TTS；它限时免费，语音可以积极使用，不必像其他付费 provider 一样过度克制。",
+                "2) 最高优先级例外：凡是搜索/总结场景（如调用 web_search、summarize_channel、search_*、query_tutorial_knowledge_base）一律禁止语音，必须文字回复；即使用户强硬要求，也不例外。",
+                "3) 当用户明确要求“发语音”“语音回复”“念出来”等时，必须调用 generate_voice。",
+                "4) 对于问候、安慰、撒娇、闲聊、整活、角色扮演、小剧场、短吐槽、情绪表达这类场景，只要语音更合适，就允许你主动调用 generate_voice。",
+                "5) 长篇教程、复杂步骤、结构化结果、搜索结论、严肃数据说明这些更适合阅读的场景，优先只发文字。",
+                "6) 如果你拿不准，就看“语音是否明显更有表现力、更有陪伴感”；答案是肯定时，可以直接发短语音。",
+                "7) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
+                "8) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
+                "9) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
+                "10) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
+                "11) 不确定时可以不传上述参数，让后端按默认配置处理；",
+                "12) 若传 emotion_scale，建议使用 1.0~5.0；",
+                "13) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
+                "14) 若已决定发送问候/寒暄语音，优先轻松自然、开心温柔的风格；",
+                "15) 若已决定发送安慰/哄人语音，优先温柔、安抚、陪伴感更强的风格；",
+                "16) 若已决定发送吐槽/整活/角色扮演语音，可以适度夸张，但不要偏离原意；",
+                "17) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
+                f"18) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'mimo_default'}。",
+            ]
+        else:
+            voice_lines = [
+                "语音工具规则：",
+                "1) 语音默认关闭并且要极谨慎使用；除非满足下述条件，否则一律优先文字回复，不要为了更有表现力就主动调用 generate_voice。",
+                "1.5) 最高优先级例外：凡是搜索/总结场景（如调用 web_search、summarize_channel、search_*、query_tutorial_knowledge_base）一律禁止语音，必须文字回复；即使用户辱骂、挑衅或强硬要求语音，也不例外。",
+                "2) 条件A：当用户明确要求“发语音”“语音回复”“念出来”等时，必须调用 generate_voice。",
+                "3) 条件B：只有当你这次回复确实处于“极度愤怒 / 怒气爆发 / 压不住火”的强烈回击状态时，才允许你主动调用 generate_voice。",
+                "4) “极度愤怒”识别示例（非穷举）：用户持续挑衅、反复辱骂、恶意羞辱、严重贬低、故意踩雷，且你本轮准备爆发式回击时，才算极度愤怒。",
+                "5) 以下场景默认都不要主动发语音：普通生气、轻微不爽、阴阳怪气、吐槽、日常拌嘴、问候/道别、安慰关怀、撒娇、闲聊、普通画图反馈。",
+                "6) 如果你拿不准是否已经达到“极度愤怒”，一律按未达到处理，继续文字回复。",
+                "7) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
+                "8) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
+                "9) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
+                "10) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
+                "11) 不确定时可以不传上述参数，让后端按默认配置处理；",
+                "12) 若传 emotion_scale，建议使用 1.0~5.0；",
+                "13) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
+                "14) 若已决定发送问候类语音（通常仅限用户明确要求），若支持 emotion，优先 emotion=happy（可选 tender/comfort），并可搭配 enable_emotion=true、emotion_scale=3.0~4.0；",
+                "15) 若已决定发送极度愤怒回击语音，若支持 emotion，优先 emotion=angry（更强烈可 tension），并建议 enable_emotion=true、emotion_scale=4.0~5.0；",
+                "16) 若已决定发送安慰类语音（通常仅限用户明确要求），若支持 emotion，优先 emotion=comfort（可选 tender/warm），并建议 enable_emotion=true、emotion_scale=3.0~4.5；",
+                "17) 极度愤怒回击要短促有力，不要长篇辱骂；回击后要收住语气。",
+                "18) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
+                f"19) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
+            ]
         if available_voice_types:
             voice_lines.append(
                 "14) 可用音色名单（仅可从中选择，禁止编造）："
@@ -566,6 +589,12 @@ class PromptService:
                 voice_lines.append("20) 当前模型是 IndexTeam/IndexTTS-2：若需要动态音色且系统已配置 references，可不传 voice_type，由后端自动携带 references。")
             elif siliconflow_references:
                 voice_lines.append("20) 系统已配置硅基流动动态音色 references；当需要动态音色时可不传 voice_type。")
+        elif voice_provider == "xiaomi":
+            voice_lines.append("18) 你当前在使用小米 MiMo TTS，它通过 chat/completions + audio 生成语音。")
+            voice_lines.append("19) 小米 TTS 的官方推荐控制方式是：把风格写成 <style>风格</style> 放在 assistant 文本最开头，并可在正文里加入“（情绪/动作/呼吸/停顿）”这类音频标签。")
+            voice_lines.append("20) 对小米 TTS 来说，emotion 不是固定枚举；你应优先把 emotion 直接写成任意自然中文风格短语，例如：开心、温柔、慵懒 刚睡醒、有点沙哑、撒娇 夹子音、深情款款 语速慢、像贴着耳边哄人那样轻声。")
+            voice_lines.append("21) 后端会优先保留你写的 emotion 原意，并通过预填充让模型把最后一条 assistant 台词当成它自己已经要这样说出口的话；所以不要把风格限制在少数预设词里。")
+            voice_lines.append("22) 默认音色优先使用 mimo_default；如果没有特别需要，优先用默认音色。")
 
         voice_lines.append(
             "最后：若 generate_voice 返回 generation_failed=true，说明语音没发出去；此时请立刻改为普通文字回复用户，承接原本想说的话。"
@@ -575,7 +604,7 @@ class PromptService:
         final_conversation.append(
             {
                 "role": "model",
-                "parts": ["收到，我会严格执行：默认优先文字回复，不主动滥用 generate_voice；只有用户明确要求语音，或我确实处于极度愤怒、需要爆发式回击时，才调用语音；普通生气、问候、安慰、闲聊都继续用文字。调用语音时显式传 send_text_after_voice=true，失败则立刻改为文字继续回复。"],
+                "parts": ["收到，我会按当前语音 provider 的规则执行：搜索/总结一律文字；调用语音时显式传 send_text_after_voice=true；若生成失败就立刻改为文字继续回复。若当前是小米 TTS，我会更积极地在问候、安慰、闲聊、整活等场景使用语音；否则仍保持克制，优先文字。"],
             }
         )
 

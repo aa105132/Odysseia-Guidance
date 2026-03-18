@@ -130,7 +130,7 @@ class VideoConfigUpdate(BaseModel):
 class VoiceConfigUpdate(BaseModel):
     """语音合成配置更新"""
     enabled: Optional[bool] = None
-    provider: Optional[str] = None  # doubao/siliconflow/custom
+    provider: Optional[str] = None  # doubao/siliconflow/custom/xiaomi
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     model_name: Optional[str] = None
@@ -2140,12 +2140,20 @@ async def get_voice_config(token: str = Depends(verify_token)):
     # 数据库优先
     enabled = db_enabled == "true" if db_enabled is not None else bool(config.get("ENABLED", False))
     provider = str(db_provider or config.get("PROVIDER", "doubao")).strip().lower()
-    if provider not in {"doubao", "siliconflow", "custom"}:
+    if provider not in {"doubao", "siliconflow", "custom", "xiaomi"}:
         provider = "doubao"
+    provider_defaults = chat_config.get_voice_provider_defaults(provider)
 
     base_url = str(db_base_url or config.get("BASE_URL", "")).strip()
     api_key = str(db_api_key or config.get("API_KEY", "")).strip()
-    model_name = str(db_model_name or config.get("MODEL_NAME", "FunAudioLLM/CosyVoice2-0.5B")).strip()
+    model_name = str(
+        db_model_name
+        or config.get("MODEL_NAME", provider_defaults["MODEL_NAME"])
+    ).strip()
+    if provider == "xiaomi" and (
+        not model_name or model_name == "FunAudioLLM/CosyVoice2-0.5B"
+    ):
+        model_name = str(provider_defaults["MODEL_NAME"])
     app_id = str(db_app_id or config.get("APP_ID", "")).strip()
     access_token = str(db_access_token or config.get("ACCESS_TOKEN", "")).strip()
     app_pool = (
@@ -2212,8 +2220,12 @@ async def get_voice_config(token: str = Depends(verify_token)):
         )
         clone_resource_id = "seed-icl-2.0"
     voice_type = str(
-        db_voice_type or config.get("VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts")
+        db_voice_type or config.get("VOICE_TYPE", provider_defaults["VOICE_TYPE"])
     ).strip()
+    if provider == "xiaomi" and (
+        not voice_type or voice_type == "zh_female_wanwanxiaohe_moon_bigtts"
+    ):
+        voice_type = str(provider_defaults["VOICE_TYPE"])
     available_voice_types = (
         _parse_string_list_setting(db_available_voice_types)
         if db_available_voice_types is not None
@@ -2265,8 +2277,10 @@ async def get_voice_config(token: str = Depends(verify_token)):
     max_text_length = (
         int(db_max_text_length)
         if db_max_text_length is not None
-        else int(config.get("MAX_TEXT_LENGTH", 500))
+        else int(config.get("MAX_TEXT_LENGTH", provider_defaults["MAX_TEXT_LENGTH"]))
     )
+    if provider == "xiaomi" and db_max_text_length is None and max_text_length <= 500:
+        max_text_length = int(provider_defaults["MAX_TEXT_LENGTH"])
     request_timeout_seconds = (
         int(db_timeout_seconds)
         if db_timeout_seconds is not None
@@ -2278,6 +2292,8 @@ async def get_voice_config(token: str = Depends(verify_token)):
             base_url = "https://openspeech.bytedance.com"
     if provider == "siliconflow" and not base_url:
         base_url = "https://api.siliconflow.cn/v1"
+    if provider == "xiaomi" and not base_url:
+        base_url = "https://api.xiaomimimo.com/v1"
 
     # 脱敏
     api_key_masked = (
@@ -2336,6 +2352,7 @@ async def get_voice_config(token: str = Depends(verify_token)):
             {"id": "doubao", "name": "火山引擎（豆包）"},
             {"id": "siliconflow", "name": "硅基流动（OpenAI 兼容）"},
             {"id": "custom", "name": "自定义 OpenAI 兼容"},
+            {"id": "xiaomi", "name": "小米 MiMo TTS"},
         ],
     }
 
@@ -2347,8 +2364,14 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
 
     updated = {}
     env_updates = {}
-    allowed_providers = {"doubao", "siliconflow", "custom"}
+    allowed_providers = {"doubao", "siliconflow", "custom", "xiaomi"}
     allowed_formats = {"mp3", "wav", "ogg", "opus", "flac", "aac", "pcm"}
+    effective_provider = str(
+        config.provider
+        if config.provider is not None
+        else chat_config.VOICE_CONFIG.get("PROVIDER", "doubao")
+    ).strip().lower() or "doubao"
+    provider_defaults = chat_config.get_voice_provider_defaults(effective_provider)
 
     if config.enabled is not None:
         chat_config.VOICE_CONFIG["ENABLED"] = config.enabled
@@ -2360,12 +2383,14 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
     if config.provider is not None:
         provider = str(config.provider).strip().lower()
         if provider not in allowed_providers:
-            raise HTTPException(400, "语音 provider 必须是 doubao/siliconflow/custom")
+            raise HTTPException(400, "语音 provider 必须是 doubao/siliconflow/custom/xiaomi")
         chat_config.VOICE_CONFIG["PROVIDER"] = provider
         os.environ["VOICE_PROVIDER"] = provider
         env_updates["VOICE_PROVIDER"] = provider
         updated["provider"] = provider
         await chat_db_manager.set_global_setting("voice_provider", provider)
+        effective_provider = provider
+        provider_defaults = chat_config.get_voice_provider_defaults(effective_provider)
 
     if config.base_url is not None:
         base_url = str(config.base_url).strip()
@@ -2387,6 +2412,10 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
 
     if config.model_name is not None:
         model_name = str(config.model_name).strip()
+        if effective_provider == "xiaomi" and (
+            not model_name or model_name == "FunAudioLLM/CosyVoice2-0.5B"
+        ):
+            model_name = str(provider_defaults["MODEL_NAME"])
         chat_config.VOICE_CONFIG["MODEL_NAME"] = model_name
         os.environ["VOICE_MODEL"] = model_name
         env_updates["VOICE_MODEL"] = model_name
@@ -2667,13 +2696,56 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
         await chat_db_manager.set_global_setting("voice_generation_cost", str(config.generation_cost))
 
     if config.max_text_length is not None:
-        if not 20 <= config.max_text_length <= 5000:
-            raise HTTPException(400, "最大文本长度必须在 20 到 5000 之间")
+        max_text_length_upper_bound = 8000 if effective_provider == "xiaomi" else 5000
+        if not 20 <= config.max_text_length <= max_text_length_upper_bound:
+            raise HTTPException(
+                400,
+                f"最大文本长度必须在 20 到 {max_text_length_upper_bound} 之间",
+            )
         chat_config.VOICE_CONFIG["MAX_TEXT_LENGTH"] = config.max_text_length
         os.environ["VOICE_MAX_TEXT_LENGTH"] = str(config.max_text_length)
         env_updates["VOICE_MAX_TEXT_LENGTH"] = str(config.max_text_length)
         updated["max_text_length"] = config.max_text_length
         await chat_db_manager.set_global_setting("voice_max_text_length", str(config.max_text_length))
+
+    if effective_provider == "xiaomi":
+        current_base_url = str(chat_config.VOICE_CONFIG.get("BASE_URL", "")).strip()
+        if not current_base_url:
+            current_base_url = "https://api.xiaomimimo.com/v1"
+            chat_config.VOICE_CONFIG["BASE_URL"] = current_base_url
+            os.environ["VOICE_API_URL"] = current_base_url
+            env_updates["VOICE_API_URL"] = current_base_url
+            updated["base_url"] = current_base_url
+            await chat_db_manager.set_global_setting("voice_api_url", current_base_url)
+
+        current_model_name = str(chat_config.VOICE_CONFIG.get("MODEL_NAME", "")).strip()
+        if not current_model_name or current_model_name == "FunAudioLLM/CosyVoice2-0.5B":
+            current_model_name = str(provider_defaults["MODEL_NAME"])
+            chat_config.VOICE_CONFIG["MODEL_NAME"] = current_model_name
+            os.environ["VOICE_MODEL"] = current_model_name
+            env_updates["VOICE_MODEL"] = current_model_name
+            updated["model_name"] = current_model_name
+            await chat_db_manager.set_global_setting("voice_model", current_model_name)
+
+        current_voice_type = str(chat_config.VOICE_CONFIG.get("VOICE_TYPE", "")).strip()
+        if not current_voice_type or current_voice_type == "zh_female_wanwanxiaohe_moon_bigtts":
+            current_voice_type = str(provider_defaults["VOICE_TYPE"])
+            chat_config.VOICE_CONFIG["VOICE_TYPE"] = current_voice_type
+            os.environ["VOICE_VOICE_TYPE"] = current_voice_type
+            env_updates["VOICE_VOICE_TYPE"] = current_voice_type
+            updated["voice_type"] = current_voice_type
+            await chat_db_manager.set_global_setting("voice_voice_type", current_voice_type)
+
+        current_max_text_length = int(chat_config.VOICE_CONFIG.get("MAX_TEXT_LENGTH", 500))
+        if current_max_text_length <= 500 and config.max_text_length is None:
+            current_max_text_length = int(provider_defaults["MAX_TEXT_LENGTH"])
+            chat_config.VOICE_CONFIG["MAX_TEXT_LENGTH"] = current_max_text_length
+            os.environ["VOICE_MAX_TEXT_LENGTH"] = str(current_max_text_length)
+            env_updates["VOICE_MAX_TEXT_LENGTH"] = str(current_max_text_length)
+            updated["max_text_length"] = current_max_text_length
+            await chat_db_manager.set_global_setting(
+                "voice_max_text_length", str(current_max_text_length)
+            )
 
     if config.request_timeout_seconds is not None:
         if not 5 <= config.request_timeout_seconds <= 300:
@@ -2714,8 +2786,20 @@ async def test_voice_generation(
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(400, "测试文本不能为空")
-    if len(text) > 5000:
-        raise HTTPException(400, "测试文本不能超过 5000 字符")
+    provider = str(chat_config.VOICE_CONFIG.get("PROVIDER", "doubao")).strip().lower()
+    provider_defaults = chat_config.get_voice_provider_defaults(provider)
+    max_text_length = max(
+        20,
+        int(
+            chat_config.VOICE_CONFIG.get(
+                "MAX_TEXT_LENGTH", provider_defaults["MAX_TEXT_LENGTH"]
+            )
+        ),
+    )
+    if provider == "xiaomi" and max_text_length <= 500:
+        max_text_length = int(provider_defaults["MAX_TEXT_LENGTH"])
+    if len(text) > max_text_length:
+        raise HTTPException(400, f"测试文本不能超过 {max_text_length} 字符")
 
     selected_voice_type = (payload.voice_type or "").strip() or None
     selected_emotion = (payload.emotion or "").strip() or None

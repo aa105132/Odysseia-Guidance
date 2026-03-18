@@ -594,17 +594,36 @@ VIDEO_GEN_QUALITY_TO_RESOLUTION = {
 
 
 # --- 语音合成配置 ---
+def get_voice_provider_defaults(provider: str = "doubao") -> dict:
+    """按 provider 返回语音服务默认值。"""
+    normalized_provider = str(provider or "doubao").strip().lower() or "doubao"
+    if normalized_provider == "xiaomi":
+        return {
+            "MODEL_NAME": "mimo-v2-tts",
+            "VOICE_TYPE": "mimo_default",
+            "MAX_TEXT_LENGTH": 8000,
+        }
+
+    return {
+        "MODEL_NAME": "FunAudioLLM/CosyVoice2-0.5B",
+        "VOICE_TYPE": "zh_female_wanwanxiaohe_moon_bigtts",
+        "MAX_TEXT_LENGTH": 500,
+    }
+
+
 def _get_voice_config():
     """获取语音合成配置，从环境变量读取"""
+    provider = os.getenv("VOICE_PROVIDER", "doubao")
+    provider_defaults = get_voice_provider_defaults(provider)
     return {
         "ENABLED": _parse_bool_env("VOICE_ENABLED", "False"),
-        # 提供商: "doubao"（火山引擎）, "siliconflow"（硅基流动）, "custom"（自定义 OpenAI 兼容）
-        "PROVIDER": os.getenv("VOICE_PROVIDER", "doubao"),
+        # 提供商: "doubao"（火山引擎）, "siliconflow"（硅基流动）, "custom"（自定义 OpenAI 兼容）, "xiaomi"（小米 MiMo）
+        "PROVIDER": provider,
         # 通用端点（留空按 provider 使用默认）
         "BASE_URL": os.getenv("VOICE_API_URL", ""),
-        # OpenAI 兼容接口使用（siliconflow/custom）
+        # OpenAI 兼容 / API Key 接口使用（siliconflow/custom/xiaomi）
         "API_KEY": os.getenv("VOICE_API_KEY", ""),
-        "MODEL_NAME": os.getenv("VOICE_MODEL", "FunAudioLLM/CosyVoice2-0.5B"),
+        "MODEL_NAME": os.getenv("VOICE_MODEL", provider_defaults["MODEL_NAME"]),
         # 火山引擎豆包使用
         "APP_ID": os.getenv("VOICE_APP_ID", ""),
         "ACCESS_TOKEN": os.getenv("VOICE_ACCESS_TOKEN", ""),
@@ -624,7 +643,7 @@ def _get_voice_config():
         "CLONE_CLUSTER": os.getenv("VOICE_CLONE_CLUSTER", "volcano_icl"),
         "CLONE_RESOURCE_ID": os.getenv("VOICE_CLONE_RESOURCE_ID", "seed-icl-2.0"),
         # 通用语音参数
-        "VOICE_TYPE": os.getenv("VOICE_VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"),
+        "VOICE_TYPE": os.getenv("VOICE_VOICE_TYPE", provider_defaults["VOICE_TYPE"]),
         # 可用音色列表（供提示词注入和工具选型；留空表示不限制）
         "AVAILABLE_VOICE_TYPES": _parse_str_list_env("VOICE_AVAILABLE_TYPES", []),
         # 音色说明映射（voice_id -> 角色/语气/适用场景说明）
@@ -645,7 +664,9 @@ def _get_voice_config():
         "EMOTION_SCALE": _parse_float_env("VOICE_EMOTION_SCALE", 4.0),
         # 成本与限制
         "VOICE_GENERATION_COST": _parse_int_env("VOICE_GEN_COST", 3),
-        "MAX_TEXT_LENGTH": _parse_int_env("VOICE_MAX_TEXT_LENGTH", 500),
+        "MAX_TEXT_LENGTH": _parse_int_env(
+            "VOICE_MAX_TEXT_LENGTH", provider_defaults["MAX_TEXT_LENGTH"]
+        ),
         "REQUEST_TIMEOUT_SECONDS": _parse_int_env("VOICE_TIMEOUT_SECONDS", 120),
     }
 

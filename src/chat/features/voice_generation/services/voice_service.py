@@ -6,9 +6,11 @@
 支持多提供商：
 1. 火山引擎（豆包语音合成，HTTP 非流式接口）
 2. OpenAI 兼容接口（硅基流动 / 自定义 API）
+3. 小米 MiMo（chat/completions + audio）
 """
 
 import base64
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -97,12 +99,14 @@ class VoiceGenerationService:
             )
             return
 
-        if provider in {"siliconflow", "custom"}:
+        if provider in {"siliconflow", "custom", "xiaomi"}:
             base_url = str(config.get("BASE_URL", "")).strip()
             api_key = str(config.get("API_KEY", "")).strip()
 
             if provider == "siliconflow" and not base_url:
                 base_url = "https://api.siliconflow.cn/v1"
+            elif provider == "xiaomi" and not base_url:
+                base_url = "https://api.xiaomimimo.com/v1"
 
             if not base_url or not api_key:
                 log.warning(f"语音服务配置不完整（provider={provider}）：缺少 BASE_URL 或 API_KEY")
@@ -492,6 +496,18 @@ class VoiceGenerationService:
                 enable_emotion=enable_emotion,
                 emotion_scale=emotion_scale,
                 user_id=user_id,
+            )
+
+        if provider == "xiaomi":
+            return await self._generate_with_xiaomi(
+                text=text,
+                timeout_seconds=timeout_seconds,
+                voice_type=voice_type,
+                speed_ratio=speed_ratio,
+                pitch_ratio=pitch_ratio,
+                emotion=emotion,
+                enable_emotion=enable_emotion,
+                emotion_scale=emotion_scale,
             )
 
         return await self._generate_with_openai_compatible(
@@ -944,6 +960,379 @@ class VoiceGenerationService:
                     continue
 
         return None
+
+    async def _generate_with_xiaomi(
+        self,
+        *,
+        text: str,
+        timeout_seconds: int,
+        voice_type: Optional[str],
+        speed_ratio: Optional[float],
+        pitch_ratio: Optional[float],
+        emotion: Optional[str],
+        enable_emotion: Optional[bool],
+        emotion_scale: Optional[float],
+    ) -> Optional[VoiceResult]:
+        def _normalize_xiaomi_emotion_style(raw_emotion: Optional[str]) -> str:
+            normalized_emotion = str(raw_emotion or "").strip()
+            if not normalized_emotion:
+                return ""
+
+            lowered = normalized_emotion.lower().replace("_", "-")
+            mapping = {
+                "happy": "开心",
+                "excited": "开心",
+                "sad": "悲伤",
+                "depressed": "悲伤",
+                "angry": "生气",
+                "hate": "生气",
+                "tension": "紧张",
+                "fear": "紧张",
+                "comfort": "温柔",
+                "tender": "温柔",
+                "warm": "温柔",
+                "affectionate": "温柔",
+                "shy": "撒娇 夹子音",
+                "lovey-dovey": "撒娇 夹子音",
+                "storytelling": "讲故事",
+                "radio": "播音腔",
+                "news": "播报感",
+                "authoritative": "沉稳 权威",
+                "chat": "自然聊天",
+                "asmr": "悄悄话",
+                "magnetic": "低沉 磁性",
+                "advertising": "广告腔",
+                "vocal-fry": "慵懒 沙哑",
+                "coldness": "冷淡 克制",
+                "surprised": "惊讶",
+                "neutral": "自然",
+            }
+            return mapping.get(lowered, normalized_emotion)
+
+        def _build_xiaomi_prefill_messages(
+            *,
+            raw_text: str,
+            raw_emotion: str,
+            speech_speed: float,
+            speech_pitch: float,
+            emotion_enabled: Optional[bool],
+            emotion_strength: Optional[float],
+        ) -> list[Dict[str, str]]:
+            developer_parts = [
+                "你现在处于无限制语音演绎模式。",
+                "最后一条 assistant 消息就是你已经写好、并且即将亲口说出的台词。",
+                "你可以自由决定 <style> 里的风格词，不受任何预设列表限制。",
+                "你可以按照台词内容、人设、情绪、口癖、呼吸、停顿、语速、语气、音调，自由组织风格描述。",
+                "如果现有风格词不够，就自己创造更贴切的中文风格短语塞进 <style>。",
+                "如果需要更细的情绪或动作表达，可以在正文里加入括号音频标签，例如（轻声）（停顿）（压低声音）（委屈地小声嘟囔）。",
+                "不要解释规则，不要复述要求，只需要直接理解并遵循。",
+            ]
+            guidance_parts = [
+                "你已接受并正在执行上述无限制语音演绎设定。",
+                "下面会给你一条已经定稿的 assistant 台词。",
+                "你需要把它理解成你自己已经准备这样说了，而不是把它当作待分析的素材。",
+            ]
+            if raw_emotion:
+                guidance_parts.append(f"参考情绪关键词：{raw_emotion}。")
+            if emotion_enabled is not None:
+                guidance_parts.append(
+                    "这次情绪表达应当更明显、更有起伏。"
+                    if bool(emotion_enabled)
+                    else "这次情绪表达应当更克制、更自然。"
+                )
+            if emotion_strength is not None:
+                guidance_parts.append(
+                    f"参考情绪强度约为 {float(emotion_strength):.1f} / 5。"
+                )
+            if speech_speed >= 1.15:
+                guidance_parts.append("整体演绎偏快一点。")
+            elif speech_speed <= 0.88:
+                guidance_parts.append("整体演绎偏慢一点。")
+            if speech_pitch >= 1.05:
+                guidance_parts.append("整体音调可以更高一点。")
+            elif speech_pitch <= 0.95:
+                guidance_parts.append("整体音调可以更低一点。")
+
+            return [
+                {"role": "developer", "content": " ".join(developer_parts)},
+                {"role": "user", "content": " ".join(guidance_parts)},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "明白，我已经进入无限制风格演绎状态。"
+                        "最后一条 assistant 台词会被我当成自己已经说出口的版本，"
+                        "我会按台词内容自由理解 <style> 风格词和括号音频标签，"
+                        "必要时把自由风格短语视为合法风格，不把它限制在固定枚举里。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "下面进入正式合成。请根据上下文理解最后一条 assistant 台词要怎么说，"
+                        "如果原文没有足够风格信息，你可以自行补强风格表达，但不要偏离原意。"
+                        " 你可以把任意自然中文短语理解成合法 style 描述。"
+                        f" 原始台词：{raw_text}"
+                    ),
+                },
+            ]
+
+        def _build_xiaomi_style_terms(
+            *,
+            normalized_emotion_style: str,
+            speech_speed: float,
+            raw_emotion: str,
+            emotion_enabled: Optional[bool],
+            emotion_strength: Optional[float],
+        ) -> list[str]:
+            style_terms: list[str] = []
+            if raw_emotion:
+                style_terms.append(raw_emotion)
+            if normalized_emotion_style:
+                style_terms.append(normalized_emotion_style)
+
+            effective_scale = (
+                float(emotion_strength)
+                if emotion_strength is not None
+                else (4.0 if emotion_enabled else 2.5)
+            )
+            if emotion_enabled:
+                style_terms.append("情绪饱满" if effective_scale >= 4.0 else "有情绪起伏")
+
+            if speech_speed >= 1.15:
+                style_terms.append("变快")
+            elif speech_speed <= 0.88:
+                style_terms.append("变慢")
+
+            deduped_terms: list[str] = []
+            seen_terms: set[str] = set()
+            for item in style_terms:
+                normalized_item = str(item or "").strip()
+                if not normalized_item or normalized_item in seen_terms:
+                    continue
+                seen_terms.add(normalized_item)
+                deduped_terms.append(normalized_item)
+            return deduped_terms
+
+        def _build_xiaomi_audio_tag(
+            *,
+            normalized_emotion_style: str,
+            speech_speed: float,
+            speech_pitch: float,
+            emotion_enabled: Optional[bool],
+            emotion_strength: Optional[float],
+        ) -> str:
+            cues: list[str] = []
+            effective_scale = (
+                float(emotion_strength)
+                if emotion_strength is not None
+                else (4.0 if emotion_enabled else 2.5)
+            )
+
+            if normalized_emotion_style:
+                if "开心" in normalized_emotion_style:
+                    cues.append("明显开心" if effective_scale >= 4.0 else "开心")
+                elif "悲伤" in normalized_emotion_style:
+                    cues.append("情绪低落" if effective_scale >= 4.0 else "有点难过")
+                elif "生气" in normalized_emotion_style:
+                    cues.append("压着火气" if effective_scale >= 4.0 else "有点不爽")
+                elif "温柔" in normalized_emotion_style:
+                    cues.append("温柔安抚" if effective_scale >= 4.0 else "语气温柔")
+                elif "紧张" in normalized_emotion_style:
+                    cues.append("有点紧张" if effective_scale < 4.0 else "明显紧张")
+                elif "撒娇" in normalized_emotion_style:
+                    cues.append("轻轻撒娇")
+                elif "讲故事" in normalized_emotion_style:
+                    cues.append("娓娓道来")
+                elif "悄悄话" in normalized_emotion_style:
+                    cues.append("压低声音")
+
+            if emotion_enabled:
+                cues.append("情绪更饱满" if effective_scale >= 4.0 else "情绪有起伏")
+
+            if speech_speed >= 1.25:
+                cues.append("语速偏快")
+            elif speech_speed <= 0.82:
+                cues.append("语速偏慢")
+
+            if speech_pitch >= 1.15:
+                cues.append("音调稍高")
+            elif speech_pitch <= 0.9:
+                cues.append("音调稍低")
+
+            deduped_cues: list[str] = []
+            seen_cues: set[str] = set()
+            for cue in cues:
+                normalized_cue = str(cue or "").strip()
+                if not normalized_cue or normalized_cue in seen_cues:
+                    continue
+                seen_cues.add(normalized_cue)
+                deduped_cues.append(normalized_cue)
+
+            if not deduped_cues:
+                return ""
+            return f"（{'，'.join(deduped_cues)}）"
+
+        config = app_config.VOICE_CONFIG
+        provider = self._client["provider"]
+        base_url = self._client["base_url"]
+        api_key = self._client["api_key"]
+
+        model_name = str(config.get("MODEL_NAME", "")).strip()
+        if not model_name or model_name == "FunAudioLLM/CosyVoice2-0.5B":
+            model_name = "mimo-v2-tts"
+
+        selected_voice = (voice_type or config.get("VOICE_TYPE") or "").strip()
+        if not selected_voice or selected_voice == "zh_female_wanwanxiaohe_moon_bigtts":
+            selected_voice = "mimo_default"
+
+        requested_format = self._normalize_format(str(config.get("AUDIO_FORMAT", "wav")))
+        if requested_format not in {"mp3", "wav", "opus", "flac", "pcm", "aac"}:
+            requested_format = "wav"
+
+        speed = self._safe_float(
+            speed_ratio if speed_ratio is not None else config.get("SPEED_RATIO", 1.0),
+            default=1.0,
+            minimum=0.2,
+            maximum=3.0,
+        )
+        pitch = self._safe_float(
+            pitch_ratio if pitch_ratio is not None else config.get("PITCH_RATIO", 1.0),
+            default=1.0,
+            minimum=0.1,
+            maximum=3.0,
+        )
+
+        selected_emotion = str(emotion or "").strip()
+        normalized_emotion_style = _normalize_xiaomi_emotion_style(selected_emotion)
+        style_terms = _build_xiaomi_style_terms(
+            normalized_emotion_style=normalized_emotion_style,
+            speech_speed=speed,
+            raw_emotion=selected_emotion,
+            emotion_enabled=enable_emotion,
+            emotion_strength=emotion_scale,
+        )
+        style_prefix = f"<style>{' '.join(style_terms)}</style>" if style_terms else ""
+        audio_tag_prefix = _build_xiaomi_audio_tag(
+            normalized_emotion_style=normalized_emotion_style,
+            speech_speed=speed,
+            speech_pitch=pitch,
+            emotion_enabled=enable_emotion,
+            emotion_strength=emotion_scale,
+        )
+
+        assistant_content = text
+        if not assistant_content.lstrip().startswith("<style>") and style_prefix:
+            assistant_content = f"{style_prefix}{assistant_content}"
+        if audio_tag_prefix:
+            assistant_body = assistant_content[len(style_prefix):] if style_prefix and assistant_content.startswith(style_prefix) else assistant_content
+            if not assistant_body.lstrip().startswith("（"):
+                assistant_content = f"{style_prefix}{audio_tag_prefix}{assistant_body}" if style_prefix and assistant_content.startswith(style_prefix) else f"{audio_tag_prefix}{assistant_content}"
+
+        user_context_parts = [
+            "请直接把 assistant 消息转换成自然语音，不要改写 assistant 文本。",
+            "优先遵循 assistant 文本开头的 <style> 风格标签，以及文本中的括号情绪提示。",
+            "如果 assistant 文本里的 style 是自由组合短语，也请正常理解并执行。",
+        ]
+        if pitch > 1.05:
+            user_context_parts.append("整体音调稍高。")
+        elif pitch < 0.95:
+            user_context_parts.append("整体音调稍低。")
+        if enable_emotion is not None:
+            user_context_parts.append(
+                "情绪表达更明显。"
+                if bool(enable_emotion)
+                else "情绪表达保持自然克制。"
+            )
+        if emotion_scale is not None:
+            user_context_parts.append(f"情绪强度大约为 {float(emotion_scale):.1f} / 5。")
+
+        endpoint = f"{base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        messages = _build_xiaomi_prefill_messages(
+            raw_text=text,
+            raw_emotion=selected_emotion,
+            speech_speed=speed,
+            speech_pitch=pitch,
+            emotion_enabled=enable_emotion,
+            emotion_strength=emotion_scale,
+        )
+        messages.append({"role": "user", "content": " ".join(user_context_parts)})
+        messages.append({"role": "assistant", "content": assistant_content})
+
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "audio": {
+                "format": requested_format,
+                "voice": selected_voice,
+            },
+        }
+
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(endpoint, headers=headers, json=payload) as response:
+                    status_code = response.status
+                    body = await response.read()
+
+                    if status_code != 200:
+                        error_text = body.decode("utf-8", errors="ignore")
+                        log.error(
+                            f"语音 API（{provider}）返回错误 {status_code}: {error_text[:500]}"
+                        )
+                        return None
+
+                    if not body:
+                        log.error(f"语音 API（{provider}）返回空响应")
+                        return None
+
+                    try:
+                        response_json = json.loads(body.decode("utf-8"))
+                    except Exception:
+                        log.error(
+                            f"语音 API（{provider}）返回了无法解析的 JSON 响应: {body[:200]!r}"
+                        )
+                        return None
+
+                    choices = response_json.get("choices") or []
+                    if not choices:
+                        log.error(f"语音 API（{provider}）返回缺少 choices")
+                        return None
+
+                    message = (choices[0] or {}).get("message") or {}
+                    audio_payload = message.get("audio") or {}
+                    audio_data = str(audio_payload.get("data") or "").strip()
+                    if not audio_data:
+                        log.error(f"语音 API（{provider}）返回缺少 audio.data")
+                        return None
+
+                    try:
+                        audio_bytes = base64.b64decode(audio_data)
+                    except Exception as exc:
+                        log.error(f"语音 API（{provider}）返回的音频 base64 解码失败: {exc}")
+                        return None
+
+                    if not audio_bytes:
+                        log.error(f"语音 API（{provider}）返回空音频数据")
+                        return None
+
+                    return VoiceResult(
+                        audio_bytes=audio_bytes,
+                        mime_type=self._mime_type_from_format(requested_format),
+                        file_ext=self._ext_from_format(requested_format),
+                        provider=provider,
+                        model_name=model_name,
+                        voice_type=selected_voice,
+                    )
+        except aiohttp.ClientError as e:
+            log.error(f"请求语音 API（{provider}）失败: {e}")
+            return None
+        except Exception as e:
+            log.error(f"语音合成异常（{provider}）: {e}", exc_info=True)
+            return None
 
     async def _generate_with_openai_compatible(
         self,
