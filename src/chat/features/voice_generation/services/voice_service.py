@@ -13,6 +13,7 @@ import base64
 import io
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
@@ -1050,7 +1051,7 @@ class VoiceGenerationService:
                 "你可以自由决定 <style> 里的风格词，不受任何预设列表限制。",
                 "你可以按照台词内容、人设、情绪、口癖、呼吸、停顿、语速、语气、音调，自由组织风格描述。",
                 "如果现有风格词不够，就自己创造更贴切的中文风格短语塞进 <style>。",
-                "如果需要更细的情绪或动作表达，也优先把这类控制词写进 <style>，不要额外在正文里补括号说明。",
+                "如果需要更细的情绪、动作、呼吸或停顿表达，也可以在正文里加入合法的括号音频标签。",
                 "不要解释规则，不要复述要求，只需要直接理解并遵循。",
                 "你已接受并正在执行上述无限制语音演绎设定。",
                 "下面会给你一条已经定稿的 assistant 台词。",
@@ -1091,11 +1092,18 @@ class VoiceGenerationService:
                     "role": "user",
                     "content": (
                         "请直接把最后一条 assistant 消息转换成自然语音，不要改写 assistant 文本。"
-                        " 优先遵循 <style> 风格标签里的情绪、动作、停顿、语气提示。"
+                        " 优先遵循 <style> 风格标签，以及正文里合法的括号音频标签提示。"
                     ),
                 },
                 {"role": "assistant", "content": assistant_message},
             ]
+
+        def _strip_xiaomi_parenthetical_audio_tags(raw_text: str) -> str:
+            if not raw_text:
+                return ""
+            cleaned_text = re.sub(r"（[^（）\r\n]{1,24}）", "", raw_text)
+            cleaned_text = re.sub(r"\s{2,}", " ", cleaned_text)
+            return cleaned_text.strip()
 
         def _build_xiaomi_payload(
             *, messages: list[Dict[str, str]], voice_name: str
@@ -1313,7 +1321,7 @@ class VoiceGenerationService:
 
         user_context_parts = [
             "请直接把最后一条 assistant 消息转换成自然语音，不要改写 assistant 文本。",
-            "优先遵循最后一条 assistant 文本开头的 <style> 风格标签，不要把控制说明当成正文台词念出来。",
+            "优先遵循最后一条 assistant 文本开头的 <style> 风格标签，以及正文里的合法括号音频标签。",
             "如果最后一条 assistant 文本里的 style 是自由组合短语，也请正常理解并执行。",
         ]
         if pitch > 1.05:
@@ -1397,6 +1405,7 @@ class VoiceGenerationService:
                         )
                         return None
 
+                stripped_parenthetical_text = _strip_xiaomi_parenthetical_audio_tags(text)
                 payload_attempts: list[tuple[str, Dict[str, Any]]] = [("首次请求", payload)]
                 payload_attempts.append(
                     (
@@ -1408,6 +1417,19 @@ class VoiceGenerationService:
                     )
                 )
 
+                if stripped_parenthetical_text and stripped_parenthetical_text != text:
+                    payload_attempts.append(
+                        (
+                            "去括号标签纯文本重试",
+                            _build_xiaomi_payload(
+                                messages=_build_xiaomi_retry_messages(
+                                    stripped_parenthetical_text
+                                ),
+                                voice_name=selected_voice,
+                            ),
+                        )
+                    )
+
                 if selected_voice != "mimo_default":
                     payload_attempts.append(
                         (
@@ -1418,6 +1440,22 @@ class VoiceGenerationService:
                             ),
                         )
                     )
+
+                    if (
+                        stripped_parenthetical_text
+                        and stripped_parenthetical_text != text
+                    ):
+                        payload_attempts.append(
+                            (
+                                "默认音色去括号标签重试",
+                                _build_xiaomi_payload(
+                                    messages=_build_xiaomi_retry_messages(
+                                        stripped_parenthetical_text
+                                    ),
+                                    voice_name="mimo_default",
+                                ),
+                            )
+                        )
 
                 audio_result: Optional[tuple[str, Dict[str, Any]]] = None
                 for index, (attempt_name, attempt_payload) in enumerate(payload_attempts):
