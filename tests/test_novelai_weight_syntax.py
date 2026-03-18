@@ -53,3 +53,32 @@ def test_clamp_danbooru_tags_only_removes_numbered_list_prefix():
     assert "masterpiece" in cleaned
     assert "best quality" in cleaned
     assert "1.45::green left eye::" in cleaned
+
+
+def test_clamp_danbooru_tags_strips_think_block_before_tags():
+    raw = (
+        "<think>Thinking about your request. Add quality tags.</think>\n"
+        "masterpiece, best quality, 1girl, solo, silver hair"
+    )
+
+    cleaned = clamp_danbooru_tags(raw, max_tags=90)
+
+    assert cleaned == "masterpiece, best quality, 1girl, solo, silver hair"
+
+
+def test_clamp_danbooru_tags_merges_positive_prompt_sections_and_ignores_negative():
+    raw = (
+        "正面提示词：\n"
+        "masterpiece, best quality, 1girl, solo\n\n"
+        "正面提示词（续）：\n"
+        "silver hair, high ponytail, heterochromia\n\n"
+        "负面提示词：\n"
+        "bad hands, lowres"
+    )
+
+    cleaned = clamp_danbooru_tags(raw, max_tags=90)
+
+    assert cleaned == (
+        "masterpiece, best quality, 1girl, solo, "
+        "silver hair, high ponytail, heterochromia"
+    )

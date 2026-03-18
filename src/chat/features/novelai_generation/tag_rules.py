@@ -9,6 +9,8 @@ NovelAI Tag 生成规则库
 import re
 from typing import List, Dict
 
+from src.chat.services.regex_service import regex_service
+
 
 # ============================================================
 # 完整的 Tag 生成核心规则 (用于对话工具 docstring 和 AI 重写)
@@ -798,17 +800,197 @@ def _build_prefill_messages() -> List[Dict[str, str]]:
     ]
 
 
-def clamp_danbooru_tags(raw_text: str, max_tags: int = 90) -> str:
-    """清洗并截断 AI 输出的 Danbooru 标签串，确保标签数不超过上限。"""
-    text = str(raw_text or "").strip().strip('"').strip("'")
+_PROMPT_SECTION_HEADER_PATTERN = re.compile(
+    r"(?im)^\s*(?P<header>("
+    r"(?:正面|正向|负面|反向)\s*(?:提示词|提示詞|prompt|tag|tags)"
+    r"|positive\s+prompt"
+    r"|negative\s+prompt"
+    r"|(?:danbooru\s+)?tags?"
+    r"|final\s+(?:prompt|tags?)"
+    r"|undesired\s+content"
+    r"|uc"
+    r"))(?:\s*[（(](?:续|continued?|cont\.?)[）)])?\s*[:：]\s*"
+)
+_POSITIVE_SECTION_KEYWORDS = (
+    "正面",
+    "正向",
+    "positive prompt",
+    "danbooru tag",
+    "tags",
+    "final prompt",
+    "final tags",
+)
+_NEGATIVE_SECTION_KEYWORDS = (
+    "负面",
+    "反向",
+    "negative prompt",
+    "undesired content",
+    "uc",
+)
+_META_TOKEN_BLACKLIST = {
+    "count",
+    "appearance",
+    "clothing",
+    "action",
+    "composition",
+    "subject",
+    "scene",
+    "detail",
+    "details",
+    "expressiveness",
+    "reactions",
+    "intensity",
+    "order",
+    "structure",
+    "fidelity",
+}
+_META_SENTENCE_STARTERS = {
+    "add",
+    "adding",
+    "adjust",
+    "amplify",
+    "enhance",
+    "follow",
+    "keep",
+    "maintain",
+    "only",
+    "organize",
+    "preserve",
+    "preserving",
+    "reorganize",
+    "resolve",
+    "retaining",
+    "return",
+    "start",
+    "starting",
+    "structure",
+    "supplement",
+    "sprinkle",
+    "thinking",
+    "without",
+}
+_META_PHRASES = (
+    "thinking about your request",
+    "preserving original intent",
+    "only adding quality",
+    "without altering intent",
+    "resolve inconsistency",
+    "structured tag order",
+    "start with upgraded quality tags",
+    "non-standard but user-intended",
+    "reorganize tags",
+    "novelai best practices",
+)
+_INLINE_HEADER_PREFIX_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"(?:正面|正向|负面|反向)\s*(?:提示词|提示詞|prompt|tag|tags)"
+    r"|positive\s+prompt"
+    r"|negative\s+prompt"
+    r"|(?:danbooru\s+)?tags?"
+    r"|final\s+(?:prompt|tags?)"
+    r"|improved\s+tags"
+    r")\s*[:：]\s*",
+    re.IGNORECASE,
+)
+_ALLOWED_DANBOORU_TOKEN_PATTERN = re.compile(r"^[a-zA-Z0-9_:\-\.#/+'() ]+$")
+
+
+def _normalize_prompt_section_header(header: str) -> str:
+    return re.sub(r"\s+", " ", str(header or "")).strip().lower()
+
+
+def _extract_positive_prompt_sections(text: str) -> str:
+    matches = list(_PROMPT_SECTION_HEADER_PATTERN.finditer(text or ""))
+    if not matches:
+        return ""
+
+    positive_chunks: List[str] = []
+    for index, match in enumerate(matches):
+        header = _normalize_prompt_section_header(match.group("header"))
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        section_body = str(text[start:end] or "").strip()
+        if not section_body:
+            continue
+        if any(keyword in header for keyword in _NEGATIVE_SECTION_KEYWORDS):
+            continue
+        if any(keyword in header for keyword in _POSITIVE_SECTION_KEYWORDS):
+            positive_chunks.append(section_body)
+
+    return "\n".join(positive_chunks)
+
+
+def _prepare_danbooru_source_text(raw_text: str) -> str:
+    text = regex_service.clean_ai_output(str(raw_text or ""))
+    text = text.strip().strip('"').strip("'")
     if not text:
         return ""
 
-    # 清理可能出现的代码块或标题前缀
-    text = re.sub(r"^```[\w-]*\s*", "", text)
+    text = re.sub(r"^\s*```[\w-]*\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
-    text = re.sub(r"^\s*(tags|improved tags)\s*:\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = text.replace("```", "")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    extracted_positive_sections = _extract_positive_prompt_sections(text)
+    if extracted_positive_sections:
+        text = extracted_positive_sections
+
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _normalize_candidate_tag(token: str) -> str:
+    normalized = str(token or "").strip()
+    if not normalized:
+        return ""
+
+    normalized = re.sub(
+        r"^\s*(?:(?:[-*•]\s+)|(?:\d+[\.)]\s+))+",
+        "",
+        normalized,
+    )
+    normalized = normalized.strip().strip("[]")
+    normalized = _INLINE_HEADER_PREFIX_PATTERN.sub("", normalized)
+    normalized = normalized.strip("`'\"* ")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _looks_like_meta_token(token: str) -> bool:
+    if not token:
+        return True
+
+    lowered = token.lower()
+    if any(phrase in lowered for phrase in _META_PHRASES):
+        return True
+    if re.search(r"[\u4e00-\u9fff]", token):
+        return True
+    if any(char in token for char in "<>[]{}"):
+        return True
+    if re.search(r"[;?!。！？；]", token):
+        return True
+    if len(token) > 80:
+        return True
+    if not re.search(r"[a-zA-Z0-9]", token):
+        return True
+    if not _ALLOWED_DANBOORU_TOKEN_PATTERN.fullmatch(token):
+        return True
+
+    words = [word for word in lowered.split() if word]
+    if len(words) > 8:
+        return True
+    if words and words[0] in _META_SENTENCE_STARTERS:
+        return True
+    if len(words) == 1 and words[0] in _META_TOKEN_BLACKLIST:
+        return True
+    return False
+
+
+def clamp_danbooru_tags(raw_text: str, max_tags: int = 90) -> str:
+    """清洗并截断 AI 输出的 Danbooru 标签串，确保标签数不超过上限。"""
+    text = _prepare_danbooru_source_text(raw_text)
+    if not text:
+        return ""
 
     if max_tags <= 0:
         max_tags = 90
@@ -816,14 +998,12 @@ def clamp_danbooru_tags(raw_text: str, max_tags: int = 90) -> str:
     tokens: List[str] = []
     seen = set()
 
-    for segment in text.split(","):
-        token = str(segment or "").strip()
+    for segment in re.split(r"[,，\n]+", text):
+        token = _normalize_candidate_tag(segment)
         if not token:
             continue
 
-        # 清理列表序号等噪声
-        token = re.sub(r"^\s*(?:(?:[-*•]\s+)|(?:\d+[\.)]\s+))+", "", token).strip().strip("[]")
-        if not token:
+        if _looks_like_meta_token(token):
             continue
 
         normalized = token.lower()
@@ -834,6 +1014,9 @@ def clamp_danbooru_tags(raw_text: str, max_tags: int = 90) -> str:
         tokens.append(token)
         if len(tokens) >= max_tags:
             break
+
+    if not tokens:
+        return re.sub(r"\s+", " ", text).strip()
 
     return ", ".join(tokens)
 
