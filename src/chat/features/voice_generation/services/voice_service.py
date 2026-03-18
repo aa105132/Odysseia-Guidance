@@ -1080,18 +1080,7 @@ class VoiceGenerationService:
                 f" 原始台词：{raw_text}"
             )
 
-            return [
-                {"role": "user", "content": " ".join(prefill_parts)},
-                {
-                    "role": "assistant",
-                    "content": (
-                        "明白，我已经进入无限制风格演绎状态。"
-                        "最后一条 assistant 台词会被我当成自己已经说出口的版本，"
-                        "我会按台词内容自由理解 <style> 风格词和括号音频标签，"
-                        "必要时把自由风格短语视为合法风格，不把它限制在固定枚举里。"
-                    ),
-                },
-            ]
+            return [{"role": "user", "content": " ".join(prefill_parts)}]
 
         def _build_xiaomi_style_terms(
             *,
@@ -1263,9 +1252,9 @@ class VoiceGenerationService:
                 assistant_content = f"{style_prefix}{audio_tag_prefix}{assistant_body}" if style_prefix and assistant_content.startswith(style_prefix) else f"{audio_tag_prefix}{assistant_content}"
 
         user_context_parts = [
-            "请直接把 assistant 消息转换成自然语音，不要改写 assistant 文本。",
-            "优先遵循 assistant 文本开头的 <style> 风格标签，以及文本中的括号情绪提示。",
-            "如果 assistant 文本里的 style 是自由组合短语，也请正常理解并执行。",
+            "请直接把最后一条 assistant 消息转换成自然语音，不要改写 assistant 文本。",
+            "优先遵循最后一条 assistant 文本开头的 <style> 风格标签，以及文本中的括号情绪提示。",
+            "如果最后一条 assistant 文本里的 style 是自由组合短语，也请正常理解并执行。",
         ]
         if pitch > 1.05:
             user_context_parts.append("整体音调稍高。")
