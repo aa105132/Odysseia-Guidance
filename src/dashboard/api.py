@@ -14,6 +14,7 @@ import uuid
 import aiohttp
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Depends, status, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +36,7 @@ from src.chat.features.games.config.text_config import (
     apply_ghost_card_image_urls,
     get_ghost_card_image_urls,
 )
+from src.database.database import AsyncSessionLocal
 
 log = logging.getLogger(__name__)
 _ENV_SAFE_UNQUOTED_RE = re.compile(r"^[A-Za-z0-9_./:@%+\-]+$")
@@ -285,6 +287,7 @@ class AIConfigUpdate(BaseModel):
     available_models: Optional[List[str]] = None
     channel_history_limit: Optional[int] = None  # 频道消息上下文条数
     newspaper_brief_threshold: Optional[int] = None  # 报纸摘要图触发阈值
+    long_reply_in_dm_enabled: Optional[bool] = None  # 超长回复是否改发私信
     max_attempts_per_key: Optional[int] = None  # 主聊天单密钥最大重试次数
     retry_delay_seconds: Optional[int] = None  # 主聊天重试延迟（秒）
     max_key_rotation_retries: Optional[int] = None  # 主聊天密钥轮换重试次数
@@ -807,6 +810,12 @@ async def get_all_config(token: str = Depends(verify_token)):
                 "gemini-2.5-flash-lite",
             ],
             "channel_history_limit": chat_config.CHANNEL_MEMORY_CONFIG.get("formatted_history_limit", 35),
+            "newspaper_brief_threshold": int(
+                chat_config.MESSAGE_SETTINGS.get("NEWSPAPER_BRIEF_THRESHOLD", 250)
+            ),
+            "long_reply_in_dm_enabled": bool(
+                chat_config.MESSAGE_SETTINGS.get("LONG_REPLY_IN_DM_ENABLED", False)
+            ),
             "max_attempts_per_key": int(chat_config.API_RETRY_CONFIG.get("MAX_ATTEMPTS_PER_KEY", 1)),
             "retry_delay_seconds": int(chat_config.API_RETRY_CONFIG.get("RETRY_DELAY_SECONDS", 1)),
             "max_key_rotation_retries": int(chat_config.API_RETRY_CONFIG.get("MAX_KEY_ROTATION_RETRIES", 3)),
@@ -1019,6 +1028,9 @@ async def get_ai_config(token: str = Depends(verify_token)):
     db_api_key = await chat_db_manager.get_global_setting("gemini_api_key")
     db_api_format = await chat_db_manager.get_global_setting("ai_api_format")
     db_newspaper_brief_threshold = await chat_db_manager.get_global_setting("newspaper_brief_threshold")
+    db_long_reply_in_dm_enabled = await chat_db_manager.get_global_setting(
+        "long_reply_in_dm_enabled"
+    )
     db_max_attempts_per_key = await chat_db_manager.get_global_setting("ai_max_attempts_per_key")
     db_retry_delay_seconds = await chat_db_manager.get_global_setting("ai_retry_delay_seconds")
     db_max_key_rotation_retries = await chat_db_manager.get_global_setting("ai_max_key_rotation_retries")
@@ -1045,6 +1057,12 @@ async def get_ai_config(token: str = Depends(verify_token)):
         )
     except (TypeError, ValueError):
         newspaper_brief_threshold = int(chat_config.MESSAGE_SETTINGS.get("NEWSPAPER_BRIEF_THRESHOLD", 250))
+
+    long_reply_in_dm_enabled = (
+        db_long_reply_in_dm_enabled == "true"
+        if db_long_reply_in_dm_enabled is not None
+        else bool(chat_config.MESSAGE_SETTINGS.get("LONG_REPLY_IN_DM_ENABLED", False))
+    )
 
     try:
         max_attempts_per_key = (
@@ -1116,6 +1134,7 @@ async def get_ai_config(token: str = Depends(verify_token)):
         "available_models": available_models,
         "channel_history_limit": chat_config.CHANNEL_MEMORY_CONFIG.get("formatted_history_limit", 35),
         "newspaper_brief_threshold": newspaper_brief_threshold,
+        "long_reply_in_dm_enabled": long_reply_in_dm_enabled,
         "max_attempts_per_key": max_attempts_per_key,
         "retry_delay_seconds": retry_delay_seconds,
         "max_key_rotation_retries": max_key_rotation_retries,
@@ -1247,6 +1266,16 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
             "newspaper_brief_threshold", str(threshold_val)
         )
         log.info(f"✅ 报纸摘要阈值已更新为: {threshold_val}")
+
+    if config.long_reply_in_dm_enabled is not None:
+        enabled = bool(config.long_reply_in_dm_enabled)
+        chat_config.MESSAGE_SETTINGS["LONG_REPLY_IN_DM_ENABLED"] = enabled
+        env_updates["LONG_REPLY_IN_DM_ENABLED"] = str(enabled).lower()
+        updated["long_reply_in_dm_enabled"] = enabled
+        await chat_db_manager.set_global_setting(
+            "long_reply_in_dm_enabled", str(enabled).lower()
+        )
+        log.info(f"✅ 超长回复私信分流已{'启用' if enabled else '禁用'}")
 
     if config.max_attempts_per_key is not None:
         if not 1 <= config.max_attempts_per_key <= 10:
@@ -4468,6 +4497,73 @@ async def get_status(token: str = Depends(verify_token)):
         "config_loaded": True,
         "timestamp": datetime.utcnow().isoformat(),
         "integrated_mode": True,  # 标识Dashboard与Bot运行在同一进程
+    }
+
+
+@app.get("/api/stats/today")
+async def get_today_stats(token: str = Depends(verify_token)):
+    """获取今日 Dashboard 统计。"""
+    from src.chat.utils.database import chat_db_manager
+    from src.database.services.dashboard_daily_stats_service import (
+        dashboard_daily_stats_service,
+    )
+    from src.database.services.token_usage_service import token_usage_service
+
+    stats_date = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    bot_info = service_registry.get_bot_status()
+
+    async with AsyncSessionLocal() as session:
+        token_usage = await token_usage_service.get_token_usage(session, stats_date)
+        daily_stats = await dashboard_daily_stats_service.get_daily_stats(
+            session, stats_date
+        )
+    model_usage_today_rows = await chat_db_manager.get_model_usage_counts_today()
+    models_today = [
+        {
+            "model_name": row["model_name"],
+            "usage_count": row["usage_count"],
+        }
+        for row in model_usage_today_rows
+    ]
+    models_today.sort(key=lambda item: item["usage_count"], reverse=True)
+
+    channel_message_count = (
+        daily_stats.channel_message_count if daily_stats else 0
+    )
+    dm_message_count = daily_stats.dm_message_count if daily_stats else 0
+    image_message_count = daily_stats.image_message_count if daily_stats else 0
+    total_message_count = channel_message_count + dm_message_count
+
+    input_tokens = token_usage.input_tokens if token_usage else 0
+    output_tokens = token_usage.output_tokens if token_usage else 0
+    total_tokens = token_usage.total_tokens if token_usage else 0
+    call_count = token_usage.call_count if token_usage else 0
+    avg_tokens_per_call = round(total_tokens / call_count, 2) if call_count else 0
+
+    return {
+        "date": stats_date.isoformat(),
+        "messages": {
+            "channel": channel_message_count,
+            "dm": dm_message_count,
+            "image": image_message_count,
+            "total": total_message_count,
+        },
+        "tokens": {
+            "input": input_tokens,
+            "output": output_tokens,
+            "total": total_tokens,
+            "call_count": call_count,
+            "avg_per_call": avg_tokens_per_call,
+        },
+        "models_today": models_today,
+        "bot": {
+            "status": bot_info.get("status", "unknown"),
+            "user": bot_info.get("user"),
+            "user_id": bot_info.get("user_id"),
+            "guilds_count": bot_info.get("guilds", 0),
+            "latency_ms": bot_info.get("latency_ms"),
+            "integrated_mode": True,
+        },
     }
 
 

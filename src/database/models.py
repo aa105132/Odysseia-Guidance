@@ -6,6 +6,7 @@ from sqlalchemy import (
     String,
     Text,
     DateTime,
+    Date,
     ForeignKey,
     JSON,
     Index,
@@ -331,6 +332,35 @@ class TokenUsage(Base):
 
     def __repr__(self):
         return f"<TokenUsage(date={self.date}, total_tokens={self.total_tokens})>"
+
+
+class DashboardDailyStats(Base):
+    """
+    记录 Dashboard 需要展示的每日消息发送统计。
+    """
+
+    __tablename__ = "dashboard_daily_stats"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    date: Mapped[datetime.date] = mapped_column(
+        Date,
+        nullable=False,
+        unique=True,
+        index=True,
+        default=datetime.date.today,
+    )
+    channel_message_count: Mapped[int] = mapped_column(default=0)
+    dm_message_count: Mapped[int] = mapped_column(default=0)
+    image_message_count: Mapped[int] = mapped_column(default=0)
+
+    def __repr__(self):
+        return (
+            "<DashboardDailyStats("
+            f"date={self.date}, "
+            f"channel={self.channel_message_count}, "
+            f"dm={self.dm_message_count}, "
+            f"image={self.image_message_count})>"
+        )
 
 
 # --- 用户设置模型 (PostgreSQL) ---

@@ -833,6 +833,8 @@ class GeminiService:
         )
 
     def _reset_last_tool_outputs(self) -> None:
+        # 清理上一轮工具状态，避免一次性的格式化工具影响后续普通对话。
+        self.last_called_tools = []
         self.last_tool_image_data = None
         self.last_tool_source_links = []
 

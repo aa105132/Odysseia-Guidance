@@ -923,7 +923,10 @@ COIN_CONFIG = {
 
 # --- 消息设置 ---
 MESSAGE_SETTINGS = {
-    "DM_THRESHOLD": 300,  # 当消息长度超过此值时，通过私信发送
+    "DM_THRESHOLD": 300,  # 当消息长度超过此值时，可按开关决定是否改发私信
+    "LONG_REPLY_IN_DM_ENABLED": _parse_bool_env(
+        "LONG_REPLY_IN_DM_ENABLED", "false"
+    ),  # 是否将超长回复优先改发私信
     "NEWSPAPER_BRIEF_THRESHOLD": _parse_int_env(
         "NEWSPAPER_BRIEF_THRESHOLD", 250
     ),  # 搜索/总结场景改用报纸摘要图的正文长度阈值

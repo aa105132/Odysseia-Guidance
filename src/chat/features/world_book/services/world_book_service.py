@@ -157,6 +157,7 @@ class WorldBookService:
             log.error("ParadeDB 连接不可用，无法添加知识条目。")
             return False
 
+        cursor = None
         try:
             from psycopg2.extras import DictCursor
 
@@ -222,9 +223,9 @@ class WorldBookService:
                 conn.rollback()
             return False
         finally:
-            if "cursor" in locals() and cursor:
+            if cursor:
                 cursor.close()
-            # 注意：不在这里关闭连接，因为连接由 RAG 服务管理
+            incremental_rag_service._close_parade_connection(conn)
 
     async def get_profile_by_discord_id(
         self, discord_id: int
@@ -281,7 +282,8 @@ class WorldBookService:
         except Exception as e:
             log.error(f"查询用户档案时发生未知错误: {e}", exc_info=True)
             return None
-        # 注意：我们不在这里关闭连接或游标，假设连接池会管理它
+        finally:
+            incremental_rag_service._close_parade_connection(conn)
 
 
 # 使用已导入的全局服务实例来创建 WorldBookService 的单例

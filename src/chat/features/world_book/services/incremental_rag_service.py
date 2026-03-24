@@ -235,7 +235,6 @@ class IncrementalRAGService:
 
     def __init__(self):
         self.gemini_service = None
-        self.parade_conn = None
 
     def _get_gemini_service(self):
         """延迟导入 Gemini 服务以避免循环导入。"""
@@ -251,26 +250,39 @@ class IncrementalRAGService:
         return gemini_service.is_available()
 
     def _get_parade_connection(self):
-        """获取 Parade DB 连接"""
-        if self.parade_conn is None:
-            try:
-                # 优先使用 DB_HOST，其次使用 EXTERNAL_DB_HOST，最后根据运行环境决定
-                db_host = os.getenv("DB_HOST") or os.getenv("EXTERNAL_DB_HOST")
-                if not db_host:
-                    db_host = "localhost"
+        """获取 Parade DB 连接。
 
-                self.parade_conn = psycopg2.connect(
-                    dbname=os.getenv("POSTGRES_DB", "braingirl_db"),
-                    user=os.getenv("POSTGRES_USER", "user"),
-                    password=os.getenv("POSTGRES_PASSWORD", "password"),
-                    host=db_host,
-                    port=os.getenv("DB_PORT", "5432"),
-                )
-                log.debug(f"成功连接到 Parade DB (host: {db_host})")
-            except Exception as e:
-                log.error(f"连接到 Parade DB 失败: {e}", exc_info=True)
-                return None
-        return self.parade_conn
+        每次调用都返回一个新的连接，避免长期复用同一个 psycopg2 连接，
+        导致只执行 SELECT 也一直停留在事务中。
+        """
+        try:
+            # 优先使用 DB_HOST，其次使用 EXTERNAL_DB_HOST，最后根据运行环境决定
+            db_host = os.getenv("DB_HOST") or os.getenv("EXTERNAL_DB_HOST")
+            if not db_host:
+                db_host = "localhost"
+
+            conn = psycopg2.connect(
+                dbname=os.getenv("POSTGRES_DB", "braingirl_db"),
+                user=os.getenv("POSTGRES_USER", "user"),
+                password=os.getenv("POSTGRES_PASSWORD", "password"),
+                host=db_host,
+                port=os.getenv("DB_PORT", "5432"),
+            )
+            log.debug(f"成功连接到 Parade DB (host: {db_host})")
+            return conn
+        except Exception as e:
+            log.error(f"连接到 Parade DB 失败: {e}", exc_info=True)
+            return None
+
+    def _close_parade_connection(self, conn):
+        """关闭 Parade DB 连接。"""
+        if not conn:
+            return
+
+        try:
+            conn.close()
+        except Exception as e:
+            log.warning(f"关闭 Parade DB 连接失败: {e}", exc_info=True)
 
     @async_retry(retries=3, delay=5)
     async def process_community_member(self, member_id: str) -> bool:
@@ -315,6 +327,7 @@ class IncrementalRAGService:
         if not conn:
             return None
 
+        cursor = None
         try:
             cursor = conn.cursor(cursor_factory=DictCursor)
             cursor.execute(
@@ -410,6 +423,7 @@ class IncrementalRAGService:
         finally:
             if cursor:
                 cursor.close()
+            self._close_parade_connection(conn)
 
         return None
 
@@ -481,9 +495,10 @@ class IncrementalRAGService:
             if not conn:
                 return False
 
-            cursor = conn.cursor()
+            cursor = None
 
             try:
+                cursor = conn.cursor()
                 for chunk_index, chunk_content in enumerate(chunks):
                     log.debug(f"正在为块 {chunk_index} 生成嵌入向量...")
 
@@ -528,7 +543,6 @@ class IncrementalRAGService:
                     log.debug(f"成功为块 {chunk_index} 生成嵌入向量并存入 Parade DB")
 
                 conn.commit()
-                cursor.close()
 
                 if success_count > 0:
                     log.info(
@@ -545,9 +559,11 @@ class IncrementalRAGService:
                 log.error(f"处理条目 {entry_id} 时发生错误: {e}", exc_info=True)
                 if conn:
                     conn.rollback()
+                return False
+            finally:
                 if cursor:
                     cursor.close()
-                return False
+                self._close_parade_connection(conn)
 
         except Exception as e:
             log.error(f"处理条目 {entry_id} 时发生错误: {e}", exc_info=True)
@@ -569,6 +585,7 @@ class IncrementalRAGService:
             if not conn:
                 return False
 
+            cursor = None
             cursor = conn.cursor()
 
             if table_type == "community":
@@ -589,14 +606,19 @@ class IncrementalRAGService:
                 )
 
             conn.commit()
-            cursor.close()
             return True
 
         except Exception as e:
             log.error(
                 f"从 Parade DB 删除条目 {entry_id} 的向量时发生错误: {e}", exc_info=True
             )
+            if conn:
+                conn.rollback()
             return False
+        finally:
+            if cursor:
+                cursor.close()
+            self._close_parade_connection(conn)
 
     @async_retry(retries=3, delay=5)
     async def process_general_knowledge(self, entry_id: str) -> bool:
@@ -643,6 +665,7 @@ class IncrementalRAGService:
         if not conn:
             return None
 
+        cursor = None
         try:
             cursor = conn.cursor(cursor_factory=DictCursor)
             cursor.execute(
@@ -715,6 +738,7 @@ class IncrementalRAGService:
         finally:
             if cursor:
                 cursor.close()
+            self._close_parade_connection(conn)
 
         return None
 

@@ -540,6 +540,22 @@ class ChatSettingsService:
                 db_channel_history_limit
             )
 
+        db_newspaper_brief_threshold = await self.db_manager.get_global_setting(
+            "newspaper_brief_threshold"
+        )
+        if db_newspaper_brief_threshold:
+            chat_config.MESSAGE_SETTINGS["NEWSPAPER_BRIEF_THRESHOLD"] = int(
+                db_newspaper_brief_threshold
+            )
+
+        db_long_reply_in_dm_enabled = await self.db_manager.get_global_setting(
+            "long_reply_in_dm_enabled"
+        )
+        if db_long_reply_in_dm_enabled is not None:
+            chat_config.MESSAGE_SETTINGS["LONG_REPLY_IN_DM_ENABLED"] = (
+                db_long_reply_in_dm_enabled.lower() == "true"
+            )
+
         log.info("数据库配置加载完成。")
 
     async def set_entity_settings(

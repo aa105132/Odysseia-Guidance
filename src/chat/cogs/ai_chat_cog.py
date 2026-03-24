@@ -6,11 +6,17 @@ import logging
 from typing import Optional, List
 import re
 import io
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # 导入新的 Service
 from src.chat.services.chat_service import chat_service
 from src.chat.services.message_processor import message_processor
 from src.chat.services.gemini_service import gemini_service
+from src.database.database import AsyncSessionLocal
+from src.database.services.dashboard_daily_stats_service import (
+    dashboard_daily_stats_service,
+)
 from src.chat.features.tools.functions.summarize_channel import (
     text_to_newspaper_brief_image,
 )
@@ -56,6 +62,35 @@ class AIChatCog(commands.Cog):
             for i in range(0, len(normalized_text), max_length)
         ]
 
+    async def _record_dashboard_delivery_stats(
+        self,
+        *,
+        channel_messages: int = 0,
+        dm_messages: int = 0,
+        image_messages: int = 0,
+    ) -> None:
+        if channel_messages <= 0 and dm_messages <= 0 and image_messages <= 0:
+            return
+
+        try:
+            stats_date = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+            async with AsyncSessionLocal() as session:
+                await dashboard_daily_stats_service.increment_message_stats(
+                    session,
+                    stats_date,
+                    channel_messages=channel_messages,
+                    dm_messages=dm_messages,
+                    image_messages=image_messages,
+                )
+        except Exception as error:
+            log.warning(
+                "记录 Dashboard 每日发送统计失败: "
+                f"channel_messages={channel_messages}, "
+                f"dm_messages={dm_messages}, "
+                f"image_messages={image_messages}, "
+                f"error={error}"
+            )
+
     async def _reply_text_safely(
         self, message: discord.Message, text: str, mention_author: bool = True
     ) -> List[discord.Message]:
@@ -95,6 +130,9 @@ class AIChatCog(commands.Cog):
                 )
                 raise
             sent_messages.append(sent_msg)
+        await self._record_dashboard_delivery_stats(
+            channel_messages=len(sent_messages)
+        )
         return sent_messages
 
     async def _send_dm_text_safely(
@@ -124,6 +162,7 @@ class AIChatCog(commands.Cog):
                 )
                 raise
             chunks = chunks[1:]
+            sent_count = 1
         else:
             try:
                 await user.send(intro_text)
@@ -137,6 +176,7 @@ class AIChatCog(commands.Cog):
                     f"error={error}"
                 )
                 raise
+            sent_count = 1
 
         total_chunks = len(chunks)
         for index, chunk in enumerate(chunks):
@@ -153,6 +193,8 @@ class AIChatCog(commands.Cog):
                     f"error={error}"
                 )
                 raise
+            sent_count += 1
+        await self._record_dashboard_delivery_stats(dm_messages=sent_count)
 
     async def _suppress_link_previews(self, sent_messages: List[discord.Message]) -> None:
         for sent_msg in sent_messages:
@@ -164,6 +206,13 @@ class AIChatCog(commands.Cog):
     @staticmethod
     def _should_send_newspaper_brief(last_tools: List[str]) -> bool:
         return "summarize_channel" in [str(tool_name or "").strip() for tool_name in last_tools]
+
+    def _should_send_long_reply_via_dm(self, text: str) -> bool:
+        if not bool(MESSAGE_SETTINGS.get("LONG_REPLY_IN_DM_ENABLED", False)):
+            return False
+        return self._get_text_length_without_emojis(text) > int(
+            MESSAGE_SETTINGS.get("DM_THRESHOLD", 300)
+        )
 
     @staticmethod
     def _extract_source_block(response_text: str) -> tuple[str, str]:
@@ -254,6 +303,10 @@ class AIChatCog(commands.Cog):
                 )
                 raise
 
+        await self._record_dashboard_delivery_stats(
+            channel_messages=1,
+            image_messages=1,
+        )
         await self._reply_sources_below_image(message, source_text, source_links)
         return True
 
@@ -366,10 +419,7 @@ class AIChatCog(commands.Cog):
                     await self._reply_sources_below_image(message, source_text, source_links)
                     return
 
-                if (
-                    self._get_text_length_without_emojis(body_text or response_text)
-                    > MESSAGE_SETTINGS["DM_THRESHOLD"]
-                ):
+                if self._should_send_long_reply_via_dm(body_text or response_text):
                     try:
                         channel_mention = (
                             message.channel.mention
@@ -387,6 +437,7 @@ class AIChatCog(commands.Cog):
                         await message.author.send(
                             f"刚刚在 {channel_mention} 频道里，你想听我说的话有点多，在这里悄悄告诉你哦：\n\n{body_text or response_text}"
                         )
+                        await self._record_dashboard_delivery_stats(dm_messages=1)
                         log.info(
                             f"回复因过长已通过私信发送给 {message.author.display_name}"
                         )
