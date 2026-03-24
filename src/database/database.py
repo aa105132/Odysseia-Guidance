@@ -1,6 +1,7 @@
 import os
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.pool import NullPool
 from dotenv import load_dotenv
 
 # Basic logging setup
@@ -41,7 +42,16 @@ if not DATABASE_URL:
 else:
     log.info(f"Using DATABASE_URL from environment (user: {db_user}, host: {db_host or 'from URL'})")
 
-engine = create_async_engine(DATABASE_URL, echo=True)
+# Bot 主线程和 Dashboard 线程各自运行在不同的 asyncio 事件循环中。
+# asyncpg 连接不能跨事件循环复用；若继续使用默认连接池，
+# 连接可能在一个 loop 中创建、回收到池中，再在另一个 loop 中被取出，
+# 最终触发 “got Future attached to a different loop”。
+# 这里显式禁用连接池，确保每次会话都创建并关闭当前 loop 专属连接。
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=True,
+    poolclass=NullPool,
+)
 AsyncSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
