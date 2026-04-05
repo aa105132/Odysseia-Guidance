@@ -2201,6 +2201,72 @@ class GeminiService:
             "available_lora_names": merged_lora_names,
         }
 
+    async def _load_thread_first_post_context(
+        self, channel: Optional[Any]
+    ) -> Optional[str]:
+        """加载帖子首楼内容，帮助模型优先理解当前楼的讨论起点。"""
+        if not channel or not hasattr(channel, "starter_message") or not hasattr(
+            channel, "owner_id"
+        ):
+            return None
+
+        try:
+            first_message = channel.starter_message
+            if not first_message and hasattr(channel, "fetch_message"):
+                first_message = await channel.fetch_message(channel.id)
+
+            content = str(getattr(first_message, "content", "") or "").strip()
+            if not content:
+                return None
+
+            content_limit = 1500
+            if len(content) > content_limit:
+                content = f"{content[:content_limit]}..."
+
+            author_name = "未知作者"
+            if getattr(channel, "owner", None):
+                author_name = (
+                    getattr(channel.owner, "display_name", None)
+                    or getattr(channel.owner, "name", None)
+                    or author_name
+                )
+            elif getattr(first_message, "author", None):
+                author_name = (
+                    getattr(first_message.author, "display_name", None)
+                    or getattr(first_message.author, "name", None)
+                    or author_name
+                )
+            elif getattr(channel, "owner_id", None) and getattr(channel, "guild", None):
+                try:
+                    owner = await channel.guild.fetch_member(channel.owner_id)
+                    author_name = (
+                        getattr(owner, "display_name", None)
+                        or getattr(owner, "name", None)
+                        or author_name
+                    )
+                except Exception:
+                    pass
+
+            tag_names = [
+                str(getattr(tag, "name", "") or "").strip()
+                for tag in (getattr(channel, "applied_tags", None) or [])
+                if str(getattr(tag, "name", "") or "").strip()
+            ]
+            tags_text = "、".join(tag_names) if tag_names else "无"
+
+            return (
+                "<thread_first_post>\n"
+                f"帖子标题: {getattr(channel, 'name', '未知帖子')}\n"
+                f"发帖人: {author_name}\n"
+                f"标签: {tags_text}\n"
+                "首楼内容:\n"
+                f"{content}\n"
+                "</thread_first_post>"
+            )
+        except Exception as e:
+            log.warning(f"加载帖子首楼上下文失败: {e}")
+            return None
+
     async def _execute_generation_cycle(
         self,
         user_id: int,
@@ -2233,6 +2299,7 @@ class GeminiService:
         await chat_settings_service.increment_model_usage(model_to_count)
 
         # 1. 构建完整的对话提示
+        thread_first_post_context = await self._load_thread_first_post_context(channel)
         final_conversation = prompt_service.build_chat_prompt(
             user_name=user_name,
             message=message,
@@ -2248,6 +2315,7 @@ class GeminiService:
             model_name=prompt_model_name,
             channel=channel,  # 传递 channel 对象
             user_id=user_id,  # 传递用户ID用于识别和主人验证
+            thread_first_post_context=thread_first_post_context,
         )
 
         # 3. 准备 API 调用参数 (重构)
@@ -2976,6 +3044,7 @@ class GeminiService:
         log.info(f"使用 OpenAI 兼容 API 生成回复: {api_url}, 模型: {model_name}")
         
         # 构建完整的对话提示
+        thread_first_post_context = await self._load_thread_first_post_context(channel)
         final_conversation = prompt_service.build_chat_prompt(
             user_name=user_name,
             message=message,
@@ -2991,6 +3060,7 @@ class GeminiService:
             model_name=model_name,
             channel=channel,
             user_id=user_id,
+            thread_first_post_context=thread_first_post_context,
         )
         
         # 转换为 OpenAI 格式的 messages

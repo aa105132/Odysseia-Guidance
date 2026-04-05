@@ -113,6 +113,21 @@ class PromptService:
             ]
         )
 
+    @staticmethod
+    def _build_human_style_guidance() -> str:
+        """补充更贴近真人聊天的高优先级风格约束。"""
+        return "\n".join(
+            [
+                "聊天风格补充（高优先级）：",
+                "1) 先像正在这个频道里聊天的真人群友一样理解眼前这句话，再决定要不要撒娇、嘴硬、玩梗或用表情。",
+                "2) 不要为了维持人设硬塞“哼”、叠词、撒娇、傲娇、感叹号或表情标签；没有必要时就正常说话。",
+                "3) 优先回应具体内容、情绪和上下文，再表达态度；少说空泛安慰、模板夸夸或像营业一样的话。",
+                "4) 普通闲聊允许长度自然波动：有时一句短回，有时顺着多接两句；不要每次都像同一种句式。",
+                "5) 月月的“七分娇三分傲”只是底色，不是每句都要表演；更像被夸、被哄、被逗时自然露出来的小反应。",
+                "6) 目标是像群里熟人真实回话，而不是像客服、运营、配音台词或提示词样板。",
+            ]
+        )
+
     def get_prompt(self, prompt_name: str, **kwargs) -> Optional[str]:
         """
         获取一个格式化后的提示词。
@@ -199,6 +214,7 @@ class PromptService:
         model_name: Optional[str] = None,
         channel: Optional[Any] = None,  # 新增 channel 参数
         user_id: Optional[int] = None,  # 新增 user_id 参数用于用户识别
+        thread_first_post_context: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         构建用于AI聊天的分层对话历史。
@@ -230,6 +246,15 @@ class PromptService:
         core_prompt = core_prompt_template.replace(
             "{default_image_engine}", chat_config.DEFAULT_IMAGE_ENGINE
         )
+        default_image_engine = self._normalize_default_image_engine(
+            chat_config.DEFAULT_IMAGE_ENGINE
+        )
+        default_new_image_tool_map = {
+            "imagen": "generate_image / generate_images_batch",
+            "comfyui": "generate_image_comfyui",
+            "novelai": "generate_image_novelai",
+        }
+        default_new_image_tool = default_new_image_tool_map[default_image_engine]
 
         final_conversation.append({"role": "user", "parts": [core_prompt]})
         final_conversation.append({"role": "model", "parts": ["我在线啦，随时开聊！"]})
@@ -249,6 +274,35 @@ class PromptService:
                 ],
             }
         )
+
+        # --- 聊天风格补充：让表达更像群友而不是模板 ---
+        final_conversation.append(
+            {
+                "role": "user",
+                "parts": [self._build_human_style_guidance()],
+            }
+        )
+        final_conversation.append(
+            {
+                "role": "model",
+                "parts": ["知道啦，我会先像真人接话，再自然带出月月自己的语气。"],
+            }
+        )
+
+        # --- 帖子首楼注入：优先让模型理解当前讨论的开场语境 ---
+        if thread_first_post_context:
+            final_conversation.append(
+                {
+                    "role": "user",
+                    "parts": [thread_first_post_context],
+                }
+            )
+            final_conversation.append(
+                {
+                    "role": "model",
+                    "parts": ["我先看过首楼了，会按这个语境继续聊。"],
+                }
+            )
 
         # --- 2. 动态知识注入 ---
         # 注入世界之书 (RAG) 内容
