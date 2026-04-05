@@ -323,10 +323,14 @@ class CoinService:
                     embed_data,
                 )
             elif item_effect == PERSONAL_MEMORY_ITEM_EFFECT_ID:
-                # 检查用户是否已经拥有个人记忆功能
-                user_profile = await chat_db_manager.get_user_profile(user_id)
+                # 检查用户是否已经拥有已生效的个人名片
+                from src.chat.features.world_book.services.world_book_service import (
+                    world_book_service,
+                )
+
                 has_personal_memory = (
-                    user_profile and user_profile["has_personal_memory"]
+                    await world_book_service.get_profile_by_discord_id(user_id)
+                    is not None
                 )
 
                 if has_personal_memory:

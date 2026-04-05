@@ -3,12 +3,14 @@ from typing import List, Optional, Dict, Any
 import logging
 import os
 
-from src.chat.features.odysseia_coin.service.coin_service import coin_service
+from src.chat.features.odysseia_coin.service.coin_service import (
+    coin_service,
+    PERSONAL_MEMORY_ITEM_EFFECT_ID,
+)
 from src.chat.services.event_service import event_service
 import asyncio
 from sqlalchemy import text
 from src.database.database import AsyncSessionLocal
-from src.chat.utils.database import chat_db_manager
 from src.chat.features.tutorial_search.services.tutorial_rag_service import (
     tutorial_rag_service,
 )
@@ -49,15 +51,16 @@ class ShopService:
             items = [dict(item) for item in items_rows]
 
             # 2. 处理特定商品的业务逻辑（例如，个人记忆功能）
-            user_profile = await chat_db_manager.get_user_profile(user_id)
+            from src.chat.features.world_book.services.world_book_service import (
+                world_book_service,
+            )
+
             has_personal_memory = (
-                getattr(user_profile, "has_personal_memory", False)
-                if user_profile
-                else False
+                await world_book_service.get_profile_by_discord_id(user_id) is not None
             )
             if has_personal_memory:
                 for item in items:
-                    if item.get("name") == "个人记忆功能":
+                    if item.get("effect_id") == PERSONAL_MEMORY_ITEM_EFFECT_ID:
                         item["price"] = 10
                         break
 

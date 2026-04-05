@@ -241,12 +241,18 @@ class ChatService:
             # --- 个人记忆服务 ---
             # 在获得AI回复后，记录这次对话并根据需要触发总结
             if user_profile_data:
-                await personal_memory_service.update_and_conditionally_summarize_memory(
-                    user_id=author.id,
-                    user_name=author.display_name,
-                    user_content=user_content,
-                    ai_response=ai_response,
-                )
+                try:
+                    await personal_memory_service.update_and_conditionally_summarize_memory(
+                        user_id=author.id,
+                        user_name=author.display_name,
+                        user_content=user_content,
+                        ai_response=ai_response,
+                    )
+                except Exception as memory_error:
+                    log.error(
+                        f"更新用户 {author.id} 的个人记忆时出错，已跳过本次记忆写入: {memory_error}",
+                        exc_info=True,
+                    )
 
             # 更新新系统的CD
             await chat_settings_service.update_user_cooldown(

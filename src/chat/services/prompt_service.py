@@ -676,21 +676,8 @@ class PromptService:
 
         user_profile_prompt = ""
         if user_profile_data:
-            # 1. 优雅地合并数据源：优先使用顶层数据，然后是嵌套的JSON数据
-            source_data = {}
-            source_metadata = user_profile_data.get("source_metadata")
-            if isinstance(source_metadata, dict):
-                content_json_str = source_metadata.get("content_json")
-                if isinstance(content_json_str, str):
-                    try:
-                        source_data.update(json.loads(content_json_str))
-                    except json.JSONDecodeError:
-                        log.warning(
-                            f"解析用户档案 'content_json' 失败: {content_json_str}"
-                        )
-
-            # 顶层数据覆盖JSON数据，确保最终一致性
-            source_data.update(user_profile_data)
+            # 1. 优雅地合并数据源：兼容顶层字段、扁平 metadata 与嵌套 JSON
+            source_data = self._merge_user_profile_source_data(user_profile_data)
 
             # 2. 定义字段映射并提取
             profile_map = {
@@ -1151,6 +1138,49 @@ class PromptService:
             return f"{header}<world_book_context>{body}\n\n</world_book_context>"
 
         return ""
+
+    def _merge_user_profile_source_data(
+        self, user_profile_data: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """合并用户档案的顶层字段、扁平 source_metadata 与嵌套 content_json。"""
+        if not user_profile_data:
+            return {}
+
+        source_data: Dict[str, Any] = {}
+        source_metadata = user_profile_data.get("source_metadata")
+
+        if isinstance(source_metadata, str):
+            try:
+                source_metadata = json.loads(source_metadata)
+            except json.JSONDecodeError:
+                log.warning(f"解析用户档案 source_metadata 失败: {source_metadata}")
+                source_metadata = None
+
+        if isinstance(source_metadata, dict):
+            content_json_data = source_metadata.get("content_json")
+            if isinstance(content_json_data, str):
+                try:
+                    content_json_data = json.loads(content_json_data)
+                except json.JSONDecodeError:
+                    log.warning(
+                        f"解析用户档案 content_json 失败: {content_json_data}"
+                    )
+                    content_json_data = None
+
+            if isinstance(content_json_data, dict):
+                source_data.update(content_json_data)
+
+            for key, value in source_metadata.items():
+                if key == "content_json":
+                    continue
+                source_data[key] = value
+
+        for key, value in user_profile_data.items():
+            if key == "source_metadata":
+                continue
+            source_data[key] = value
+
+        return source_data
 
     def build_rag_summary_prompt(
         self,

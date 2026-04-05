@@ -66,9 +66,30 @@ class PersonalMemoryService:
                     setattr(profile, "history", [])
 
         if history_to_summarize:
-            await self._summarize_memory(user_id, history_to_summarize)
+            summary_saved = False
+            try:
+                summary_saved = await self._summarize_memory(
+                    user_id, history_to_summarize
+                )
+            except Exception as e:
+                log.error(
+                    f"为用户 {user_id} 生成记忆摘要时发生异常，准备恢复历史记录: {e}",
+                    exc_info=True,
+                )
 
-    async def _summarize_memory(self, user_id: int, conversation_history: list):
+            if not summary_saved:
+                await self._restore_history_after_failed_summary(
+                    user_id, history_to_summarize
+                )
+
+    @staticmethod
+    def _count_user_turns(conversation_history: list) -> int:
+        """统计一段对话历史中的用户轮次数。"""
+        return sum(
+            1 for turn in (conversation_history or []) if turn.get("role") == "user"
+        )
+
+    async def _summarize_memory(self, user_id: int, conversation_history: list) -> bool:
         """私有方法：获取历史，生成摘要，并清空计数和历史。"""
         log.info(f"开始为用户 {user_id} 生成记忆摘要。")
 
@@ -89,13 +110,13 @@ class PersonalMemoryService:
 
         if not dialogue_text:
             log.warning(f"用户 {user_id} 的对话历史格式化后为空。")
-            return
+            return False
 
         # 3. 构建 Prompt 并调用 AI 生成新摘要
         prompt_template = chat_config.PROMPT_CONFIG.get("personal_memory_summary")
         if not prompt_template:
             log.error("未找到 'personal_memory_summary' 的 prompt 模板。")
-            return
+            return False
 
         final_prompt = prompt_template.format(
             old_summary=old_summary, dialogue_history=dialogue_text
@@ -140,9 +161,46 @@ class PersonalMemoryService:
                 log.debug(f"完整的新摘要:\n{new_summary}")
             # --- [MEMORY DEBUGGER] ---
             await self.update_summary_manually(user_id, new_summary)
+            log.info(f"用户 {user_id} 的总结流程完成。")
+            return True
         else:
             log.error(f"为用户 {user_id} 生成记忆摘要失败，AI 返回空。")
         log.info(f"用户 {user_id} 的总结流程完成。")
+        return False
+
+    async def _restore_history_after_failed_summary(
+        self, user_id: int, conversation_history: list
+    ) -> None:
+        """当总结失败时，尽量恢复已清空的历史与计数，避免长期记忆丢失。"""
+        restored_history = list(conversation_history or [])
+        restored_count = self._count_user_turns(restored_history)
+
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                stmt = (
+                    select(CommunityMemberProfile)
+                    .where(CommunityMemberProfile.discord_id == str(user_id))
+                    .with_for_update()
+                )
+                result = await session.execute(stmt)
+                profile = result.scalars().first()
+
+                if not profile:
+                    log.error(f"恢复用户 {user_id} 的个人记忆失败：未找到档案。")
+                    return
+
+                current_history = list(getattr(profile, "history", []) or [])
+                current_count = getattr(profile, "personal_message_count", 0) or 0
+
+                if current_history:
+                    restored_history.extend(current_history)
+
+                setattr(profile, "history", restored_history)
+                setattr(profile, "personal_message_count", restored_count + current_count)
+
+        log.warning(
+            f"用户 {user_id} 的记忆摘要生成失败，已恢复 {restored_count} 轮历史记录。"
+        )
 
     async def get_memory_summary(self, user_id: int) -> str:
         """根据用户ID从 ParadeDB 获取其个人记忆摘要。"""

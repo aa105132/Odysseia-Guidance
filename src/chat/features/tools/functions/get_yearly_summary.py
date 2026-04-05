@@ -336,12 +336,23 @@ async def _get_user_summary_data(user_id: int, year: int) -> Dict[str, Any] | No
             summary_data["affection_level"] = affection_result["affection_points"]
 
         # 检查并获取 Tier 1 的额外数据
+        from src.chat.features.world_book.services.world_book_service import (
+            world_book_service,
+        )
+
+        world_book_profile = await world_book_service.get_profile_by_discord_id(user_id)
         user_profile = await chat_db_manager.get_user_profile(user_id)
-        if user_profile and user_profile["has_personal_memory"]:
+        if world_book_profile:
+            summary_data["has_personal_profile"] = True
+            if world_book_profile.get("personal_summary"):
+                summary_data["memory_summary"] = world_book_profile["personal_summary"]
+        elif user_profile and user_profile["has_personal_memory"]:
             summary_data["has_personal_profile"] = True
             summary_data[
                 "memory_summary"
             ] = await personal_memory_service.get_memory_summary(user_id)
+
+        if user_profile:
             # 修复：直接通过列名访问，并检查键是否存在
             if "persona" in user_profile.keys() and user_profile["persona"]:
                 summary_data["persona"] = user_profile["persona"]
