@@ -82,6 +82,9 @@ def test_build_chat_prompt_injects_human_style_and_thread_first_post_context():
     assert "聊天风格补充（高优先级）" in all_user_text
     assert "先像正在这个频道里聊天的真人群友一样" in all_user_text
     assert "如果最近两三轮已经用过某种开头、结尾、撒娇句或狠话" in all_user_text
+    assert "普通闲聊长度由当下话题决定" in all_user_text
+    assert "不要机械卡字数" in all_user_text
+    assert "10-50字之间随机浮动" not in all_user_text
     assert "<thread_first_post>" in all_user_text
     assert "今天想聊聊最近玩的游戏。" in all_user_text
 
@@ -118,3 +121,15 @@ def test_build_chat_prompt_reply_image_routing_uses_default_new_image_tool():
         assert "参考画风/元素新画一张优先 generate_image_comfyui" in all_user_text
     finally:
         chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine
+
+
+def test_build_tool_result_wrapper_prompt_uses_relaxed_length_override_for_search():
+    prompt_service = PromptService()
+
+    prompt = prompt_service.build_tool_result_wrapper_prompt(
+        "web_search", "测试搜索结果"
+    )
+
+    assert "普通闲聊优先短回" in prompt
+    assert "聊天场景优先短段落、自然分段" in prompt
+    assert "50字限制" not in prompt
