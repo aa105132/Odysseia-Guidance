@@ -2,10 +2,38 @@
 
 import os
 import sys
+import types
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+fake_image_module = types.ModuleType("PIL.Image")
+fake_image_module.Image = object
+fake_image_module.Resampling = types.SimpleNamespace(LANCZOS=0)
+
+fake_image_draw_module = types.ModuleType("PIL.ImageDraw")
+fake_image_draw_module.Draw = lambda *args, **kwargs: types.SimpleNamespace(
+    text=lambda *a, **k: None
+)
+
+fake_pil_package = types.ModuleType("PIL")
+fake_pil_package.Image = fake_image_module
+fake_pil_package.ImageDraw = fake_image_draw_module
+
+sys.modules.setdefault("PIL", fake_pil_package)
+sys.modules.setdefault("PIL.Image", fake_image_module)
+sys.modules.setdefault("PIL.ImageDraw", fake_image_draw_module)
+
+fake_image_utils = types.ModuleType("src.chat.utils.image_utils")
+fake_image_utils.extract_image_frames_for_ai = lambda *args, **kwargs: []
+sys.modules.setdefault("src.chat.utils.image_utils", fake_image_utils)
+
+fake_context_service_module = types.ModuleType("src.chat.services.context_service")
+fake_context_service_module.context_service = types.SimpleNamespace(
+    clean_message_content=lambda content, guild=None: content
+)
+sys.modules.setdefault("src.chat.services.context_service", fake_context_service_module)
 
 from src.chat.config import chat_config
 from src.chat.services.prompt_service import PromptService
@@ -22,7 +50,7 @@ def _collect_user_text(conversation: list[dict]) -> str:
     return '\n'.join(parts)
 
 
-def test_build_chat_prompt_injects_comfyui_model_and_lora_context_rules():
+def test_build_chat_prompt_uses_compact_tool_guidance_for_comfyui():
     prompt_service = PromptService()
     original_default_image_engine = chat_config.DEFAULT_IMAGE_ENGINE
 
@@ -40,37 +68,21 @@ def test_build_chat_prompt_injects_comfyui_model_and_lora_context_rules():
             guild_name='测试服务器',
             location_name='测试频道',
             user_id=123456,
-            comfyui_choice_context={
-                'available_model_names': [
-                    'zimage_real_v4.safetensors',
-                    'qwen_photo_v2.safetensors',
-                    'anime_mix_v9.safetensors',
-                ],
-                'available_lora_names': [
-                    'skin_detail.safetensors',
-                    '<wlr:portrait_softlight:0.8>',
-                ],
-            },
         )
 
         all_user_text = _collect_user_text(conversation)
 
-        assert 'ComfyUI 底模与 LoRA 选择规则' in all_user_text
-        assert '真人优先候选底模' in all_user_text
-        assert 'zimage_real_v4.safetensors' in all_user_text
-        assert 'qwen_photo_v2.safetensors' in all_user_text
-        assert '可用底模列表' in all_user_text
-        assert '可用 LoRA 列表' in all_user_text
-        assert '中文自然语言描述' in all_user_text
-        assert 'SD tag 风格' in all_user_text
-        assert '只输出最终提示词正文' in all_user_text
-        assert '前景/中景/背景' in all_user_text
-        assert '建议不少于 12 句且不少于 350 字' in all_user_text
+        assert '工具调用协议（精简版）' in all_user_text
+        assert 'get_tool_usage_guide' in all_user_text
+        assert 'generate_image_comfyui' in all_user_text
+        assert '可用底模列表' not in all_user_text
+        assert 'zimage_real_v4.safetensors' not in all_user_text
+        assert 'skin_detail.safetensors' not in all_user_text
     finally:
         chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine
 
 
-def test_build_chat_prompt_treats_zit_model_as_real_human_candidate():
+def test_build_chat_prompt_does_not_inline_comfyui_choice_lists():
     prompt_service = PromptService()
     original_default_image_engine = chat_config.DEFAULT_IMAGE_ENGINE
 
@@ -88,21 +100,12 @@ def test_build_chat_prompt_treats_zit_model_as_real_human_candidate():
             guild_name='测试服务器',
             location_name='测试频道',
             user_id=123456,
-            comfyui_choice_context={
-                'available_model_names': [
-                    'moodyPornMix_zitV9.safetensors',
-                    'moodyWildMix_v10Base50steps.safetensors',
-                    'anime_mix_v9.safetensors',
-                ],
-                'available_lora_names': [],
-            },
         )
 
         all_user_text = _collect_user_text(conversation)
 
-        assert '真人优先候选底模' in all_user_text
-        assert 'moodyPornMix_zitV9.safetensors' in all_user_text
-        assert 'moodyWildMix_v10Base50steps.safetensors' in all_user_text
-        assert 'zimage / qwen / zit / zib' in all_user_text
+        assert 'get_tool_usage_guide' in all_user_text
+        assert 'moodyPornMix_zitV9.safetensors' not in all_user_text
+        assert 'moodyWildMix_v10Base50steps.safetensors' not in all_user_text
     finally:
         chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine

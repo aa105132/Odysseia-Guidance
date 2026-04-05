@@ -80,26 +80,38 @@ class PromptService:
         return PROMPT_CONFIG.get("default", {}).get(prompt_name)
 
     @staticmethod
-    def _format_choice_preview(items: Optional[List[str]], limit: int = 60) -> str:
-        normalized_items: List[str] = []
-        seen = set()
-        for raw_item in items or []:
-            item_text = str(raw_item or '').strip()
-            if not item_text:
-                continue
-            key = item_text.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            normalized_items.append(item_text)
+    def _normalize_default_image_engine(engine: Optional[str]) -> str:
+        normalized_engine = str(engine or "novelai").strip().lower()
+        if normalized_engine not in {"imagen", "novelai", "comfyui"}:
+            normalized_engine = "novelai"
+        return normalized_engine
 
-        if not normalized_items:
-            return '（当前未获取到）'
+    def _build_compact_tool_guidance(self) -> str:
+        """构建精简版工具协议，详细规则按需交给工具指南工具。"""
+        default_image_engine = self._normalize_default_image_engine(
+            chat_config.DEFAULT_IMAGE_ENGINE
+        )
+        default_new_image_tool_map = {
+            "imagen": "generate_image / generate_images_batch",
+            "comfyui": "generate_image_comfyui",
+            "novelai": "generate_image_novelai",
+        }
+        default_new_image_tool = default_new_image_tool_map[default_image_engine]
+        voice_provider = str(
+            chat_config.VOICE_CONFIG.get("PROVIDER", "") or ""
+        ).strip().lower() or "unknown"
 
-        preview = '、'.join(f'「{item}」' for item in normalized_items[:limit])
-        if len(normalized_items) > limit:
-            preview = f'{preview}……（其余 {len(normalized_items) - limit} 项省略）'
-        return preview
+        return "\n".join(
+            [
+                "工具调用协议（精简版）：",
+                "1) 平时直接按函数名调用工具，不需要把所有工具细则都背下来。",
+                "2) 只要你不确定当前有哪些工具、该选哪个工具、或某个工具的实时参数/预设/音色/底模/LoRA，就先调用 get_tool_usage_guide。",
+                "3) 对图片、视频、语音这类参数较多的工具，默认先查一次 get_tool_usage_guide 再决定最终参数。",
+                f"4) 当前默认画新图工具：{default_new_image_tool}（默认引擎：{default_image_engine}）；明确改原图/图生图时才调用 edit_image。",
+                f"5) 当前语音 provider：{voice_provider}；凡是搜索、总结、教程、结构化结果场景，一律优先文字，不要发语音。",
+                "6) 用户若点名具体预设、音色、ComfyUI 底模/VAE/CLIP/LoRA 或其他实时清单，先查 get_tool_usage_guide，确认后再传参。",
+            ]
+        )
 
     def get_prompt(self, prompt_name: str, **kwargs) -> Optional[str]:
         """
@@ -187,8 +199,6 @@ class PromptService:
         model_name: Optional[str] = None,
         channel: Optional[Any] = None,  # 新增 channel 参数
         user_id: Optional[int] = None,  # 新增 user_id 参数用于用户识别
-        novelai_preset_context: Optional[Dict[str, List[str]]] = None,
-        comfyui_choice_context: Optional[Dict[str, List[str]]] = None,
     ) -> List[Dict[str, Any]]:
         """
         构建用于AI聊天的分层对话历史。
@@ -224,429 +234,21 @@ class PromptService:
         final_conversation.append({"role": "user", "parts": [core_prompt]})
         final_conversation.append({"role": "model", "parts": ["我在线啦，随时开聊！"]})
 
-        # --- 绘图工具路由注入（跨模型统一规则）---
+        # --- 工具调用精简协议：详细清单按需通过工具查询 ---
         final_conversation.append(
             {
                 "role": "user",
+                "parts": [self._build_compact_tool_guidance()],
+            }
+        )
+        final_conversation.append(
+            {
+                "role": "model",
                 "parts": [
-                    "绘图工具路由规则："
-                    "1) 画新图默认优先 generate_image_novelai；"
-                    "2) 只有用户明确要求修改原图/图生图时才调用 edit_image；"
-                    "3) 若用户说‘照这个画风画xxx’或回复 NovelAI 图片继续创作，"
-                    "优先 generate_image_novelai；"
-                    "4) 仅当用户明确指定 Imagen 时，才调用 generate_image / generate_images_batch。"
+                    "收到，遇到需要工具但细节不确定的场景，我会先调用 get_tool_usage_guide，再决定真正要用的工具和参数。"
                 ],
             }
         )
-        final_conversation.append(
-            {
-                "role": "model",
-                "parts": ["收到，绘图时我会按该路由优先使用 NovelAI。"],
-            }
-        )
-
-        # --- NovelAI 提示词分工注入（主AI vs 提示词AI）---
-        use_prompt_model_raw = chat_config.NOVELAI_CONFIG.get(
-            "USE_PROMPT_MODEL_IN_CHAT_TOOL", True
-        )
-        if isinstance(use_prompt_model_raw, str):
-            use_prompt_model_enabled = use_prompt_model_raw.strip().lower() not in {
-                "0",
-                "false",
-                "off",
-                "no",
-                "n",
-            }
-        else:
-            use_prompt_model_enabled = bool(use_prompt_model_raw)
-
-        if use_prompt_model_enabled:
-            final_conversation.append(
-                {
-                    "role": "user",
-                    "parts": [
-                        "NovelAI 提示词分工规则（当前提示词模型已开启，使用双串策略）："
-                        "1) 调用 generate_image_novelai 时，prompt 必须传英文 Danbooru 标签串（逗号分隔），禁止自然语言摘要；"
-                        "2) 你优先负责写覆盖关键信息的 Danbooru 草稿串；工具会基于该草稿再调用提示词 AI 生成优化串；"
-                        "3) 若提示词 AI 未返回合格 Danbooru，会回退使用你传入的草稿串；"
-                        "4) 禁止在 prompt 中混入 artist:xxx 画师串（画师串必须走 artist_string）；"
-                        "5) 你只需负责草稿串质量与消息文案，并按需传 preview_message / success_message。"
-                    ],
-                }
-            )
-            final_conversation.append(
-                {
-                    "role": "model",
-                    "parts": [
-                        "收到，当前 NovelAI 提示词模型已开启；我会先给英文 Danbooru 草稿串，不写摘要式 prompt，再交给提示词AI优化；若优化失败就回退用我的草稿串。"
-                    ],
-                }
-            )
-        else:
-            final_conversation.append(
-                {
-                    "role": "user",
-                    "parts": [
-                        "NovelAI 提示词分工规则（当前提示词模型已关闭）："
-                        "1) 调用 generate_image_novelai 时，prompt 必须直接传最终可用的英文 Danbooru 标签串（逗号分隔），不要写自然语言摘要、解释、段落或“待优化草稿”；"
-                        "2) 工具不会再帮你调用提示词 AI 改写格式；若用户只给自然语言，你必须先自行细化并转成最终 Danbooru 标签后再调用；"
-                        "3) 如有需要，可显式传 use_prompt_model=False；"
-                        "4) 禁止在 prompt 中混入 artist:xxx 画师串（画师串必须走 artist_string）；"
-                        "5) 你只需负责最终标签串质量与消息文案，并按需传 preview_message / success_message。"
-                    ],
-                }
-            )
-            final_conversation.append(
-                {
-                    "role": "model",
-                    "parts": [
-                        "收到，当前 NovelAI 提示词模型已关闭；我会直接写最终可用的英文 Danbooru 标签串，不写摘要式 prompt，也不依赖工具二次改写。"
-                    ],
-                }
-            )
-
-        # --- 默认绘图引擎路由覆盖注入（高优先级）---
-        default_image_engine = str(chat_config.DEFAULT_IMAGE_ENGINE or 'novelai').strip().lower()
-        if default_image_engine not in {'imagen', 'novelai', 'comfyui'}:
-            default_image_engine = 'novelai'
-
-        if default_image_engine == 'imagen':
-            default_new_image_tool = 'generate_image / generate_images_batch'
-            route_override_text = (
-                '绘图工具路由覆盖（高优先级）：'
-                '1) 当前默认引擎是 Imagen，画新图优先调用 generate_image / generate_images_batch；'
-                '2) 只有用户明确要求修改原图/图生图时才调用 edit_image；'
-                '3) 用户明确指定 NovelAI 时才调用 generate_image_novelai；'
-                '4) 用户明确指定 ComfyUI 或 comfy 时才调用 generate_image_comfyui。'
-            )
-            route_ack_text = '收到，默认画新图我会优先使用 Imagen。'
-        elif default_image_engine == 'comfyui':
-            default_new_image_tool = 'generate_image_comfyui'
-            route_override_text = (
-                '绘图工具路由覆盖（高优先级）：'
-                '1) 当前默认引擎是 ComfyUI，画新图优先调用 generate_image_comfyui；'
-                '2) 只有用户明确要求修改原图/图生图时才调用 edit_image；'
-                '3) 用户明确指定 NovelAI 时才调用 generate_image_novelai；'
-                '4) 用户明确指定 Imagen 时才调用 generate_image / generate_images_batch。'
-            )
-            route_ack_text = '收到，默认画新图我会优先使用 ComfyUI。'
-        else:
-            default_new_image_tool = 'generate_image_novelai'
-            route_override_text = (
-                '绘图工具路由覆盖（高优先级）：'
-                '1) 当前默认引擎是 NovelAI，画新图优先调用 generate_image_novelai；'
-                '2) 只有用户明确要求修改原图/图生图时才调用 edit_image；'
-                '3) 用户明确指定 Imagen 时才调用 generate_image / generate_images_batch；'
-                '4) 用户明确指定 ComfyUI 或 comfy 时才调用 generate_image_comfyui。'
-            )
-            route_ack_text = '收到，默认画新图我会优先使用 NovelAI。'
-
-        final_conversation.append({'role': 'user', 'parts': [route_override_text]})
-        final_conversation.append({'role': 'model', 'parts': [route_ack_text]})
-
-        if default_image_engine == 'comfyui':
-            comfyui_param_hint = (
-                'ComfyUI 参数传参规则：'
-                '若用户明确给出步数、CFG、分辨率、采样器、调度器、seed、LoRA、底模、VAE、CLIP，请优先透传到 '
-                'generate_image_comfyui 的对应参数；'
-                '若用户未明确指定，你也可以根据画面目标主动设定 steps/cfg/seed/分辨率等；'
-                '若用户未指定则留空，优先使用该用户在 /comfy 面板保存的个人默认；没有个人默认时再用 Dashboard 默认。'
-            )
-            final_conversation.append({'role': 'user', 'parts': [comfyui_param_hint]})
-            final_conversation.append({'role': 'model', 'parts': ['收到，ComfyUI 生图时我会优先透传用户给出的参数。']})
-
-            comfyui_placeholder_hint = (
-                'ComfyUI 工作流占位符透传规则：'
-                '除标准参数外，你可以按占位符键名直接传额外参数（如 strength、denoise、batch_size 等），'
-                '工具会透传到工作流占位符替换层；'
-                '仅可传 JSON 基本类型（字符串/数字/布尔/数组/对象），禁止传无关上下文对象。'
-            )
-            final_conversation.append({'role': 'user', 'parts': [comfyui_placeholder_hint]})
-            final_conversation.append({'role': 'model', 'parts': ['收到，我会在需要时主动传递额外工作流参数并保持类型正确。']})
-
-            available_model_names = [
-                str(name).strip()
-                for name in ((comfyui_choice_context or {}).get('available_model_names') or [])
-                if str(name).strip()
-            ]
-            available_vae_names = [
-                str(name).strip()
-                for name in ((comfyui_choice_context or {}).get('available_vae_names') or [])
-                if str(name).strip()
-            ]
-            available_clip_names = [
-                str(name).strip()
-                for name in ((comfyui_choice_context or {}).get('available_clip_names') or [])
-                if str(name).strip()
-            ]
-            available_lora_names = [
-                str(name).strip()
-                for name in ((comfyui_choice_context or {}).get('available_lora_names') or [])
-                if str(name).strip()
-            ]
-
-            real_human_model_candidates = [
-                model_name
-                for model_name in available_model_names
-                if any(
-                    keyword in model_name.lower()
-                    for keyword in ('zimage', 'qwen', 'zit', 'zib', 'moodywildmix', 'moodypornmix')
-                )
-            ]
-
-            comfyui_model_lora_hint_lines = [
-                'ComfyUI 底模与 LoRA 选择规则：',
-                '1) 仅可从可用列表中选择 model_name / vae_name / clip_name / lora，禁止编造不存在的名称；',
-                '2) 当用户要画真人、写实肖像、现实人物时，优先选择名称包含 zimage / qwen / zit / zib 的底模；',
-                '3) 若最终选择的底模名称包含 zimage / qwen / zit / zib（大小写不敏感），prompt/negative_prompt 使用中文自然语言描述；',
-                '4) 其他底模保持 SD tag 风格（英文标签、逗号分隔）；',
-                '5) 用户明确指定底模或 LoRA 时，优先遵从用户指定。',
-            ]
-
-            comfyui_natural_language_protocol = (
-                '当底模为 zimage/qwen/zit/zib（含 moodyWildMix/moodyPornMix）时，必须使用 Visual Logic Compiler v10 协议生成中文自然语言提示词：\n'
-                '【核心规则】\n'
-                '1) 只输出最终提示词正文（用于 prompt/negative_prompt），不要解释，不要编号，不要 Markdown，不要 SD tag 串；\n'
-                '2) 正面提示词必须按以下九段结构组织：风格、画面关系、外貌、发型、服装、姿势、神情、光影、背景；\n'
-                '3) 写作必须使用主谓宾直述句，语言直白，严禁成语与被动语态（被/遭到/受到）；\n'
-                '4) 保留用户核心意图，不得擅自更改主体身份、场景和关键设定。\n'
-                '【绝对禁令】\n'
-                '1) 禁止面色异常词（脸红/潮红/微醺等），人物面部统一写“面色自然”或“肤色正常”；\n'
-                '2) 禁止抽象外貌词（清秀/英俊/丰满等），改写为可见几何或物理特征；\n'
-                '3) 禁止夸张冲突表情和不可能动作，手部遵守单手单物，动作符合人体工学；\n'
-                '4) 世界观、服装、道具、人种特征必须一致，不得互相矛盾。\n'
-                '【内容要求】\n'
-                '1) 建议不少于 12 句且不少于 350 字；\n'
-                '2) 必须明确前景/中景/背景层次、主辅光方向、色温、阴影软硬、轮廓光；\n'
-                '3) 必须补充可见材质纹理、镜头机位、焦段感、景深虚化与视觉引导路径；\n'
-                '4) 若涉及私密暴露内容，在 prompt 开头添加 nsfw 前缀。\n'
-                '【负面提示词】\n'
-                'negative_prompt 也必须使用中文自然语言，至少覆盖五类排除项：画质缺陷、解剖错误、构图错误、手部错误、纹理/材质异常。'
-            )
-
-            if real_human_model_candidates:
-                comfyui_model_lora_hint_lines.append(
-                    '真人优先候选底模：'
-                    + self._format_choice_preview(real_human_model_candidates, limit=30)
-                )
-
-            comfyui_model_lora_hint_lines.append(
-                '可用底模列表：' + self._format_choice_preview(available_model_names, limit=80)
-            )
-            comfyui_model_lora_hint_lines.append(
-                '可用 VAE 列表：' + self._format_choice_preview(available_vae_names, limit=80)
-            )
-            comfyui_model_lora_hint_lines.append(
-                '可用 CLIP 列表：' + self._format_choice_preview(available_clip_names, limit=80)
-            )
-            comfyui_model_lora_hint_lines.append(
-                '可用 LoRA 列表：' + self._format_choice_preview(available_lora_names, limit=80)
-            )
-
-            final_conversation.append({'role': 'user', 'parts': ['\n'.join(comfyui_model_lora_hint_lines)]})
-            final_conversation.append(
-                {
-                    'role': 'model',
-                    'parts': ['收到，我会基于可用底模/LoRA列表选型，真人优先 zimage/qwen/zit/zib，并按底模类型切换提示词写法。'],
-                }
-            )
-            final_conversation.append({'role': 'user', 'parts': [comfyui_natural_language_protocol]})
-            final_conversation.append(
-                {
-                    'role': 'model',
-                    'parts': ['收到，zimage/qwen/zit/zib 模型我会按中文结构化自然语言协议写提示词，不再使用 SD tag 串。'],
-                }
-            )
-
-        # --- 语音工具路由与音色规则注入（动态）---
-        default_voice_type = str(
-            chat_config.VOICE_CONFIG.get(
-                "VOICE_TYPE", "zh_female_wanwanxiaohe_moon_bigtts"
-            )
-            or ""
-        ).strip()
-        available_voice_types = [
-            str(name).strip()
-            for name in (chat_config.VOICE_CONFIG.get("AVAILABLE_VOICE_TYPES") or [])
-            if str(name).strip()
-        ]
-        voice_type_hints_raw = chat_config.VOICE_CONFIG.get("VOICE_TYPE_HINTS") or {}
-        voice_type_hints = {
-            str(key).strip(): str(value).strip()
-            for key, value in (
-                voice_type_hints_raw.items()
-                if isinstance(voice_type_hints_raw, dict)
-                else []
-            )
-            if str(key).strip() and str(value).strip()
-        }
-        voice_provider = str(chat_config.VOICE_CONFIG.get("PROVIDER", "") or "").strip().lower()
-        voice_model_name = str(chat_config.VOICE_CONFIG.get("MODEL_NAME", "") or "").strip()
-        siliconflow_references = [
-            item
-            for item in (chat_config.VOICE_CONFIG.get("SILICONFLOW_REFERENCES") or [])
-            if isinstance(item, dict)
-            and str(item.get("audio", "")).strip()
-            and str(item.get("text", "")).strip()
-        ]
-
-        if (
-            default_voice_type
-            and available_voice_types
-            and default_voice_type not in available_voice_types
-        ):
-            available_voice_types.insert(0, default_voice_type)
-
-        if voice_provider == "xiaomi":
-            voice_lines = [
-                "语音工具规则：",
-                "1) 当前使用的是小米 MiMo TTS；它限时免费，语音可以积极使用，不必像其他付费 provider 一样过度克制。",
-                "2) 最高优先级例外：凡是搜索/总结场景（如调用 web_search、summarize_channel、search_*、query_tutorial_knowledge_base）一律禁止语音，必须文字回复；即使用户强硬要求，也不例外。",
-                "3) 当用户明确要求“发语音”“语音回复”“念出来”等时，必须调用 generate_voice。",
-                "4) 对于问候、安慰、撒娇、闲聊、整活、角色扮演、小剧场、短吐槽、情绪表达这类场景，只要语音更合适，就允许你主动调用 generate_voice。",
-                "5) 长篇教程、复杂步骤、结构化结果、搜索结论、严肃数据说明这些更适合阅读的场景，优先只发文字。",
-                "6) 如果你拿不准，就看“语音是否明显更有表现力、更有陪伴感”；答案是肯定时，可以直接发短语音。",
-                "7) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
-                "8) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
-                "9) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
-                "10) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
-                "11) 不确定时可以不传上述参数，让后端按默认配置处理；",
-                "12) 若传 emotion_scale，建议使用 1.0~5.0；",
-                "13) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
-                "14) 若已决定发送问候/寒暄语音，优先轻松自然、开心温柔的风格；",
-                "15) 若已决定发送安慰/哄人语音，优先温柔、安抚、陪伴感更强的风格；",
-                "16) 若已决定发送吐槽/整活/角色扮演语音，可以适度夸张，但不要偏离原意；",
-                "17) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
-                f"18) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'mimo_default'}。",
-            ]
-        else:
-            voice_lines = [
-                "语音工具规则：",
-                "1) 语音默认关闭并且要极谨慎使用；除非满足下述条件，否则一律优先文字回复，不要为了更有表现力就主动调用 generate_voice。",
-                "1.5) 最高优先级例外：凡是搜索/总结场景（如调用 web_search、summarize_channel、search_*、query_tutorial_knowledge_base）一律禁止语音，必须文字回复；即使用户辱骂、挑衅或强硬要求语音，也不例外。",
-                "2) 条件A：当用户明确要求“发语音”“语音回复”“念出来”等时，必须调用 generate_voice。",
-                "3) 条件B：只有当你这次回复确实处于“极度愤怒 / 怒气爆发 / 压不住火”的强烈回击状态时，才允许你主动调用 generate_voice。",
-                "4) “极度愤怒”识别示例（非穷举）：用户持续挑衅、反复辱骂、恶意羞辱、严重贬低、故意踩雷，且你本轮准备爆发式回击时，才算极度愤怒。",
-                "5) 以下场景默认都不要主动发语音：普通生气、轻微不爽、阴阳怪气、吐槽、日常拌嘴、问候/道别、安慰关怀、撒娇、闲聊、普通画图反馈。",
-                "6) 如果你拿不准是否已经达到“极度愤怒”，一律按未达到处理，继续文字回复。",
-                "7) 调用 generate_voice 时，text 就是你这次要对用户说的完整内容；",
-                "8) 调用 generate_voice 时，必须显式传 send_text_after_voice=true；",
-                "9) 语音发送成功后，系统会补发一条与 text 完全一致的文字，不要再额外改写第二版文本；",
-                "10) emotion / enable_emotion / emotion_scale 都是可选参数，不是必填；",
-                "11) 不确定时可以不传上述参数，让后端按默认配置处理；",
-                "12) 若传 emotion_scale，建议使用 1.0~5.0；",
-                "13) 语音内容不做 NSFW 过滤，只需按用户原意自然表达；",
-                "14) 若已决定发送问候类语音（通常仅限用户明确要求），若支持 emotion，优先 emotion=happy（可选 tender/comfort），并可搭配 enable_emotion=true、emotion_scale=3.0~4.0；",
-                "15) 若已决定发送极度愤怒回击语音，若支持 emotion，优先 emotion=angry（更强烈可 tension），并建议 enable_emotion=true、emotion_scale=4.0~5.0；",
-                "16) 若已决定发送安慰类语音（通常仅限用户明确要求），若支持 emotion，优先 emotion=comfort（可选 tender/warm），并建议 enable_emotion=true、emotion_scale=3.0~4.5；",
-                "17) 极度愤怒回击要短促有力，不要长篇辱骂；回击后要收住语气。",
-                "18) 若未明确指定音色，优先不传 voice_type，让系统使用默认音色；",
-                f"19) 当前语音提供商：{voice_provider or 'unknown'}；当前语音模型：{voice_model_name or 'unknown'}；当前默认音色：{default_voice_type or 'zh_female_wanwanxiaohe_moon_bigtts'}。",
-            ]
-        if available_voice_types:
-            voice_lines.append(
-                "14) 可用音色名单（仅可从中选择，禁止编造）："
-                + "、".join(f"「{name}」" for name in available_voice_types)
-            )
-            voice_lines.append(
-                "15) 若用户点名音色且命中名单，才显式传 voice_type；否则继续用默认音色。"
-            )
-        else:
-            voice_lines.append("14) 暂未配置可用音色名单；如无必要请继续使用默认音色。")
-
-        if voice_type_hints:
-            hint_items = list(voice_type_hints.items())
-            hint_preview = "；".join(
-                f"「{voice_id}」=> {hint_text}"
-                for voice_id, hint_text in hint_items[:20]
-            )
-            if len(hint_items) > 20:
-                hint_preview += f"；（其余{len(hint_items) - 20}项省略）"
-            voice_lines.append(f"16) 音色说明（voice_type -> 角色/场景）：{hint_preview}")
-            voice_lines.append("17) 选择音色时优先参考上述说明，按场景匹配，不要只看 ID 字符串猜测。")
-        else:
-            voice_lines.append("16) 暂未配置音色说明；不确定时优先默认音色。")
-
-        if voice_provider == "doubao":
-            voice_lines.append("18) 你当前在使用豆包语音。emotion 必须从支持枚举中选择，禁止编造。")
-            voice_lines.append(
-                "19) 中文音色情感枚举：happy,sad,angry,surprised,fear,hate,excited,coldness,neutral,depressed,lovey-dovey,shy,comfort,tension,tender,storytelling,radio,magnetic,advertising,vocal-fry,vocal_fry,asmr,news,entertainment,dialect。"
-            )
-            voice_lines.append(
-                "20) 英文音色情感枚举：neutral,happy,angry,sad,excited,chat,asmr,warm,affectionate,authoritative。"
-            )
-            voice_lines.append(
-                "21) 情感选择要贴合语义：若已决定发送问候/寒暄语音，优先 happy（可选 tender/comfort）；若已决定发送极度愤怒回击语音，优先 angry（更强烈可 tension）；若已决定发送安慰语音，优先 comfort/tender；撒娇优先 lovey-dovey/shy；讲故事优先 storytelling。"
-            )
-            voice_lines.append(
-                "22) 若使用复刻音色（如 S_ 开头或非官方音色），后端会强制走该音色绑定的 APP_ID；未绑定或绑定不可用会失败。"
-            )
-        elif voice_provider == "siliconflow":
-            voice_lines.append("18) 你当前在使用硅基流动 TTS。可用 voice_type 只允许使用配置里给出的值，不要编造。")
-            voice_lines.append("19) 若 voice_type 形如 speech:...，表示用户自定义音色；仅在明确需要该音色时再传。")
-
-            if "indexteam/indextts-2" in voice_model_name.lower():
-                voice_lines.append("20) 当前模型是 IndexTeam/IndexTTS-2：若需要动态音色且系统已配置 references，可不传 voice_type，由后端自动携带 references。")
-            elif siliconflow_references:
-                voice_lines.append("20) 系统已配置硅基流动动态音色 references；当需要动态音色时可不传 voice_type。")
-        elif voice_provider == "xiaomi":
-            voice_lines.append("18) 你当前在使用小米 MiMo TTS，它通过 chat/completions + audio 生成语音。")
-            voice_lines.append("19) 小米 TTS 的官方控制方式是：把整体风格写成 <style>风格</style> 放在 assistant 文本最开头；如果需要更细的情绪、动作、呼吸或停顿表达，也可以在正文里加入合法的括号音频标签。")
-            voice_lines.append("20) 对小米 TTS 来说，emotion 不是固定枚举；你应优先把 emotion 直接写成任意自然中文风格短语并塞进 <style>，例如：开心、温柔、慵懒 刚睡醒、有点沙哑、撒娇 夹子音、深情款款 语速慢、像贴着耳边哄人那样轻声；括号标签只用于细粒度表演提示，不要写解释性旁白。")
-            voice_lines.append("21) 后端会优先保留你写的 emotion 原意，并通过预填充让模型把最后一条 assistant 台词当成它自己已经要这样说出口的话；所以不要把风格限制在少数预设词里。")
-            voice_lines.append("22) 默认音色优先使用 mimo_default；如果没有特别需要，优先用默认音色。")
-
-        voice_lines.append(
-            "最后：若 generate_voice 返回 generation_failed=true，说明语音没发出去；此时请立刻改为普通文字回复用户，承接原本想说的话。"
-        )
-
-        final_conversation.append({"role": "user", "parts": ["\n".join(voice_lines)]})
-        final_conversation.append(
-            {
-                "role": "model",
-                "parts": ["收到，我会按当前语音 provider 的规则执行：搜索/总结一律文字；调用语音时显式传 send_text_after_voice=true；若生成失败就立刻改为文字继续回复。若当前是小米 TTS，我会更积极地在问候、安慰、闲聊、整活等场景使用语音；否则仍保持克制，优先文字。"],
-            }
-        )
-
-        # --- NovelAI 可用预设名注入（动态）---
-        if novelai_preset_context:
-            user_preset_names = [
-                str(name).strip()
-                for name in (novelai_preset_context.get("user_preset_names") or [])
-                if str(name).strip()
-            ]
-            admin_preset_names = [
-                str(name).strip()
-                for name in (novelai_preset_context.get("admin_preset_names") or [])
-                if str(name).strip()
-            ]
-
-            if user_preset_names or admin_preset_names:
-                preset_lines = [
-                    "NovelAI 可用画师串预设名（实时）：",
-                    "调用 generate_image_novelai 且需要 preset_name 时，只能从下列名称中选择；不要编造不存在的预设名。",
-                    "【强制规则】当用户原话点名了某个预设（例如‘用XX串/XX预设/XX风格’且能对应到下列名称）时，必须显式传 preset_name。",
-                    "传入的 preset_name 必须与列表名称完全一致（仅大小写可容错）；命中管理员预设时，优先使用‘管理员/预设名’避免同名冲突。",
-                    "只有在用户没有点名且你无法明确判断时，才可以不传 preset_name，让系统自动按场景选择。",
-                ]
-
-                if user_preset_names:
-                    user_names_text = "、".join(f"「{name}」" for name in user_preset_names)
-                    preset_lines.append(f"用户预设名：{user_names_text}")
-
-                if admin_preset_names:
-                    admin_names_text = "、".join(f"「{name}」" for name in admin_preset_names)
-                    preset_lines.append(f"管理员预设名：{admin_names_text}")
-
-                final_conversation.append(
-                    {"role": "user", "parts": ["\n".join(preset_lines)]}
-                )
-                final_conversation.append(
-                    {
-                        "role": "model",
-                        "parts": ["收到，命中用户点名预设时我会强制传 preset_name，并从可用列表中精确选择。"],
-                    }
-                )
 
         # --- 2. 动态知识注入 ---
         # 注入世界之书 (RAG) 内容

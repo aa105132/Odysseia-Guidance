@@ -2233,8 +2233,6 @@ class GeminiService:
         await chat_settings_service.increment_model_usage(model_to_count)
 
         # 1. 构建完整的对话提示
-        novelai_preset_context = await self._load_novelai_preset_context(user_id)
-        comfyui_choice_context = await self._load_comfyui_choice_context(user_id)
         final_conversation = prompt_service.build_chat_prompt(
             user_name=user_name,
             message=message,
@@ -2250,8 +2248,6 @@ class GeminiService:
             model_name=prompt_model_name,
             channel=channel,  # 传递 channel 对象
             user_id=user_id,  # 传递用户ID用于识别和主人验证
-            novelai_preset_context=novelai_preset_context,
-            comfyui_choice_context=comfyui_choice_context,
         )
 
         # 3. 准备 API 调用参数 (重构)
@@ -2980,8 +2976,6 @@ class GeminiService:
         log.info(f"使用 OpenAI 兼容 API 生成回复: {api_url}, 模型: {model_name}")
         
         # 构建完整的对话提示
-        novelai_preset_context = await self._load_novelai_preset_context(user_id)
-        comfyui_choice_context = await self._load_comfyui_choice_context(user_id)
         final_conversation = prompt_service.build_chat_prompt(
             user_name=user_name,
             message=message,
@@ -2997,8 +2991,6 @@ class GeminiService:
             model_name=model_name,
             channel=channel,
             user_id=user_id,
-            novelai_preset_context=novelai_preset_context,
-            comfyui_choice_context=comfyui_choice_context,
         )
         
         # 转换为 OpenAI 格式的 messages
