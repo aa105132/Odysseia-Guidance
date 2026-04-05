@@ -3123,8 +3123,15 @@ class GeminiService:
         called_tool_names = []
         web_search_source_links: List[tuple] = []
         disabled_payload_fields: set[str] = set()
+        force_text_response_without_tools = False
         
         for iteration in range(max_tool_calls):
+            iteration_tools = (
+                []
+                if force_text_response_without_tools
+                else openai_tools
+            )
+
             payload = {
                 "model": model_name,
                 "messages": messages,
@@ -3133,8 +3140,8 @@ class GeminiService:
             }
             
             # 添加工具定义（如果有的话）
-            if openai_tools:
-                payload["tools"] = openai_tools
+            if iteration_tools:
+                payload["tools"] = iteration_tools
                 payload["tool_choice"] = "auto"
             
             payload = self._build_openai_chat_payload(
@@ -3142,7 +3149,7 @@ class GeminiService:
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                tools=openai_tools,
+                tools=iteration_tools,
                 disabled_fields=disabled_payload_fields,
             )
 
@@ -3214,6 +3221,8 @@ class GeminiService:
                     # 否则当第一项工具（如 generate_voice）返回 skip_ai_response=True 时，
                     # 会提前中断后续工具（如 generate_image_comfyui）。
                     skip_ai_response_requested = False
+                    executed_new_tool_in_this_turn = False
+                    blocked_tool_call_in_this_turn = False
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name", "")
                         tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
@@ -3249,6 +3258,7 @@ class GeminiService:
                                 tool_name, tool_args
                             )
                             if web_search_call_count >= max_web_search_calls:
+                                blocked_tool_call_in_this_turn = True
                                 log.warning(
                                     "OpenAI 工具循环中 web_search 超过调用上限，已拦截。"
                                 )
@@ -3256,6 +3266,7 @@ class GeminiService:
                                     f"本轮对话中 web_search 调用已达到上限 ({max_web_search_calls} 次)。"
                                 )
                             elif call_signature in executed_tool_signatures:
+                                blocked_tool_call_in_this_turn = True
                                 log.warning(
                                     "OpenAI 工具循环中检测到重复 web_search 参数，已拦截。"
                                 )
@@ -3266,6 +3277,7 @@ class GeminiService:
                                 executed_tool_signatures.add(call_signature)
                                 web_search_call_count += 1
                                 web_search_executed = True
+                                executed_new_tool_in_this_turn = True
                                 if discord_message:
                                     try:
                                         await discord_message.add_reaction("🔍")
@@ -3280,6 +3292,7 @@ class GeminiService:
                                     current_turn_tool_names=current_turn_tool_names,
                                 )
                         elif call_signature in executed_tool_signatures:
+                            blocked_tool_call_in_this_turn = True
                             log.warning(
                                 f"OpenAI 工具循环中检测到重复 {tool_name} 参数，已拦截。"
                             )
@@ -3289,6 +3302,7 @@ class GeminiService:
                             )
                         else:
                             executed_tool_signatures.add(call_signature)
+                            executed_new_tool_in_this_turn = True
                             tool_result = await self._execute_openai_tool_call(
                                 tool_name=tool_name,
                                 tool_args=tool_args,
@@ -3370,6 +3384,15 @@ class GeminiService:
                         self.last_called_tools = called_tool_names
                         self.last_tool_source_links = list(web_search_source_links)
                         return None
+
+                    if blocked_tool_call_in_this_turn and not executed_new_tool_in_this_turn:
+                        force_text_response_without_tools = True
+                        log.info(
+                            "OpenAI 工具循环本轮仅出现被拦截的重复/超限工具调用；"
+                            "下一轮将临时禁用工具，强制模型基于现有结果直接作答。"
+                        )
+                    elif executed_new_tool_in_this_turn:
+                        force_text_response_without_tools = False
 
                     # 继续循环以获取最终响应
                     continue
