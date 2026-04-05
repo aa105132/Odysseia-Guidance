@@ -31,6 +31,9 @@ from google.genai import errors as genai_errors
 from src.chat.utils.database import chat_db_manager
 from src.chat.config import chat_config as app_config
 from src.chat.utils.prompt_utils import replace_emojis
+from src.chat.utils.response_dedup_utils import (
+    collapse_consecutive_duplicate_sentences,
+)
 from src.chat.services.prompt_service import prompt_service
 from src.chat.services.key_rotation_service import (
     KeyRotationService,
@@ -509,6 +512,7 @@ class GeminiService:
             r"<CURRENT_USER_MESSAGE_TO_REPLY.*?>", "", formatted, flags=re.IGNORECASE
         )
         formatted = regex_service.clean_ai_output(formatted)
+        formatted = collapse_consecutive_duplicate_sentences(formatted)
 
         # 2. Remove old Discord emoji codes (like :emoji_name:)
         discord_emoji_pattern = re.compile(r":\w+:")

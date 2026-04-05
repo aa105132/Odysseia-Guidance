@@ -81,6 +81,7 @@ def test_build_chat_prompt_injects_human_style_and_thread_first_post_context():
 
     assert "聊天风格补充（高优先级）" in all_user_text
     assert "先像正在这个频道里聊天的真人群友一样" in all_user_text
+    assert "如果最近两三轮已经用过某种开头、结尾、撒娇句或狠话" in all_user_text
     assert "<thread_first_post>" in all_user_text
     assert "今天想聊聊最近玩的游戏。" in all_user_text
 
