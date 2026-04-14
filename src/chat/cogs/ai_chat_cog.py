@@ -205,7 +205,14 @@ class AIChatCog(commands.Cog):
 
     @staticmethod
     def _should_send_newspaper_brief(last_tools: List[str]) -> bool:
-        return "summarize_channel" in [str(tool_name or "").strip() for tool_name in last_tools]
+        normalized_tools = {
+            str(tool_name or "").strip()
+            for tool_name in last_tools
+            if str(tool_name or "").strip()
+        }
+        return bool(
+            {"summarize_channel", "render_newspaper_brief"} & normalized_tools
+        )
 
     def _should_send_long_reply_via_dm(self, text: str) -> bool:
         if not bool(MESSAGE_SETTINGS.get("LONG_REPLY_IN_DM_ENABLED", False)):
