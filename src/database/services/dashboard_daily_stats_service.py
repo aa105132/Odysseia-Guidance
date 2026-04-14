@@ -1,19 +1,102 @@
+import asyncio
+import logging
 from datetime import date
 
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from src.database.models import DashboardDailyStats
+from src.database.models import Base, DashboardDailyStats
+
+
+log = logging.getLogger(__name__)
 
 
 class DashboardDailyStatsService:
+    _table_ready_lock: asyncio.Lock | None = None
+    _table_ready_checked: bool = False
+
+    @classmethod
+    def _get_table_ready_lock(cls) -> asyncio.Lock:
+        if cls._table_ready_lock is None:
+            cls._table_ready_lock = asyncio.Lock()
+        return cls._table_ready_lock
+
     @staticmethod
-    async def get_daily_stats(
-        session: AsyncSession, stats_date: date
-    ) -> DashboardDailyStats | None:
-        result = await session.execute(
-            select(DashboardDailyStats).filter(DashboardDailyStats.date == stats_date)
+    def _is_missing_dashboard_daily_stats_table_error(error: Exception) -> bool:
+        if not isinstance(error, ProgrammingError):
+            return False
+
+        orig = getattr(error, "orig", None)
+        sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+        error_text = " ".join(
+            str(part) for part in (error, orig) if part is not None
+        ).lower()
+
+        return (
+            "dashboard_daily_stats" in error_text
+            and (
+                sqlstate == "42P01"
+                or "does not exist" in error_text
+                or "undefinedtable" in error_text
+            )
         )
+
+    @staticmethod
+    async def _ensure_dashboard_daily_stats_table(session: AsyncSession) -> None:
+        bind = getattr(session, "bind", None)
+        if bind is None:
+            raise RuntimeError(
+                "AsyncSession 未绑定数据库引擎，无法自动创建 dashboard_daily_stats 表。"
+            )
+
+        async with bind.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: Base.metadata.create_all(
+                    sync_conn,
+                    tables=[DashboardDailyStats.__table__],
+                    checkfirst=True,
+                )
+            )
+
+        log.warning("检测到 dashboard_daily_stats 表缺失，已自动补建。")
+
+    @classmethod
+    async def ensure_table_ready(
+        cls,
+        session: AsyncSession,
+        *,
+        force: bool = False,
+    ) -> None:
+        if cls._table_ready_checked and not force:
+            return
+
+        async with cls._get_table_ready_lock():
+            if cls._table_ready_checked and not force:
+                return
+
+            await cls._ensure_dashboard_daily_stats_table(session)
+            cls._table_ready_checked = True
+
+    @classmethod
+    async def get_daily_stats(
+        cls, session: AsyncSession, stats_date: date
+    ) -> DashboardDailyStats | None:
+        await cls.ensure_table_ready(session)
+
+        try:
+            result = await session.execute(
+                select(DashboardDailyStats).filter(DashboardDailyStats.date == stats_date)
+            )
+        except ProgrammingError as error:
+            if not cls._is_missing_dashboard_daily_stats_table_error(error):
+                raise
+
+            await session.rollback()
+            await cls.ensure_table_ready(session, force=True)
+            result = await session.execute(
+                select(DashboardDailyStats).filter(DashboardDailyStats.date == stats_date)
+            )
         return result.scalars().first()
 
     @staticmethod

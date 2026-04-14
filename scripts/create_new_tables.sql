@@ -52,5 +52,19 @@ CREATE TABLE IF NOT EXISTS "user".user_tool_settings (
 
 CREATE INDEX IF NOT EXISTS ix_user_tool_settings_id ON "user".user_tool_settings (id);
 
+-- 4. 创建 dashboard_daily_stats 表
+CREATE TABLE IF NOT EXISTS dashboard_daily_stats (
+    id SERIAL NOT NULL,
+    date DATE NOT NULL,
+    channel_message_count INTEGER NOT NULL DEFAULT 0,
+    dm_message_count INTEGER NOT NULL DEFAULT 0,
+    image_message_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE (date)
+);
+
+CREATE INDEX IF NOT EXISTS ix_dashboard_daily_stats_id ON dashboard_daily_stats (id);
+CREATE INDEX IF NOT EXISTS ix_dashboard_daily_stats_date ON dashboard_daily_stats (date);
+
 -- 完成
 SELECT 'All tables created successfully!' AS status;

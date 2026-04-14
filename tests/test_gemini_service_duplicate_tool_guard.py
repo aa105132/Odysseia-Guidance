@@ -194,3 +194,174 @@ def test_openai_duplicate_tool_turn_forces_text_response(monkeypatch):
     assert "[get_user_profile 已跳过]" in captured_payloads[2]["messages"][-1][
         "content"
     ]
+
+
+def test_openai_duplicate_tool_on_last_tool_round_still_forces_text_response(
+    monkeypatch,
+):
+    service = GeminiService()
+    captured_payloads = []
+    executed_tool_calls = []
+
+    responses = iter(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "get_user_profile",
+                                        "arguments": '{"queries":["display_name"],"user_id":"1"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_2",
+                                    "function": {
+                                        "name": "get_user_profile",
+                                        "arguments": '{"queries":["display_name"],"user_id":"2"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_3",
+                                    "function": {
+                                        "name": "get_user_profile",
+                                        "arguments": '{"queries":["display_name"],"user_id":"3"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_4",
+                                    "function": {
+                                        "name": "get_user_profile",
+                                        "arguments": '{"queries":["display_name"],"user_id":"4"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_5",
+                                    "function": {
+                                        "name": "get_user_profile",
+                                        "arguments": '{"queries":["display_name"],"user_id":"4"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "最后一轮拦截后仍然成功直接作答",
+                        }
+                    }
+                ]
+            },
+        ]
+    )
+
+    async def _fake_load_context(_user_id):
+        return None
+
+    async def _fake_post_openai_chat_completion_with_fallback(**kwargs):
+        captured_payloads.append(copy.deepcopy(kwargs["payload"]))
+        return next(responses)
+
+    async def _fake_execute_openai_tool_call(**kwargs):
+        executed_tool_calls.append(copy.deepcopy(kwargs))
+        return {"profile": {"display_name": {"value": f"测试用户{len(executed_tool_calls)}"}}}
+
+    async def _fake_post_process_response(raw_response, user_id, guild_id):
+        return raw_response
+
+    monkeypatch.setattr(service, "_load_novelai_preset_context", _fake_load_context)
+    monkeypatch.setattr(service, "_load_comfyui_choice_context", _fake_load_context)
+    monkeypatch.setattr(
+        service,
+        "_convert_tools_to_openai_format",
+        lambda *_args, **_kwargs: [
+            {"type": "function", "function": {"name": "get_user_profile"}}
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "_post_openai_chat_completion_with_fallback",
+        _fake_post_openai_chat_completion_with_fallback,
+    )
+    monkeypatch.setattr(
+        service, "_execute_openai_tool_call", _fake_execute_openai_tool_call
+    )
+    monkeypatch.setattr(service, "_post_process_response", _fake_post_process_response)
+    monkeypatch.setattr(
+        gemini_module.prompt_service,
+        "build_chat_prompt",
+        lambda **kwargs: [{"role": "user", "parts": [kwargs["message"]]}],
+    )
+
+    result = asyncio.run(
+        service._generate_with_openai_compatible(
+            user_id=1,
+            guild_id=1,
+            message="最后一轮重复工具也要能正常回答",
+            model_name="grok-4.20-beta",
+            api_url="https://example.com/v1",
+            api_key="test-key",
+        )
+    )
+
+    assert result == "最后一轮拦截后仍然成功直接作答"
+    assert len(executed_tool_calls) == 4
+    assert len(captured_payloads) == 6
+    assert all("tools" in payload for payload in captured_payloads[:5])
+    assert "tools" not in captured_payloads[5]
+    assert captured_payloads[5]["messages"][-1]["role"] == "tool"
+    assert "[get_user_profile 已跳过]" in captured_payloads[5]["messages"][-1][
+        "content"
+    ]

@@ -3117,6 +3117,7 @@ class GeminiService:
         
         # 工具调用循环
         max_tool_calls = 5
+        max_completion_rounds = max_tool_calls + 1
         max_web_search_calls = 1
         web_search_call_count = 0
         executed_tool_signatures: set[str] = set()
@@ -3125,10 +3126,11 @@ class GeminiService:
         disabled_payload_fields: set[str] = set()
         force_text_response_without_tools = False
         
-        for iteration in range(max_tool_calls):
+        for iteration in range(max_completion_rounds):
+            tool_budget_exhausted = iteration >= max_tool_calls
             iteration_tools = (
                 []
-                if force_text_response_without_tools
+                if force_text_response_without_tools or tool_budget_exhausted
                 else openai_tools
             )
 
@@ -3387,9 +3389,13 @@ class GeminiService:
 
                     if blocked_tool_call_in_this_turn and not executed_new_tool_in_this_turn:
                         force_text_response_without_tools = True
+                        if tool_budget_exhausted or iteration == max_tool_calls - 1:
+                            next_step_hint = "当前已到最后一轮工具轮次，将额外补发一次无工具请求，强制模型直接作答。"
+                        else:
+                            next_step_hint = "下一轮将临时禁用工具，强制模型基于现有结果直接作答。"
                         log.info(
                             "OpenAI 工具循环本轮仅出现被拦截的重复/超限工具调用；"
-                            "下一轮将临时禁用工具，强制模型基于现有结果直接作答。"
+                            f"{next_step_hint}"
                         )
                     elif executed_new_tool_in_this_turn:
                         force_text_response_without_tools = False
@@ -3426,7 +3432,10 @@ class GeminiService:
                 raise
         
         # 达到最大工具调用次数
-        log.warning(f"OpenAI 工具调用循环达到最大次数 {max_tool_calls}")
+        log.warning(
+            "OpenAI 工具调用循环达到最大次数 "
+            f"{max_tool_calls}，且收尾无工具请求仍未得到文本响应"
+        )
         return "呜...思考太多次了，脑子有点转不过来，请重新问一下吧！"
     
     def _convert_conversation_to_openai_messages(self, final_conversation: List[Dict]) -> List[Dict]:
