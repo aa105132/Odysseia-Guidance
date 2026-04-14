@@ -274,6 +274,7 @@ class AIChatCog(commands.Cog):
         provided_image_data: Optional[dict] = None,
         title: str = "月月简报",
         section_name: str = "搜索 / 总结",
+        send_sources: bool = True,
     ) -> bool:
         image_data = provided_image_data or getattr(gemini_service, "last_tool_image_data", None)
         image_filename = "newspaper-brief.png"
@@ -314,7 +315,40 @@ class AIChatCog(commands.Cog):
             channel_messages=1,
             image_messages=1,
         )
-        await self._reply_sources_below_image(message, source_text, source_links)
+        if send_sources:
+            await self._reply_sources_below_image(message, source_text, source_links)
+        return True
+
+    async def _send_newspaper_brief_with_full_text(
+        self,
+        message: discord.Message,
+        response_text: str,
+        source_text: str,
+        source_links: List[tuple],
+        *,
+        used_web_search: bool,
+        provided_image_data: Optional[dict] = None,
+        title: str = "月月简报",
+        section_name: str = "搜索 / 总结",
+    ) -> bool:
+        sent = await self._send_newspaper_brief_reply(
+            message=message,
+            body_text=response_text,
+            source_text=source_text,
+            source_links=source_links,
+            provided_image_data=provided_image_data,
+            title=title,
+            section_name=section_name,
+            send_sources=False,
+        )
+        if not sent:
+            return False
+
+        sent_messages = await self._reply_text_safely(
+            message, response_text, mention_author=False
+        )
+        if used_web_search:
+            await self._suppress_link_previews(sent_messages)
         return True
 
     @commands.Cog.listener()
@@ -389,11 +423,12 @@ class AIChatCog(commands.Cog):
                     and tool_image_data
                     and "render_newspaper_brief" in last_tools
                 ):
-                    sent = await self._send_newspaper_brief_reply(
-                        message,
-                        body_text=body_text or response_text,
+                    sent = await self._send_newspaper_brief_with_full_text(
+                        message=message,
+                        response_text=response_text,
                         source_text=source_text,
                         source_links=source_links,
+                        used_web_search=used_web_search,
                         provided_image_data=tool_image_data,
                     )
                     if sent:
@@ -401,11 +436,12 @@ class AIChatCog(commands.Cog):
 
                 if should_send_newspaper_brief:
                     log.info("调用了总结工具, 尝试转为报纸摘要图发送。")
-                    sent = await self._send_newspaper_brief_reply(
-                        message,
-                        body_text=body_text or response_text,
+                    sent = await self._send_newspaper_brief_with_full_text(
+                        message=message,
+                        response_text=response_text,
                         source_text=source_text,
                         source_links=source_links,
+                        used_web_search=used_web_search,
                         title="月月频道简报",
                         section_name="频道总结",
                     )
