@@ -20,8 +20,8 @@ log = logging.getLogger(__name__)
     category="总结",
 )
 async def render_newspaper_brief(
-    title: str,
     body: str,
+    title: Optional[str] = None,
     subtitle: Optional[str] = None,
     section_name: Optional[str] = None,
     issue_date: Optional[str] = None,
@@ -30,17 +30,21 @@ async def render_newspaper_brief(
 ) -> dict:
     """将整理好的摘要正文渲染成报纸风 PNG。"""
     try:
-        if not str(title or "").strip():
-            return {"error": "报纸摘要标题不能为空。"}
         if not str(body or "").strip():
             return {"error": "报纸摘要正文不能为空。"}
 
+        final_title = (
+            str(title or "").strip()
+            or str(subtitle or "").strip()
+            or str(section_name or "").strip()
+            or "月月简报"
+        )
         final_issue_date = str(issue_date or "").strip() or datetime.now().strftime(
             "%Y-%m-%d"
         )
         image_bytes = text_to_newspaper_brief_image(
             body=str(body).strip(),
-            title=str(title).strip(),
+            title=final_title,
             subtitle=str(subtitle or "").strip() or None,
             section_name=str(section_name or "").strip() or "月月简报",
             issue_date=final_issue_date,
@@ -54,7 +58,7 @@ async def render_newspaper_brief(
                 "mime_type": "image/png",
                 "data": image_bytes,
             },
-            "title": str(title).strip(),
+            "title": final_title,
             "section_name": str(section_name or "").strip() or "月月简报",
             "issue_date": final_issue_date,
             "message": "报纸摘要图已生成。若需要消息源，请在图片下方单独发送链接文本。",
