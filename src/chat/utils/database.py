@@ -443,6 +443,20 @@ class ChatDatabaseManager:
                 );
             """)
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS bot_reply_daily_usage (
+                    usage_date TEXT PRIMARY KEY,
+                    reply_count INTEGER NOT NULL DEFAULT 0
+                );
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS bot_reply_paused_scopes (
+                    scope_id INTEGER PRIMARY KEY,
+                    paused_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
             # --- 打工游戏状态表 ---
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_work_status (
@@ -1237,6 +1251,62 @@ class ChatDatabaseManager:
         """
         await self._execute(self._db_transaction, query, (key, value), commit=True)
         log.info(f"已更新全局设置: {key} = {value}")
+
+    async def get_bot_reply_daily_count(self, usage_date: Optional[str] = None) -> int:
+        """获取指定日期已回复 bot 消息的次数。"""
+        target_date = usage_date or get_beijing_today_str()
+        query = "SELECT reply_count FROM bot_reply_daily_usage WHERE usage_date = ?"
+        row = await self._execute(
+            self._db_transaction, query, (target_date,), fetch="one"
+        )
+        return int(row["reply_count"]) if row else 0
+
+    async def increment_bot_reply_daily_count(
+        self, usage_date: Optional[str] = None, amount: int = 1
+    ) -> None:
+        """增加指定日期的 bot 回复计数。"""
+        target_date = usage_date or get_beijing_today_str()
+        increment_amount = max(1, int(amount))
+        query = """
+            INSERT INTO bot_reply_daily_usage (usage_date, reply_count)
+            VALUES (?, ?)
+            ON CONFLICT(usage_date) DO UPDATE SET
+                reply_count = bot_reply_daily_usage.reply_count + excluded.reply_count;
+        """
+        await self._execute(
+            self._db_transaction,
+            query,
+            (target_date, increment_amount),
+            commit=True,
+        )
+
+    async def is_bot_reply_paused(self, scope_id: int) -> bool:
+        """检查指定频道/线程是否已暂停 bot 回复。"""
+        query = "SELECT 1 FROM bot_reply_paused_scopes WHERE scope_id = ?"
+        row = await self._execute(
+            self._db_transaction, query, (scope_id,), fetch="one"
+        )
+        return row is not None
+
+    async def set_bot_reply_paused(self, scope_id: int, paused: bool) -> None:
+        """设置指定频道/线程的 bot 回复暂停状态。"""
+        if paused:
+            query = """
+                INSERT INTO bot_reply_paused_scopes (scope_id)
+                VALUES (?)
+                ON CONFLICT(scope_id) DO UPDATE SET
+                    paused_at = CURRENT_TIMESTAMP;
+            """
+            await self._execute(
+                self._db_transaction,
+                query,
+                (scope_id,),
+                commit=True,
+            )
+            return
+
+        query = "DELETE FROM bot_reply_paused_scopes WHERE scope_id = ?"
+        await self._execute(self._db_transaction, query, (scope_id,), commit=True)
 
     async def get_image_feedback_runtime_config(self) -> Dict[str, Any]:
         """获取图片负反馈封禁配置（数据库优先，回退到内存默认）。"""

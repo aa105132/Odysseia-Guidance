@@ -45,6 +45,14 @@ class _DummyCog:
         return decorator
 
 
+class _DummyTypingContext:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 discord_module = types.ModuleType("discord")
 _remember_module("discord")
 discord_module.HTTPException = _DummyHTTPException
@@ -98,7 +106,11 @@ _ensure_module(
     "src.chat.features.tools.functions.summarize_channel",
     text_to_newspaper_brief_image=MagicMock(),
 )
-_ensure_module("src.chat.utils.database", chat_db_manager=MagicMock())
+_ensure_module(
+    "src.chat.utils.database",
+    chat_db_manager=MagicMock(),
+    get_beijing_today_str=lambda: "2026-04-16",
+)
 _ensure_module("src.database.database", AsyncSessionLocal=MagicMock())
 _ensure_module(
     "src.database.services.dashboard_daily_stats_service",
@@ -137,6 +149,37 @@ def _restore_stubbed_modules():
 
 
 _restore_stubbed_modules()
+
+
+def _build_message(*, author_bot: bool, content: str = "@月月 你好", mentioned: bool = True):
+    bot_user = MagicMock()
+    bot_user.id = 114514
+    bot_user.display_name = "月月"
+
+    bot = MagicMock()
+    bot.user = bot_user
+
+    message = MagicMock()
+    message.id = 123
+    message.content = content
+    message.author = MagicMock()
+    message.author.bot = author_bot
+    message.author.id = 456 if not author_bot else 789
+    message.author.display_name = "测试作者"
+    message.guild = MagicMock()
+    message.guild.id = 1
+    message.guild.name = "测试服务器"
+    message.mentions = [bot_user] if mentioned else []
+    message.reply = AsyncMock(return_value=MagicMock())
+
+    channel = MagicMock()
+    channel.id = 2
+    channel.name = "测试频道"
+    channel.typing = lambda: _DummyTypingContext()
+    channel.send = AsyncMock(return_value=MagicMock())
+    message.channel = channel
+
+    return bot, message
 
 
 def test_reply_text_safely_skips_blank_text():
@@ -291,3 +334,182 @@ def test_send_newspaper_brief_with_full_text_sends_image_then_text():
         mention_author=False,
     )
     cog._suppress_link_previews.assert_awaited_once()
+
+
+
+def test_on_message_allows_mentioned_bot_message_and_records_daily_usage():
+    bot, message = _build_message(author_bot=True)
+    cog = AIChatCog(bot=bot)
+    cog.handle_chat_message = AsyncMock(return_value="bot reply")
+    cog._reply_text_safely = AsyncMock(return_value=[MagicMock()])
+    cog._reply_sources_below_image = AsyncMock()
+    cog._suppress_link_previews = AsyncMock()
+
+    ai_chat_cog_module.message_processor.process_message = AsyncMock(
+        return_value={"user_content": "hi", "replied_content": "", "image_data_list": []}
+    )
+    ai_chat_cog_module.chat_service.should_process_message = AsyncMock(return_value=True)
+    ai_chat_cog_module.chat_db_manager.is_user_globally_blacklisted = AsyncMock(
+        return_value=False
+    )
+    ai_chat_cog_module.chat_db_manager.is_bot_reply_paused = AsyncMock(return_value=False)
+    ai_chat_cog_module.chat_db_manager.get_bot_reply_daily_count = AsyncMock(
+        return_value=0
+    )
+    ai_chat_cog_module.chat_db_manager.increment_bot_reply_daily_count = AsyncMock()
+
+    asyncio.run(cog.on_message(message))
+
+    cog.handle_chat_message.assert_awaited_once()
+    cog._reply_text_safely.assert_awaited_once_with(
+        message, "bot reply", mention_author=True
+    )
+    ai_chat_cog_module.chat_db_manager.increment_bot_reply_daily_count.assert_awaited_once()
+
+
+
+def test_on_message_skips_bot_message_when_daily_limit_reached():
+    bot, message = _build_message(author_bot=True)
+    cog = AIChatCog(bot=bot)
+    cog.handle_chat_message = AsyncMock()
+    cog._reply_text_safely = AsyncMock()
+
+    ai_chat_cog_module.message_processor.process_message = AsyncMock(
+        return_value={"user_content": "hi", "replied_content": "", "image_data_list": []}
+    )
+    ai_chat_cog_module.chat_db_manager.is_bot_reply_paused = AsyncMock(return_value=False)
+    ai_chat_cog_module.chat_db_manager.get_bot_reply_daily_count = AsyncMock(
+        return_value=200
+    )
+
+    asyncio.run(cog.on_message(message))
+
+    cog.handle_chat_message.assert_not_called()
+    cog._reply_text_safely.assert_not_called()
+
+
+
+def test_on_message_skips_bot_message_when_scope_is_paused():
+    bot, message = _build_message(author_bot=True)
+    cog = AIChatCog(bot=bot)
+    cog.handle_chat_message = AsyncMock()
+    cog._reply_text_safely = AsyncMock()
+
+    ai_chat_cog_module.message_processor.process_message = AsyncMock(
+        return_value={"user_content": "hi", "replied_content": "", "image_data_list": []}
+    )
+    ai_chat_cog_module.chat_db_manager.is_bot_reply_paused = AsyncMock(return_value=True)
+
+    asyncio.run(cog.on_message(message))
+
+    cog.handle_chat_message.assert_not_called()
+    cog._reply_text_safely.assert_not_called()
+
+
+
+def test_on_message_stop_bot_reply_command_pauses_current_scope():
+    bot, message = _build_message(author_bot=False, content="@月月 停止回复bot")
+    cog = AIChatCog(bot=bot)
+    cog.handle_chat_message = AsyncMock()
+    cog._reply_text_safely = AsyncMock(return_value=[])
+
+    ai_chat_cog_module.message_processor.process_message = AsyncMock(
+        return_value={
+            "user_content": "停止回复bot",
+            "replied_content": "",
+            "image_data_list": [],
+        }
+    )
+    ai_chat_cog_module.chat_db_manager.set_bot_reply_paused = AsyncMock()
+
+    asyncio.run(cog.on_message(message))
+
+    ai_chat_cog_module.chat_db_manager.set_bot_reply_paused.assert_awaited_once_with(
+        message.channel.id, True
+    )
+    cog._reply_text_safely.assert_awaited_once()
+    cog.handle_chat_message.assert_not_called()
+
+
+
+def test_on_message_resume_bot_reply_command_unpauses_current_scope():
+    bot, message = _build_message(author_bot=False, content="@月月 恢复回复bot")
+    cog = AIChatCog(bot=bot)
+    cog.handle_chat_message = AsyncMock()
+    cog._reply_text_safely = AsyncMock(return_value=[])
+
+    ai_chat_cog_module.message_processor.process_message = AsyncMock(
+        return_value={
+            "user_content": "恢复回复bot",
+            "replied_content": "",
+            "image_data_list": [],
+        }
+    )
+    ai_chat_cog_module.chat_db_manager.set_bot_reply_paused = AsyncMock()
+
+    asyncio.run(cog.on_message(message))
+
+    ai_chat_cog_module.chat_db_manager.set_bot_reply_paused.assert_awaited_once_with(
+        message.channel.id, False
+    )
+    cog._reply_text_safely.assert_awaited_once()
+    cog.handle_chat_message.assert_not_called()
+
+
+def test_on_message_records_bot_usage_after_channel_summary_brief():
+    bot, message = _build_message(author_bot=True)
+    cog = AIChatCog(bot=bot)
+    cog.handle_chat_message = AsyncMock(return_value="频道总结内容")
+    cog._send_newspaper_brief_with_full_text = AsyncMock(return_value=True)
+    cog._record_bot_reply_usage_if_needed = AsyncMock()
+
+    ai_chat_cog_module.gemini_service.last_called_tools = ["summarize_channel"]
+    ai_chat_cog_module.gemini_service.last_tool_image_data = None
+    ai_chat_cog_module.gemini_service.last_tool_source_links = []
+    ai_chat_cog_module.message_processor.process_message = AsyncMock(
+        return_value={"user_content": "hi", "replied_content": "", "image_data_list": []}
+    )
+    ai_chat_cog_module.chat_service.should_process_message = AsyncMock(return_value=True)
+    ai_chat_cog_module.chat_db_manager.is_user_globally_blacklisted = AsyncMock(
+        return_value=False
+    )
+    ai_chat_cog_module.chat_db_manager.is_bot_reply_paused = AsyncMock(return_value=False)
+    ai_chat_cog_module.chat_db_manager.get_bot_reply_daily_count = AsyncMock(
+        return_value=0
+    )
+
+    asyncio.run(cog.on_message(message))
+
+    cog._send_newspaper_brief_with_full_text.assert_awaited_once()
+    cog._record_bot_reply_usage_if_needed.assert_awaited_once_with(message)
+
+
+def test_on_message_records_bot_usage_after_direct_dm_send():
+    bot, message = _build_message(author_bot=True)
+    cog = AIChatCog(bot=bot)
+    cog.handle_chat_message = AsyncMock(return_value="这是一段会走私信分支的回复")
+    cog._record_dashboard_delivery_stats = AsyncMock()
+    cog._record_bot_reply_usage_if_needed = AsyncMock()
+    cog._should_send_long_reply_via_dm = MagicMock(return_value=True)
+    message.author.send = AsyncMock()
+
+    ai_chat_cog_module.gemini_service.last_called_tools = []
+    ai_chat_cog_module.gemini_service.last_tool_image_data = None
+    ai_chat_cog_module.gemini_service.last_tool_source_links = []
+    ai_chat_cog_module.message_processor.process_message = AsyncMock(
+        return_value={"user_content": "hi", "replied_content": "", "image_data_list": []}
+    )
+    ai_chat_cog_module.chat_service.should_process_message = AsyncMock(return_value=True)
+    ai_chat_cog_module.chat_db_manager.is_user_globally_blacklisted = AsyncMock(
+        return_value=False
+    )
+    ai_chat_cog_module.chat_db_manager.is_bot_reply_paused = AsyncMock(return_value=False)
+    ai_chat_cog_module.chat_db_manager.get_bot_reply_daily_count = AsyncMock(
+        return_value=0
+    )
+
+    asyncio.run(cog.on_message(message))
+
+    message.author.send.assert_awaited_once()
+    cog._record_dashboard_delivery_stats.assert_awaited_once_with(dm_messages=1)
+    cog._record_bot_reply_usage_if_needed.assert_awaited_once_with(message)

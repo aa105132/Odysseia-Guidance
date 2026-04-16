@@ -24,12 +24,13 @@ from src.chat.features.tools.functions.summarize_channel import (
 # 导入上下文服务
 
 # 导入数据库管理器以进行黑名单检查和斜杠命令
-from src.chat.utils.database import chat_db_manager
+from src.chat.utils.database import chat_db_manager, get_beijing_today_str
 from src.chat.config.chat_config import CHAT_ENABLED, MESSAGE_SETTINGS
 from src.chat.config import chat_config
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
 
 log = logging.getLogger(__name__)
+BOT_REPLY_DAILY_LIMIT = 200
 
 
 class AIChatCog(commands.Cog):
@@ -61,6 +62,87 @@ class AIChatCog(commands.Cog):
             normalized_text[i:i + max_length]
             for i in range(0, len(normalized_text), max_length)
         ]
+
+    @staticmethod
+    def _normalize_bot_reply_control_text(content: str) -> str:
+        normalized = re.sub(r"<@!?\d+>", "", str(content or ""))
+        normalized = normalized.casefold()
+        normalized = re.sub(r"\s+", "", normalized)
+        return normalized
+
+    def _get_bot_reply_control_action(self, content: str) -> Optional[str]:
+        normalized = self._normalize_bot_reply_control_text(content)
+        pause_keywords = (
+            "停止回复bot",
+            "停止bot回复",
+            "暂停回复bot",
+            "暂停bot回复",
+            "停止本轮bot回复",
+            "暂停本轮bot回复",
+            "停止回复机器人",
+            "停止机器人回复",
+            "暂停回复机器人",
+            "暂停机器人回复",
+        )
+        resume_keywords = (
+            "恢复回复bot",
+            "恢复bot回复",
+            "继续回复bot",
+            "继续bot回复",
+            "恢复回复机器人",
+            "恢复机器人回复",
+            "继续回复机器人",
+            "继续机器人回复",
+        )
+
+        if any(keyword in normalized for keyword in pause_keywords):
+            return "pause"
+        if any(keyword in normalized for keyword in resume_keywords):
+            return "resume"
+        return None
+
+    async def _handle_bot_reply_control_command(self, message: discord.Message) -> bool:
+        action = self._get_bot_reply_control_action(getattr(message, "content", ""))
+        if not action:
+            return False
+
+        scope_id = getattr(getattr(message, "channel", None), "id", None)
+        if scope_id is None:
+            return False
+
+        is_pause = action == "pause"
+        await chat_db_manager.set_bot_reply_paused(scope_id, is_pause)
+
+        reply_text = (
+            "好啦，这个频道/线程的 bot 回复我先停下啦。要恢复的话，再叫我“恢复回复bot”就行。"
+            if is_pause
+            else "这个频道/线程的 bot 回复已经恢复啦。"
+        )
+        await self._reply_text_safely(message, reply_text, mention_author=False)
+        return True
+
+    async def _can_reply_to_bot_message(self, message: discord.Message) -> bool:
+        scope_id = getattr(getattr(message, "channel", None), "id", None)
+        if scope_id is None:
+            return False
+
+        if await chat_db_manager.is_bot_reply_paused(scope_id):
+            log.info(f"频道/线程 {scope_id} 已暂停 bot 回复，忽略 bot 消息。")
+            return False
+
+        today = get_beijing_today_str()
+        current_count = await chat_db_manager.get_bot_reply_daily_count(today)
+        if current_count >= BOT_REPLY_DAILY_LIMIT:
+            log.info(
+                f"今日 bot 回复已达到上限 {BOT_REPLY_DAILY_LIMIT}，忽略来自 {message.author.id} 的 bot 消息。"
+            )
+            return False
+
+        return True
+
+    async def _record_bot_reply_usage_if_needed(self, message: discord.Message) -> None:
+        if getattr(getattr(message, "author", None), "bot", False):
+            await chat_db_manager.increment_bot_reply_daily_count(get_beijing_today_str())
 
     async def _record_dashboard_delivery_stats(
         self,
@@ -360,7 +442,7 @@ class AIChatCog(commands.Cog):
             return
 
         # 忽略机器人自己的消息
-        if message.author.bot:
+        if self.bot.user and message.author.id == self.bot.user.id:
             return
 
         # --- 核心前置检查 ---
@@ -377,6 +459,13 @@ class AIChatCog(commands.Cog):
 
         if not is_dm and not is_mentioned:
             return
+
+        if not getattr(message.author, "bot", False):
+            if await self._handle_bot_reply_control_command(message):
+                return
+        else:
+            if not await self._can_reply_to_bot_message(message):
+                return
 
         # 新增：检查是否在帖子中，以及帖子创建者是否禁用了回复
         if isinstance(message.channel, discord.Thread):
@@ -432,6 +521,7 @@ class AIChatCog(commands.Cog):
                         provided_image_data=tool_image_data,
                     )
                     if sent:
+                        await self._record_bot_reply_usage_if_needed(message)
                         return
 
                 if should_send_newspaper_brief:
@@ -446,6 +536,7 @@ class AIChatCog(commands.Cog):
                         section_name="频道总结",
                     )
                     if sent:
+                        await self._record_bot_reply_usage_if_needed(message)
                         return
                     log.error("频道总结报纸摘要图片生成失败，将作为文本尝试发送。")
 
@@ -460,6 +551,7 @@ class AIChatCog(commands.Cog):
                     if used_web_search:
                         await self._suppress_link_previews(sent_messages)
                     await self._reply_sources_below_image(message, source_text, source_links)
+                    await self._record_bot_reply_usage_if_needed(message)
                     return
 
                 if self._should_send_long_reply_via_dm(body_text or response_text):
@@ -476,11 +568,13 @@ class AIChatCog(commands.Cog):
                             await self._send_dm_text_safely(
                                 message.author, 'Long reply split in DM:', body_text or response_text
                             )
+                            await self._record_bot_reply_usage_if_needed(message)
                             return
                         await message.author.send(
                             f"刚刚在 {channel_mention} 频道里，你想听我说的话有点多，在这里悄悄告诉你哦：\n\n{body_text or response_text}"
                         )
                         await self._record_dashboard_delivery_stats(dm_messages=1)
+                        await self._record_bot_reply_usage_if_needed(message)
                         log.info(
                             f"回复因过长已通过私信发送给 {message.author.display_name}"
                         )
@@ -494,6 +588,7 @@ class AIChatCog(commands.Cog):
                         if used_web_search:
                             await self._suppress_link_previews(sent_messages)
                         await self._reply_sources_below_image(message, source_text, source_links)
+                        await self._record_bot_reply_usage_if_needed(message)
                         return
                     return
 
@@ -503,6 +598,7 @@ class AIChatCog(commands.Cog):
                 if used_web_search:
                     await self._suppress_link_previews(sent_messages)
                 await self._reply_sources_below_image(message, source_text, source_links)
+                await self._record_bot_reply_usage_if_needed(message)
 
             except discord.errors.HTTPException as e:
                 final_body_text = str(body_text or response_text or "")
