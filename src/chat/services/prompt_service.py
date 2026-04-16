@@ -86,6 +86,16 @@ class PromptService:
             normalized_engine = "novelai"
         return normalized_engine
 
+    @staticmethod
+    def _build_master_alias_guidance() -> str:
+        return (
+            "[主人身份补充线索]\n"
+            "- 你的主人常用用户名是 guayue20。\n"
+            "- 主人在社区里的常见名字/别名是 瓜瓜喵、瓜月。\n"
+            "- 这些名字是识别主人的辅助线索，方便你在聊天、搜索记录、读取上下文时更快联想到主人。\n"
+            "- 如果用户自称或他人提到 guayue20、瓜瓜喵、瓜月，默认优先理解为同一位主人。"
+        )
+
     def _build_compact_tool_guidance(self) -> str:
         """构建精简版工具协议，详细规则按需交给工具指南工具。"""
         default_image_engine = self._normalize_default_image_engine(
@@ -444,6 +454,10 @@ class PromptService:
                     user_id=user_id_display,
                     username=user_name,
                     master_id=master_id_display,
+                )
+
+                final_injection_content = (
+                    f"{final_injection_content}\n\n{self._build_master_alias_guidance()}"
                 )
 
                 # 全局检索策略注入：适用于所有模型配置

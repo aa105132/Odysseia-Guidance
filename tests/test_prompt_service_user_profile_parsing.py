@@ -24,6 +24,12 @@ fake_image_utils = types.ModuleType("src.chat.utils.image_utils")
 fake_image_utils.extract_image_frames_for_ai = lambda *args, **kwargs: []
 sys.modules.setdefault("src.chat.utils.image_utils", fake_image_utils)
 
+fake_context_service_module = types.ModuleType("src.chat.services.context_service")
+fake_context_service_module.context_service = types.SimpleNamespace(
+    clean_message_content=lambda content, guild=None: content
+)
+sys.modules.setdefault("src.chat.services.context_service", fake_context_service_module)
+
 from src.chat.services.prompt_service import PromptService
 
 
@@ -79,3 +85,56 @@ def test_merge_user_profile_source_data_keeps_nested_and_top_level_priority():
     assert merged["background"] == "扁平背景"
     assert merged["personality"] == "content_json 性格"
     assert merged["preferences"] == "顶层偏好"
+
+
+def test_build_chat_prompt_contains_master_alias_hints():
+    service = PromptService()
+    original_get_prompt = service.get_prompt
+
+    def fake_get_prompt(prompt_name, *args, **kwargs):
+        if prompt_name == "SYSTEM_PROMPT":
+            return "基础系统提示，不含主人别名。"
+        return original_get_prompt(prompt_name, *args, **kwargs)
+
+    def fake_get_model_specific_prompt(model_name, prompt_name):
+        if prompt_name in {"JAILBREAK_USER_PROMPT", "JAILBREAK_MODEL_RESPONSE"}:
+            return None
+        if prompt_name == "JAILBREAK_FINAL_INSTRUCTION":
+            return (
+                "<system_info>\n"
+                "基础最终注入\n"
+                "社区: {guild_name}\n"
+                "频道: {location_name}\n"
+                "当前用户: {username} ({user_id})\n"
+                "主人ID: {master_id}\n"
+                "</system_info>"
+            )
+        return None
+
+    service.get_prompt = fake_get_prompt
+    service._get_model_specific_prompt = fake_get_model_specific_prompt
+
+    conversation = service.build_chat_prompt(
+        user_name="测试用户",
+        message="你好",
+        replied_message=None,
+        images=[],
+        channel_context=[],
+        world_book_entries=[],
+        affection_status=None,
+        guild_name="测试社区",
+        location_name="测试频道",
+        user_id=123456789,
+    )
+
+    combined_text_parts = []
+    for turn in conversation:
+        for part in turn.get("parts", []):
+            if isinstance(part, str):
+                combined_text_parts.append(part)
+
+    combined_text = "\n".join(combined_text_parts)
+
+    assert "guayue20" in combined_text
+    assert "瓜瓜喵" in combined_text
+    assert "瓜月" in combined_text
