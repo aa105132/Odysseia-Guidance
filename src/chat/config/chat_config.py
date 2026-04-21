@@ -511,7 +511,7 @@ def _get_imagen_config():
         # - "url": 优先从 URL 下载图片（适用于上游 base64 有问题的情况）
         "IMAGE_RESPONSE_FORMAT": os.getenv("GEMINI_IMAGEN_RESPONSE_FORMAT", "auto"),
         # OpenAI 兼容图片接口路由:
-        # - "auto": grok-imagine / gpt-image 等模型优先走 /images/*，其余走 chat/completions
+        # - "auto": grok-imagine 等模型优先走 /images/*，其余（含 gpt-image-*）走 chat/completions
         # - "chat_completions": 强制走 /chat/completions
         # - "images_api": 强制走 /images/generations 和 /images/edits
         "OPENAI_IMAGE_API_MODE": os.getenv("GEMINI_IMAGEN_OPENAI_IMAGE_API_MODE", "auto"),

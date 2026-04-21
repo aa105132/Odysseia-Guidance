@@ -128,11 +128,18 @@ class GeminiImagenService:
 
     @staticmethod
     def _looks_like_images_api_model(model_name: str) -> bool:
-        """判断模型是否更适合走 /images/* 接口。"""
+        """判断模型是否更适合走 /images/* 接口。
+
+        注意：`gpt-image-*` 虽然是 OpenAI 官方图片接口专用模型，但很多
+        OpenAI 兼容代理（含部分自建网关）会同时暴露 chat/completions 与
+        /images/* 路由。为避免把所有走 `gpt-image` 的代理都锁死在
+        `/images/generations`，此处默认不再把 `gpt-image` 当作强制 images_api
+        的信号；需要时可以通过 `OPENAI_IMAGE_API_MODE=images_api` 显式指定。
+        """
         normalized = str(model_name or "").strip().lower()
         if not normalized:
             return False
-        return normalized.startswith("grok-imagine") or normalized.startswith("gpt-image")
+        return normalized.startswith("grok-imagine")
 
     def _resolve_openai_image_api_mode(
         self,
@@ -943,7 +950,7 @@ class GeminiImagenService:
                 mode_override=openai_image_api_mode,
             ):
                 log.warning(
-                    "检测到 Grok / GPT Image 模型，文生图将固定使用 /images/generations；"
+                    "检测到 Grok Imagine 模型，文生图将固定使用 /images/generations；"
                     "本次未回收到图像结果，已跳过 chat/completions 回退。"
                 )
                 return None
@@ -2139,7 +2146,7 @@ class GeminiImagenService:
                 mode_override=openai_image_api_mode,
             ):
                 log.warning(
-                    "检测到 Grok / GPT Image 编辑模型，图生图将固定使用 /images/edits；"
+                    "检测到 Grok Imagine 编辑模型，图生图将固定使用 /images/edits；"
                     "本次未回收到图像结果，已跳过 chat/completions 回退。"
                 )
                 return None

@@ -385,7 +385,8 @@ class ImagenGenerationPanelView(discord.ui.View):
         embed = discord.Embed(title=title, color=0x2B2D31)
         embed.description = (
             "在这里先配置参数，再点击“开始生成”。\n"
-            "当模型像 `grok-imagine-*` / `gpt-image-*` 时，`auto` 会优先走 `/v1/images/*`。"
+            "当模型像 `grok-imagine-*` 时，`auto` 会优先走 `/v1/images/*`；"
+            "`gpt-image-*` 默认走 `chat/completions`，需要固定 `/v1/images/*` 时请显式切换模式。"
         )
         embed.add_field(
             name="当前模式",

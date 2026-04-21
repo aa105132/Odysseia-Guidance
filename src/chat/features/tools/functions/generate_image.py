@@ -66,8 +66,8 @@ async def generate_image(
     - `openai_quality`: 透传 `quality`
     - `openai_style`: 透传 `style`
     - `openai_image_api_mode`: 透传图片路由，支持 `auto` / `images_api` / `chat_completions`
-      - 当模型名是 `grok-imagine-*` / `gpt-image-*` 时，`auto` 会优先走 `/v1/images/generations`
-      - 如需强制指定，可显式传 `openai_image_api_mode="images_api"`
+      - 当模型名是 `grok-imagine-*` 时，`auto` 会优先走 `/v1/images/generations`
+      - `gpt-image-*` 默认走 `chat/completions`；如需固定使用 `/v1/images/generations`，请显式传 `openai_image_api_mode="images_api"`
 
     如果用户明确要求“按我的头像 / 按某人的头像 / 用头像来画”，不要只靠纯文生图臆造外观：
     - 优先调用 `edit_image` 并传 `avatar_user_id` / `avatar_user_ids`

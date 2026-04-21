@@ -55,8 +55,8 @@ async def edit_image(
     - `openai_quality`: 透传 `quality`
     - `openai_style`: 透传 `style`
     - `openai_image_api_mode`: 透传图片路由，支持 `auto` / `images_api` / `chat_completions`
-      - 当模型名是 `grok-imagine-*` / `gpt-image-*` 时，`auto` 会优先走 `/v1/images/edits`
-      - 如需强制指定，可显式传 `openai_image_api_mode="images_api"`
+      - 当模型名是 `grok-imagine-*` 时，`auto` 会优先走 `/v1/images/edits`
+      - `gpt-image-*` 默认走 `chat/completions`；如需固定使用 `/v1/images/edits`，请显式传 `openai_image_api_mode="images_api"`
 
     当用户说“画一下我的头像”“按我头像来一个成熟版”“把 A 和 B 的头像画在一起”时，这个工具就是首选：
     - 当前用户头像：传 `avatar_user_id`
