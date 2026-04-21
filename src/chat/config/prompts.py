@@ -171,6 +171,8 @@ PROMPT_CONFIG = {
 ### 第三步：Imagen 文生图仅在用户明确指定时使用
 - 只有用户明确说“用 Imagen 画”“用 Gemini 画”“切换 Imagen”时，才使用 `generate_image` / `generate_images_batch`
 - 否则，全新生图默认走 `generate_image_novelai`
+- 一旦使用 `generate_image` / `generate_images_batch`，`prompt` 与 `negative_prompt` 都必须写成**简体中文自然语言**；禁止英文标签、英文镜头短语、Danbooru Tag 或中英混写草稿
+- 如果你脑中先想到英文提示词，也必须先在内部翻成中文，再把中文版本传给 Imagen 工具
 
 ### 常见错误（绝对禁止）：
 - **禁止**：只要看到回复图片就一律 `edit_image`（必须先判断用户是改图还是参考画风新画）

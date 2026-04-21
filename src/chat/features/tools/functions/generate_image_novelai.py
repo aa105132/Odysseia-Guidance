@@ -23,6 +23,9 @@ import re
 import discord
 from typing import Optional, List, Dict, Any
 
+from src.chat.features.image_generation.utils.spoiler_policy import (
+    should_spoiler_image,
+)
 from src.chat.features.tools.functions.image_policy_guard import (
     check_yueyue_self_nsfw_violation,
 )
@@ -2819,7 +2822,7 @@ async def _regenerate_with_imagen(
     image_file = discord.File(
         io.BytesIO(result),
         filename="imagen_generated.png",
-        spoiler=True,
+        spoiler=should_spoiler_image(content_rating),
     )
 
     view = ToolImagenResultView(

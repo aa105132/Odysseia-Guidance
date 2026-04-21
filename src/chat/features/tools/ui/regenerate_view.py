@@ -11,6 +11,9 @@ import io
 import discord
 from typing import Optional, Dict, Any, Callable, Awaitable, List
 
+from src.chat.features.image_generation.utils.spoiler_policy import (
+    should_spoiler_image,
+)
 log = logging.getLogger(__name__)
 
 OPENAI_IMAGE_PARAM_KEYS = (
@@ -451,7 +454,11 @@ class RegenerateView(discord.ui.View):
                     new_view.original_params["resolution"] = resolution
                     new_view.original_params["content_rating"] = content_rating
 
-                    file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
+                    file = discord.File(
+                        io.BytesIO(edited_image_bytes),
+                        filename="edited_image.png",
+                        spoiler=should_spoiler_image(content_rating),
+                    )
                     sent_message = await channel.send(embed=embed, file=file, view=new_view)
                     if sent_message:
                         await chat_db_manager.register_generated_image_message(
@@ -889,7 +896,11 @@ class SlashCommandRegenerateView(discord.ui.View):
                     new_view.original_params["resolution"] = resolution
                     new_view.original_params["content_rating"] = content_rating
 
-                    file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
+                    file = discord.File(
+                        io.BytesIO(edited_image_bytes),
+                        filename="edited_image.png",
+                        spoiler=should_spoiler_image(content_rating),
+                    )
                     sent_message = await channel.send(embed=embed, file=file, view=new_view)
                     if sent_message:
                         await chat_db_manager.register_generated_image_message(

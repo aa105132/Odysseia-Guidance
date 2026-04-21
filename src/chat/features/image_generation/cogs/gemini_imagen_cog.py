@@ -15,6 +15,9 @@ from discord.ext import commands
 
 from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG, PROMPT_CONFIG
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
+from src.chat.features.image_generation.utils.spoiler_policy import (
+    should_spoiler_image,
+)
 from src.chat.config.emoji_config import replace_emotion_tags
 from ..services.gemini_imagen_service import gemini_imagen_service
 from ..ui.imagen_panel_view import open_imagen_generation_panel
@@ -268,13 +271,18 @@ class GeminiImagenCog(commands.Cog):
                     user_id=user_id,
                 )
                 
-                # 发送图片（每条消息最多10张，带遮罩）
+                # 发送图片（每条消息最多10张；仅 NSFW 带遮罩）
                 MAX_FILES_PER_MESSAGE = 10
                 first_batch = True
+                use_spoiler = should_spoiler_image(content_rating)
                 for batch_start in range(0, len(images), MAX_FILES_PER_MESSAGE):
                     batch_end = min(batch_start + MAX_FILES_PER_MESSAGE, len(images))
                     batch_files = [
-                        discord.File(io.BytesIO(images[i]), filename=f"generated_image_{i+1}.png", spoiler=True)
+                        discord.File(
+                            io.BytesIO(images[i]),
+                            filename=f"generated_image_{i+1}.png",
+                            spoiler=use_spoiler,
+                        )
                         for i in range(batch_start, batch_end)
                     ]
                     if first_batch:
@@ -591,13 +599,18 @@ class GeminiImagenCog(commands.Cog):
                     user_id=user_id,
                 )
                 
-                # 发送图片（每条消息最多10张，带遮罩）
+                # 发送图片（每条消息最多10张；仅 NSFW 带遮罩）
                 MAX_FILES_PER_MESSAGE = 10
                 first_batch = True
+                use_spoiler = should_spoiler_image(content_rating)
                 for batch_start in range(0, len(images), MAX_FILES_PER_MESSAGE):
                     batch_end = min(batch_start + MAX_FILES_PER_MESSAGE, len(images))
                     batch_files = [
-                        discord.File(io.BytesIO(images[i]), filename=f"edited_image_{i+1}.png", spoiler=True)
+                        discord.File(
+                            io.BytesIO(images[i]),
+                            filename=f"edited_image_{i+1}.png",
+                            spoiler=use_spoiler,
+                        )
                         for i in range(batch_start, batch_end)
                     ]
                     if first_batch:

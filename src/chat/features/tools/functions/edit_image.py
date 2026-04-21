@@ -10,6 +10,9 @@ import logging
 import discord
 from typing import Optional, List, Dict, Any
 
+from src.chat.features.image_generation.utils.spoiler_policy import (
+    should_spoiler_image,
+)
 from src.chat.features.tools.functions.image_policy_guard import (
     check_yueyue_self_nsfw_violation,
 )
@@ -563,6 +566,7 @@ async def edit_image(
             log.warning(f"无效的内容分级参数，已重置为默认值 sfw")
         
         log.info(f"图生图内容分级: {content_rating}")
+        use_spoiler = should_spoiler_image(content_rating)
         log.info(
             f"图生图参考图策略: mode={reference_image_mode}, max={max_reference_images}, "
             f"实际数量={len(reference_images) if reference_images else (1 if reference_image else 0)}"
@@ -691,7 +695,11 @@ async def edit_image(
                             user_id=parsed_user_id,
                         )
                     
-                    file = discord.File(io.BytesIO(edited_image_bytes), filename="edited_image.png", spoiler=True)
+                    file = discord.File(
+                        io.BytesIO(edited_image_bytes),
+                        filename="edited_image.png",
+                        spoiler=use_spoiler,
+                    )
                     send_kwargs = {"embed": embed, "file": file}
                     if regenerate_view:
                         send_kwargs["view"] = regenerate_view
