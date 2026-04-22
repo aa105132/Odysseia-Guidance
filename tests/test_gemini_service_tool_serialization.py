@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import copy
 import os
 import sys
 import types
@@ -31,6 +32,10 @@ sys.modules.setdefault("src.chat.services.prompt_service", MagicMock())
 sys.modules.setdefault(
     "src.chat.features.tools.services.tool_service",
     MagicMock(ToolService=MagicMock()),
+)
+sys.modules.setdefault(
+    "src.chat.features.tools.utils.discord_image_utils",
+    MagicMock(fetch_avatar_image=MagicMock()),
 )
 sys.modules.setdefault(
     "src.chat.features.tools.tool_loader",
@@ -142,6 +147,23 @@ def test_build_openai_tool_image_followup_message_ignores_other_tools():
     )
 
     assert message is None
+
+
+def test_reset_last_tool_outputs_clears_previous_tool_state():
+    service = GeminiService()
+    service.last_called_tools = ["summarize_channel", "render_newspaper_brief"]
+    service.last_tool_image_data = {
+        "mime_type": "image/png",
+        "data": b"brief-bytes",
+        "tool_name": "render_newspaper_brief",
+    }
+    service.last_tool_source_links = [("示例来源", "https://example.com")]
+
+    service._reset_last_tool_outputs()
+
+    assert service.last_called_tools == []
+    assert service.last_tool_image_data is None
+    assert service.last_tool_source_links == []
 
 
 def test_execute_openai_tool_call_injects_avatar_reference_for_novelai():
@@ -484,3 +506,234 @@ def test_openai_compat_request_auto_parses_sse_tool_calls(monkeypatch):
     assert tool_call["function"]["name"] == "web_search"
     assert tool_call["function"]["arguments"] == '{"q":"hello"}'
     assert result["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_openai_tool_loop_skips_duplicate_web_fetch(monkeypatch):
+    service = GeminiService()
+    captured_payloads = []
+    executed_tool_calls = []
+    responses = iter(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "web_fetch",
+                                        "arguments": '{"url":"https://example.com/repo"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_2",
+                                    "function": {
+                                        "name": "web_fetch",
+                                        "arguments": '{"url":"https://example.com/repo"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "这是最终总结",
+                        }
+                    }
+                ]
+            },
+        ]
+    )
+
+    async def _fake_load_context(_user_id):
+        return None
+
+    async def _fake_post_openai_chat_completion_with_fallback(**kwargs):
+        captured_payloads.append(copy.deepcopy(kwargs["payload"]))
+        return next(responses)
+
+    async def _fake_execute_openai_tool_call(**kwargs):
+        executed_tool_calls.append(copy.deepcopy(kwargs))
+        return (
+            "[网页内容获取结果 - URL: https://example.com/repo]\n\n"
+            "AstrBot 是一个用于社区机器人的项目仓库。"
+        )
+
+    async def _fake_post_process_response(raw_response, user_id, guild_id):
+        return raw_response
+
+    monkeypatch.setattr(service, "_load_novelai_preset_context", _fake_load_context)
+    monkeypatch.setattr(service, "_load_comfyui_choice_context", _fake_load_context)
+    monkeypatch.setattr(
+        service,
+        "_convert_tools_to_openai_format",
+        lambda: [{"type": "function", "function": {"name": "web_fetch"}}],
+    )
+    monkeypatch.setattr(
+        service,
+        "_post_openai_chat_completion_with_fallback",
+        _fake_post_openai_chat_completion_with_fallback,
+    )
+    monkeypatch.setattr(
+        service, "_execute_openai_tool_call", _fake_execute_openai_tool_call
+    )
+    monkeypatch.setattr(service, "_post_process_response", _fake_post_process_response)
+    monkeypatch.setattr(
+        sys.modules["src.chat.services.gemini_service"].prompt_service,
+        "build_chat_prompt",
+        lambda **kwargs: [{"role": "user", "parts": [kwargs["message"]]}],
+    )
+
+    result = asyncio.run(
+        service._generate_with_openai_compatible(
+            user_id=1,
+            guild_id=1,
+            message="帮我看看这个链接",
+            model_name="grok-4.20-beta",
+            api_url="https://example.com/v1",
+            api_key="test-key",
+        )
+    )
+
+    assert result == "这是最终总结"
+    assert len(executed_tool_calls) == 1
+    assert executed_tool_calls[0]["tool_name"] == "web_fetch"
+    assert len(captured_payloads) == 3
+    assert captured_payloads[2]["messages"][-1]["role"] == "tool"
+    assert "[web_fetch 已跳过]" in captured_payloads[2]["messages"][-1]["content"]
+
+
+def test_openai_tool_loop_keeps_tool_responses_contiguous_before_avatar_followup(
+    monkeypatch,
+):
+    service = GeminiService()
+    captured_payloads = []
+
+    responses = iter(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "get_user_avatar",
+                                        "arguments": "{}",
+                                    },
+                                },
+                                {
+                                    "id": "call_2",
+                                    "function": {
+                                        "name": "get_user_profile",
+                                        "arguments": '{"queries":["display_name"],"user_id":"1"}',
+                                    },
+                                },
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "这是最终回答",
+                        }
+                    }
+                ]
+            },
+        ]
+    )
+
+    async def _fake_load_context(_user_id):
+        return None
+
+    async def _fake_post_openai_chat_completion_with_fallback(**kwargs):
+        captured_payloads.append(copy.deepcopy(kwargs["payload"]))
+        return next(responses)
+
+    async def _fake_execute_openai_tool_call(**kwargs):
+        if kwargs["tool_name"] == "get_user_avatar":
+            return {
+                "image_data": {
+                    "data": b"avatar-bytes",
+                    "mime_type": "image/png",
+                }
+            }
+        return {"profile": {"display_name": {"value": "测试用户"}}}
+
+    async def _fake_post_process_response(raw_response, user_id, guild_id):
+        return raw_response
+
+    monkeypatch.setattr(service, "_load_novelai_preset_context", _fake_load_context)
+    monkeypatch.setattr(service, "_load_comfyui_choice_context", _fake_load_context)
+    monkeypatch.setattr(
+        service,
+        "_convert_tools_to_openai_format",
+        lambda *_args, **_kwargs: [
+            {"type": "function", "function": {"name": "get_user_avatar"}},
+            {"type": "function", "function": {"name": "get_user_profile"}},
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "_post_openai_chat_completion_with_fallback",
+        _fake_post_openai_chat_completion_with_fallback,
+    )
+    monkeypatch.setattr(
+        service, "_execute_openai_tool_call", _fake_execute_openai_tool_call
+    )
+    monkeypatch.setattr(service, "_post_process_response", _fake_post_process_response)
+    monkeypatch.setattr(
+        sys.modules["src.chat.services.gemini_service"].prompt_service,
+        "build_chat_prompt",
+        lambda **kwargs: [{"role": "user", "parts": [kwargs["message"]]}],
+    )
+
+    result = asyncio.run(
+        service._generate_with_openai_compatible(
+            user_id=1,
+            guild_id=1,
+            message="请参考我的头像继续处理",
+            model_name="grok-4.20-beta",
+            api_url="https://example.com/v1",
+            api_key="test-key",
+        )
+    )
+
+    assert result == "这是最终回答"
+    assert len(captured_payloads) == 2
+
+    second_messages = captured_payloads[1]["messages"]
+    assistant_index = next(
+        idx
+        for idx, item in enumerate(second_messages)
+        if item.get("role") == "assistant" and item.get("tool_calls")
+    )
+    assert [
+        second_messages[assistant_index + 1]["role"],
+        second_messages[assistant_index + 2]["role"],
+        second_messages[assistant_index + 3]["role"],
+    ] == ["tool", "tool", "user"]
+    assert second_messages[assistant_index + 1]["tool_call_id"] == "call_1"
+    assert second_messages[assistant_index + 2]["tool_call_id"] == "call_2"

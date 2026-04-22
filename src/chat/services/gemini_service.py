@@ -885,6 +885,41 @@ class GeminiService:
         )
 
     @staticmethod
+    def _is_openai_image_generation_model(model_name: Optional[str]) -> bool:
+        """判断当前 OpenAI 兼容模型是否属于图片生成/编辑模型。"""
+        normalized = str(model_name or "").strip().lower()
+        if not normalized:
+            return False
+
+        return normalized.startswith(("gpt-image", "grok-imagine", "imagen"))
+
+    @classmethod
+    def _filter_tool_declarations_for_openai_request(
+        cls,
+        tool_declarations: Optional[List[Callable]],
+        *,
+        model_name: Optional[str] = None,
+    ) -> List[Callable]:
+        """
+        针对 OpenAI 兼容请求过滤工具声明。
+
+        图片生成/编辑模型不应暴露聊天工具，否则模型可能在绘图链路里
+        误调论坛搜索、频道总结等无关函数，甚至把工具循环带崩。
+        """
+        declarations = list(tool_declarations or [])
+        if not declarations:
+            return declarations
+
+        if cls._is_openai_image_generation_model(model_name):
+            log.info(
+                "检测到 OpenAI 图片模型 '%s'，本轮将不向模型暴露聊天工具。",
+                model_name,
+            )
+            return []
+
+        return declarations
+
+    @staticmethod
     def _exception_chain_contains_timeout(error: BaseException) -> bool:
         """判断异常链中是否包含超时信号（含 TimeoutError 文本为空的场景）。"""
         visited: set[int] = set()
@@ -3092,6 +3127,11 @@ class GeminiService:
             if isinstance(candidate_tools, list):
                 visible_tool_declarations = candidate_tools
 
+        visible_tool_declarations = self._filter_tool_declarations_for_openai_request(
+            visible_tool_declarations,
+            model_name=model_name,
+        )
+
         convert_signature = inspect.signature(self._convert_tools_to_openai_format)
         if len(convert_signature.parameters) == 0:
             openai_tools = self._convert_tools_to_openai_format()
@@ -3225,6 +3265,8 @@ class GeminiService:
                     skip_ai_response_requested = False
                     executed_new_tool_in_this_turn = False
                     blocked_tool_call_in_this_turn = False
+                    tool_result_messages: List[Dict[str, Any]] = []
+                    followup_image_messages: List[Dict[str, Any]] = []
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("function", {}).get("name", "")
                         tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
@@ -3350,7 +3392,7 @@ class GeminiService:
                             tool_result
                         )
 
-                        messages.append(
+                        tool_result_messages.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
@@ -3368,11 +3410,7 @@ class GeminiService:
                             )
                         )
                         if followup_image_message:
-                            messages.append(followup_image_message)
-                            log.info(
-                                f"已将工具 '{tool_name}' 的参考图追加到 OpenAI 消息上下文，"
-                                "供后续模型继续视觉分析。"
-                            )
+                            followup_image_messages.append(followup_image_message)
 
                         # 检查是否有工具标记了 skip_ai_response（本轮工具执行完后统一处理）
                         if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
@@ -3381,6 +3419,15 @@ class GeminiService:
                                 "将在本轮工具全部执行后跳过后续AI回复。"
                             )
                             skip_ai_response_requested = True
+
+                    if tool_result_messages:
+                        messages.extend(tool_result_messages)
+                    if followup_image_messages:
+                        messages.extend(followup_image_messages)
+                        log.info(
+                            "已在本轮全部工具响应之后，统一追加 %s 条参考图上下文消息。",
+                            len(followup_image_messages),
+                        )
 
                     if skip_ai_response_requested:
                         self.last_called_tools = called_tool_names

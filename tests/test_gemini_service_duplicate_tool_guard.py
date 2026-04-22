@@ -365,3 +365,78 @@ def test_openai_duplicate_tool_on_last_tool_round_still_forces_text_response(
     assert "[get_user_profile 已跳过]" in captured_payloads[5]["messages"][-1][
         "content"
     ]
+
+
+def test_openai_image_model_request_does_not_expose_chat_tools(monkeypatch):
+    service = GeminiService()
+    captured_payloads = []
+
+    async def _fake_load_context(_user_id):
+        return None
+
+    async def _fake_post_openai_chat_completion_with_fallback(**kwargs):
+        captured_payloads.append(copy.deepcopy(kwargs["payload"]))
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "图像任务已完成",
+                    }
+                }
+            ]
+        }
+
+    async def _fake_post_process_response(raw_response, user_id, guild_id):
+        return raw_response
+
+    def _fake_search_forum_threads():
+        """论坛搜索"""
+
+    def _fake_edit_image():
+        """图片编辑"""
+
+    monkeypatch.setattr(service, "_load_novelai_preset_context", _fake_load_context)
+    monkeypatch.setattr(service, "_load_comfyui_choice_context", _fake_load_context)
+    monkeypatch.setattr(
+        service,
+        "_post_openai_chat_completion_with_fallback",
+        _fake_post_openai_chat_completion_with_fallback,
+    )
+    monkeypatch.setattr(service, "_post_process_response", _fake_post_process_response)
+    monkeypatch.setattr(
+        gemini_module.prompt_service,
+        "build_chat_prompt",
+        lambda **kwargs: [{"role": "user", "parts": [kwargs["message"]]}],
+    )
+    monkeypatch.setattr(
+        service,
+        "_convert_tools_to_openai_format",
+        lambda tool_declarations: [
+            {
+                "type": "function",
+                "function": {"name": getattr(tool, "__name__", "unknown_tool")},
+            }
+            for tool in tool_declarations
+        ],
+    )
+
+    service.available_tools = [_fake_search_forum_threads, _fake_edit_image]
+    service.tool_service.get_visible_tool_declarations.return_value = list(
+        service.available_tools
+    )
+
+    result = asyncio.run(
+        service._generate_with_openai_compatible(
+            user_id=1,
+            guild_id=1,
+            message="请根据这张图生成一张海报",
+            images=[{"data": b"fake-image", "mime_type": "image/png"}],
+            model_name="gpt-image-2",
+            api_url="https://example.com/v1",
+            api_key="test-key",
+        )
+    )
+
+    assert result == "图像任务已完成"
+    assert len(captured_payloads) == 1
+    assert "tools" not in captured_payloads[0]
