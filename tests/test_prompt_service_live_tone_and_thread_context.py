@@ -123,6 +123,100 @@ def test_build_chat_prompt_reply_image_routing_uses_default_new_image_tool():
         chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine
 
 
+def test_build_chat_prompt_core_image_policy_respects_imagen_default_engine():
+    prompt_service = PromptService()
+    original_default_image_engine = chat_config.DEFAULT_IMAGE_ENGINE
+
+    try:
+        chat_config.DEFAULT_IMAGE_ENGINE = "imagen"
+
+        conversation = prompt_service.build_chat_prompt(
+            user_name="测试用户",
+            message="帮我画一张图",
+            replied_message=None,
+            images=[],
+            channel_context=[],
+            world_book_entries=[],
+            affection_status=None,
+            guild_name="测试服务器",
+            location_name="测试频道",
+            user_id=123456,
+        )
+
+        all_user_text = _collect_user_text(conversation)
+
+        assert (
+            "当前策略：新画默认优先 generate_image / generate_images_batch（默认引擎：imagen）"
+            in all_user_text
+        )
+        assert "全新生图默认使用" in all_user_text
+        assert "generate_image / generate_images_batch" in all_user_text
+        assert "新画优先 NovelAI" not in all_user_text
+        assert "全新生图默认走 `generate_image_novelai`" not in all_user_text
+    finally:
+        chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine
+
+
+def test_build_chat_prompt_includes_current_image_model_context():
+    prompt_service = PromptService()
+    original_default_image_engine = chat_config.DEFAULT_IMAGE_ENGINE
+    original_imagen_model = chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME")
+    original_imagen_edit_model = chat_config.GEMINI_IMAGEN_CONFIG.get("EDIT_MODEL_NAME")
+    original_novelai_model = chat_config.NOVELAI_CONFIG.get("MODEL")
+    original_comfyui_default_model = chat_config.COMFYUI_CONFIG.get("DEFAULT_MODEL_NAME")
+    original_comfyui_realistic_model = chat_config.COMFYUI_CONFIG.get(
+        "DEFAULT_REALISTIC_MODEL_NAME"
+    )
+    original_comfyui_anime_model = chat_config.COMFYUI_CONFIG.get(
+        "DEFAULT_ANIME_MODEL_NAME"
+    )
+
+    try:
+        chat_config.DEFAULT_IMAGE_ENGINE = "imagen"
+        chat_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = "imagen-gen-test"
+        chat_config.GEMINI_IMAGEN_CONFIG["EDIT_MODEL_NAME"] = "imagen-edit-test"
+        chat_config.NOVELAI_CONFIG["MODEL"] = "nai-diffusion-test"
+        chat_config.COMFYUI_CONFIG["DEFAULT_MODEL_NAME"] = "comfy-default.safetensors"
+        chat_config.COMFYUI_CONFIG["DEFAULT_REALISTIC_MODEL_NAME"] = "comfy-realistic.safetensors"
+        chat_config.COMFYUI_CONFIG["DEFAULT_ANIME_MODEL_NAME"] = "comfy-anime.safetensors"
+
+        conversation = prompt_service.build_chat_prompt(
+            user_name="测试用户",
+            message="帮我画一张图",
+            replied_message=None,
+            images=[],
+            channel_context=[],
+            world_book_entries=[],
+            affection_status=None,
+            guild_name="测试服务器",
+            location_name="测试频道",
+            user_id=123456,
+        )
+
+        all_user_text = _collect_user_text(conversation)
+
+        assert "绘图模型速记" in all_user_text
+        assert "Imagen 默认文生图模型：imagen-gen-test" in all_user_text
+        assert "Imagen 默认图生图模型：imagen-edit-test" in all_user_text
+        assert "NovelAI 默认模型：nai-diffusion-test" in all_user_text
+        assert "ComfyUI 通用默认底模：comfy-default.safetensors" in all_user_text
+        assert "ComfyUI 写实默认底模：comfy-realistic.safetensors" in all_user_text
+        assert "ComfyUI 动漫默认底模：comfy-anime.safetensors" in all_user_text
+        assert "如果用户直接点名具体模型名" in all_user_text
+    finally:
+        chat_config.DEFAULT_IMAGE_ENGINE = original_default_image_engine
+        chat_config.GEMINI_IMAGEN_CONFIG["MODEL_NAME"] = original_imagen_model
+        chat_config.GEMINI_IMAGEN_CONFIG["EDIT_MODEL_NAME"] = original_imagen_edit_model
+        chat_config.NOVELAI_CONFIG["MODEL"] = original_novelai_model
+        chat_config.COMFYUI_CONFIG["DEFAULT_MODEL_NAME"] = original_comfyui_default_model
+        chat_config.COMFYUI_CONFIG["DEFAULT_REALISTIC_MODEL_NAME"] = (
+            original_comfyui_realistic_model
+        )
+        chat_config.COMFYUI_CONFIG["DEFAULT_ANIME_MODEL_NAME"] = (
+            original_comfyui_anime_model
+        )
+
+
 def test_build_tool_result_wrapper_prompt_uses_relaxed_length_override_for_search():
     prompt_service = PromptService()
 

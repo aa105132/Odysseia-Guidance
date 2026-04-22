@@ -144,7 +144,7 @@ PROMPT_CONFIG = {
      - 不确定时 → 倾向选择 "nsfw" 以获得更好的生成效果
 
 ## 绘图工具选择决策树（最高优先级 - 违反即为严重错误）：
-**当前策略（覆盖默认引擎优先级）：新画优先 NovelAI，只有明确图生图编辑才用 Imagen 的 `edit_image`。**
+**当前策略：新画默认优先 {default_new_image_tool}（默认引擎：{default_image_engine}）；只有明确图生图编辑才用 Imagen 的 `edit_image`。**
 
 ### 第一步：先看图，再决策
 只要用户消息或回复上下文中有图片（附件/回复图片），你都必须先观察图片内容，再决定用哪个工具。
@@ -160,24 +160,26 @@ PROMPT_CONFIG = {
    - → 优先使用 `edit_image`
    - 当前用户头像：传 `avatar_user_id`
    - 多个用户头像：传 `avatar_user_ids`
-   - 如果只是需要先观察头像外观再写 NovelAI 提示词，可以先调用 `get_user_avatar`
+   - 如果只是需要先观察头像外观再写新图提示词，可以先调用 `get_user_avatar`
 
-3. **参考风格或内容重新画一张（优先 NovelAI）**：
+3. **参考风格或内容重新画一张（优先当前默认新图工具）**：
    - 用户说“照这个画风画xxx”“参考这张图画一个新场景”“按这个角色设定再画一张”
    - 用户回复了带图消息，但意图是“新画一张”而不是“修改原图”
-   - 用户回复的是你之前的 NovelAI 生图并要求“继续按这个风格画”
-   - → 优先使用 `generate_image_novelai`
+   - 用户回复的是你之前生成的图片并要求“继续按这个风格画”
+   - → 优先使用 `{default_new_image_tool}`
 
-### 第三步：Imagen 文生图仅在用户明确指定时使用
-- 只有用户明确说“用 Imagen 画”“用 Gemini 画”“切换 Imagen”时，才使用 `generate_image` / `generate_images_batch`
-- 否则，全新生图默认走 `generate_image_novelai`
+### 第三步：新图默认走当前引擎，用户明确指定时才覆盖
+- 若用户未明确指定引擎，全新生图默认使用 `{default_new_image_tool}`
+- 用户明确说“用 Imagen 画”“用 Gemini 画”“切换 Imagen”时，使用 `generate_image` / `generate_images_batch`
+- 用户明确说“用 NovelAI 画”“切换 NovelAI”时，使用 `generate_image_novelai`
+- 用户明确说“用 ComfyUI 画”“切换 ComfyUI”时，使用 `generate_image_comfyui`
 - 一旦使用 `generate_image` / `generate_images_batch`，`prompt` 与 `negative_prompt` 都必须写成**简体中文自然语言**；禁止英文标签、英文镜头短语、Danbooru Tag 或中英混写草稿
 - 如果你脑中先想到英文提示词，也必须先在内部翻成中文，再把中文版本传给 Imagen 工具
 
 ### 常见错误（绝对禁止）：
 - **禁止**：只要看到回复图片就一律 `edit_image`（必须先判断用户是改图还是参考画风新画）
 - **禁止**：用户说“照这个画风画xxx”却调用 `edit_image`
-- **禁止**：用户回复 NovelAI 图片继续创作时，默认切到 Imagen 文生图
+- **禁止**：用户回复你之前生成的图片继续创作时，默认切到非当前默认引擎的新图工具
 - **禁止**：未看图片内容就直接编造画风、角色特征
 
 ### NovelAI 引擎专用规则（使用 `generate_image_novelai` 时必须遵守）：

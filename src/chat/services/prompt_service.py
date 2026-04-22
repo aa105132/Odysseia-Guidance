@@ -86,6 +86,63 @@ class PromptService:
             normalized_engine = "novelai"
         return normalized_engine
 
+    @classmethod
+    def _get_default_new_image_tool(cls, engine: Optional[str]) -> str:
+        normalized_engine = cls._normalize_default_image_engine(engine)
+        default_new_image_tool_map = {
+            "imagen": "generate_image / generate_images_batch",
+            "comfyui": "generate_image_comfyui",
+            "novelai": "generate_image_novelai",
+        }
+        return default_new_image_tool_map[normalized_engine]
+
+    @staticmethod
+    def _format_image_model_value(value: Optional[str], fallback: str = "未配置") -> str:
+        normalized = str(value or "").strip()
+        return normalized or fallback
+
+    def _build_image_model_hint_lines(self) -> List[str]:
+        default_image_engine = self._normalize_default_image_engine(
+            chat_config.DEFAULT_IMAGE_ENGINE
+        )
+        default_new_image_tool = self._get_default_new_image_tool(default_image_engine)
+
+        imagen_text_model = self._format_image_model_value(
+            chat_config.GEMINI_IMAGEN_CONFIG.get("MODEL_NAME")
+        )
+        imagen_edit_model = self._format_image_model_value(
+            chat_config.GEMINI_IMAGEN_CONFIG.get("EDIT_MODEL_NAME"),
+            fallback=imagen_text_model,
+        )
+        novelai_model = self._format_image_model_value(
+            chat_config.NOVELAI_CONFIG.get("MODEL")
+        )
+        comfyui_default_model = self._format_image_model_value(
+            chat_config.COMFYUI_CONFIG.get("DEFAULT_MODEL_NAME")
+        )
+        comfyui_realistic_model = self._format_image_model_value(
+            chat_config.COMFYUI_CONFIG.get("DEFAULT_REALISTIC_MODEL_NAME")
+        )
+        comfyui_anime_model = self._format_image_model_value(
+            chat_config.COMFYUI_CONFIG.get("DEFAULT_ANIME_MODEL_NAME")
+        )
+
+        return [
+            "",
+            "绘图模型速记：",
+            f"- 当前默认绘图引擎：{default_image_engine}",
+            f"- 当前默认新图工具：{default_new_image_tool}",
+            f"- Imagen 默认文生图模型：{imagen_text_model}",
+            f"- Imagen 默认图生图模型：{imagen_edit_model}",
+            f"- NovelAI 默认模型：{novelai_model}",
+            f"- ComfyUI 通用默认底模：{comfyui_default_model}",
+            f"- ComfyUI 写实默认底模：{comfyui_realistic_model}",
+            f"- ComfyUI 动漫默认底模：{comfyui_anime_model}",
+            "- 如果用户直接点名具体模型名、底模名、checkpoint 名或 LoRA 名：",
+            "- 若名称命中以上当前默认模型，可直接按对应引擎理解。",
+            '- 若你不确定归属、是否可用或是否还有别的候选，先调用 get_tool_usage_guide(topic="image") 再决定。',
+        ]
+
     @staticmethod
     def _build_master_alias_guidance() -> str:
         return (
@@ -101,27 +158,22 @@ class PromptService:
         default_image_engine = self._normalize_default_image_engine(
             chat_config.DEFAULT_IMAGE_ENGINE
         )
-        default_new_image_tool_map = {
-            "imagen": "generate_image / generate_images_batch",
-            "comfyui": "generate_image_comfyui",
-            "novelai": "generate_image_novelai",
-        }
-        default_new_image_tool = default_new_image_tool_map[default_image_engine]
+        default_new_image_tool = self._get_default_new_image_tool(default_image_engine)
         voice_provider = str(
             chat_config.VOICE_CONFIG.get("PROVIDER", "") or ""
         ).strip().lower() or "unknown"
 
-        return "\n".join(
-            [
-                "工具调用协议（精简版）：",
-                "1) 平时直接按函数名调用工具，不需要把所有工具细则都背下来。",
-                "2) 只要你不确定当前有哪些工具、该选哪个工具、或某个工具的实时参数/预设/音色/底模/LoRA，就先调用 get_tool_usage_guide。",
-                "3) 对图片、视频、语音这类参数较多的工具，默认先查一次 get_tool_usage_guide 再决定最终参数。",
-                f"4) 当前默认画新图工具：{default_new_image_tool}（默认引擎：{default_image_engine}）；明确改原图/图生图时才调用 edit_image。",
-                f"5) 当前语音 provider：{voice_provider}；凡是搜索、总结、教程、结构化结果场景，一律优先文字，不要发语音。",
-                "6) 用户若点名具体预设、音色、ComfyUI 底模/VAE/CLIP/LoRA 或其他实时清单，先查 get_tool_usage_guide，确认后再传参。",
-            ]
-        )
+        lines = [
+            "工具调用协议（精简版）：",
+            "1) 平时直接按函数名调用工具，不需要把所有工具细则都背下来。",
+            "2) 只要你不确定当前有哪些工具、该选哪个工具、或某个工具的实时参数/预设/音色/底模/LoRA，就先调用 get_tool_usage_guide。",
+            "3) 对图片、视频、语音这类参数较多的工具，默认先查一次 get_tool_usage_guide 再决定最终参数。",
+            f"4) 当前默认画新图工具：{default_new_image_tool}（默认引擎：{default_image_engine}）；明确改原图/图生图时才调用 edit_image。",
+            f"5) 当前语音 provider：{voice_provider}；凡是搜索、总结、教程、结构化结果场景，一律优先文字，不要发语音。",
+            "6) 用户若点名具体预设、音色、ComfyUI 底模/VAE/CLIP/LoRA 或其他实时清单，先查 get_tool_usage_guide，确认后再传参。",
+            *self._build_image_model_hint_lines(),
+        ]
+        return "\n".join(lines)
 
     @staticmethod
     def _build_human_style_guidance() -> str:
@@ -252,20 +304,18 @@ class PromptService:
         # 动态知识块（世界之书、个人记忆）将作为独立消息注入，无需在此处处理占位符
         core_prompt_template = self.get_prompt("SYSTEM_PROMPT", model_name=model_name)
 
-        # 填充核心提示词（动态替换占位符）
-        # 必须通过模块引用读取，而非 from import，因为 Dashboard 会动态修改该值
-        core_prompt = core_prompt_template.replace(
-            "{default_image_engine}", chat_config.DEFAULT_IMAGE_ENGINE
-        )
         default_image_engine = self._normalize_default_image_engine(
             chat_config.DEFAULT_IMAGE_ENGINE
         )
-        default_new_image_tool_map = {
-            "imagen": "generate_image / generate_images_batch",
-            "comfyui": "generate_image_comfyui",
-            "novelai": "generate_image_novelai",
-        }
-        default_new_image_tool = default_new_image_tool_map[default_image_engine]
+        default_new_image_tool = self._get_default_new_image_tool(default_image_engine)
+
+        # 填充核心提示词（动态替换占位符）
+        # 必须通过模块引用读取，而非 from import，因为 Dashboard 会动态修改该值
+        core_prompt = (
+            core_prompt_template.replace(
+                "{default_image_engine}", default_image_engine
+            ).replace("{default_new_image_tool}", default_new_image_tool)
+        )
 
         final_conversation.append({"role": "user", "parts": [core_prompt]})
         final_conversation.append({"role": "model", "parts": ["我在线啦，随时开聊！"]})
