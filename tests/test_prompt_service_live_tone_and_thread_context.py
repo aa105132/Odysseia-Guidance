@@ -217,6 +217,29 @@ def test_build_chat_prompt_includes_current_image_model_context():
         )
 
 
+def test_build_chat_prompt_prefers_profile_for_other_user_portrait_requests():
+    prompt_service = PromptService()
+
+    conversation = prompt_service.build_chat_prompt(
+        user_name="测试用户",
+        message="帮我画一张 @小雪 的立绘，要按她本人设定来",
+        replied_message=None,
+        images=[],
+        channel_context=[],
+        world_book_entries=[],
+        affection_status=None,
+        guild_name="测试服务器",
+        location_name="测试频道",
+        user_id=123456,
+    )
+
+    all_user_text = _collect_user_text(conversation)
+
+    assert "先调用 `get_user_profile`" in all_user_text
+    assert "名片里的外貌/人设描述为最高优先级" in all_user_text
+    assert "只有在名片没有明确外貌时，才用头像兜底" in all_user_text
+
+
 def test_build_tool_result_wrapper_prompt_uses_relaxed_length_override_for_search():
     prompt_service = PromptService()
 

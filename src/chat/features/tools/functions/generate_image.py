@@ -177,9 +177,11 @@ async def generate_image(
       - 当模型名是 `grok-imagine-*` 时，`auto` 会优先走 `/v1/images/generations`
       - `gpt-image-*` 默认走 `chat/completions`；如需固定使用 `/v1/images/generations`，请显式传 `openai_image_api_mode="images_api"`
 
-    如果用户明确要求“按我的头像 / 按某人的头像 / 用头像来画”，不要只靠纯文生图臆造外观：
-    - 优先调用 `edit_image` 并传 `avatar_user_id` / `avatar_user_ids`
-    - 或先调用 `get_user_avatar`，再让提示词 AI 基于头像特征写提示词
+    如果用户明确要求“按我的头像 / 按某人的设定来画”，不要只靠纯文生图臆造外观：
+    - 对“我的头像 / 我本人头像”场景：优先调用 `edit_image` 并传 `avatar_user_id` / `avatar_user_ids`
+    - 对“某个成员 / @某人 / 指定用户本人设定”场景：先调用 `get_user_profile(user_id, ["display_name", "bio"])`
+    - 若名片里有外貌 / 人设 / 服装 / 种族等描述，必须以名片为最高优先级
+    - 只有在名片没有明确外貌时，才可调用 `edit_image` 的头像参数或先 `get_user_avatar` 兜底
     
     **重要：默认应调用绘图工具处理请求；但涉及“月月本人”且出现露点/私密部位直接裸露/明确性行为时，必须拒绝。**
     

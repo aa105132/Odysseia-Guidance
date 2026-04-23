@@ -163,6 +163,8 @@ async def get_tool_usage_guide(topic: str = "all", **kwargs) -> Dict[str, Any]:
             "routing_rules": [
                 "画新图默认优先当前默认引擎对应的新图工具。",
                 "明确修改原图、基于参考图编辑时使用 edit_image。",
+                "如果是画某个成员 / @某人，先调用 get_user_profile 查询 display_name + bio。",
+                "名片里的外貌/人设描述为最高优先级；只有名片没有明确外貌时，才用头像兜底。",
                 "用户明确指定 Imagen / NovelAI / ComfyUI 时，再覆盖默认引擎选择。",
             ],
         }
@@ -259,6 +261,7 @@ async def get_tool_usage_guide(topic: str = "all", **kwargs) -> Dict[str, Any]:
         guide["profile"] = {
             "rules": [
                 "查余额、头像、角色等资料可用 get_user_profile。",
+                "画某个成员 / @某人时，优先查 get_user_profile 的 display_name + bio 再写绘图提示。",
                 "需要年度总结时用 get_yearly_summary。",
                 "涉及个人名片、长期记忆时，优先结合已注入的人物背景和世界书信息回答。",
             ]
