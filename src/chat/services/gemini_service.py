@@ -323,6 +323,21 @@ class GeminiService:
         self.last_tool_image_data = None
         self.last_tool_source_links = []
         log.info("Discord Bot 实例已成功注入 ToolService。")
+
+    @staticmethod
+    def _normalize_api_format(
+        api_format: Optional[str], default: str = "gemini"
+    ) -> str:
+        """统一归一化 API 格式，兼容历史别名写法。"""
+        raw_value = str(api_format or "").strip().lower()
+        alias_map = {
+            "openai_compatible": "openai",
+            "openai-compatible": "openai",
+        }
+        normalized_value = alias_map.get(raw_value, raw_value or default)
+        if normalized_value not in {"gemini", "openai"}:
+            return default
+        return normalized_value
     
     def reload_api_keys(self, new_keys_str: str = None) -> dict:
         """
@@ -1729,12 +1744,14 @@ class GeminiService:
         # 稳定性优化：
         # 当仅依赖 Dashboard 全局 URL 且格式是 openai 时，
         # 直接走 OpenAI 兼容路径，避免误入官方 Gemini SDK 路径导致参数不兼容。
-        api_format = str(getattr(app_config, "_db_api_format", None) or "gemini").strip().lower()
+        api_format = self._normalize_api_format(
+            getattr(app_config, "_db_api_format", None) or "gemini"
+        )
         if (
             use_custom_endpoint
             and (not custom_endpoint_from_model)
             and custom_endpoint_from_global_url
-            and api_format in {"openai", "openai_compatible", "openai-compatible"}
+            and api_format == "openai"
         ):
             direct_model_name = model_name or self.default_model_name
             log.info(
@@ -1801,7 +1818,7 @@ class GeminiService:
             # 如果所有尝试都失败了，则执行回退逻辑
             fallback_model_name = self.default_model_name
 
-            if api_format in {"openai", "openai_compatible", "openai-compatible"}:
+            if api_format == "openai":
                 log.warning(
                     f"自定义端点 '{model_name}' 的所有 {max_attempts} 次尝试均失败。最终错误: {last_exception}. "
                     "当前为 OpenAI 兼容格式，将回退到 OpenAI 兼容路径。"
@@ -1937,11 +1954,13 @@ class GeminiService:
             raise ValueError(error_msg)
 
         # 获取 API 格式配置
-        api_format = str(getattr(app_config, '_db_api_format', None) or "gemini").strip().lower()
+        api_format = self._normalize_api_format(
+            getattr(app_config, "_db_api_format", None) or "gemini"
+        )
         log.info(f"正在为自定义端点创建客户端: {endpoint_config['base_url']} (格式: {api_format})")
         
         # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
-        if api_format in {"openai", "openai_compatible", "openai-compatible"}:
+        if api_format == "openai":
             return await self._generate_with_openai_compatible(
                 user_id=user_id,
                 guild_id=guild_id,
@@ -3963,14 +3982,18 @@ class GeminiService:
             生成的文本字符串，如果失败则返回 None。
         """
         # 获取 API 格式配置（支持调用方覆盖）
-        resolved_api_format = (
-            api_format or getattr(app_config, "_db_api_format", None) or "gemini"
-        ).strip().lower()
-        if resolved_api_format not in {"gemini", "openai"}:
+        raw_api_format = api_format or getattr(app_config, "_db_api_format", None) or "gemini"
+        resolved_api_format = self._normalize_api_format(raw_api_format)
+        normalized_raw_api_format = str(raw_api_format or "").strip().lower()
+        if normalized_raw_api_format not in {
+            "gemini",
+            "openai",
+            "openai_compatible",
+            "openai-compatible",
+        }:
             log.warning(
-                f"generate_simple_response 收到未知 api_format={resolved_api_format}，回退为 gemini"
+                f"generate_simple_response 收到未知 api_format={normalized_raw_api_format}，回退为 gemini"
             )
-            resolved_api_format = "gemini"
 
         # 先确定请求模型，再尝试做“别名 -> 实际模型名”解析
         requested_model_name = model_name or self.default_model_name
@@ -4011,17 +4034,15 @@ class GeminiService:
                 or os.getenv("GEMINI_API_KEYS", "")
             )
 
-        lowered_api_url = (resolved_api_url or "").lower()
-        looks_like_gemini_endpoint = (
-            "generativelanguage.googleapis.com" in lowered_api_url
-            or "aiplatform.googleapis.com" in lowered_api_url
-            or "/v1beta" in lowered_api_url
-        )
-        if resolved_api_format == "openai" and looks_like_gemini_endpoint:
-            log.warning(
-                "generate_simple_response detected Gemini-like endpoint with openai format; forcing gemini format"
-            )
-            resolved_api_format = "gemini"
+        route_name = "gemini_key_rotation"
+        if resolved_api_format == "openai" and resolved_api_url and resolved_api_key:
+            route_name = "openai_compatible"
+        elif resolved_api_url and resolved_api_key:
+            route_name = "gemini_custom_endpoint"
+
+        resolved_api_url_preview = str(resolved_api_url or "").strip() or "<default>"
+        if len(resolved_api_url_preview) > 80:
+            resolved_api_url_preview = resolved_api_url_preview[:77] + "..."
 
         # 调试日志
         has_messages = messages is not None and len(messages) > 0
@@ -4033,6 +4054,14 @@ class GeminiService:
             f"requested_model={requested_model_name}, "
             f"api_model={final_model_name}, "
             f"has_messages={has_messages}"
+        )
+        log.info(
+            "generate_simple_response 路由决议: requested_model=%s, final_model=%s, api_format=%s, api_url=%s, route=%s",
+            requested_model_name,
+            final_model_name,
+            resolved_api_format,
+            resolved_api_url_preview,
+            route_name,
         )
         
         # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端

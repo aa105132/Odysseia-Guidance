@@ -5108,6 +5108,7 @@
                             this.aiForm.custom_model = loadedModel;
                         }
                         
+                        this.aiForm.api_format = this.config.ai.api_format || 'gemini';
                         this.aiForm.temperature = this.config.ai.temperature;
                         this.aiForm.max_tokens = this.config.ai.max_tokens;
                         this.aiForm.api_url = this.config.ai.api_url || '';

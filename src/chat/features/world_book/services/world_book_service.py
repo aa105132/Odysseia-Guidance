@@ -2,11 +2,13 @@ import logging
 from typing import Optional, List, Dict, Any
 import json
 import os
+import re
 
 import asyncio
 
 # 导入新的服务依赖
 from src.chat.services.gemini_service import GeminiService, gemini_service
+from src.chat.services.regex_service import regex_service
 from src import config
 from src.chat.config import chat_config
 from src.chat.features.world_book.services.incremental_rag_service import (
@@ -76,19 +78,31 @@ class WorldBookService:
                 history_for_rag.pop()
                 log.debug("已为RAG总结移除系统注入的上下文提示。")
 
-        # RAG 查询重写功能已根据用户要求移除，直接使用清理后的原始查询
-        from src.chat.services.regex_service import regex_service
-        import re
-
         clean_query = regex_service.clean_user_input(latest_query)
         # 进一步移除 Discord 提及
-        summarized_query = re.sub(r"<@!?&?\d+>\s*", "", clean_query).strip()
-        log.info(f"原始查询: '{summarized_query}'")
+        clean_query = re.sub(r"<@!?&?\d+>\s*", "", clean_query).strip()
+        log.info(f"RAG 清洗后的原始查询: '{clean_query}'")
 
         # 4. 确保查询字符串不为空
-        if not summarized_query.strip():
+        if not clean_query.strip():
             log.warning(f"最终查询为空，无法进行RAG搜索 (user_id: {user_id})")
             return []
+
+        summarized_query = ""
+        try:
+            summarized_query = await self.gemini_service.summarize_for_rag(
+                clean_query,
+                user_name,
+                history_for_rag,
+            )
+        except Exception as e:
+            log.warning(f"RAG 查询重写失败，将回退到清洗后的原始查询: {e}")
+
+        final_query = (summarized_query or "").strip() or clean_query
+        if final_query != clean_query:
+            log.info(f"RAG 查询重写结果: '{clean_query}' -> '{final_query}'")
+        else:
+            log.info(f"RAG 使用清洗后的原始查询: '{final_query}'")
 
         # 3. 执行混合搜索
         try:
@@ -96,8 +110,7 @@ class WorldBookService:
             from src.chat.features.world_book.services.knowledge_search_service import (
                 knowledge_search_service,
             )
-
-            search_results = await knowledge_search_service.search(summarized_query)
+            search_results = await knowledge_search_service.search(final_query)
 
             if search_results:
                 search_brief = [
