@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple, Set
 import re
 import asyncio
 import aiohttp
+from pathlib import Path
 from urllib.parse import urlparse
 
 from src.chat.services.regex_service import regex_service
@@ -31,6 +32,26 @@ IMAGE_EXT_TO_MIME = {
     ".bmp": "image/bmp",
     ".avif": "image/avif",
 }
+TEXT_ATTACHMENT_MAX_BYTES = 3 * 1024 * 1024
+TEXT_ATTACHMENT_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".log",
+    ".json",
+    ".yml",
+    ".yaml",
+}
+TEXT_ATTACHMENT_MIME_TYPES = {
+    "text/plain",
+    "text/markdown",
+    "application/json",
+    "text/json",
+    "application/yaml",
+    "application/x-yaml",
+    "text/yaml",
+    "text/x-yaml",
+}
+TEXT_ATTACHMENT_ENCODINGS = ("utf-8-sig", "utf-8", "gb18030")
 
 
 class MessageProcessor:
@@ -250,6 +271,91 @@ class MessageProcessor:
 
         return image_data_list
 
+    def _is_supported_text_attachment(self, attachment: discord.Attachment) -> bool:
+        """判断附件是否属于可直接全文注入上下文的纯文本附件。"""
+        filename = getattr(attachment, "filename", "") or ""
+        ext = Path(filename).suffix.lower()
+        content_type = (
+            (getattr(attachment, "content_type", "") or "")
+            .split(";", 1)[0]
+            .strip()
+            .lower()
+        )
+
+        if ext in TEXT_ATTACHMENT_EXTENSIONS:
+            return True
+        if content_type in TEXT_ATTACHMENT_MIME_TYPES:
+            return True
+        return bool(content_type and content_type.startswith("text/"))
+
+    def _decode_text_attachment_bytes(self, file_bytes: bytes) -> Optional[str]:
+        """按约定编码顺序解码文本附件；疑似二进制内容返回 None。"""
+        if b"\x00" in file_bytes:
+            return None
+
+        for encoding in TEXT_ATTACHMENT_ENCODINGS:
+            try:
+                return file_bytes.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return None
+
+    async def _extract_text_blocks_from_attachments(
+        self, attachments: List[discord.Attachment], label: str
+    ) -> List[str]:
+        """读取可支持的纯文本附件，并转成可直接拼接进 prompt 的全文块。"""
+        text_blocks: List[str] = []
+
+        for attachment in attachments:
+            if not self._is_supported_text_attachment(attachment):
+                continue
+
+            filename = getattr(attachment, "filename", "未命名附件")
+            attachment_size = getattr(attachment, "size", None)
+            if isinstance(attachment_size, int) and attachment_size > TEXT_ATTACHMENT_MAX_BYTES:
+                log.info(
+                    f"文本附件超过 {TEXT_ATTACHMENT_MAX_BYTES} 字节限制，已跳过: {filename}"
+                )
+                continue
+
+            try:
+                file_bytes = await attachment.read()
+            except Exception as e:
+                log.error(f"读取文本附件 {filename} 时出错: {e}")
+                continue
+
+            if not file_bytes:
+                continue
+            if len(file_bytes) > TEXT_ATTACHMENT_MAX_BYTES:
+                log.info(
+                    f"文本附件读取后确认超过 {TEXT_ATTACHMENT_MAX_BYTES} 字节限制，已跳过: {filename}"
+                )
+                continue
+
+            decoded_text = self._decode_text_attachment_bytes(file_bytes)
+            if decoded_text is None:
+                log.warning(f"文本附件无法按支持编码解码或疑似二进制，已跳过: {filename}")
+                continue
+
+            text_blocks.append(
+                f"[{label}: {filename}]\n[附件全文开始]\n{decoded_text}\n[附件全文结束]"
+            )
+            log.debug(f"成功读取文本附件: {filename}, 大小: {len(file_bytes)} 字节")
+
+        return text_blocks
+
+    def _append_text_blocks(self, base_content: str, text_blocks: List[str]) -> str:
+        """将文本附件块追加到已有内容末尾，保持简单换行边界。"""
+        if not text_blocks:
+            return base_content
+
+        extra_content = "\n\n".join(block for block in text_blocks if block)
+        if not extra_content:
+            return base_content
+        if not base_content:
+            return extra_content
+        return f"{base_content}\n\n{extra_content}"
+
     async def process_message(
         self, message: discord.Message, bot: discord.Client
     ) -> Optional[Dict[str, Any]]:
@@ -276,10 +382,16 @@ class MessageProcessor:
         image_data_list = []
         seen_text_image_urls: Set[str] = set()
         bot_user = message.guild.me
+        current_text_attachment_blocks: List[str] = []
 
         if message.attachments:
             image_data_list.extend(
                 await self._extract_images_from_attachments(message.attachments)
+            )
+            current_text_attachment_blocks = (
+                await self._extract_text_blocks_from_attachments(
+                    message.attachments, label="用户上传的文本附件"
+                )
             )
 
         # 处理文本中的 Discord 图片链接（例如 [󠄀](https://cdn.discordapp.com/emojis/...webp)）
@@ -366,6 +478,12 @@ class MessageProcessor:
                                 for img in snapshot_images:
                                     img["source"] = "replied_attachment"
                                 image_data_list.extend(snapshot_images)
+                                snapshot_content_parts.extend(
+                                    await self._extract_text_blocks_from_attachments(
+                                        snapshot.attachments,
+                                        label="转发消息包含文本附件",
+                                    )
+                                )
 
                         snapshot_full_text = "\n".join(
                             filter(None, snapshot_content_parts)
@@ -420,6 +538,7 @@ class MessageProcessor:
                         ref_content_cleaned = self._clean_message_content(
                             ref_msg.content, ref_msg.mentions, bot_user
                         )
+                        replied_text_attachment_blocks: List[str] = []
 
                         # 新增：普通回复文本中的 Discord 图片链接
                         if ref_msg.content:
@@ -433,7 +552,13 @@ class MessageProcessor:
                             image_data_list.extend(replied_link_images)
 
                         full_ref_content = [
-                            ref for ref in [ref_content_cleaned, embed_content] if ref
+                            ref
+                            for ref in [
+                                ref_content_cleaned,
+                                embed_content,
+                                "\n\n".join(replied_text_attachment_blocks),
+                            ]
+                            if ref
                         ]
                         combined_content = "\n".join(full_ref_content).strip()
 
@@ -471,6 +596,46 @@ class MessageProcessor:
                             for img in replied_images:
                                 img["source"] = "replied_attachment"
                             image_data_list.extend(replied_images)
+                            replied_text_attachment_blocks = (
+                                await self._extract_text_blocks_from_attachments(
+                                    ref_msg.attachments,
+                                    label="回复消息包含文本附件",
+                                )
+                            )
+                            full_ref_content = [
+                                ref
+                                for ref in [
+                                    ref_content_cleaned,
+                                    embed_content,
+                                    "\n\n".join(replied_text_attachment_blocks),
+                                ]
+                                if ref
+                            ]
+                            combined_content = "\n".join(full_ref_content).strip()
+                            if combined_content:
+                                lines = combined_content.split("\n")
+                                formatted_quote = "\n> ".join(lines)
+
+                                reply_header = ""
+                                embed_author_name = (
+                                    ref_msg.embeds[0].author.name
+                                    if ref_msg.embeds and ref_msg.embeds[0].author
+                                    else None
+                                )
+
+                                if ref_msg.author.id == bot_user.id and embed_author_name:
+                                    command_context = (
+                                        f"的 {command_name} 回应"
+                                        if command_name
+                                        else "的回应"
+                                    )
+                                    reply_header = f"> [月月对 {embed_author_name} {command_context}]:"
+                                else:
+                                    reply_header = f"> [{ref_msg.author.display_name}]:"
+
+                                replied_message_content = (
+                                    f"{reply_header}\n> {formatted_quote}\n\n"
+                                )
 
                         # 从回复消息的 embed 中提取图片（proxy_url 回退）
                         if ref_msg.embeds and not any(
@@ -498,6 +663,9 @@ class MessageProcessor:
 
         clean_content = self._clean_message_content(
             content_with_placeholders, message.mentions, bot_user
+        )
+        clean_content = self._append_text_blocks(
+            clean_content, current_text_attachment_blocks
         )
 
         return {
