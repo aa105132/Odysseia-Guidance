@@ -556,6 +556,30 @@ class ChatSettingsService:
                 db_long_reply_in_dm_enabled.lower() == "true"
             )
 
+        # --- 每日换装配置 ---
+        outfit_keys = {
+            "daily_outfit_enabled": ("ENABLED", lambda v: v.lower() == "true"),
+            "daily_outfit_schedule_hour": ("SCHEDULE_HOUR", int),
+            "daily_outfit_schedule_minute": ("SCHEDULE_MINUTE", int),
+            "daily_outfit_designer_api_url": ("DESIGNER_API_URL", str),
+            "daily_outfit_designer_api_key": ("DESIGNER_API_KEY", str),
+            "daily_outfit_designer_model": ("DESIGNER_MODEL", str),
+            "daily_outfit_style_preference": ("STYLE_PREFERENCE", str),
+            "daily_outfit_custom_prompt": ("CUSTOM_PROMPT", str),
+            "daily_outfit_notification_channel_id": ("NOTIFICATION_CHANNEL_ID", int),
+            "daily_outfit_description": ("CURRENT_OUTFIT_DESCRIPTION", str),
+            "daily_outfit_tags": ("CURRENT_OUTFIT_TAGS", str),
+            "daily_outfit_name": ("CURRENT_OUTFIT_NAME", str),
+            "daily_outfit_last_change": ("LAST_CHANGE_TIME", str),
+        }
+        for db_key, (config_key, converter) in outfit_keys.items():
+            val = await self.db_manager.get_global_setting(db_key)
+            if val is not None:
+                try:
+                    chat_config.DAILY_OUTFIT_CONFIG[config_key] = converter(val)
+                except (TypeError, ValueError):
+                    pass
+
         log.info("数据库配置加载完成。")
 
     async def set_entity_settings(

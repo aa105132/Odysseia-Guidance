@@ -647,7 +647,7 @@ async def generate_image_novelai(
     - 异瞳顺序规则：green/blue 具体瞳色标签要前置，heterochromia 放后段，防止异瞳标签把具体瞳色带偏
     - 罩杯规则：默认 medium breasts(C)；仅当用户明确要求其他罩杯时才允许改成 small/large breasts
     - 提示词AI对月月只能补充场景/构图/光影细节，禁止改写以上外貌DNA与权重标签
-    - white off-shoulder top, fur trim, detached sleeves, white high waist skirt, pink bow belt, silver crescent moon necklace, jewelry
+    - 服装Tag：参照系统提示词中月月当前服装描述生成对应的Danbooru服装标签（服装会每日变化，以系统提示词为准）
     - 禁止为月月加入 `nude/completely nude/topless/bottomless/pussy/nipple/sex/fellatio/masturbation` 等露点或明确性行为标签
 
     ### 10. 参考标签库

@@ -648,6 +648,19 @@ class SpringFestivalConfigUpdate(BaseModel):
     reward_reason: Optional[str] = None
 
 
+class DailyOutfitConfigUpdate(BaseModel):
+    """每日换装配置更新"""
+    enabled: Optional[bool] = None
+    schedule_hour: Optional[int] = None
+    schedule_minute: Optional[int] = None
+    designer_api_url: Optional[str] = None
+    designer_api_key: Optional[str] = None
+    designer_model: Optional[str] = None
+    style_preference: Optional[str] = None
+    custom_prompt: Optional[str] = None
+    notification_channel_id: Optional[int] = None
+
+
 class ThreadAutoSpeakerConfigUpdate(BaseModel):
     """帖子自动发言配置更新"""
     enabled: Optional[bool] = None
@@ -6126,6 +6139,89 @@ async def serve_frontend():
             },
         )
     return {"message": "Dashboard API 正在运行。前端尚未构建。"}
+
+
+# ==================== 每日换装配置 ====================
+
+
+@app.get("/api/config/daily-outfit")
+async def get_daily_outfit_config(token: str = Depends(verify_token)):
+    """获取每日换装配置和当前服装状态。"""
+    cfg = chat_config.DAILY_OUTFIT_CONFIG
+    api_key = cfg.get("DESIGNER_API_KEY", "")
+    masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else ("***" if api_key else "")
+
+    return {
+        "enabled": cfg.get("ENABLED", True),
+        "schedule_hour": cfg.get("SCHEDULE_HOUR", 8),
+        "schedule_minute": cfg.get("SCHEDULE_MINUTE", 0),
+        "designer_api_url": cfg.get("DESIGNER_API_URL", ""),
+        "designer_api_key_masked": masked_key,
+        "designer_model": cfg.get("DESIGNER_MODEL", ""),
+        "style_preference": cfg.get("STYLE_PREFERENCE", ""),
+        "custom_prompt": cfg.get("CUSTOM_PROMPT", ""),
+        "notification_channel_id": cfg.get("NOTIFICATION_CHANNEL_ID", 0),
+        "current_outfit": {
+            "name": cfg.get("CURRENT_OUTFIT_NAME", "默认服装"),
+            "description": cfg.get("CURRENT_OUTFIT_DESCRIPTION", ""),
+            "tags": cfg.get("CURRENT_OUTFIT_TAGS", ""),
+            "last_change_time": cfg.get("LAST_CHANGE_TIME", ""),
+        },
+    }
+
+
+@app.put("/api/config/daily-outfit")
+async def update_daily_outfit_config(
+    config: DailyOutfitConfigUpdate, token: str = Depends(verify_token)
+):
+    """更新每日换装配置。"""
+    from src.chat.utils.database import chat_db_manager
+
+    cfg = chat_config.DAILY_OUTFIT_CONFIG
+    env_updates = {}
+
+    field_map = {
+        "enabled": ("ENABLED", "daily_outfit_enabled", "DAILY_OUTFIT_ENABLED", lambda v: str(v).lower()),
+        "schedule_hour": ("SCHEDULE_HOUR", "daily_outfit_schedule_hour", "DAILY_OUTFIT_SCHEDULE_HOUR", str),
+        "schedule_minute": ("SCHEDULE_MINUTE", "daily_outfit_schedule_minute", "DAILY_OUTFIT_SCHEDULE_MINUTE", str),
+        "designer_api_url": ("DESIGNER_API_URL", "daily_outfit_designer_api_url", "DAILY_OUTFIT_DESIGNER_API_URL", str),
+        "designer_api_key": ("DESIGNER_API_KEY", "daily_outfit_designer_api_key", "DAILY_OUTFIT_DESIGNER_API_KEY", str),
+        "designer_model": ("DESIGNER_MODEL", "daily_outfit_designer_model", "DAILY_OUTFIT_DESIGNER_MODEL", str),
+        "style_preference": ("STYLE_PREFERENCE", "daily_outfit_style_preference", "DAILY_OUTFIT_STYLE_PREFERENCE", str),
+        "custom_prompt": ("CUSTOM_PROMPT", "daily_outfit_custom_prompt", "DAILY_OUTFIT_CUSTOM_PROMPT", str),
+        "notification_channel_id": ("NOTIFICATION_CHANNEL_ID", "daily_outfit_notification_channel_id", "DAILY_OUTFIT_NOTIFICATION_CHANNEL_ID", str),
+    }
+
+    for field_name, (config_key, db_key, env_key, serializer) in field_map.items():
+        value = getattr(config, field_name, None)
+        if value is not None:
+            cfg[config_key] = value
+            await chat_db_manager.set_global_setting(db_key, serializer(value))
+            env_updates[env_key] = serializer(value)
+
+    if env_updates:
+        update_env_file(env_updates)
+
+    return {"status": "ok", "message": "每日换装配置已更新。"}
+
+
+@app.post("/api/config/daily-outfit/trigger")
+async def trigger_daily_outfit(token: str = Depends(verify_token)):
+    """手动触发换装。"""
+    from src.chat.features.daily_outfit.services.outfit_service import outfit_service
+    try:
+        result = await outfit_service.design_new_outfit()
+        return {"status": "ok", "outfit": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config/daily-outfit/revert")
+async def revert_daily_outfit(token: str = Depends(verify_token)):
+    """恢复默认服装。"""
+    from src.chat.features.daily_outfit.services.outfit_service import outfit_service
+    await outfit_service.revert_to_default()
+    return {"status": "ok", "message": "已恢复为默认服装。"}
 
 
 def run_dashboard(host: str = "0.0.0.0", port: int = 8080):

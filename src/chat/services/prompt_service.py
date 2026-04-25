@@ -312,10 +312,14 @@ class PromptService:
 
         # 填充核心提示词（动态替换占位符）
         # 必须通过模块引用读取，而非 from import，因为 Dashboard 会动态修改该值
+        from src.chat.features.daily_outfit.services.outfit_service import outfit_service
         core_prompt = (
             core_prompt_template.replace(
                 "{default_image_engine}", default_image_engine
-            ).replace("{default_new_image_tool}", default_new_image_tool)
+            )
+            .replace("{default_new_image_tool}", default_new_image_tool)
+            .replace("__CURRENT_OUTFIT__", outfit_service.get_current_outfit_description())
+            .replace("__CURRENT_OUTFIT_TAGS__", outfit_service.get_current_outfit_tags())
         )
 
         final_conversation.append({"role": "user", "parts": [core_prompt]})

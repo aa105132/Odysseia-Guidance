@@ -1080,6 +1080,24 @@ THREAD_COMMENTOR_CONFIG = {
     ),
 }
 
+# --- 每日换装 ---
+DAILY_OUTFIT_CONFIG = {
+    "ENABLED": _parse_bool_env("DAILY_OUTFIT_ENABLED", "true"),
+    "SCHEDULE_HOUR": _parse_int_env("DAILY_OUTFIT_SCHEDULE_HOUR", 8),
+    "SCHEDULE_MINUTE": _parse_int_env("DAILY_OUTFIT_SCHEDULE_MINUTE", 0),
+    "DESIGNER_API_URL": _strip_wrapping_quotes(os.getenv("DAILY_OUTFIT_DESIGNER_API_URL", "")),
+    "DESIGNER_API_KEY": _strip_wrapping_quotes(os.getenv("DAILY_OUTFIT_DESIGNER_API_KEY", "")),
+    "DESIGNER_MODEL": _strip_wrapping_quotes(os.getenv("DAILY_OUTFIT_DESIGNER_MODEL", "")),
+    "STYLE_PREFERENCE": _strip_wrapping_quotes(os.getenv("DAILY_OUTFIT_STYLE_PREFERENCE", "")),
+    "CUSTOM_PROMPT": _strip_wrapping_quotes(os.getenv("DAILY_OUTFIT_CUSTOM_PROMPT", "")),
+    "NOTIFICATION_CHANNEL_ID": _parse_int_env("DAILY_OUTFIT_NOTIFICATION_CHANNEL_ID", 0),
+    # 运行时状态（从 DB 加载）
+    "CURRENT_OUTFIT_DESCRIPTION": "",
+    "CURRENT_OUTFIT_TAGS": "",
+    "CURRENT_OUTFIT_NAME": "",
+    "LAST_CHANGE_TIME": "",
+}
+
 # --- 好感度系统 ---
 AFFECTION_CONFIG = {
     "INCREASE_CHANCE": 0.5,  # 每次对话增加好感度的几率

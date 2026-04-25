@@ -681,6 +681,12 @@
                             <i data-lucide="calendar-check" class="w-5 h-5"></i>
                             <span>年度总结</span>
                         </button>
+                        <button @click="currentTab = 'dailyOutfit'"
+                                :class="currentTab === 'dailyOutfit' ? 'nav-button-active' : 'nav-button-idle'"
+                                class="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all">
+                            <i data-lucide="shirt" class="w-5 h-5"></i>
+                            <span>每日换装</span>
+                        </button>
                     </div>
                 </nav>
             </div>
@@ -4563,6 +4569,111 @@
                 </div>
             </div>
 
+            <!-- 每日换装设置 -->
+            <div x-show="currentTab === 'dailyOutfit'" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-6">
+                <div>
+                    <p class="section-kicker">DAILY OUTFIT</p>
+                    <h2 class="text-2xl font-bold text-white">每日换装</h2>
+                    <p class="text-sm text-white/50 mt-1">自动为月月设计每日服装造型</p>
+                </div>
+
+                <!-- 当前造型预览 -->
+                <div class="surface-card rounded-2xl p-6">
+                    <h3 class="text-lg font-semibold text-white mb-4">当前造型</h3>
+                    <div class="panel-card-muted rounded-xl p-4 space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-white/50 text-sm">名称:</span>
+                            <span class="text-white font-medium" x-text="dailyOutfitPreview.name || '默认服装'"></span>
+                        </div>
+                        <div>
+                            <span class="text-white/50 text-sm">描述:</span>
+                            <p class="text-white/80 text-sm mt-1" x-text="dailyOutfitPreview.description || '未设置'"></p>
+                        </div>
+                        <div>
+                            <span class="text-white/50 text-sm">生图标签:</span>
+                            <p class="text-white/60 text-xs mt-1 font-mono" x-text="dailyOutfitPreview.tags || '未设置'"></p>
+                        </div>
+                        <div x-show="dailyOutfitPreview.last_change_time" class="text-white/40 text-xs">
+                            上次换装: <span x-text="dailyOutfitPreview.last_change_time"></span>
+                        </div>
+                    </div>
+                    <div class="flex gap-3 mt-4">
+                        <button @click="triggerDailyOutfit()" :disabled="dailyOutfitTriggerLoading" class="primary-soft-button px-4 py-2 rounded-lg text-sm">
+                            <span x-show="!dailyOutfitTriggerLoading">立即换装</span>
+                            <span x-show="dailyOutfitTriggerLoading">换装中...</span>
+                        </button>
+                        <button @click="revertDailyOutfit()" class="soft-button px-4 py-2 rounded-lg text-sm">恢复默认</button>
+                    </div>
+                </div>
+
+                <!-- 基础设置 -->
+                <div class="surface-card rounded-2xl p-6 space-y-5">
+                    <h3 class="text-lg font-semibold text-white">基础设置</h3>
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-white font-medium">启用每日换装</p>
+                            <p class="text-white/50 text-sm">每天定时自动更换月月的服装造型</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="dailyOutfitForm.enabled" class="peer sr-only">
+                            <div class="toggle-track peer-checked:bg-violet-500"></div>
+                        </label>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-white/70 mb-1.5">换装时间（时）</label>
+                            <input type="number" x-model.number="dailyOutfitForm.schedule_hour" min="0" max="23" class="form-control w-full">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-white/70 mb-1.5">换装时间（分）</label>
+                            <input type="number" x-model.number="dailyOutfitForm.schedule_minute" min="0" max="59" class="form-control w-full">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-white/70 mb-1.5">通知频道 ID</label>
+                        <input type="text" x-model="dailyOutfitForm.notification_channel_id" placeholder="换装后发送通知的频道 ID（留空则不通知）" class="form-control w-full">
+                    </div>
+                </div>
+
+                <!-- API 设置 -->
+                <div class="surface-card rounded-2xl p-6 space-y-5">
+                    <h3 class="text-lg font-semibold text-white">设计模型 API（OpenAI 兼容）</h3>
+                    <div>
+                        <label class="block text-sm text-white/70 mb-1.5">API 地址</label>
+                        <input type="text" x-model="dailyOutfitForm.designer_api_url" placeholder="https://api.example.com/v1" class="form-control w-full">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-white/70 mb-1.5">API Key</label>
+                        <input type="password" x-model="dailyOutfitForm.designer_api_key" :placeholder="dailyOutfitKeyMasked || '输入 API Key'" class="form-control w-full">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-white/70 mb-1.5">模型名称</label>
+                        <input type="text" x-model="dailyOutfitForm.designer_model" placeholder="例如: gpt-4o-mini, gemini-2.5-flash" class="form-control w-full">
+                    </div>
+                </div>
+
+                <!-- 风格设置 -->
+                <div class="surface-card rounded-2xl p-6 space-y-5">
+                    <h3 class="text-lg font-semibold text-white">风格设置</h3>
+                    <div>
+                        <label class="block text-sm text-white/70 mb-1.5">风格偏好</label>
+                        <input type="text" x-model="dailyOutfitForm.style_preference" placeholder="例如: 偏向可爱风格、运动系、日系校园" class="form-control w-full">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-white/70 mb-1.5">自定义 Prompt（高级）</label>
+                        <textarea x-model="dailyOutfitForm.custom_prompt" rows="3" placeholder="附加给设计 AI 的额外指令" class="form-control w-full"></textarea>
+                    </div>
+                </div>
+
+                <!-- 保存按钮 -->
+                <div class="flex justify-end">
+                    <button @click="saveDailyOutfitConfig()" :disabled="dailyOutfitLoading" class="primary-soft-button px-6 py-2.5 rounded-xl font-medium">
+                        <span x-show="!dailyOutfitLoading">保存配置</span>
+                        <span x-show="dailyOutfitLoading">保存中...</span>
+                    </button>
+                </div>
+            </div>
+
             <!-- 添加/编辑表情模态框 -->
             <div x-show="showAddEmojiModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50" x-transition>
                 <div class="bg-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-700" @click.away="closeEmojiModal()">
@@ -4806,6 +4917,28 @@
                     claimed_label: '已领取',
                     reward_reason: '新春红包奖励'
                 },
+
+                // 每日换装数据
+                dailyOutfitForm: {
+                    enabled: true,
+                    schedule_hour: 8,
+                    schedule_minute: 0,
+                    designer_api_url: '',
+                    designer_api_key: '',
+                    designer_model: '',
+                    style_preference: '',
+                    custom_prompt: '',
+                    notification_channel_id: 0,
+                },
+                dailyOutfitPreview: {
+                    name: '默认服装',
+                    description: '',
+                    tags: '',
+                    last_change_time: '',
+                },
+                dailyOutfitKeyMasked: '',
+                dailyOutfitLoading: false,
+                dailyOutfitTriggerLoading: false,
 
                 // 自动暖贴配置
                 threadAutoSpeakerForm: {
@@ -5372,6 +5505,8 @@
                     this.loadWebSearchConfig();
                     // 加载自动暖贴配置
                     this.loadThreadAutoSpeakerConfig();
+                    // 加载每日换装配置
+                    this.loadDailyOutfitConfig();
                 },
                 
                 async loadEmbeddingConfig() {
@@ -5979,6 +6114,85 @@
                     } catch (e) {
                         this.showToast('清除失败: ' + e.message, 'error');
                     }
+                },
+
+                async loadDailyOutfitConfig() {
+                    try {
+                        const resp = await fetch('/api/config/daily-outfit', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (!resp.ok) return;
+                        const data = await resp.json();
+                        this.dailyOutfitForm.enabled = data.enabled ?? true;
+                        this.dailyOutfitForm.schedule_hour = data.schedule_hour ?? 8;
+                        this.dailyOutfitForm.schedule_minute = data.schedule_minute ?? 0;
+                        this.dailyOutfitForm.designer_api_url = data.designer_api_url || '';
+                        this.dailyOutfitForm.designer_model = data.designer_model || '';
+                        this.dailyOutfitForm.style_preference = data.style_preference || '';
+                        this.dailyOutfitForm.custom_prompt = data.custom_prompt || '';
+                        this.dailyOutfitForm.notification_channel_id = data.notification_channel_id || 0;
+                        this.dailyOutfitKeyMasked = data.designer_api_key_masked || '';
+                        this.dailyOutfitForm.designer_api_key = '';
+                        if (data.current_outfit) {
+                            this.dailyOutfitPreview = data.current_outfit;
+                        }
+                    } catch (e) { console.error('加载换装配置失败:', e); }
+                },
+
+                async saveDailyOutfitConfig() {
+                    this.dailyOutfitLoading = true;
+                    try {
+                        const payload = { ...this.dailyOutfitForm };
+                        if (!payload.designer_api_key) delete payload.designer_api_key;
+                        if (!payload.notification_channel_id) payload.notification_channel_id = 0;
+                        const resp = await fetch('/api/config/daily-outfit', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify(payload),
+                        });
+                        if (resp.ok) this.showToast('换装配置已保存', 'success');
+                        else this.showToast('保存失败', 'error');
+                    } catch (e) { this.showToast('保存失败: ' + e.message, 'error'); }
+                    finally { this.dailyOutfitLoading = false; }
+                },
+
+                async triggerDailyOutfit() {
+                    this.dailyOutfitTriggerLoading = true;
+                    try {
+                        const resp = await fetch('/api/config/daily-outfit/trigger', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` },
+                        });
+                        const data = await resp.json();
+                        if (resp.ok && data.outfit) {
+                            this.dailyOutfitPreview = {
+                                name: data.outfit.name || '今日造型',
+                                description: data.outfit.description || '',
+                                tags: data.outfit.tags || '',
+                                last_change_time: new Date().toLocaleString('zh-CN'),
+                            };
+                            this.showToast('换装成功: ' + (data.outfit.name || ''), 'success');
+                        } else {
+                            this.showToast('换装失败: ' + (data.detail || ''), 'error');
+                        }
+                    } catch (e) { this.showToast('换装失败: ' + e.message, 'error'); }
+                    finally { this.dailyOutfitTriggerLoading = false; }
+                },
+
+                async revertDailyOutfit() {
+                    try {
+                        const resp = await fetch('/api/config/daily-outfit/revert', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` },
+                        });
+                        if (resp.ok) {
+                            await this.loadDailyOutfitConfig();
+                            this.showToast('已恢复默认服装', 'success');
+                        }
+                    } catch (e) { this.showToast('恢复失败: ' + e.message, 'error'); }
                 },
 
                 async loadEmojiConfig() {
