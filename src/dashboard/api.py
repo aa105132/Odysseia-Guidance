@@ -6145,6 +6145,12 @@ async def serve_frontend():
 
 # ==================== 每日换装配置 ====================
 
+def _get_default_outfit_prompts() -> dict:
+    from src.chat.features.daily_outfit.config.outfit_constants import (
+        OUTFIT_DESIGNER_SYSTEM_PROMPT, OUTFIT_DESIGNER_USER_TEMPLATE,
+    )
+    return {"system": OUTFIT_DESIGNER_SYSTEM_PROMPT, "user": OUTFIT_DESIGNER_USER_TEMPLATE}
+
 
 @app.get("/api/config/daily-outfit")
 async def get_daily_outfit_config(token: str = Depends(verify_token)):
@@ -6163,8 +6169,10 @@ async def get_daily_outfit_config(token: str = Depends(verify_token)):
         "style_preference": cfg.get("STYLE_PREFERENCE", ""),
         "custom_prompt": cfg.get("CUSTOM_PROMPT", ""),
         "notification_channel_id": cfg.get("NOTIFICATION_CHANNEL_ID", 0),
-        "designer_system_prompt": cfg.get("DESIGNER_SYSTEM_PROMPT", ""),
-        "designer_user_template": cfg.get("DESIGNER_USER_TEMPLATE", ""),
+        "designer_system_prompt": cfg.get("DESIGNER_SYSTEM_PROMPT", "") or _get_default_outfit_prompts()["system"],
+        "designer_user_template": cfg.get("DESIGNER_USER_TEMPLATE", "") or _get_default_outfit_prompts()["user"],
+        "designer_system_prompt_is_default": not cfg.get("DESIGNER_SYSTEM_PROMPT", ""),
+        "designer_user_template_is_default": not cfg.get("DESIGNER_USER_TEMPLATE", ""),
         "current_outfit": {
             "name": cfg.get("CURRENT_OUTFIT_NAME", "默认服装"),
             "description": cfg.get("CURRENT_OUTFIT_DESCRIPTION", ""),

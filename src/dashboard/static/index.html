@@ -4668,14 +4668,21 @@
                 <!-- 设计师提示词 -->
                 <div class="surface-card rounded-2xl p-6 space-y-5">
                     <h3 class="text-lg font-semibold text-white">设计师提示词</h3>
-                    <p class="text-white/50 text-sm -mt-2">自定义发送给 AI 的服装生成提示词，留空则使用内置默认提示词</p>
+                    <p class="text-white/50 text-sm -mt-2">当前显示的是实际生效的提示词，可直接修改。清空内容并保存即恢复内置默认。</p>
                     <div>
-                        <label class="block text-sm text-white/70 mb-1.5">System Prompt</label>
-                        <textarea x-model="dailyOutfitForm.designer_system_prompt" rows="10" placeholder="留空使用默认：包含角色固定特征、设计要求、输出JSON格式等..." class="form-control w-full font-mono text-xs"></textarea>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="text-sm text-white/70">System Prompt</label>
+                            <span x-show="dailyOutfitSystemPromptIsDefault" class="text-xs text-violet-400/70">内置默认</span>
+                        </div>
+                        <textarea x-model="dailyOutfitForm.designer_system_prompt" rows="12" class="form-control w-full font-mono text-xs"></textarea>
                     </div>
                     <div>
-                        <label class="block text-sm text-white/70 mb-1.5">User Prompt 模板</label>
-                        <textarea x-model="dailyOutfitForm.designer_user_template" rows="6" placeholder="留空使用默认。可用变量：{current_date} {season} {style_line} {custom_line}" class="form-control w-full font-mono text-xs"></textarea>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="text-sm text-white/70">User Prompt 模板</label>
+                            <span x-show="dailyOutfitUserTemplateIsDefault" class="text-xs text-violet-400/70">内置默认</span>
+                        </div>
+                        <textarea x-model="dailyOutfitForm.designer_user_template" rows="6" class="form-control w-full font-mono text-xs"></textarea>
+                        <p class="text-white/40 text-xs mt-1">可用变量：{current_date} {season} {style_line} {custom_line}</p>
                     </div>
                 </div>
 
@@ -4946,6 +4953,8 @@
                     designer_system_prompt: '',
                     designer_user_template: '',
                 },
+                dailyOutfitSystemPromptIsDefault: true,
+                dailyOutfitUserTemplateIsDefault: true,
                 dailyOutfitPreview: {
                     name: '默认服装',
                     description: '',
@@ -6149,6 +6158,8 @@
                         this.dailyOutfitForm.notification_channel_id = data.notification_channel_id || 0;
                         this.dailyOutfitForm.designer_system_prompt = data.designer_system_prompt || '';
                         this.dailyOutfitForm.designer_user_template = data.designer_user_template || '';
+                        this.dailyOutfitSystemPromptIsDefault = data.designer_system_prompt_is_default ?? true;
+                        this.dailyOutfitUserTemplateIsDefault = data.designer_user_template_is_default ?? true;
                         this.dailyOutfitKeyMasked = data.designer_api_key_masked || '';
                         this.dailyOutfitForm.designer_api_key = '';
                         if (data.current_outfit) {
