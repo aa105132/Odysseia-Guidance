@@ -115,7 +115,11 @@ class OutfitService:
         style_pref = force_style or cfg.get("STYLE_PREFERENCE", "")
         custom_prompt = cfg.get("CUSTOM_PROMPT", "")
 
-        user_msg = OUTFIT_DESIGNER_USER_TEMPLATE.format(
+        # 优先使用 Dashboard 配置的 prompt，空则用默认
+        system_prompt = cfg.get("DESIGNER_SYSTEM_PROMPT", "").strip() or OUTFIT_DESIGNER_SYSTEM_PROMPT
+        user_template = cfg.get("DESIGNER_USER_TEMPLATE", "").strip() or OUTFIT_DESIGNER_USER_TEMPLATE
+
+        user_msg = user_template.format(
             current_date=now.strftime("%Y年%m月%d日 %A"),
             season=season,
             style_line=f"- 风格偏好: {style_pref}" if style_pref else "",
@@ -125,7 +129,7 @@ class OutfitService:
         try:
             result = await self._call_openai_compatible(
                 api_url=api_url, api_key=api_key, model=model,
-                system_prompt=OUTFIT_DESIGNER_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_message=user_msg,
             )
         except Exception as e:

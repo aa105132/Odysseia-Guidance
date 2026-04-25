@@ -659,6 +659,8 @@ class DailyOutfitConfigUpdate(BaseModel):
     style_preference: Optional[str] = None
     custom_prompt: Optional[str] = None
     notification_channel_id: Optional[int] = None
+    designer_system_prompt: Optional[str] = None
+    designer_user_template: Optional[str] = None
 
 
 class ThreadAutoSpeakerConfigUpdate(BaseModel):
@@ -6161,6 +6163,8 @@ async def get_daily_outfit_config(token: str = Depends(verify_token)):
         "style_preference": cfg.get("STYLE_PREFERENCE", ""),
         "custom_prompt": cfg.get("CUSTOM_PROMPT", ""),
         "notification_channel_id": cfg.get("NOTIFICATION_CHANNEL_ID", 0),
+        "designer_system_prompt": cfg.get("DESIGNER_SYSTEM_PROMPT", ""),
+        "designer_user_template": cfg.get("DESIGNER_USER_TEMPLATE", ""),
         "current_outfit": {
             "name": cfg.get("CURRENT_OUTFIT_NAME", "默认服装"),
             "description": cfg.get("CURRENT_OUTFIT_DESCRIPTION", ""),
@@ -6190,6 +6194,8 @@ async def update_daily_outfit_config(
         "style_preference": ("STYLE_PREFERENCE", "daily_outfit_style_preference", "DAILY_OUTFIT_STYLE_PREFERENCE", str),
         "custom_prompt": ("CUSTOM_PROMPT", "daily_outfit_custom_prompt", "DAILY_OUTFIT_CUSTOM_PROMPT", str),
         "notification_channel_id": ("NOTIFICATION_CHANNEL_ID", "daily_outfit_notification_channel_id", "DAILY_OUTFIT_NOTIFICATION_CHANNEL_ID", str),
+        "designer_system_prompt": ("DESIGNER_SYSTEM_PROMPT", "daily_outfit_designer_system_prompt", "DAILY_OUTFIT_DESIGNER_SYSTEM_PROMPT", str),
+        "designer_user_template": ("DESIGNER_USER_TEMPLATE", "daily_outfit_designer_user_template", "DAILY_OUTFIT_DESIGNER_USER_TEMPLATE", str),
     }
 
     for field_name, (config_key, db_key, env_key, serializer) in field_map.items():

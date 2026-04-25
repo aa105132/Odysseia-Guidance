@@ -1091,6 +1091,8 @@ DAILY_OUTFIT_CONFIG = {
     "STYLE_PREFERENCE": _strip_wrapping_quotes(os.getenv("DAILY_OUTFIT_STYLE_PREFERENCE", "")),
     "CUSTOM_PROMPT": _strip_wrapping_quotes(os.getenv("DAILY_OUTFIT_CUSTOM_PROMPT", "")),
     "NOTIFICATION_CHANNEL_ID": _parse_int_env("DAILY_OUTFIT_NOTIFICATION_CHANNEL_ID", 0),
+    "DESIGNER_SYSTEM_PROMPT": "",  # 设计师 system prompt（空则用默认）
+    "DESIGNER_USER_TEMPLATE": "",  # 设计师 user prompt 模板（空则用默认）
     # 运行时状态（从 DB 加载）
     "CURRENT_OUTFIT_DESCRIPTION": "",
     "CURRENT_OUTFIT_TAGS": "",

@@ -567,6 +567,8 @@ class ChatSettingsService:
             "daily_outfit_style_preference": ("STYLE_PREFERENCE", str),
             "daily_outfit_custom_prompt": ("CUSTOM_PROMPT", str),
             "daily_outfit_notification_channel_id": ("NOTIFICATION_CHANNEL_ID", int),
+            "daily_outfit_designer_system_prompt": ("DESIGNER_SYSTEM_PROMPT", str),
+            "daily_outfit_designer_user_template": ("DESIGNER_USER_TEMPLATE", str),
             "daily_outfit_description": ("CURRENT_OUTFIT_DESCRIPTION", str),
             "daily_outfit_tags": ("CURRENT_OUTFIT_TAGS", str),
             "daily_outfit_name": ("CURRENT_OUTFIT_NAME", str),

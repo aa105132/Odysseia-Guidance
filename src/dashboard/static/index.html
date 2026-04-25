@@ -4665,6 +4665,20 @@
                     </div>
                 </div>
 
+                <!-- 设计师提示词 -->
+                <div class="surface-card rounded-2xl p-6 space-y-5">
+                    <h3 class="text-lg font-semibold text-white">设计师提示词</h3>
+                    <p class="text-white/50 text-sm -mt-2">自定义发送给 AI 的服装生成提示词，留空则使用内置默认提示词</p>
+                    <div>
+                        <label class="block text-sm text-white/70 mb-1.5">System Prompt</label>
+                        <textarea x-model="dailyOutfitForm.designer_system_prompt" rows="10" placeholder="留空使用默认：包含角色固定特征、设计要求、输出JSON格式等..." class="form-control w-full font-mono text-xs"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-white/70 mb-1.5">User Prompt 模板</label>
+                        <textarea x-model="dailyOutfitForm.designer_user_template" rows="6" placeholder="留空使用默认。可用变量：{current_date} {season} {style_line} {custom_line}" class="form-control w-full font-mono text-xs"></textarea>
+                    </div>
+                </div>
+
                 <!-- 保存按钮 -->
                 <div class="flex justify-end">
                     <button @click="saveDailyOutfitConfig()" :disabled="dailyOutfitLoading" class="primary-soft-button px-6 py-2.5 rounded-xl font-medium">
@@ -4929,6 +4943,8 @@
                     style_preference: '',
                     custom_prompt: '',
                     notification_channel_id: 0,
+                    designer_system_prompt: '',
+                    designer_user_template: '',
                 },
                 dailyOutfitPreview: {
                     name: '默认服装',
@@ -6131,6 +6147,8 @@
                         this.dailyOutfitForm.style_preference = data.style_preference || '';
                         this.dailyOutfitForm.custom_prompt = data.custom_prompt || '';
                         this.dailyOutfitForm.notification_channel_id = data.notification_channel_id || 0;
+                        this.dailyOutfitForm.designer_system_prompt = data.designer_system_prompt || '';
+                        this.dailyOutfitForm.designer_user_template = data.designer_user_template || '';
                         this.dailyOutfitKeyMasked = data.designer_api_key_masked || '';
                         this.dailyOutfitForm.designer_api_key = '';
                         if (data.current_outfit) {
