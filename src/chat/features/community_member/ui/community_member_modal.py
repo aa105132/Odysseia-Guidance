@@ -5,15 +5,9 @@ import os
 from typing import Dict, Any
 
 from src import config
-from src.chat.config import chat_config
 from src.chat.services.submission_service import submission_service
 
 log = logging.getLogger(__name__)
-
-# 获取审核配置
-REVIEW_SETTINGS = chat_config.WORLD_BOOK_CONFIG["review_settings"]
-VOTE_EMOJI = REVIEW_SETTINGS["vote_emoji"]
-REJECT_EMOJI = REVIEW_SETTINGS["reject_emoji"]
 
 
 class CommunityMemberUploadModal(discord.ui.Modal, title="上传社区成员档案"):
@@ -46,7 +40,6 @@ class CommunityMemberUploadModal(discord.ui.Modal, title="上传社区成员档�
             label="性格特点",
             placeholder="描述该成员的性格特点、行为方式等",
             style=discord.TextStyle.paragraph,
-            max_length=500,
             required=True,
         )
         self.add_item(self.personality_input)
@@ -56,7 +49,6 @@ class CommunityMemberUploadModal(discord.ui.Modal, title="上传社区成员档�
             label="背景信息",
             placeholder="描述该成员的背景故事、经历等",
             style=discord.TextStyle.paragraph,
-            max_length=1000,
             required=False,
         )
         self.add_item(self.background_input)
@@ -66,7 +58,6 @@ class CommunityMemberUploadModal(discord.ui.Modal, title="上传社区成员档�
             label="喜好偏好",
             placeholder="描述该成员的喜好、兴趣、习惯等",
             style=discord.TextStyle.paragraph,
-            max_length=500,
             required=False,
         )
         self.add_item(self.preferences_input)
@@ -200,7 +191,7 @@ class CommunityMemberUploadModal(discord.ui.Modal, title="上传社区成员档�
 
         if pending_id:
             await interaction.followup.send(
-                f"✅ 您的 **{member_name}** 档案已成功提交审核！\n请关注频道内的公开投票。",
+                f"✅ **{member_name}** 的档案已成功收录！现在就已经生效啦～",
                 ephemeral=True,
             )
         else:
@@ -216,9 +207,9 @@ class CommunityMemberUploadModal(discord.ui.Modal, title="上传社区成员档�
                     reason=f"社区成员档案提交失败自动退款 (item_id: {self.purchase_info.get('item_id')})",
                 )
                 await interaction.followup.send(
-                    "提交审核时发生错误，已自动退款，请稍后再试。", ephemeral=True
+                    "保存档案时发生错误，已自动退款，请稍后再试。", ephemeral=True
                 )
             else:
                 await interaction.followup.send(
-                    "提交审核时发生错误，请稍后再试。", ephemeral=True
+                    "保存档案时发生错误，请稍后再试。", ephemeral=True
                 )

@@ -11,6 +11,13 @@ from src import config
 from src.chat.config import chat_config
 from src.chat.services.review_service import review_service
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
+from src.chat.features.admin_panel.services.db_services import (
+    get_parade_db_connection,
+    get_cursor,
+)
+from src.chat.features.world_book.services.incremental_rag_service import (
+    incremental_rag_service,
+)
 import asyncio
 
 log = logging.getLogger(__name__)
@@ -131,36 +138,132 @@ class SubmissionService:
 
         return pending_id
 
+    async def _direct_save_community_member(
+        self,
+        member_data: Dict[str, Any],
+        proposer_id: int,
+    ) -> Optional[int]:
+        """直接将社区成员档案写入 ParadeDB，跳过审核流程。"""
+        parade_conn = None
+        try:
+            parade_conn = get_parade_db_connection()
+            if not parade_conn:
+                raise Exception("无法获取 Parade DB 连接。")
+            parade_cursor = get_cursor(parade_conn)
+
+            profile_user_id = member_data.get("discord_id")
+            if not profile_user_id:
+                raise ValueError("社区成员档案缺少 discord_id。")
+
+            parade_cursor.execute(
+                "SELECT id FROM community.member_profiles WHERE discord_id = %s",
+                (str(profile_user_id),),
+            )
+            existing_member = parade_cursor.fetchone()
+
+            updated_name = member_data.get("name", "").strip()
+            full_text = f"""
+名称: {updated_name}
+Discord ID: {profile_user_id}
+性格特点: {member_data.get("personality", "").strip()}
+背景信息: {member_data.get("background", "").strip()}
+喜好偏好: {member_data.get("preferences", "").strip()}
+            """.strip()
+            source_metadata = {
+                "name": updated_name,
+                "discord_id": str(profile_user_id),
+                "personality": member_data.get("personality", "").strip(),
+                "background": member_data.get("background", "").strip(),
+                "preferences": member_data.get("preferences", "").strip(),
+                "source": "community_submission",
+                "contributor_id": str(proposer_id),
+                "original_submission": member_data,
+            }
+
+            if existing_member:
+                old_entry_id = existing_member["id"]
+                log.info(
+                    f"检测到用户 {profile_user_id} 已有档案 (ID: {old_entry_id})，将执行更新操作。"
+                )
+                parade_cursor.execute(
+                    """
+                    UPDATE community.member_profiles
+                    SET title = %s, full_text = %s, source_metadata = %s, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        updated_name,
+                        full_text,
+                        json.dumps(source_metadata, ensure_ascii=False),
+                        old_entry_id,
+                    ),
+                )
+                new_entry_id = old_entry_id
+                asyncio.create_task(
+                    incremental_rag_service.delete_entry(new_entry_id)
+                )
+            else:
+                external_id = f"direct_{proposer_id}_{profile_user_id}"
+                parade_cursor.execute(
+                    """
+                    INSERT INTO community.member_profiles (external_id, discord_id, title, full_text, source_metadata, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                    RETURNING id
+                    """,
+                    (
+                        external_id,
+                        str(profile_user_id),
+                        updated_name,
+                        full_text,
+                        json.dumps(source_metadata, ensure_ascii=False),
+                    ),
+                )
+                result = parade_cursor.fetchone()
+                if not result:
+                    raise Exception("插入社区成员到 ParadeDB 后未能取回新 ID。")
+                new_entry_id = result["id"]
+
+            parade_conn.commit()
+            log.info(
+                f"社区成员档案 '{updated_name}' (ID: {new_entry_id}) 已直接写入数据库。"
+            )
+
+            asyncio.create_task(
+                incremental_rag_service.process_community_member(new_entry_id)
+            )
+            return new_entry_id
+
+        except Exception as e:
+            if parade_conn:
+                parade_conn.rollback()
+            log.error(f"直接保存社区成员档案时出错: {e}", exc_info=True)
+            return None
+        finally:
+            if parade_conn:
+                parade_conn.close()
+
     async def submit_community_member(
         self,
         interaction: discord.Interaction,
         member_data: Dict[str, Any],
         purchase_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[int]:
-        """处理社区成员档案的提交"""
+        """处理社区成员档案的提交（直接入库，无需审核）"""
         log.info(
             f"用户 {interaction.user.id} 正在提交社区成员档案: {member_data.get('name')}"
         )
 
-        # 如果有购买信息，将其添加到 entry_data 中
-        if purchase_info:
-            member_data["purchase_info"] = purchase_info
-
-        pending_id = await self._create_pending_entry(
-            entry_type="community_member",
-            interaction=interaction,
-            entry_data=member_data,
+        new_entry_id = await self._direct_save_community_member(
+            member_data=member_data,
+            proposer_id=interaction.user.id,
         )
 
-        if pending_id:
-            # 异步启动审核流程，不阻塞当前交互
-            assert review_service is not None
-            asyncio.create_task(review_service.start_review(pending_id))
+        if new_entry_id:
             log.info(
-                f"已为社区成员档案 '{member_data.get('name')}' (pending_id: {pending_id}) 创建审核任务。"
+                f"社区成员档案 '{member_data.get('name')}' 已直接收录 (ID: {new_entry_id})。"
             )
 
-        return pending_id
+        return new_entry_id
 
     async def submit_personal_profile_from_purchase(
         self,
@@ -169,7 +272,7 @@ class SubmissionService:
         purchase_info: Dict[str, Any],
     ) -> Tuple[bool, str]:
         """
-        处理从商店购买的个人档案提交，包含完整的扣款、验证和提交流程。
+        处理从商店购买的个人档案提交（直接入库，无需审核）。
 
         Returns:
             A tuple of (success, message).
@@ -198,39 +301,29 @@ class SubmissionService:
             f"用户 {interaction.user.id} 成功购买个人档案商品，花费 {price}，新余额 {new_balance}。"
         )
 
-        # 2. 验证数据 (虽然模态框里有基础验证，这里可以做更复杂的后端验证)
-        # 在这个场景下，基本验证已足够
-
-        # 3. 将购买信息添加到数据中，以便后续可能需要
-        profile_data["purchase_info"] = purchase_info
-
-        # 4. 创建待审核条目
-        pending_id = await self._create_pending_entry(
-            entry_type="community_member",
-            interaction=interaction,
-            entry_data=profile_data,
+        # 2. 直接写入数据库
+        new_entry_id = await self._direct_save_community_member(
+            member_data=profile_data,
+            proposer_id=interaction.user.id,
         )
 
-        if not pending_id:
-            # 如果创建失败，必须退款
+        if not new_entry_id:
+            # 写入失败，退款
             await coin_service.add_coins(
                 user_id=interaction.user.id,
                 amount=price,
-                reason=f"个人档案提交审核失败自动退款 (item_id: {item_id})",
+                reason=f"个人档案写入失败自动退款 (item_id: {item_id})",
             )
             log.error(
-                f"为用户 {interaction.user.id} 创建个人档案待审条目失败，已自动退款 {price}。"
+                f"为用户 {interaction.user.id} 直接保存个人档案失败，已自动退款 {price}。"
             )
-            return False, "❌ 提交审核时发生错误，你的购买费用已自动退还。"
+            return False, "❌ 保存名片时发生错误，你的购买费用已自动退还。"
 
-        # 5. 启动审核流程
-        assert review_service is not None
-        asyncio.create_task(review_service.start_review(pending_id))
         log.info(
-            f"已为用户 {interaction.user.id} 的个人档案 (pending_id: {pending_id}) 创建审核任务。"
+            f"用户 {interaction.user.id} 的个人名片已直接收录 (ID: {new_entry_id})。"
         )
 
-        return True, "✅ 你的名片已成功提交审核！审核通过后将自动生效。"
+        return True, "✅ 你的名片已成功收录！现在就已经生效啦～"
 
     async def submit_work_event(
         self,

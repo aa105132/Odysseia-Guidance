@@ -18,28 +18,24 @@ class PersonalProfilePurchaseModal(discord.ui.Modal, title="创建或更新你�
             placeholder="请输入你的角色名称",
             required=True,
             style=discord.TextStyle.short,
-            max_length=50,
         )
         self.personality = discord.ui.TextInput(
             label="性格特点",
             placeholder="用几个词描述你的性格，例如：热情、勇敢、有点内向",
             required=True,
             style=discord.TextStyle.paragraph,
-            max_length=1000,
         )
         self.background = discord.ui.TextInput(
             label="背景信息 (可选)",
             placeholder="可以简单介绍一下你的背景故事",
             required=False,
             style=discord.TextStyle.paragraph,
-            max_length=1500,
         )
         self.preferences = discord.ui.TextInput(
             label="喜好偏好 (可选)",
             placeholder="你喜欢什么？讨厌什么？",
             required=False,
             style=discord.TextStyle.paragraph,
-            max_length=1000,
         )
 
         self.add_item(self.name)
