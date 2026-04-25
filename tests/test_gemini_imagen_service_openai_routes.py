@@ -41,7 +41,27 @@ def test_resolve_openai_image_api_mode_routes_grok_to_images_api(monkeypatch):
     service = GeminiImagenService()
 
     assert service._resolve_openai_image_api_mode("grok-imagine-1.0") == "images_api"
-    assert service._resolve_openai_image_api_mode("gpt-image-1") == "images_api"
+
+
+def test_resolve_openai_image_api_mode_routes_gpt_image_to_chat(monkeypatch):
+    """gpt-image-* 默认走 chat/completions，避免强制锁死在 /images/generations。"""
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
+    service = GeminiImagenService()
+
+    assert service._resolve_openai_image_api_mode("gpt-image-1") == "chat_completions"
+
+
+def test_resolve_openai_image_api_mode_respects_images_api_override(monkeypatch):
+    """显式指定 images_api 时，任意模型（含 gpt-image-*）都应走 /images/*。"""
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
+    service = GeminiImagenService()
+
+    assert (
+        service._resolve_openai_image_api_mode(
+            "gpt-image-1", mode_override="images_api"
+        )
+        == "images_api"
+    )
 
 
 def test_resolve_openai_image_api_mode_routes_regular_models_to_chat(monkeypatch):
@@ -113,6 +133,43 @@ def test_edit_openai_format_keeps_grok_on_images_api(monkeypatch):
     )
 
     assert result is None
+
+
+def test_edit_openai_format_multi_image_skips_images_api(monkeypatch):
+    """多参考图（>1）应跳过 /images/edits，直接走 chat/completions。"""
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
+    service = GeminiImagenService()
+
+    async def _unexpected_images_api(**kwargs):
+        raise AssertionError("多参考图不应走 /images/edits")
+
+    fake_image = b"fake-edited-image"
+
+    async def _fake_chat_completions(**kwargs):
+        return fake_image
+
+    monkeypatch.setattr(
+        service, "_edit_image_openai_images_api_format", _unexpected_images_api
+    )
+    monkeypatch.setattr(
+        service,
+        "_edit_image_openai_chat_completions_format",
+        _fake_chat_completions,
+    )
+
+    result = asyncio.run(
+        service._edit_image_openai_format(
+            reference_images=[
+                {"data": b"img1", "mime_type": "image/png"},
+                {"data": b"img2", "mime_type": "image/png"},
+            ],
+            edit_prompt="merge these two images",
+            aspect_ratio="1:1",
+            model_name="grok-imagine-1.0-edit",
+        )
+    )
+
+    assert result == fake_image
 
 
 def test_parse_sse_payload_text_extracts_data_items():

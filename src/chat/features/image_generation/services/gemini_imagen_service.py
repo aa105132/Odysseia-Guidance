@@ -190,6 +190,21 @@ class GeminiImagenService:
         return None
 
     @staticmethod
+    def _resolve_image_size_for_resolution(
+        resolution: str,
+        openai_image_size: Optional[str] = None,
+    ) -> Optional[str]:
+        """当用户未手动指定 openai_image_size 时，根据 resolution 自动映射。"""
+        if openai_image_size:
+            return openai_image_size
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        if resolution == "2k":
+            return config.get("RESOLUTION_SIZE_2K") or "2048x2048"
+        if resolution == "4k":
+            return config.get("RESOLUTION_SIZE_4K") or "4096x4096"
+        return None
+
+    @staticmethod
     def _build_openai_image_prompt(
         prompt: str,
         negative_prompt: Optional[str] = None,
@@ -464,6 +479,12 @@ class GeminiImagenService:
         )
         log.info(f"使用模型 {model_name} 生成图像 (分辨率: {resolution}, 内容分级: {content_rating})")
 
+        # 分辨率自动映射 openai_image_size
+        resolved_image_size = self._resolve_image_size_for_resolution(
+            resolution=resolution,
+            openai_image_size=openai_image_size,
+        )
+
         # 根据 API 格式选择不同的生成方法
         # gemini_chat: 使用 Gemini SDK 的 generate_content 多模态聊天接口
         # gemini: 使用 Gemini SDK 的 generate_images 专用接口
@@ -475,7 +496,7 @@ class GeminiImagenService:
                 aspect_ratio=aspect_ratio,
                 number_of_images=number_of_images,
                 model_name=model_name,
-                openai_image_size=openai_image_size,
+                openai_image_size=resolved_image_size,
                 openai_response_format=openai_response_format,
                 openai_stream=openai_stream,
                 openai_quality=openai_quality,
@@ -1963,7 +1984,13 @@ class GeminiImagenService:
             )
         )
         log.info(f"图生图使用模型: {model_name} (分辨率: {resolution}, 内容分级: {content_rating})")
-        
+
+        # 分辨率自动映射 openai_image_size
+        resolved_image_size = self._resolve_image_size_for_resolution(
+            resolution=resolution,
+            openai_image_size=openai_image_size,
+        )
+
         retry_max_attempts = max(
             1, int(app_config.GEMINI_IMAGEN_CONFIG.get("EMPTY_RESULT_MAX_RETRIES", 3))
         )
@@ -1976,7 +2003,7 @@ class GeminiImagenService:
                     edit_prompt=edit_prompt,
                     aspect_ratio=aspect_ratio,
                     model_name=model_name,
-                    openai_image_size=openai_image_size,
+                    openai_image_size=resolved_image_size,
                     openai_response_format=openai_response_format,
                     openai_stream=openai_stream,
                     openai_quality=openai_quality,
@@ -2122,12 +2149,14 @@ class GeminiImagenService:
     ) -> Optional[bytes]:
         """
         根据模型和配置决定走 OpenAI 兼容的 chat/completions 还是 /images/edits。
+        多参考图（>1）时强制走 chat/completions，因为 /images/edits 只支持单张 image 字段。
         """
+        multi_image = len(reference_images) > 1
         resolved_mode = self._resolve_openai_image_api_mode(
             model_name=model_name,
             mode_override=openai_image_api_mode,
         )
-        if resolved_mode == "images_api":
+        if resolved_mode == "images_api" and not multi_image:
             edited_image = await self._edit_image_openai_images_api_format(
                 reference_images=reference_images,
                 edit_prompt=edit_prompt,
@@ -2152,6 +2181,11 @@ class GeminiImagenService:
                 return None
             log.warning(
                 "OpenAI 图生图 images_api auto 路由未拿到结果，回退到 chat/completions 再试一次。"
+            )
+
+        if multi_image and resolved_mode == "images_api":
+            log.info(
+                f"多参考图({len(reference_images)}张)跳过 /images/edits，直接走 chat/completions 路由。"
             )
 
         return await self._edit_image_openai_chat_completions_format(

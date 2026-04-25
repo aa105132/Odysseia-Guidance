@@ -515,6 +515,10 @@ def _get_imagen_config():
         # - "chat_completions": 强制走 /chat/completions
         # - "images_api": 强制走 /images/generations 和 /images/edits
         "OPENAI_IMAGE_API_MODE": os.getenv("GEMINI_IMAGEN_OPENAI_IMAGE_API_MODE", "auto"),
+        # --- 分辨率 → OpenAI size 自动映射 ---
+        # 当用户选择 2k/4k 分辨率且未手动指定 openai_image_size 时，自动填入此 size
+        "RESOLUTION_SIZE_2K": os.getenv("GEMINI_IMAGEN_RESOLUTION_SIZE_2K", "2048x2048"),
+        "RESOLUTION_SIZE_4K": os.getenv("GEMINI_IMAGEN_RESOLUTION_SIZE_4K", "4096x4096"),
         # 空回自动重试次数（图片/视频全局共用）
         # 仅在上游成功响应但未返回图片/视频时触发重试
         "EMPTY_RESULT_MAX_RETRIES": _parse_int_env("GENERATION_EMPTY_RESULT_MAX_RETRIES", 3),
