@@ -1744,9 +1744,19 @@ class GeminiService:
         # 稳定性优化：
         # 当仅依赖 Dashboard 全局 URL 且格式是 openai 时，
         # 直接走 OpenAI 兼容路径，避免误入官方 Gemini SDK 路径导致参数不兼容。
-        api_format = self._normalize_api_format(
-            getattr(app_config, "_db_api_format", None) or "gemini"
-        )
+        db_api_format_raw = getattr(app_config, "_db_api_format", None)
+        if db_api_format_raw:
+            api_format = self._normalize_api_format(db_api_format_raw)
+        elif custom_endpoint_from_global_url and not custom_endpoint_from_model:
+            # Dashboard 设了全局 URL 但未显式选择格式时，根据 URL 特征自动推断
+            global_url = str(getattr(app_config, "_db_api_url", "") or "").lower()
+            is_gemini_url = any(kw in global_url for kw in (
+                "generativelanguage.googleapis.com", "aiplatform.googleapis.com", "/v1beta",
+            ))
+            api_format = "gemini" if is_gemini_url else "openai"
+            log.info(f"API 格式未显式设置，根据 URL 自动推断为: {api_format}")
+        else:
+            api_format = "gemini"
         if (
             use_custom_endpoint
             and (not custom_endpoint_from_model)
@@ -1953,10 +1963,17 @@ class GeminiService:
             log.error(error_msg)
             raise ValueError(error_msg)
 
-        # 获取 API 格式配置
-        api_format = self._normalize_api_format(
-            getattr(app_config, "_db_api_format", None) or "gemini"
-        )
+        # 获取 API 格式配置：显式设置 > URL 自动推断 > 默认 gemini
+        db_api_format_raw = getattr(app_config, "_db_api_format", None)
+        if db_api_format_raw:
+            api_format = self._normalize_api_format(db_api_format_raw)
+        else:
+            base_url_lower = str(endpoint_config.get("base_url", "")).lower()
+            is_gemini_url = any(kw in base_url_lower for kw in (
+                "generativelanguage.googleapis.com", "aiplatform.googleapis.com", "/v1beta",
+            ))
+            api_format = "gemini" if is_gemini_url else "openai"
+            log.info(f"API 格式未显式设置，根据端点 URL 自动推断为: {api_format}")
         log.info(f"正在为自定义端点创建客户端: {endpoint_config['base_url']} (格式: {api_format})")
         
         # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
