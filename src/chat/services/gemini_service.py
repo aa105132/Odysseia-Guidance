@@ -2643,7 +2643,9 @@ class GeminiService:
                     executed_tool_signatures.add(call_signature)
                     web_search_call_count += 1
                     web_search_executed_in_current_turn = True
-                elif call_signature in executed_tool_signatures:
+                elif call_signature in executed_tool_signatures and call.name not in (
+                    "get_user_avatar", "get_user_profile",
+                ):
                     log.warning(
                         f"检测到重复的工具参数，已拦截本次重复工具请求：{call.name}"
                     )
@@ -3381,7 +3383,9 @@ class GeminiService:
                                     discord_message=discord_message,
                                     current_turn_tool_names=current_turn_tool_names,
                                 )
-                        elif call_signature in executed_tool_signatures:
+                        elif call_signature in executed_tool_signatures and tool_name not in (
+                            "get_user_avatar", "get_user_profile",
+                        ):
                             blocked_tool_call_in_this_turn = True
                             log.warning(
                                 f"OpenAI 工具循环中检测到重复 {tool_name} 参数，已拦截。"
