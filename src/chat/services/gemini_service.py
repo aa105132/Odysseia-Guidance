@@ -830,8 +830,8 @@ class GeminiService:
                     "type": "text",
                     "text": (
                         f"已获取用户头像{identity_hint}。"
-                        "你现在已经拥有了这个用户的外观参考，不需要再查询任何资料。"
-                        "请立即根据用户的画图请求调用绘图工具开始画图。"
+                        "如果还需要获取其他人的头像，继续调用 get_user_avatar；"
+                        "全部头像获取完毕后立即开始画图，不要再做多余的查询。"
                     ),
                 },
                 *image_parts,
@@ -2730,8 +2730,8 @@ class GeminiService:
                     # 根据工具类型生成不同的提示信息
                     if actual_tool_name == "get_user_avatar":
                         response_hint = (
-                            "已获取用户头像。你现在已有该用户的外观参考，"
-                            "不需要再查询其他资料，请立即根据用户请求调用绘图工具开始画图。"
+                            "已获取用户头像。如果还需要获取其他人的头像，继续调用 get_user_avatar；"
+                            "全部头像获取完毕后立即开始画图，不要再做多余的查询。"
                         )
                     elif actual_tool_name == "render_newspaper_brief":
                         response_hint = (

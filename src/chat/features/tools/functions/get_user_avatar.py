@@ -281,7 +281,8 @@ async def get_user_avatar(
             },
             "hint": (
                 f"已获取 {user_name}（user_id: {target_id}）的头像。"
-                f"你现在已有该用户的外观参考，不需要再查询其他资料，请立即开始画图。"
+                f"如果还需要获取其他人的头像，继续调用 get_user_avatar；"
+                f"全部头像获取完毕后立即开始画图，不要再做多余的查询。"
                 f"调用 edit_image 时传 avatar_user_id=\"{target_id}\"。"
             ),
         }
