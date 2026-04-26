@@ -206,10 +206,14 @@ class MessageProcessor:
         # 兼容 Discord Emoji 链接在极端情况下缺少扩展名的形式
         return "/emojis/" in path
 
+    def _is_image_url_by_extension(self, url: str) -> bool:
+        """判断 URL 是否以图片扩展名结尾（不限制域名）。"""
+        return self._guess_mime_type_from_url(url) is not None
+
     async def _extract_images_from_text_links(
         self, content: str, source: str, seen_urls: Optional[Set[str]] = None
     ) -> List[Dict[str, Any]]:
-        """从文本链接下载 Discord 图片，并转换为统一图片输入结构。"""
+        """从文本链接下载图片，支持 Discord CDN 和外部图片链接。"""
         if not content:
             return []
 
@@ -222,12 +226,12 @@ class MessageProcessor:
 
         collected_urls: List[str] = []
         for url in candidate_urls:
-            if not self._is_supported_discord_image_url(url):
-                continue
             if url in seen_urls:
                 continue
-            seen_urls.add(url)
-            collected_urls.append(url)
+            # Discord CDN 链接或以图片扩展名结尾的外部链接都允许
+            if self._is_supported_discord_image_url(url) or self._is_image_url_by_extension(url):
+                seen_urls.add(url)
+                collected_urls.append(url)
 
         if not collected_urls:
             return []
@@ -404,13 +408,35 @@ class MessageProcessor:
                 )
             )
 
-        # 从 embed 中提取图片（用户贴的 CDN 链接会被 Discord 自动嵌入，
-        # embed 的 proxy_url 经过 Discord 代理，不受 CDN 签名参数限制）
-        if message.embeds and not image_data_list:
+        # 从 embed 中提取图片（用户贴的链接会被 Discord 自动嵌入为 embed，
+        # embed 的 proxy_url 经过 Discord 代理，比原始 URL 更可靠）
+        if message.embeds:
             embed_images = await self._extract_images_from_embeds(
                 message.embeds, seen_urls=seen_text_image_urls
             )
             image_data_list.extend(embed_images)
+
+        # 提取贴纸/动图图片（Discord 贴纸不在 attachments 中）
+        if getattr(message, "stickers", None) and not image_data_list:
+            try:
+                from src.chat.features.tools.utils.discord_image_utils import fetch_sticker_image
+                for sticker in message.stickers:
+                    sticker_image = await fetch_sticker_image(sticker)
+                    if sticker_image and sticker_image.get("data"):
+                        image_data_list.append(
+                            {
+                                "mime_type": sticker_image.get("mime_type", "image/png"),
+                                "data": sticker_image["data"],
+                                "source": "sticker",
+                            }
+                        )
+                        log.info(
+                            f"已提取贴纸图片: {sticker.name} (ID: {sticker.id}), "
+                            f"MIME: {sticker_image.get('mime_type')}, "
+                            f"大小: {len(sticker_image['data'])} bytes"
+                        )
+            except Exception as e:
+                log.warning(f"提取贴纸图片失败: {e}")
 
         replied_message_content = ""
         if message.reference and message.reference.message_id:
@@ -648,6 +674,27 @@ class MessageProcessor:
                             for img in replied_embed_images:
                                 img["source"] = "replied_attachment"
                             image_data_list.extend(replied_embed_images)
+
+                        # 从回复消息中提取贴纸图片
+                        if getattr(ref_msg, "stickers", None) and not any(
+                            img.get("source") == "replied_attachment"
+                            for img in image_data_list
+                        ):
+                            try:
+                                from src.chat.features.tools.utils.discord_image_utils import fetch_sticker_image
+                                for sticker in ref_msg.stickers:
+                                    sticker_image = await fetch_sticker_image(sticker)
+                                    if sticker_image and sticker_image.get("data"):
+                                        image_data_list.append(
+                                            {
+                                                "mime_type": sticker_image.get("mime_type", "image/png"),
+                                                "data": sticker_image["data"],
+                                                "source": "replied_attachment",
+                                            }
+                                        )
+                                        log.info(f"已从回复消息提取贴纸图片: {sticker.name}")
+                            except Exception as e:
+                                log.warning(f"从回复消息提取贴纸图片失败: {e}")
 
             except (discord.NotFound, discord.Forbidden):
                 log.warning(
