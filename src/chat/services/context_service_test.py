@@ -230,10 +230,10 @@ class ContextServiceTest:
                             if len(ref_preview_text) > 180:
                                 ref_preview_text = ref_preview_text[:177] + "..."
                             reply_info = (
-                                f"[回复 {ref_msg.author.display_name}: {ref_preview_text}]"
+                                f"[回复 {ref_msg.author.display_name}<{ref_msg.author.id}>: {ref_preview_text}]"
                             )
                         else:
-                            reply_info = f"[回复 {ref_msg.author.display_name}]"
+                            reply_info = f"[回复 {ref_msg.author.display_name}<{ref_msg.author.id}>]"
 
                 # 处理图片附件信息
                 attachment_info = ""
@@ -251,8 +251,9 @@ class ContextServiceTest:
                 if not combined_content and msg.attachments:
                     combined_content = "（仅发送了图片）"
 
-                # 强制在元信息（用户名和回复）后添加冒号，清晰地分割内容
-                user_meta = f"[{msg.author.display_name}]{attachment_info}{reply_info}"
+                # 强制在元信息（用户名+ID和回复）后添加冒号，清晰地分割内容
+                bot_tag = "[BOT] " if msg.author.bot else ""
+                user_meta = f"{bot_tag}[{msg.author.display_name}<{msg.author.id}>]{attachment_info}{reply_info}"
                 final_part = f"{user_meta}: {combined_content}"
                 history_parts.append(final_part)
 
@@ -299,7 +300,9 @@ class ContextServiceTest:
             def replace_mention(match):
                 user_id = int(match.group(1))
                 member = guild.get_member(user_id)
-                return f"@{member.display_name}" if member else "@未知用户"
+                if member:
+                    return f"{member.display_name}<{user_id}>"
+                return f"未知用户<{user_id}>"
 
             content = re.sub(r"<@!?(\d+)>", replace_mention, content)
         content = re.sub(r"<a?:\w+:\d+>", "", content)
