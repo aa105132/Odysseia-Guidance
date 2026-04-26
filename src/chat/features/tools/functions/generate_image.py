@@ -496,24 +496,13 @@ async def generate_image(
         await remove_reaction(GENERATING_EMOJI)
         
         if images_list and len(images_list) > 0:
-            # 添加成功反应
-            await add_reaction(SUCCESS_EMOJI)
-            
             # 实际生成的图片数量
             actual_count = len(images_list)
             actual_cost = cost_per_image * actual_count
-            
-            # 扣除月光币（按实际生成数量）
-            if parsed_user_id is not None and actual_cost > 0:
-                try:
-                    await coin_service.remove_coins(
-                        parsed_user_id, actual_cost, f"AI图片生成x{actual_count}: {prompt[:25]}..."
-                    )
-                    log.info(f"用户 {parsed_user_id} 生成 {actual_count} 张图片成功，扣除 {actual_cost} 月光币")
-                except Exception as e:
-                    log.error(f"扣除月光币失败: {e}")
-            
+
             # 发送图片到频道（每条消息最多10张，Discord上限）
+            # 注意：✅ 反应和扣费移到发送成功之后，避免发送失败时已打 ✅
+            image_sent = False
             if channel:
                 try:
                     import io
@@ -609,11 +598,30 @@ async def generate_image(
                                 channel_id=sent_message.channel.id,
                             )
                     
+                    image_sent = True
                     log.info(f"已发送 {len(images_list)} 张图片到频道（每条消息最多10张）")
                 except Exception as e:
-                    log.error(f"发送图片到频道失败: {e}")
-            
-            # 返回成功信息给 AI（标记跳过后续AI回复，因为预告消息已经发过了）
+                    log.error(f"发送图片到频道失败: {e}", exc_info=True)
+
+            if not image_sent:
+                await add_reaction(FAILED_EMOJI)
+                return {
+                    "generation_failed": True,
+                    "reason": "send_failed",
+                    "hint": "图片已生成但发送到频道失败了。请用自己的语气告诉用户稍后再试。"
+                }
+
+            # 发送成功后才打 ✅ 和扣费
+            await add_reaction(SUCCESS_EMOJI)
+            if parsed_user_id is not None and actual_cost > 0:
+                try:
+                    await coin_service.remove_coins(
+                        parsed_user_id, actual_cost, f"AI图片生成x{actual_count}: {prompt[:25]}..."
+                    )
+                    log.info(f"用户 {parsed_user_id} 生成 {actual_count} 张图片成功，扣除 {actual_cost} 月光币")
+                except Exception as e:
+                    log.error(f"扣除月光币失败: {e}")
+
             return {
                 "success": True,
                 "skip_ai_response": True,
@@ -895,23 +903,12 @@ async def generate_images_batch(
         await remove_reaction(GENERATING_EMOJI)
         
         if successful_images:
-            # 添加成功反应
-            await add_reaction(SUCCESS_EMOJI)
-            
             actual_count = len(successful_images)
             actual_cost = cost_per_image * actual_count
-            
-            # 扣除月光币
-            if parsed_user_id is not None and actual_cost > 0:
-                try:
-                    await coin_service.remove_coins(
-                        parsed_user_id, actual_cost, f"AI批量图片生成x{actual_count}"
-                    )
-                    log.info(f"用户 {parsed_user_id} 批量生成 {actual_count} 张图片，扣除 {actual_cost} 月光币")
-                except Exception as e:
-                    log.error(f"扣除月光币失败: {e}")
-            
+
             # 发送图片到频道（一条消息包含所有图片和提示词）
+            # 注意：✅ 反应和扣费移到发送成功之后，避免发送失败时已打 ✅
+            batch_image_sent = False
             if channel:
                 try:
                     # 获取实际使用的模型名称
@@ -982,11 +979,29 @@ async def generate_images_batch(
                                 channel_id=sent_message.channel.id,
                             )
                     
+                    batch_image_sent = True
                     log.info(f"已发送 {len(all_images)} 张图片到频道")
                 except Exception as e:
-                    log.error(f"发送图片到频道失败: {e}")
-            
-            # 返回成功信息（标记跳过后续AI回复）
+                    log.error(f"发送图片到频道失败: {e}", exc_info=True)
+
+            if not batch_image_sent:
+                await add_reaction(FAILED_EMOJI)
+                return {
+                    "generation_failed": True,
+                    "reason": "send_failed",
+                    "hint": "批量图片已生成但发送到频道失败了。请用自己的语气告诉用户稍后再试。"
+                }
+
+            await add_reaction(SUCCESS_EMOJI)
+            if parsed_user_id is not None and actual_cost > 0:
+                try:
+                    await coin_service.remove_coins(
+                        parsed_user_id, actual_cost, f"AI批量图片生成x{actual_count}"
+                    )
+                    log.info(f"用户 {parsed_user_id} 批量生成 {actual_count} 张图片，扣除 {actual_cost} 月光币")
+                except Exception as e:
+                    log.error(f"扣除月光币失败: {e}")
+
             return {
                 "success": True,
                 "skip_ai_response": True,

@@ -609,20 +609,9 @@ async def edit_image(
         await remove_reaction(GENERATING_EMOJI)
         
         if edited_image_bytes:
-            # 添加成功反应
-            await add_reaction(SUCCESS_EMOJI)
-            
-            # 扣除月光币
-            if parsed_user_id is not None and cost > 0:
-                try:
-                    await coin_service.remove_coins(
-                        parsed_user_id, cost, f"AI图生图: {edit_prompt[:30]}..."
-                    )
-                    log.info(f"用户 {parsed_user_id} 图生图成功，扣除 {cost} 月光币")
-                except Exception as e:
-                    log.error(f"扣除月光币失败: {e}")
-            
             # 直接发送图片到频道（Embed 格式 + 重新生成按钮）
+            # 注意：✅ 反应和扣费移到发送成功之后，避免发送失败时已打 ✅
+            image_sent = False
             if channel:
                 try:
                     import io
@@ -706,6 +695,7 @@ async def edit_image(
                     if regenerate_view:
                         send_kwargs["view"] = regenerate_view
                     sent_message = await channel.send(**send_kwargs)
+                    image_sent = True
                     if parsed_user_id is not None:
                         await chat_db_manager.register_generated_image_message(
                             message_id=sent_message.id,
@@ -715,9 +705,27 @@ async def edit_image(
                         )
                     log.info("修改后的图片已直接发送到频道（Embed格式+重新生成按钮）")
                 except Exception as e:
-                    log.error(f"发送图片到频道失败: {e}")
-            
-            # 返回成功信息给 AI（标记跳过后续AI回复）
+                    log.error(f"发送图片到频道失败: {e}", exc_info=True)
+
+            if not image_sent:
+                await add_reaction(FAILED_EMOJI)
+                return {
+                    "edit_failed": True,
+                    "reason": "send_failed",
+                    "hint": "图片已生成但发送到频道失败了。请用自己的语气告诉用户稍后再试。"
+                }
+
+            # 发送成功后才打 ✅ 和扣费
+            await add_reaction(SUCCESS_EMOJI)
+            if parsed_user_id is not None and cost > 0:
+                try:
+                    await coin_service.remove_coins(
+                        parsed_user_id, cost, f"AI图生图: {edit_prompt[:30]}..."
+                    )
+                    log.info(f"用户 {parsed_user_id} 图生图成功，扣除 {cost} 月光币")
+                except Exception as e:
+                    log.error(f"扣除月光币失败: {e}")
+
             return {
                 "success": True,
                 "skip_ai_response": True,
