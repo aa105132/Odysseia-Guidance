@@ -853,7 +853,8 @@ async def generate_images_batch(
         # 批量生成默认使用 sfw，因为批量请求通常是多样化主题
         # 如需 NSFW 批量生成，应使用 generate_image 配合 number_of_images
         batch_content_rating = "sfw"
-        
+        use_spoiler = should_spoiler_image(batch_content_rating)
+
         # 为每个提示词创建一个生成任务
         max_concurrent_tasks = max(
             1, int(GEMINI_IMAGEN_CONFIG.get("MAX_CONCURRENT_IMAGE_TASKS", 3))

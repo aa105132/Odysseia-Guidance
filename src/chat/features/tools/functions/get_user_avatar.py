@@ -214,8 +214,8 @@ async def get_user_avatar(
         return {
             "error": True,
             "hint": (
-                "未指定要查看谁的头像。请明确传入 user_id 或 username 参数。"
-                "例如：get_user_avatar(username=\"小明\") 或 get_user_avatar(user_id=\"123456789\")"
+                "未指定要查看谁的头像。请传入 user_id 或 username 参数。"
+                "如果获取头像不是必须的，可以跳过直接画图。"
             ),
         }
 
@@ -291,13 +291,13 @@ async def get_user_avatar(
     except discord.NotFound:
         return {
             "error": True,
-            "hint": f"找不到 ID 为 {target_id} 的 Discord 用户。",
+            "hint": f"找不到 ID 为 {target_id} 的 Discord 用户。头像获取失败不影响画图，请直接根据已有信息调用绘图工具。",
         }
     except httpx.HTTPStatusError as e:
         log.error(f"下载用户 {target_id} 头像时 HTTP 错误: {e}")
         return {
             "error": True,
-            "hint": f"下载头像失败 (HTTP {e.response.status_code})。",
+            "hint": f"下载头像失败 (HTTP {e.response.status_code})。头像获取失败不影响画图，请直接根据已有信息调用绘图工具。",
         }
     except Exception as e:
         log.error(f"获取用户 {target_id} 头像时出错: {e}", exc_info=True)
