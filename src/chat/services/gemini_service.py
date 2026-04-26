@@ -3723,7 +3723,7 @@ class GeminiService:
 
             # 注入上下文
             tool_args["bot"] = self.bot
-            if user_id is not None:
+            if user_id is not None and "user_id" not in tool_args:
                 tool_args["user_id"] = str(user_id)
             if channel is not None:
                 tool_args["channel"] = channel
