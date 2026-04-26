@@ -169,7 +169,9 @@ class PromptService:
             "2) 只要你不确定当前有哪些工具、该选哪个工具、或某个工具的实时参数/预设/音色/底模/LoRA，就先调用 get_tool_usage_guide。",
             "3) 对图片、视频、语音这类参数较多的工具，默认先查一次 get_tool_usage_guide 再决定最终参数。",
             f"4) 当前默认画新图工具：{default_new_image_tool}（默认引擎：{default_image_engine}）；明确改原图/图生图时才调用 edit_image。",
-            "   ↳ 画某个人（@提及/昵称/成员名）时不要臆造外观：先从上下文 `用户名<ID>` 格式提取 user_id，或调用 get_user_avatar(username=昵称) 解析 user_id；再调用 get_user_profile(user_id, [\"bio\"]) 查名片外貌设定。名片外貌优先于头像。",
+            "   ↳ 画面中涉及任何人名/昵称/角色名时，不要臆造外观。先判断该名字是否对应频道中的真实用户或 bot（从上下文 `用户名<ID>` 或 `[BOT] [用户名<ID>]` 格式匹配），"
+            "     若匹配到则提取 user_id → 调用 get_user_avatar(user_id=ID) 获取头像 + get_user_profile(user_id, [\"bio\"]) 查名片外貌（名片优先于头像）；"
+            "     若上下文找不到，调用 get_user_avatar(username=该名字) 尝试解析；仍找不到才视为虚构角色自由发挥。",
             f"5) 当前语音 provider：{voice_provider}；凡是搜索、总结、教程、结构化结果场景，一律优先文字，不要发语音。",
             "6) 用户若点名具体预设、音色、ComfyUI 底模/VAE/CLIP/LoRA 或其他实时清单，先查 get_tool_usage_guide，确认后再传参。",
             *self._build_image_model_hint_lines(),
