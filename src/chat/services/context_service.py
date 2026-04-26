@@ -89,7 +89,7 @@ class ContextService:
                     history.append(
                         {
                             "role": "user",
-                            "parts": [f"{msg.author.display_name}: {clean_content}"],
+                            "parts": [f"{msg.author.display_name}<{msg.author.id}>: {clean_content}"],
                         }
                     )
 
@@ -209,7 +209,7 @@ class ContextService:
                             # 清理被回复消息的内容
                             # 创建更丰富的回复信息，包括被回复的内容摘要
                             # 使用更不容易被模型模仿的括号和格式来构造回复信息
-                            reply_info = f"[{ref_msg.author.display_name}] "
+                            reply_info = f"[回复 {ref_msg.author.display_name}<{ref_msg.author.id}>] "
                     except (discord.NotFound, discord.Forbidden):
                         log.warning(
                             f"无法找到或无权访问被回复的消息 ID: {msg.reference.message_id}"
@@ -232,7 +232,7 @@ class ContextService:
 
                     # 统一历史消息中机器人和用户的回复格式，解决主语混淆问题
                     bot_message_content = (
-                        f"[{msg.author.display_name}]: {reply_info}{clean_content}"
+                        f"[{msg.author.display_name}<{msg.author.id}>]: {reply_info}{clean_content}"
                     )
                     model_messages_buffer.append(bot_message_content)
                 else:
@@ -259,8 +259,9 @@ class ContextService:
 
                     # 格式化用户消息，符合用户期望的 [用户名]:xxxx 或 [用户名][回复xxx]:xxxx
                     # 恢复旧版格式，冒号始终在用户名后
+                    bot_tag = "[BOT] " if msg.author.bot else ""
                     formatted_message = (
-                        f"[{msg.author.display_name}]: {attachment_info}{reply_info}{clean_content}"
+                        f"{bot_tag}[{msg.author.display_name}<{msg.author.id}>]: {attachment_info}{reply_info}{clean_content}"
                     )
                     user_messages_buffer.append(formatted_message)
 
