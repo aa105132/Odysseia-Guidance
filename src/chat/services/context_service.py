@@ -196,8 +196,14 @@ class ContextService:
                     continue
 
                 clean_content = self.clean_message_content(msg.content, msg.guild)
+
+                # 其他 bot 的消息可能是纯 embed（内容为空），但仍需让 AI 知道该 bot 存在
+                has_embeds = bool(getattr(msg, "embeds", None))
                 if not clean_content and not msg.attachments:
-                    continue
+                    if msg.author.bot and has_embeds:
+                        clean_content = "[发送了嵌入内容]"
+                    else:
+                        continue
 
                 # --- 新增：处理回复关系 ---
                 reply_info = ""
