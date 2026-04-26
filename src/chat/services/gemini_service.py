@@ -2473,7 +2473,7 @@ class GeminiService:
         # 5. 实现手动、顺序工具调用循环
         called_tool_names = []
         thinking_was_used = False
-        max_calls = 5
+        max_calls = 20
         max_web_search_calls = 1
         web_search_call_count = 0
         executed_tool_signatures: set[str] = set()
@@ -3202,7 +3202,7 @@ class GeminiService:
                 base_api_url = base_api_url + "/v1/chat/completions"
         
         # 工具调用循环
-        max_tool_calls = 5
+        max_tool_calls = 20
         max_completion_rounds = max_tool_calls + 1
         max_web_search_calls = 1
         web_search_call_count = 0
