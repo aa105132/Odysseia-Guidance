@@ -113,8 +113,8 @@ async def get_user_avatar(
     返回图片数据供 AI 视觉分析，用于了解用户外观特征。
 
     [调用指南]
-    - **必须传参数**: 必须明确传入 user_id 或 username，不传参数会报错
-    - **画某个人时**: 用户说"画小明"，你应调用 get_user_avatar(username="小明")，不要省略参数
+    - **画当前对话人**: 用户说"拿我头像画"，可以不传参数，系统会自动使用当前对话用户
+    - **画某个人时**: 用户说"画小明"，必须传 get_user_avatar(username="小明")
     - **按用户名查找**: username 支持 display_name/global_name/name；若重名会返回歧义提示
     - **从上下文提取ID**: 如果上下文中有 `小明<123456>` 格式，可直接传 get_user_avatar(user_id="123456")
     - **返回图片**: 此工具返回的图片会直接传给你的视觉能力，你可以看到用户的外观
@@ -212,14 +212,17 @@ async def get_user_avatar(
                 }
 
     if not resolved_user_id:
-        # 未传任何参数时不再默认回退到当前对话用户
-        # 避免AI想查"某个人"但忘记传参数时误拿当前用户的头像
-        return {
-            "error": True,
-            "hint": (
-                "未指定要查看谁的头像。请传入 user_id 或 username 参数。"
-                "如果获取头像不是必须的，可以跳过直接画图。"
-            ),
+        # 未传参数时回退到当前对话用户（适用于"拿我头像画"场景）
+        fallback_user_id = str(kwargs.get("user_id", "")).strip()
+        if fallback_user_id and fallback_user_id.isdigit():
+            resolved_user_id = fallback_user_id
+            log.info(f"get_user_avatar 未传参数，回退到当前对话用户: {resolved_user_id}")
+        else:
+            return {
+                "error": True,
+                "hint": (
+                    "未指定要查看谁的头像。请传入 user_id 或 username 参数。"
+                ),
         }
 
     if not resolved_user_id.isdigit():
