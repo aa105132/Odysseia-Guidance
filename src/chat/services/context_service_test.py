@@ -205,7 +205,8 @@ class ContextServiceTest:
 
                 clean_content = self.clean_message_content(msg.content, msg.guild)
                 msg_embed_content = self._extract_message_embed_text(msg)
-                if not clean_content and not msg.attachments and not msg_embed_content:
+                has_stickers = bool(getattr(msg, "stickers", None))
+                if not clean_content and not msg.attachments and not msg_embed_content and not has_stickers:
                     continue
 
                 reply_info = ""
@@ -243,17 +244,25 @@ class ContextServiceTest:
                         if att.content_type and att.content_type.startswith("image/")
                     ]
                     if image_attachments:
-                        # 标记用户发送了图片，让 AI 知道可以使用 edit_image 工具
                         attachment_info = f"[发送了{len(image_attachments)}张图片]"
+
+                # 处理贴纸/动图
+                sticker_info = ""
+                if has_stickers:
+                    sticker_names = [s.name for s in msg.stickers if hasattr(s, "name")]
+                    if sticker_names:
+                        sticker_info = f"[发送了贴纸: {', '.join(sticker_names)}]"
+                    else:
+                        sticker_info = f"[发送了{len(msg.stickers)}个贴纸]"
 
                 message_parts = [part for part in [clean_content, msg_embed_content] if part]
                 combined_content = "\n".join(message_parts).strip()
-                if not combined_content and msg.attachments:
-                    combined_content = "（仅发送了图片）"
+                if not combined_content and (msg.attachments or has_stickers):
+                    combined_content = sticker_info or "（仅发送了图片）"
 
                 # 强制在元信息（用户名+ID和回复）后添加冒号，清晰地分割内容
                 bot_tag = "[BOT] " if msg.author.bot else ""
-                user_meta = f"{bot_tag}[{msg.author.display_name}<{msg.author.id}>]{attachment_info}{reply_info}"
+                user_meta = f"{bot_tag}[{msg.author.display_name}<{msg.author.id}>]{attachment_info}{sticker_info}{reply_info}"
                 final_part = f"{user_meta}: {combined_content}"
                 history_parts.append(final_part)
 
