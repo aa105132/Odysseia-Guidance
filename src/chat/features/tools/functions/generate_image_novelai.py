@@ -556,15 +556,12 @@ async def generate_image_novelai(
     """
     使用 NovelAI 引擎生成图片。当默认绘图引擎为 "novelai" 时，所有画图请求都必须使用此工具，不要使用 generate_image。
 
-    **画面涉及任何人名/昵称时不要臆造外观（重要）**：
-    先确认该名字是否为频道中真实存在的用户或 bot，不要直接编造：
-    - 先在上下文历史中匹配 `用户名<ID>` 或 `[BOT] [用户名<ID>]` 格式，提取 user_id
-    - 上下文找不到时调用 `get_user_avatar(username=该名字)` 尝试解析
-    - 解析到 user_id 后调用 `get_user_profile(user_id, ["display_name", "bio"])` 查名片
+    **画面涉及人名/昵称时禁止臆造外观（重要）**：
+    必须先调用 `get_user_avatar(username=该名字)` 查找频道中的用户或 bot：
+    - 查到后调用 `get_user_profile(user_id, ["display_name", "bio"])` 读名片
     - 若名片里有外貌/人设/服装/种族等描述，必须以名片为最高优先级，将名片外貌转为 Danbooru 标签
-    - 只有在名片没有明确外貌时，才用头像兜底
-    - 名片设定和头像外观冲突时，必须遵循名片
-    - 完全找不到该用户才视为虚构角色自由发挥
+    - 只有在名片没有明确外貌时，才用头像兜底；名片设定和头像冲突时遵循名片
+    - 完全查不到该用户才视为虚构角色自由发挥
 
     **默认启用提示词 AI 双串策略（主 AI 草稿串 + 提示词 AI 优化串）。**
     **可通过 `use_prompt_model=False` 关闭；关闭后对话 AI 直接按规则给出最终 Tag，工具不再额外生成草稿/优化串。**
