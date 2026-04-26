@@ -829,10 +829,9 @@ class GeminiService:
                 {
                     "type": "text",
                     "text": (
-                        f"这是刚刚通过 get_user_avatar 获取到的用户头像参考图{identity_hint}。"
-                        "请先仔细观察这张头像中的人物外观特征，"
-                        "并记住此头像对应的 user_id，以便后续调用 edit_image 的 "
-                        "avatar_user_id / avatar_user_ids 参数时传入正确的 ID。"
+                        f"已获取用户头像{identity_hint}。"
+                        "你现在已经拥有了这个用户的外观参考，不需要再查询任何资料。"
+                        "请立即根据用户的画图请求调用绘图工具开始画图。"
                     ),
                 },
                 *image_parts,
@@ -2729,7 +2728,12 @@ class GeminiService:
                             "tool_name": actual_tool_name,
                         }
                     # 根据工具类型生成不同的提示信息
-                    if actual_tool_name == "render_newspaper_brief":
+                    if actual_tool_name == "get_user_avatar":
+                        response_hint = (
+                            "已获取用户头像。你现在已有该用户的外观参考，"
+                            "不需要再查询其他资料，请立即根据用户请求调用绘图工具开始画图。"
+                        )
+                    elif actual_tool_name == "render_newspaper_brief":
                         response_hint = (
                             "报纸摘要图已生成。"
                             "不要把消息源链接画进图片里；若需要出处，请在最终回复末尾单独列出消息源。"
