@@ -273,9 +273,10 @@ async def get_user_avatar(
                 "avatar_url": avatar_url,
             },
             "hint": (
-                f"这是用户 {user_name} 的 Discord 头像图片。"
-                f"请仔细观察图中的外观特征（如发色、发型、瞳色、服饰、风格等），"
-                f"以便在后续生成图片时参考。"
+                f"这是用户 {user_name}（user_id: {target_id}）的 Discord 头像图片。"
+                f"请仔细观察图中的外观特征（如发色、发型、瞳色、服饰、风格等）。"
+                f"后续调用 edit_image 画这个人时，请传 avatar_user_id=\"{target_id}\" "
+                f"或在 avatar_user_ids 列表中包含 \"{target_id}\"。"
             ),
         }
 

@@ -802,7 +802,10 @@ class GeminiService:
 
     @classmethod
     def _build_openai_tool_image_followup_message(
-        cls, tool_name: str, image_payload: Optional[Dict[str, Any]]
+        cls,
+        tool_name: str,
+        image_payload: Optional[Dict[str, Any]],
+        user_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """为 OpenAI 兼容链路构造包含工具参考图的后续用户消息。"""
         normalized_tool_name = str(tool_name or "").strip()
@@ -813,16 +816,23 @@ class GeminiService:
         if not image_parts:
             return None
 
+        identity_hint = ""
+        if user_info and isinstance(user_info, dict):
+            uid = user_info.get("user_id", "")
+            dname = user_info.get("display_name", "")
+            if uid:
+                identity_hint = f"（用户: {dname}<{uid}>）"
+
         return {
             "role": "user",
             "content": [
                 {
                     "type": "text",
                     "text": (
-                        "这是刚刚通过 get_user_avatar 获取到的用户头像参考图。"
+                        f"这是刚刚通过 get_user_avatar 获取到的用户头像参考图{identity_hint}。"
                         "请先仔细观察这张头像中的人物外观特征，"
-                        "并在后续的人物描述、外观分析、绘图提示词生成中"
-                        "把这张图当作最高优先级的视觉参考。"
+                        "并记住此头像对应的 user_id，以便后续调用 edit_image 的 "
+                        "avatar_user_id / avatar_user_ids 参数时传入正确的 ID。"
                     ),
                 },
                 *image_parts,
@@ -2694,6 +2704,12 @@ class GeminiService:
                             },
                         )
                     )
+                # 处理多 Part 返回（图片+元数据）
+                elif isinstance(result, list):
+                    for sub_part in result:
+                        if isinstance(sub_part, types.Part):
+                            tool_result_parts.append(sub_part)
+                    log.info(f"工具 '{actual_tool_name}' 返回了 {len(result)} 个 Part（多模态+元数据）。")
                 # 处理图片类型的 Part（inline_data）
                 elif (
                     isinstance(result, types.Part)
@@ -2711,13 +2727,7 @@ class GeminiService:
                             "tool_name": actual_tool_name,
                         }
                     # 根据工具类型生成不同的提示信息
-                    if actual_tool_name == "get_user_avatar":
-                        response_hint = (
-                            "已获取用户头像图片。上面的图片就是该用户的 Discord 头像。"
-                            "请仔细分析图中的外观特征（发色、发型、瞳色、服饰风格等），"
-                            "以便在后续为用户生成图片时参考这些视觉特征。"
-                        )
-                    elif actual_tool_name == "render_newspaper_brief":
+                    if actual_tool_name == "render_newspaper_brief":
                         response_hint = (
                             "报纸摘要图已生成。"
                             "不要把消息源链接画进图片里；若需要出处，请在最终回复末尾单独列出消息源。"
@@ -3440,9 +3450,15 @@ class GeminiService:
                             }
                         )
 
+                        followup_user_info = (
+                            tool_result.get("user_info")
+                            if isinstance(tool_result, dict)
+                            else None
+                        )
                         followup_image_message = (
                             self._build_openai_tool_image_followup_message(
-                                tool_name, extracted_tool_image
+                                tool_name, extracted_tool_image,
+                                user_info=followup_user_info,
                             )
                         )
                         if followup_image_message:

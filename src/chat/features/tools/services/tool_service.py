@@ -272,21 +272,34 @@ class ToolService:
 
             # 步骤 5: 根据工具返回的结果，构造相应的 Part
             if isinstance(result, dict) and "image_data" in result and isinstance(result["image_data"], dict):
-                # 这是一个多模态（图片）结果
+                # 多模态结果：同时返回图片 Part 和文本 function_response Part
+                # 这样 AI 既能"看到"图片，又能读取 user_info 等结构化数据
                 image_info = result["image_data"]
                 if log_detailed:
                     log.info(
                         f"检测到图片结果，MIME 类型: {image_info.get('mime_type')}"
                     )
-                part = types.Part(
+                image_part = types.Part(
                     inline_data=types.Blob(
                         mime_type=image_info.get("mime_type", "image/png"),
                         data=image_info.get("data", b""),
                     )
                 )
+                text_metadata = {
+                    k: v for k, v in result.items()
+                    if k != "image_data" and not isinstance(v, (bytes, bytearray))
+                }
+                if text_metadata:
+                    text_part = types.Part.from_function_response(
+                        name=tool_name,
+                        response={"result": text_metadata},
+                    )
+                    if log_detailed:
+                        log.info(f"已为 '{tool_name}' 构造图片+元数据双 Part。")
+                    return [image_part, text_part]
                 if log_detailed:
                     log.info(f"已为 '{tool_name}' 构造包含图片的 Part。")
-                return part
+                return image_part
             else:
                 # 这是一个标准的文本/JSON结果（包括错误信息）
                 part = types.Part.from_function_response(
