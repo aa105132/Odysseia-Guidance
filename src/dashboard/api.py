@@ -111,6 +111,14 @@ class ImagenConfigUpdate(BaseModel):
     nsfw_edit_model_2k: Optional[str] = None  # NSFW 2K图生图
     nsfw_model_4k: Optional[str] = None  # NSFW 4K文生图
     nsfw_edit_model_4k: Optional[str] = None  # NSFW 4K图生图
+    # 运行参数
+    empty_result_max_retries: Optional[int] = None
+    request_timeout: Optional[int] = None
+    streaming_timeout: Optional[int] = None
+    connect_timeout: Optional[int] = None
+    transient_max_retries: Optional[int] = None
+    # NovelAI 引擎开关
+    novelai_enabled: Optional[bool] = None
 
 
 class VideoConfigUpdate(BaseModel):
@@ -1558,7 +1566,15 @@ async def get_imagen_config(token: str = Depends(verify_token)):
     db_nsfw_edit_model_2k = await chat_db_manager.get_global_setting("imagen_nsfw_edit_model_2k")
     db_nsfw_model_4k = await chat_db_manager.get_global_setting("imagen_nsfw_model_4k")
     db_nsfw_edit_model_4k = await chat_db_manager.get_global_setting("imagen_nsfw_edit_model_4k")
-    
+    # 运行参数
+    db_empty_result_max_retries = await chat_db_manager.get_global_setting("imagen_empty_result_max_retries")
+    db_request_timeout = await chat_db_manager.get_global_setting("imagen_request_timeout")
+    db_streaming_timeout = await chat_db_manager.get_global_setting("imagen_streaming_timeout")
+    db_connect_timeout = await chat_db_manager.get_global_setting("imagen_connect_timeout")
+    db_transient_max_retries = await chat_db_manager.get_global_setting("imagen_transient_max_retries")
+    # NovelAI 开关
+    db_novelai_enabled = await chat_db_manager.get_global_setting("imagen_novelai_enabled")
+
     # 内存配置作为回退
     config = chat_config.GEMINI_IMAGEN_CONFIG
     
@@ -1645,6 +1661,14 @@ async def get_imagen_config(token: str = Depends(verify_token)):
         "nsfw_edit_model_2k": nsfw_edit_model_2k,
         "nsfw_model_4k": nsfw_model_4k,
         "nsfw_edit_model_4k": nsfw_edit_model_4k,
+        # 运行参数
+        "empty_result_max_retries": _safe_int(db_empty_result_max_retries, config.get("EMPTY_RESULT_MAX_RETRIES", 3)),
+        "request_timeout": _safe_int(db_request_timeout, config.get("REQUEST_TIMEOUT_SECONDS", 120)),
+        "streaming_timeout": _safe_int(db_streaming_timeout, config.get("STREAMING_TIMEOUT_SECONDS", 180)),
+        "connect_timeout": _safe_int(db_connect_timeout, config.get("CONNECT_TIMEOUT_SECONDS", 15)),
+        "transient_max_retries": _safe_int(db_transient_max_retries, config.get("TRANSIENT_MAX_RETRIES", 2)),
+        # NovelAI 开关
+        "novelai_enabled": db_novelai_enabled == "true" if db_novelai_enabled else chat_config.NOVELAI_CONFIG.get("ENABLED", False),
         "available_models": [
             "imagen-3.0-generate-002",
             "imagen-3.0-fast-generate-001",
@@ -1893,6 +1917,56 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         await chat_db_manager.set_global_setting("imagen_nsfw_edit_model_4k", config.nsfw_edit_model_4k)
         log.info(f"✅ NSFW 4K图生图模型已设置为: {config.nsfw_edit_model_4k or '(使用默认模型)'}")
     
+    # 运行参数
+    if config.empty_result_max_retries is not None:
+        val = max(1, min(10, config.empty_result_max_retries))
+        chat_config.GEMINI_IMAGEN_CONFIG["EMPTY_RESULT_MAX_RETRIES"] = val
+        os.environ["GENERATION_EMPTY_RESULT_MAX_RETRIES"] = str(val)
+        env_updates["GENERATION_EMPTY_RESULT_MAX_RETRIES"] = str(val)
+        updated["empty_result_max_retries"] = val
+        await chat_db_manager.set_global_setting("imagen_empty_result_max_retries", str(val))
+
+    if config.request_timeout is not None:
+        val = max(10, min(600, config.request_timeout))
+        chat_config.GEMINI_IMAGEN_CONFIG["REQUEST_TIMEOUT_SECONDS"] = val
+        os.environ["GEMINI_IMAGEN_TIMEOUT_SECONDS"] = str(val)
+        env_updates["GEMINI_IMAGEN_TIMEOUT_SECONDS"] = str(val)
+        updated["request_timeout"] = val
+        await chat_db_manager.set_global_setting("imagen_request_timeout", str(val))
+
+    if config.streaming_timeout is not None:
+        val = max(10, min(600, config.streaming_timeout))
+        chat_config.GEMINI_IMAGEN_CONFIG["STREAMING_TIMEOUT_SECONDS"] = val
+        os.environ["GEMINI_IMAGEN_STREAMING_TIMEOUT_SECONDS"] = str(val)
+        env_updates["GEMINI_IMAGEN_STREAMING_TIMEOUT_SECONDS"] = str(val)
+        updated["streaming_timeout"] = val
+        await chat_db_manager.set_global_setting("imagen_streaming_timeout", str(val))
+
+    if config.connect_timeout is not None:
+        val = max(5, min(60, config.connect_timeout))
+        chat_config.GEMINI_IMAGEN_CONFIG["CONNECT_TIMEOUT_SECONDS"] = val
+        os.environ["GEMINI_IMAGEN_CONNECT_TIMEOUT_SECONDS"] = str(val)
+        env_updates["GEMINI_IMAGEN_CONNECT_TIMEOUT_SECONDS"] = str(val)
+        updated["connect_timeout"] = val
+        await chat_db_manager.set_global_setting("imagen_connect_timeout", str(val))
+
+    if config.transient_max_retries is not None:
+        val = max(0, min(10, config.transient_max_retries))
+        chat_config.GEMINI_IMAGEN_CONFIG["TRANSIENT_MAX_RETRIES"] = val
+        os.environ["GEMINI_IMAGEN_TRANSIENT_MAX_RETRIES"] = str(val)
+        env_updates["GEMINI_IMAGEN_TRANSIENT_MAX_RETRIES"] = str(val)
+        updated["transient_max_retries"] = val
+        await chat_db_manager.set_global_setting("imagen_transient_max_retries", str(val))
+
+    # NovelAI 引擎开关
+    if config.novelai_enabled is not None:
+        chat_config.NOVELAI_CONFIG["ENABLED"] = config.novelai_enabled
+        os.environ["NOVELAI_ENABLED"] = str(config.novelai_enabled).lower()
+        env_updates["NOVELAI_ENABLED"] = str(config.novelai_enabled).lower()
+        updated["novelai_enabled"] = config.novelai_enabled
+        await chat_db_manager.set_global_setting("imagen_novelai_enabled", str(config.novelai_enabled).lower())
+        log.info(f"NovelAI 绘图引擎已{'启用' if config.novelai_enabled else '禁用'}")
+
     # 如果有环境变量更新，尝试写入 .env 文件
     if env_updates:
         try:
@@ -1900,7 +1974,7 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
             log.info(f"Imagen 环境变量已写入 .env 文件")
         except Exception as e:
             log.warning(f"无法写入 .env 文件: {e}")
-    
+
     # 热重载 Imagen 服务（仅当启用时）
     if config.enabled is True:
         try:

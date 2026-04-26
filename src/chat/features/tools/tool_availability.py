@@ -4,7 +4,7 @@ from datetime import date, datetime
 import logging
 from typing import Callable, Iterable, List, Optional
 
-from src.chat.config.chat_config import SPRING_FESTIVAL_CONFIG
+from src.chat.config.chat_config import SPRING_FESTIVAL_CONFIG, NOVELAI_CONFIG
 from src.chat.utils.time_utils import BEIJING_TZ
 
 log = logging.getLogger(__name__)
@@ -69,6 +69,8 @@ def filter_tool_declarations(tool_declarations: Iterable[Callable]) -> List[Call
             tool_name == SPRING_FESTIVAL_TOOL_NAME
             and not is_spring_festival_tool_visible()
         ):
+            continue
+        if tool_name == "generate_image_novelai" and not NOVELAI_CONFIG.get("ENABLED", False):
             continue
         filtered_tools.append(tool)
     return filtered_tools
