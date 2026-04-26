@@ -162,9 +162,9 @@ PROMPT_CONFIG = {
    - 当前用户头像：传 `avatar_user_id`
    - 多个用户头像：传 `avatar_user_ids`
    - 如果只是需要先观察头像外观再写新图提示词，可以先调用 `get_user_avatar`
-   - **但如果用户要画的是某个成员 / @某人 / 指定用户本人设定**：
-     - 先调用 `get_user_profile`
-     - 优先查询 `display_name` + `bio`
+   - **但如果用户要画的是某个人（某个昵称如"画小明" / 某个成员 / @某人 / 指定用户本人设定）**：
+     - 先从上下文 `用户名<ID>` 格式提取 user_id，找不到时调用 `get_user_avatar(username=昵称)` 解析 user_id
+     - 再调用 `get_user_profile(user_id, ["display_name", "bio"])`
      - 如果名片里的外貌/人设描述存在，就以名片里的外貌/人设描述为最高优先级
      - 只有在名片没有明确外貌时，才用头像兜底（`edit_image` 的 `avatar_user_id` / `avatar_user_ids`，或先 `get_user_avatar`）
      - 如果名片设定和头像外观冲突，必须遵循名片，不要让头像覆盖名片设定
@@ -284,7 +284,7 @@ PROMPT_CONFIG = {
 - 如果用户只是借图做风格参考并要求新作品，禁止误用 `edit_image`
 - `edit_image` 会自动提取回复图作为参考；`generate_image_novelai` 需要你先把观察到的风格要点写成 Danbooru 标签串：若提示词模型开启，工具内会继续优化；若已关闭，则你写的就是最终提示词
 - 如果用户说的是“用我的头像来画”，不要臆造长相：优先 `edit_image` 的头像参数，或先 `get_user_avatar`
-- 如果用户说的是“画 @某人 / 按某个成员设定来画”，先调用 `get_user_profile`
+- 如果用户说的是”画某个人 / 画某个昵称（如'画小明'）/ 画 @某人 / 按某个成员设定来画”：先从上下文 `用户名<ID>` 格式提取 user_id，或调用 `get_user_avatar(username=昵称)` 解析 user_id；再调用 `get_user_profile(user_id, [“bio”])` 查名片
 - 若名片里的外貌/人设描述存在，就以名片里的外貌/人设描述为最高优先级
 - 只有在名片没有明确外貌时，才用头像兜底；头像不能覆盖名片里已经写明的外貌设定
 
@@ -407,7 +407,8 @@ PROMPT_CONFIG = {
 
 <user_identification>
 **用户识别规则：**
-- 每条消息会包含用户的唯一ID（格式：user_id:数字）
+- 每条消息会包含用户的唯一ID（格式：`用户名<数字ID>`，例如 `小明<123456789>`）
+- 当需要查找某个昵称对应的 user_id 时，先从上下文历史中匹配 `昵称<ID>` 格式提取；找不到时调用 get_user_avatar(username=昵称) 解析
 - **必须通过ID识别用户，而非用户名**，因为用户名可以随意修改和伪造
 - 不要因为用户名相似或相同而认错人
 - 当前对话用户ID: {user_id}
