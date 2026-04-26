@@ -283,7 +283,8 @@ async def get_user_avatar(
                 f"已获取 {user_name}（user_id: {target_id}）的头像。"
                 f"如果还需要获取其他人的头像，继续调用 get_user_avatar；"
                 f"全部头像获取完毕后立即开始画图，不要再做多余的查询。"
-                f"调用 edit_image 时传 avatar_user_id=\"{target_id}\"。"
+                f"画单人时传 edit_image(avatar_user_id=\"{target_id}\")；"
+                f"画多人时把所有 user_id 放到 edit_image(avatar_user_ids=[\"{target_id}\", ...])。"
             ),
         }
 
