@@ -130,11 +130,14 @@ async def get_user_avatar(
     """
     bot = kwargs.get("bot")
 
+    log.info(f"get_user_avatar 被调用: user_id={user_id!r} (type={type(user_id).__name__}), username={username!r}")
+
     if not bot:
         return {"error": "Bot 实例不可用。"}
 
     resolved_user_id: str = str(user_id).strip() if user_id is not None else ""
     lookup_username: str = str(username).strip() if username is not None else ""
+    log.info(f"get_user_avatar 解析后: resolved_user_id={resolved_user_id!r}, lookup_username={lookup_username!r}")
 
     # 1) 优先按 user_id
     # 2) 未提供 user_id 时，尝试按 username 解析
