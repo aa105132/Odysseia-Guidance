@@ -3723,7 +3723,16 @@ class GeminiService:
 
             # 注入上下文
             tool_args["bot"] = self.bot
-            if user_id is not None and "user_id" not in tool_args:
+            # 对查询类工具（get_user_avatar/get_user_profile），如果 AI 已传了
+            # username 参数来指定目标用户，不要注入当前对话人的 user_id 覆盖意图
+            skip_user_id_inject = (
+                "user_id" in tool_args
+                or (
+                    normalized_tool_name in ("get_user_avatar", "get_user_profile")
+                    and tool_args.get("username")
+                )
+            )
+            if user_id is not None and not skip_user_id_inject:
                 tool_args["user_id"] = str(user_id)
             if channel is not None:
                 tool_args["channel"] = channel
