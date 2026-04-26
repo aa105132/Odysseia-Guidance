@@ -35,7 +35,7 @@ async def edit_image(
     avatar_user_id: Optional[str] = None,
     avatar_user_ids: Optional[List[str]] = None,
     reference_image_mode: str = "auto",
-    max_reference_images: int = 4,
+    max_reference_images: int = 10,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     model_name_override: Optional[str] = None,
