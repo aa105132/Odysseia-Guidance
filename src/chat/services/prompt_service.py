@@ -127,6 +127,12 @@ class PromptService:
             chat_config.COMFYUI_CONFIG.get("DEFAULT_ANIME_MODEL_NAME")
         )
 
+        imagen_cfg = chat_config.GEMINI_IMAGEN_CONFIG
+        sfw_model = self._format_image_model_value(imagen_cfg.get("SFW_MODEL_NAME"), fallback=imagen_text_model)
+        sfw_edit_model = self._format_image_model_value(imagen_cfg.get("SFW_EDIT_MODEL_NAME"), fallback=imagen_edit_model)
+        nsfw_model = self._format_image_model_value(imagen_cfg.get("NSFW_MODEL_NAME"), fallback=imagen_text_model)
+        nsfw_edit_model = self._format_image_model_value(imagen_cfg.get("NSFW_EDIT_MODEL_NAME"), fallback=imagen_edit_model)
+
         return [
             "",
             "绘图模型速记：",
@@ -134,12 +140,13 @@ class PromptService:
             f"- 当前默认新图工具：{default_new_image_tool}",
             f"- Imagen 默认文生图模型：{imagen_text_model}",
             f"- Imagen 默认图生图模型：{imagen_edit_model}",
+            f"- Imagen SFW 文生图：{sfw_model}，SFW 图生图：{sfw_edit_model}",
+            f"- Imagen NSFW 文生图：{nsfw_model}，NSFW 图生图：{nsfw_edit_model}",
             f"- NovelAI 默认模型：{novelai_model}",
             f"- ComfyUI 通用默认底模：{comfyui_default_model}",
             f"- ComfyUI 写实默认底模：{comfyui_realistic_model}",
             f"- ComfyUI 动漫默认底模：{comfyui_anime_model}",
-            "- 如果用户直接点名具体模型名、底模名、checkpoint 名或 LoRA 名：",
-            "- 若名称命中以上当前默认模型，可直接按对应引擎理解。",
+            "- 用户指定模型名时（如'用gpt画'），通过 model_name_override 参数传入对应模型名。",
             '- 若你不确定归属、是否可用或是否还有别的候选，先调用 get_tool_usage_guide(topic="image") 再决定。',
         ]
 
