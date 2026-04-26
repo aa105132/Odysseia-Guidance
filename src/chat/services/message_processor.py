@@ -385,7 +385,7 @@ class MessageProcessor:
 
         image_data_list = []
         seen_text_image_urls: Set[str] = set()
-        bot_user = message.guild.me
+        bot_user = message.guild.me if message.guild else self.bot.user
         current_text_attachment_blocks: List[str] = []
 
         if message.attachments:
