@@ -113,12 +113,11 @@ async def get_user_avatar(
     返回图片数据供 AI 视觉分析，用于了解用户外观特征。
 
     [调用指南]
-    - **主动调用**: 当你需要为用户画图、生成角色描述、或需要了解用户外观时，应主动调用此工具
-    - **生图前调用**: 在调用 generate_image 或 generate_image_novelai 之前，如果需要参考用户外观，先调用此工具查看头像
-    - **自动填充**: 如果不传 user_id / username，系统会自动使用当前对话用户的 ID
-    - **指定用户**: 如果用户提到了其他人（如 @某人、用户名或用户ID），可传 user_id 或 username 获取对方头像
+    - **必须传参数**: 必须明确传入 user_id 或 username，不传参数会报错
+    - **画某个人时**: 用户说"画小明"，你应调用 get_user_avatar(username="小明")，不要省略参数
     - **按用户名查找**: username 支持 display_name/global_name/name；若重名会返回歧义提示
-    - **返回图片**: 此工具返回的图片会直接传给你的视觉能力，你可以分析图中人物的发色、瞳色、发型、服饰等特征
+    - **从上下文提取ID**: 如果上下文中有 `小明<123456>` 格式，可直接传 get_user_avatar(user_id="123456")
+    - **返回图片**: 此工具返回的图片会直接传给你的视觉能力，你可以看到用户的外观
 
     Args:
         user_id (str, optional): 目标用户的 Discord 数字ID。
@@ -210,9 +209,17 @@ async def get_user_avatar(
                 }
 
     if not resolved_user_id:
-        resolved_user_id = str(kwargs.get("user_id", "")).strip()
+        # 未传任何参数时不再默认回退到当前对话用户
+        # 避免AI想查"某个人"但忘记传参数时误拿当前用户的头像
+        return {
+            "error": True,
+            "hint": (
+                "未指定要查看谁的头像。请明确传入 user_id 或 username 参数。"
+                "例如：get_user_avatar(username=\"小明\") 或 get_user_avatar(user_id=\"123456789\")"
+            ),
+        }
 
-    if not resolved_user_id or not resolved_user_id.isdigit():
+    if not resolved_user_id.isdigit():
         return {
             "error": True,
             "hint": (
