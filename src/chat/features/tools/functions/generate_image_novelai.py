@@ -558,10 +558,9 @@ async def generate_image_novelai(
 
     **画面涉及人名/昵称时禁止臆造外观（重要）**：
     必须先调用 `get_user_avatar(username=该名字)` 查找频道中的用户或 bot：
-    - 查到后调用 `get_user_profile(user_id, ["display_name", "bio"])` 读名片
-    - 若名片里有外貌/人设/服装/种族等描述，必须以名片为最高优先级，将名片外貌转为 Danbooru 标签
-    - 只有在名片没有明确外貌时，才用头像兜底；名片设定和头像冲突时遵循名片
-    - 完全查不到该用户才视为虚构角色自由发挥
+    - `get_user_avatar` 查到了 → 该用户/bot 真实存在，直接用返回的头像作为参考
+    - 可再调 `get_user_profile(user_id, ["bio"])` 查名片；有外貌描述则名片优先转为 Danbooru 标签，没有名片就用头像画
+    - 只有 `get_user_avatar` 完全查不到该名字时才视为虚构角色自由发挥
 
     **默认启用提示词 AI 双串策略（主 AI 草稿串 + 提示词 AI 优化串）。**
     **可通过 `use_prompt_model=False` 关闭；关闭后对话 AI 直接按规则给出最终 Tag，工具不再额外生成草稿/优化串。**

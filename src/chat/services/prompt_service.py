@@ -170,7 +170,8 @@ class PromptService:
             "3) 对图片、视频、语音这类参数较多的工具，默认先查一次 get_tool_usage_guide 再决定最终参数。",
             f"4) 当前默认画新图工具：{default_new_image_tool}（默认引擎：{default_image_engine}）；明确改原图/图生图时才调用 edit_image。",
             "   ↳ 画面涉及人名/昵称时禁止臆造外观！必须先调用 get_user_avatar(username=该名字) 查找频道用户/bot；"
-            "     查到后再调 get_user_profile(user_id, [\"bio\"]) 读名片（名片外貌优先于头像）；完全查不到才视为虚构角色。",
+            "     若 get_user_avatar 查到了用户，就用返回的头像作为参考画图（也可再调 get_user_profile 查名片，有名片外貌则优先名片）；"
+            "     只有 get_user_avatar 完全查不到该名字时才视为虚构角色。",
             f"5) 当前语音 provider：{voice_provider}；凡是搜索、总结、教程、结构化结果场景，一律优先文字，不要发语音。",
             "6) 用户若点名具体预设、音色、ComfyUI 底模/VAE/CLIP/LoRA 或其他实时清单，先查 get_tool_usage_guide，确认后再传参。",
             *self._build_image_model_hint_lines(),
