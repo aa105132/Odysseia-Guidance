@@ -5,7 +5,7 @@
 """
 
 
-async def stay_silent(reason: str = "") -> dict:
+async def stay_silent(reason: str = "", **kwargs) -> dict:
     """
     主动选择不回复当前消息。
 
