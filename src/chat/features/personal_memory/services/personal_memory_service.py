@@ -290,6 +290,138 @@ class PersonalMemoryService:
                 await self._reset_history_and_count(session, user_id)
         log.info(f"用户 {user_id} 的对话历史已删除。")
 
+    async def auto_generate_profile(
+        self,
+        user_id: int,
+        user_name: str,
+        is_bot: bool,
+        avatar_url: Optional[str],
+        user_message: str,
+        ai_response: str,
+    ):
+        """
+        后台任务：根据头像和首次对话内容，用 AI 自动生成用户初始名片。
+        """
+        import json
+        import aiohttp
+
+        log.info(f"开始为用户 {user_id} 自动生成初始名片...")
+
+        # 1. 下载头像
+        avatar_image_data = None
+        if avatar_url:
+            try:
+                async with aiohttp.ClientSession() as http_session:
+                    async with http_session.get(avatar_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                        if resp.status == 200:
+                            image_bytes = await resp.read()
+                            avatar_image_data = {"data": image_bytes, "mime_type": "image/png"}
+                            log.debug(f"用户 {user_id} 的头像下载成功 ({len(image_bytes)} bytes)。")
+                        else:
+                            log.warning(f"下载用户 {user_id} 的头像失败，HTTP {resp.status}。")
+            except Exception as e:
+                log.warning(f"下载用户 {user_id} 的头像时出错: {e}")
+
+        # 2. 构建 prompt
+        prompt_template = chat_config.PROMPT_CONFIG.get("auto_profile_generation")
+        if not prompt_template:
+            log.error("未找到 'auto_profile_generation' 的 prompt 模板，跳过自动名片生成。")
+            return
+
+        final_prompt = prompt_template.format(
+            user_name=user_name,
+            is_bot="是（Bot用户）" if is_bot else "否（真人用户）",
+            user_message=user_message[:500],
+            ai_response=ai_response[:500],
+        )
+
+        # 3. 调用 AI 生成
+        from src.chat.services.gemini_service import gemini_service
+
+        images_param = [avatar_image_data] if avatar_image_data else None
+        raw_response = await gemini_service.generate_simple_response(
+            prompt=final_prompt,
+            generation_config=chat_config.GEMINI_PROFILE_GEN_CONFIG,
+            model_name=chat_config.SUMMARY_MODEL,
+            images=images_param,
+            return_error_text=False,
+        )
+
+        if not raw_response:
+            log.warning(f"为用户 {user_id} 生成初始名片失败，AI 返回空。")
+            return
+
+        # 4. 解析 JSON
+        try:
+            cleaned = raw_response.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            profile_data = json.loads(cleaned)
+        except (json.JSONDecodeError, ValueError) as e:
+            log.warning(f"解析用户 {user_id} 的自动名片 JSON 失败: {e}\n原始响应: {raw_response}")
+            return
+
+        personality = profile_data.get("personality", "暂无足够信息")
+        background = profile_data.get("background", "暂无足够信息")
+        preferences = profile_data.get("preferences", "暂无足够信息")
+
+        # 5. 更新数据库
+        profile_id = None
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                stmt = (
+                    select(CommunityMemberProfile)
+                    .where(CommunityMemberProfile.discord_id == str(user_id))
+                    .with_for_update()
+                )
+                result = await session.execute(stmt)
+                profile = result.scalars().first()
+
+                if not profile:
+                    log.warning(f"用户 {user_id} 的档案在生成名片时已不存在，跳过。")
+                    return
+
+                if profile.source_metadata:
+                    log.info(f"用户 {user_id} 的档案已有 source_metadata（可能已手动创建），跳过自动填充。")
+                    return
+
+                full_text = (
+                    f"名称: {user_name}\n"
+                    f"Discord ID: {user_id}\n"
+                    f"性格特点: {personality}\n"
+                    f"背景信息: {background}\n"
+                    f"喜好偏好: {preferences}"
+                )
+                source_metadata = {
+                    "name": user_name,
+                    "discord_id": str(user_id),
+                    "personality": personality,
+                    "background": background,
+                    "preferences": preferences,
+                    "source": "auto_generated",
+                    "contributor_id": "system",
+                }
+
+                profile.full_text = full_text
+                profile.source_metadata = source_metadata
+                profile.title = user_name
+                profile_id = profile.id
+
+        if profile_id:
+            log.info(f"已为用户 {user_id} 自动生成初始名片 (profile_id={profile_id})。")
+            # 6. 触发 RAG 重建索引
+            try:
+                from src.chat.features.world_book.services.incremental_rag_service import (
+                    incremental_rag_service,
+                )
+                import asyncio
+                asyncio.create_task(
+                    incremental_rag_service.process_community_member(profile_id)
+                )
+                log.info(f"已为用户 {user_id} 的名片触发 RAG 重建索引。")
+            except Exception as rag_error:
+                log.error(f"为用户 {user_id} 的名片触发 RAG 索引时出错: {rag_error}", exc_info=True)
+
 
 # 单例实例
 personal_memory_service = PersonalMemoryService()

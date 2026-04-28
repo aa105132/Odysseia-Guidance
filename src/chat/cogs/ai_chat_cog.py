@@ -3,7 +3,7 @@
 import discord
 from discord.ext import commands
 import logging
-from typing import Optional, List
+from typing import Dict, Optional, List
 import re
 import io
 from datetime import datetime
@@ -31,6 +31,7 @@ from src.chat.features.odysseia_coin.service.coin_service import coin_service
 
 log = logging.getLogger(__name__)
 BOT_REPLY_DAILY_LIMIT = 200
+BOT_CONSECUTIVE_REPLY_LIMIT = 20  # 单个频道/帖子内连续回复 bot 的轮数上限
 
 
 class AIChatCog(commands.Cog):
@@ -38,6 +39,8 @@ class AIChatCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # 每个频道/帖子的连续 bot 对话计数器 {channel_id: count}
+        self._bot_consecutive_counts: Dict[int, int] = {}
         # 服务实例的注入已由 main.py 统一处理，此处不再需要
 
     def _get_text_length_without_emojis(self, text: str) -> int:
@@ -138,11 +141,25 @@ class AIChatCog(commands.Cog):
             )
             return False
 
+        # 连续 bot 对话轮数限制
+        consecutive = self._bot_consecutive_counts.get(scope_id, 0)
+        if consecutive >= BOT_CONSECUTIVE_REPLY_LIMIT:
+            log.info(
+                f"频道/帖子 {scope_id} 的连续 bot 对话已达 {BOT_CONSECUTIVE_REPLY_LIMIT} 轮上限，"
+                f"忽略来自 {message.author.id} 的 bot 消息。"
+            )
+            return False
+
         return True
 
     async def _record_bot_reply_usage_if_needed(self, message: discord.Message) -> None:
         if getattr(getattr(message, "author", None), "bot", False):
             await chat_db_manager.increment_bot_reply_daily_count(get_beijing_today_str())
+            scope_id = getattr(message.channel, "id", None)
+            if scope_id is not None:
+                self._bot_consecutive_counts[scope_id] = (
+                    self._bot_consecutive_counts.get(scope_id, 0) + 1
+                )
 
     async def _record_dashboard_delivery_stats(
         self,
@@ -460,7 +477,13 @@ class AIChatCog(commands.Cog):
         if not is_dm and not is_mentioned:
             return
 
-        if not getattr(message.author, "bot", False):
+        is_bot_author = getattr(message.author, "bot", False)
+        scope_id = getattr(message.channel, "id", None)
+
+        if not is_bot_author:
+            # 真人消息：重置该频道的连续 bot 对话计数
+            if scope_id and scope_id in self._bot_consecutive_counts:
+                self._bot_consecutive_counts.pop(scope_id, None)
             if await self._handle_bot_reply_control_command(message):
                 return
         else:
@@ -493,6 +516,12 @@ class AIChatCog(commands.Cog):
         async with message.channel.typing():
             # 注意：这里我们将已经处理过的数据传递下去
             response_text = await self.handle_chat_message(message, processed_data)
+
+        # 即使 AI 选择沉默（stay_silent），也要递增 bot 连续对话计数
+        if not response_text and is_bot_author and scope_id is not None:
+            self._bot_consecutive_counts[scope_id] = (
+                self._bot_consecutive_counts.get(scope_id, 0) + 1
+            )
 
         # 在退出 typing 状态后发送回复
         if response_text:

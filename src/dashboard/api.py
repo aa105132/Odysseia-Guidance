@@ -1266,8 +1266,8 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         log.info(f"✅ API 格式已保存: {config.api_format}")
 
     if config.channel_history_limit is not None:
-        if not 5 <= config.channel_history_limit <= 100:
-            raise HTTPException(400, "频道消息上下文条数必须在 5 到 100 之间")
+        if not 5 <= config.channel_history_limit <= 500:
+            raise HTTPException(400, "频道消息上下文条数必须在 5 到 500 之间")
         limit_val = int(config.channel_history_limit)
         chat_config.CHANNEL_MEMORY_CONFIG["raw_history_limit"] = limit_val
         chat_config.CHANNEL_MEMORY_CONFIG["formatted_history_limit"] = limit_val

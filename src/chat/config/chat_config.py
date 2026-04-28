@@ -967,6 +967,12 @@ GEMINI_SUMMARY_GEN_CONFIG = {
     "max_output_tokens": 4000,  # 提高token限制，给模型更多空间处理
 }
 
+# 用于自动生成用户初始名片的配置
+GEMINI_PROFILE_GEN_CONFIG = {
+    "temperature": 0.7,
+    "max_output_tokens": 1000,
+}
+
 # 用于生成忏悔回应的配置
 GEMINI_CONFESSION_GEN_CONFIG = {
     "temperature": 1.1,
@@ -1190,6 +1196,27 @@ PROMPT_CONFIG = {
         "- (要点1)\n"
         "### 近期动态\n"
         "- (要点1)\n"
+    ),
+    "auto_profile_generation": (
+        "你是一位观察力敏锐的档案分析专家。根据下面提供的信息，为这位用户生成一份简短的初始档案。\n\n"
+        "**用户信息：**\n"
+        "- 用户名：{user_name}\n"
+        "- 是否为Bot：{is_bot}\n\n"
+        "**用户的头像图片已附在上方（如有）。请观察头像的风格、配色、角色形象等特征作为参考。**\n\n"
+        "**首次对话内容：**\n"
+        "用户: {user_message}\n"
+        "AI回复: {ai_response}\n\n"
+        "**你的任务：**\n"
+        "根据以上所有信息（头像视觉特征 + 对话内容 + Bot状态），生成这位用户的初始档案。\n"
+        "请严格按照以下JSON格式输出，不要包含任何其他文字、解释或markdown代码块标记：\n"
+        '{{"personality": "用1-3句话描述推测的性格特点", '
+        '"background": "用1-2句话描述推测的背景信息（可以基于头像风格和对话内容推测）", '
+        '"preferences": "用1-2句话描述推测的喜好偏好"}}\n\n'
+        "**注意事项：**\n"
+        "- 如果是Bot用户，在background中提及这是一个Bot\n"
+        "- 基于有限信息进行合理推测，不要编造具体事实\n"
+        "- 保持简洁，每个字段不超过50个字\n"
+        "- 如果信息不足以推测某个字段，写\"暂无足够信息\"\n"
     ),
     "feeding_prompt": (
         "# 任务:评价投喂的食物\n"

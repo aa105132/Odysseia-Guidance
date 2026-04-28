@@ -254,6 +254,33 @@ class ChatService:
                     exc_info=True,
                 )
 
+            # --- 自动名片生成 ---
+            # 如果用户是首次对话（之前没有档案），在后台自动生成初始名片
+            if user_profile_data is None:
+                try:
+                    avatar_url = None
+                    if message.author.display_avatar:
+                        avatar_url = str(
+                            message.author.display_avatar.with_size(256).with_format("png")
+                        )
+                    import asyncio
+                    asyncio.create_task(
+                        personal_memory_service.auto_generate_profile(
+                            user_id=author.id,
+                            user_name=author.display_name,
+                            is_bot=getattr(message.author, "bot", False),
+                            avatar_url=avatar_url,
+                            user_message=user_content,
+                            ai_response=ai_response,
+                        )
+                    )
+                    log.info(f"已为首次对话用户 {author.id} 启动后台自动名片生成任务。")
+                except Exception as profile_gen_error:
+                    log.error(
+                        f"启动用户 {author.id} 的自动名片生成任务时出错: {profile_gen_error}",
+                        exc_info=True,
+                    )
+
             # 更新新系统的CD
             await chat_settings_service.update_user_cooldown(
                 author.id, message.channel.id, effective_config
