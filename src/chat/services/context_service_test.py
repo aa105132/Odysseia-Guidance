@@ -2,6 +2,7 @@
 
 import logging
 from typing import Optional, Dict, List, Any
+from datetime import timezone, timedelta
 import discord
 from discord.ext import commands
 import re
@@ -260,9 +261,13 @@ class ContextServiceTest:
                 if not combined_content and (msg.attachments or has_stickers):
                     combined_content = sticker_info or "（仅发送了图片）"
 
+                # 将消息时间转换为北京时间（UTC+8）
+                beijing_tz = timezone(timedelta(hours=8))
+                msg_time_beijing = msg.created_at.astimezone(beijing_tz).strftime("%H:%M")
+
                 # 强制在元信息（用户名+ID和回复）后添加冒号，清晰地分割内容
                 bot_tag = "[BOT] " if msg.author.bot else ""
-                user_meta = f"{bot_tag}[{msg.author.display_name}<{msg.author.id}>]{attachment_info}{sticker_info}{reply_info}"
+                user_meta = f"{bot_tag}[{msg_time_beijing}][{msg.author.display_name}<{msg.author.id}>]{attachment_info}{sticker_info}{reply_info}"
                 final_part = f"{user_meta}: {combined_content}"
                 history_parts.append(final_part)
 
