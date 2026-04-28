@@ -24,13 +24,12 @@ from src.chat.features.tools.functions.summarize_channel import (
 # 导入上下文服务
 
 # 导入数据库管理器以进行黑名单检查和斜杠命令
-from src.chat.utils.database import chat_db_manager, get_beijing_today_str
+from src.chat.utils.database import chat_db_manager
 from src.chat.config.chat_config import CHAT_ENABLED, MESSAGE_SETTINGS
 from src.chat.config import chat_config
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
 
 log = logging.getLogger(__name__)
-BOT_REPLY_DAILY_LIMIT = 200
 BOT_CONSECUTIVE_REPLY_LIMIT = 20  # 单个频道/帖子内连续回复 bot 的轮数上限
 
 
@@ -133,14 +132,6 @@ class AIChatCog(commands.Cog):
             log.info(f"频道/线程 {scope_id} 已暂停 bot 回复，忽略 bot 消息。")
             return False
 
-        today = get_beijing_today_str()
-        current_count = await chat_db_manager.get_bot_reply_daily_count(today)
-        if current_count >= BOT_REPLY_DAILY_LIMIT:
-            log.info(
-                f"今日 bot 回复已达到上限 {BOT_REPLY_DAILY_LIMIT}，忽略来自 {message.author.id} 的 bot 消息。"
-            )
-            return False
-
         # 连续 bot 对话轮数限制
         consecutive = self._bot_consecutive_counts.get(scope_id, 0)
         if consecutive >= BOT_CONSECUTIVE_REPLY_LIMIT:
@@ -154,11 +145,14 @@ class AIChatCog(commands.Cog):
 
     async def _record_bot_reply_usage_if_needed(self, message: discord.Message) -> None:
         if getattr(getattr(message, "author", None), "bot", False):
-            await chat_db_manager.increment_bot_reply_daily_count(get_beijing_today_str())
             scope_id = getattr(message.channel, "id", None)
             if scope_id is not None:
                 self._bot_consecutive_counts[scope_id] = (
                     self._bot_consecutive_counts.get(scope_id, 0) + 1
+                )
+                log.debug(
+                    f"频道 {scope_id} 连续 bot 对话计数: "
+                    f"{self._bot_consecutive_counts[scope_id]}/{BOT_CONSECUTIVE_REPLY_LIMIT}"
                 )
 
     async def _record_dashboard_delivery_stats(
