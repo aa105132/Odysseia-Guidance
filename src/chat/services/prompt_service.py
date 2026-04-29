@@ -393,7 +393,7 @@ class PromptService:
 
         # 注入个人记忆
         if personal_summary:
-            personal_summary_content = f"这是关于 {user_name} ,你对ta的一些记忆：\n<personal_memory>\n{personal_summary}\n</personal_memory>"
+            personal_summary_content = f"这是关于 {user_name} ,你对ta的一些记忆（注意：这些都是线上聊天记录，不代表真实物理接触或亲密关系；你和用户隔着屏幕）：\n<personal_memory>\n{personal_summary}\n</personal_memory>"
             final_conversation.append(
                 {"role": "user", "parts": [personal_summary_content]}
             )
