@@ -12,89 +12,17 @@ inline_data Part 传回 Gemini，实现 AI 视觉分析。
 """
 
 import logging
-import re
 import discord
 import httpx
-from typing import Optional, List, Tuple
+from typing import Optional
 
 from src.chat.features.tools.tool_metadata import tool_metadata
+from src.chat.features.tools.utils.resolve_user import (
+    MENTION_ID_PATTERN,
+    resolve_username_to_id,
+)
 
 log = logging.getLogger(__name__)
-
-MENTION_ID_PATTERN = re.compile(r"^<@!?(\d+)>$")
-
-
-def _normalize_lookup_name(name: Optional[str]) -> str:
-    if not name:
-        return ""
-    return str(name).strip().lstrip("@").casefold()
-
-
-def _member_name_candidates(member: discord.abc.User) -> List[str]:
-    names: List[str] = []
-    for raw_name in (
-        getattr(member, "display_name", None),
-        getattr(member, "global_name", None),
-        getattr(member, "name", None),
-    ):
-        if isinstance(raw_name, str):
-            clean_name = raw_name.strip()
-            if clean_name and clean_name not in names:
-                names.append(clean_name)
-    return names
-
-
-def _resolve_member_by_username(
-    members: List[discord.abc.User], username: str
-) -> Tuple[Optional[discord.abc.User], Optional[str]]:
-    target = _normalize_lookup_name(username)
-    if not target:
-        return None, "未提供有效用户名。"
-
-    exact_matches: List[discord.abc.User] = []
-    fuzzy_matches: List[discord.abc.User] = []
-
-    for member in members:
-        normalized_names = [
-            _normalize_lookup_name(name) for name in _member_name_candidates(member)
-        ]
-        if target in normalized_names:
-            exact_matches.append(member)
-            continue
-        if any(target in name for name in normalized_names):
-            fuzzy_matches.append(member)
-
-    if len(exact_matches) == 1:
-        return exact_matches[0], None
-
-    if len(exact_matches) > 1:
-        options = "、".join(
-            f"{m.display_name}({m.id})" for m in exact_matches[:5]
-        )
-        return (
-            None,
-            (
-                f"用户名“{username}”匹配到多个用户：{options}。"
-                "请改用更精确的用户名，或直接提供 user_id / @提及。"
-            ),
-        )
-
-    if len(fuzzy_matches) == 1:
-        return fuzzy_matches[0], None
-
-    if len(fuzzy_matches) > 1:
-        options = "、".join(
-            f"{m.display_name}({m.id})" for m in fuzzy_matches[:5]
-        )
-        return (
-            None,
-            (
-                f"用户名“{username}”模糊匹配到多个用户：{options}。"
-                "请改用更精确的用户名，或直接提供 user_id / @提及。"
-            ),
-        )
-
-    return None, None
 
 
 @tool_metadata(
@@ -143,73 +71,16 @@ async def get_user_avatar(
     # 2) 未提供 user_id 时，尝试按 username 解析
     # 3) 两者都没有时，回退为当前对话用户
     if not resolved_user_id and lookup_username:
-        mention_match = MENTION_ID_PATTERN.match(lookup_username)
-        if mention_match:
-            resolved_user_id = mention_match.group(1)
-        elif lookup_username.isdigit():
-            resolved_user_id = lookup_username
-        else:
-            guild = kwargs.get("guild")
-            channel = kwargs.get("channel")
-            if not guild and channel and getattr(channel, "guild", None):
-                guild = channel.guild
+        guild = kwargs.get("guild")
+        channel = kwargs.get("channel")
+        if not guild and channel and getattr(channel, "guild", None):
+            guild = channel.guild
 
-            if not guild:
-                return {
-                    "error": True,
-                    "hint": (
-                        f"当前场景无法仅通过用户名“{lookup_username}”定位用户。"
-                        "请提供 user_id 或 @提及。"
-                    ),
-                }
-
-            candidate_map = {}
-
-            # 先收集缓存成员
-            try:
-                for member in getattr(guild, "members", []) or []:
-                    candidate_map[member.id] = member
-            except Exception:
-                pass
-
-            # 再尝试 Discord 的成员命中
-            try:
-                direct_member = guild.get_member_named(lookup_username)
-                if direct_member:
-                    candidate_map[direct_member.id] = direct_member
-            except Exception:
-                pass
-
-            # 最后尝试 query_members（可能因权限/配置失败，失败时仅记 debug）
-            try:
-                queried_members = await guild.query_members(
-                    query=lookup_username, limit=25
-                )
-                for member in queried_members:
-                    candidate_map[member.id] = member
-            except Exception as query_error:
-                log.debug(f"按用户名 query_members 失败: {query_error}")
-
-            matched_member, match_error = _resolve_member_by_username(
-                list(candidate_map.values()), lookup_username
-            )
-            if match_error:
-                return {"error": True, "hint": match_error}
-
-            if matched_member:
-                resolved_user_id = str(matched_member.id)
-                log.info(
-                    f"通过用户名 '{lookup_username}' 解析到用户 "
-                    f"{matched_member.display_name} ({matched_member.id})"
-                )
-            else:
-                return {
-                    "error": True,
-                    "hint": (
-                        f"在当前服务器中找不到用户名“{lookup_username}”。"
-                        "请提供更精确的用户名，或直接给出 user_id / @提及。"
-                    ),
-                }
+        uid, err = await resolve_username_to_id(guild, lookup_username)
+        if uid:
+            resolved_user_id = uid
+        elif err:
+            return {"error": True, "hint": err}
 
     if not resolved_user_id:
         # 未传参数时回退到当前对话用户（适用于"拿我头像画"场景）

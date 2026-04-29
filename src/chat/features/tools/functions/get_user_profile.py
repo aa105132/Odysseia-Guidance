@@ -203,8 +203,9 @@ async def _resolve_user(bot: discord.Client, target_id: int) -> Optional[discord
     category="用户信息",
 )
 async def get_user_profile(
-    user_id: str,
-    queries: List[str],
+    user_id: str = "",
+    queries: List[str] = None,
+    username: Optional[str] = None,
     log_detailed: bool = False,
     **kwargs,
 ) -> Dict[str, Any]:
@@ -227,6 +228,7 @@ async def get_user_profile(
     - **名片 vs 长期记忆的区别**：`bio` 是用户自己写的自我介绍/人设；`long_term_memory` 是你对该用户的记忆（由 AI 自动总结生成）。两者是不同的东西，请根据用户的请求选择正确的字段
     - **兼容别名**: `balance -> currency`、`name/nickname -> display_name`、
       `stats -> activity_stats`、`items -> inventory`、`memory/记忆 -> long_term_memory`。
+    - **按用户名查询**: 如果不知道 user_id，可以传 `username` 参数按名字查。支持 Discord 昵称、全局名和名片名称。例如：`get_user_profile(username="软软", queries=["long_term_memory"])`
     - **查询当前对话用户**: 若是当前对话用户，系统会自动注入 `user_id`，模型无需手填。
 
     Returns:
@@ -246,14 +248,27 @@ async def get_user_profile(
         return {"error": "Bot instance is not available."}
 
     normalized_user_id = str(user_id or "").strip()
+    lookup_username = str(username or "").strip() if username else ""
+
     if log_detailed:
         log.info(
             "--- [工具执行]: get_user_profile, "
-            f"user_id={normalized_user_id}, queries={queries} ---"
+            f"user_id={normalized_user_id}, username={lookup_username}, queries={queries} ---"
         )
 
+    if not normalized_user_id.isdigit() and lookup_username:
+        resolved_id, resolve_error = await resolve_username_to_id(guild, lookup_username)
+        if resolved_id:
+            normalized_user_id = resolved_id
+        elif resolve_error:
+            db_discord_id = await _search_profile_by_name(lookup_username)
+            if db_discord_id:
+                normalized_user_id = str(db_discord_id).strip()
+            else:
+                return {"error": resolve_error}
+
     if not normalized_user_id.isdigit():
-        return {"error": f"Invalid or missing user_id provided: {normalized_user_id}"}
+        return {"error": f"Invalid or missing user_id provided: {normalized_user_id}. 也可以传 username 参数按用户名查询。"}
 
     target_id = int(normalized_user_id)
     canonical_queries, unsupported_queries = _normalize_requested_queries(queries or [])
