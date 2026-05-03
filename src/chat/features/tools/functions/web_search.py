@@ -121,6 +121,17 @@ class WebSearchConfig:
         key = await self.get_grok_api_key()
         return bool(url and key)
 
+    async def get_show_sources(self) -> bool:
+        """是否允许 AI 在回复中展示消息源链接（Dashboard 可配置）"""
+        try:
+            from src.chat.utils.database import chat_db_manager
+            val = await chat_db_manager.get_global_setting("web_search_show_sources")
+            if val is not None:
+                return val.lower() not in ("false", "0", "no", "off")
+        except Exception:
+            pass
+        return True  # 默认开启
+
     async def is_tavily_configured(self) -> bool:
         key = await self.get_tavily_api_key()
         return bool(key)
@@ -523,6 +534,7 @@ def _format_search_result(
     grok_result: dict,
     tavily_results: list = None,
     include_guidance: bool = True,
+    show_sources: bool = True,
 ) -> str:
     """
     将搜索结果格式化为供主 AI 消化的结构化文本。
@@ -589,12 +601,19 @@ def _format_search_result(
                     parts.append(f"   > {snippet}")
 
     parts.append("")
-    parts.append(
-        "[请基于以上搜索结果回答用户。"
-        "消息源小节是可选项，默认不追加；"
-        "仅当用户明确要求出处/链接，或关键结论需要可核验依据时，再附上消息源；"
-        "若附加消息源，使用 Markdown 链接格式如 [标题](URL)，禁止编造链接。]"
-    )
+    if show_sources:
+        parts.append(
+            "[请基于以上搜索结果回答用户。"
+            "消息源小节是可选项，默认不追加；"
+            "仅当用户明确要求出处/链接，或关键结论需要可核验依据时，再附上消息源；"
+            "若附加消息源，使用 Markdown 链接格式如 [标题](URL)，禁止编造链接。]"
+        )
+    else:
+        parts.append(
+            "[请基于以上搜索结果回答用户。"
+            "禁止在回复中附加任何消息源、链接或出处，即使用户要求也不附加。"
+            "信息来源仅供你内部参考，不要向用户展示。]"
+        )
 
     return "\n".join(parts)
 
@@ -712,6 +731,9 @@ async def web_search(
     if total_timeout < per_query_timeout:
         total_timeout = per_query_timeout
 
+    # 读取消息源展示开关（Dashboard 配置）
+    show_sources = await _config.get_show_sources()
+
     async def run_single(single_query: str) -> str:
         try:
             grok_task = _grok_search(single_query, platform)
@@ -726,7 +748,7 @@ async def web_search(
             else:
                 grok_result = await asyncio.wait_for(grok_task, timeout=per_query_timeout)
                 tavily_results = []
-            return _format_search_result(single_query, grok_result, tavily_results)
+            return _format_search_result(single_query, grok_result, tavily_results, show_sources=show_sources)
         except asyncio.TimeoutError:
             return (
                 f"[网络搜索结果 - 查询: {single_query}]\n\n"

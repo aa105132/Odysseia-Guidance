@@ -97,6 +97,53 @@ def test_sanitize_tavily_api_url_accepts_valid_custom_proxy():
     )
 
 
+def test_format_search_result_show_sources_true():
+    result = web_search_tool._format_search_result(
+        query="test",
+        grok_result={"content": "answer", "sources": [{"title": "A", "url": "https://a.com"}]},
+        show_sources=True,
+    )
+    assert "禁止在回复中附加任何消息源" not in result
+    assert "消息源小节是可选项" in result
+
+
+def test_format_search_result_show_sources_false():
+    result = web_search_tool._format_search_result(
+        query="test",
+        grok_result={"content": "answer", "sources": [{"title": "A", "url": "https://a.com"}]},
+        show_sources=False,
+    )
+    assert "禁止在回复中附加任何消息源" in result
+    assert "消息源小节是可选项" not in result
+    # 信源数据仍然包含在结果中（供 AI 内部参考）
+    assert "https://a.com" in result
+
+
+def test_web_search_show_sources_disabled(monkeypatch):
+    monkeypatch.setattr(
+        web_search_tool._config,
+        'is_grok_configured',
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        web_search_tool._config,
+        'is_tavily_configured',
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        web_search_tool._config,
+        'get_show_sources',
+        AsyncMock(return_value=False),
+    )
+
+    grok_mock = AsyncMock(return_value={'content': 'ok', 'sources': []})
+    monkeypatch.setattr(web_search_tool, '_grok_search', grok_mock)
+
+    result = asyncio.run(web_search_tool.web_search('test query'))
+
+    assert '禁止在回复中附加任何消息源' in result
+
+
 def test_get_tavily_api_url_falls_back_when_setting_is_grok_url(monkeypatch):
     monkeypatch.setattr(
         web_search_tool._config,

@@ -5031,6 +5031,7 @@ class WebSearchConfigUpdate(BaseModel):
     tavily_api_url: Optional[str] = None
     tavily_api_key: Optional[str] = None
     search_history_fallback_fetch_limit: Optional[int] = None
+    show_sources: Optional[bool] = None
 
 
 @app.get("/api/config/web-search")
@@ -5047,6 +5048,7 @@ async def get_web_search_config(token: str = Depends(verify_token)):
     db_search_history_fallback_fetch_limit = await chat_db_manager.get_global_setting(
         "search_history_fallback_fetch_limit"
     )
+    db_show_sources = await chat_db_manager.get_global_setting("web_search_show_sources")
 
     # 回退到环境变量
     grok_api_url = db_grok_api_url or os.getenv("GROK_API_URL", "")
@@ -5077,6 +5079,7 @@ async def get_web_search_config(token: str = Depends(verify_token)):
         "grok_configured": bool(grok_api_url and grok_api_key),
         "tavily_configured": bool(tavily_api_key),
         "search_history_fallback_fetch_limit": search_history_fallback_fetch_limit,
+        "show_sources": db_show_sources not in ("false", "0", "no", "off") if db_show_sources else True,
     }
 
 
@@ -5143,6 +5146,14 @@ async def update_web_search_config(config: WebSearchConfigUpdate, token: str = D
             "✅ 历史消息回退扫描条数已更新: "
             f"{config.search_history_fallback_fetch_limit} (0=自动)"
         )
+
+    if config.show_sources is not None:
+        await chat_db_manager.set_global_setting(
+            "web_search_show_sources",
+            "true" if config.show_sources else "false",
+        )
+        updated["show_sources"] = config.show_sources
+        log.info(f"✅ 网络搜索消息源展示已{'开启' if config.show_sources else '关闭'}")
 
     if not updated:
         return {"success": True, "message": "没有需要更新的配置"}

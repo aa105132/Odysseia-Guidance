@@ -3007,6 +3007,23 @@
                     </div>
                 </div>
 
+                <!-- 消息源展示开关 -->
+                <div class="panel-card p-6 max-w-2xl mb-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="section-title mb-1">
+                                <i data-lucide="link" class="w-5 h-5 text-cyan-400"></i>
+                                搜索消息源展示
+                            </h3>
+                            <p class="text-sm text-slate-400">开启后，月月在回复中可附带信息来源链接；关闭后，搜索结果仅供参考，回复中不附带任何链接</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer ml-4 shrink-0">
+                            <input type="checkbox" x-model="webSearchForm.show_sources" class="sr-only peer">
+                            <div class="toggle-track toggle-track-green"></div>
+                        </label>
+                    </div>
+                </div>
+
                 <div class="panel-card p-6 max-w-2xl mb-6">
                     <h3 class="section-title mb-4">
                         <i data-lucide="history" class="w-5 h-5 text-amber-400"></i>
@@ -5049,6 +5066,7 @@
                     tavily_api_url: '',
                     tavily_api_key: '',
                     search_history_fallback_fetch_limit: 1000,
+                    show_sources: true,
                 },
                 webSearchConfig: { grok_configured: false, tavily_configured: false, has_grok_key: false, has_tavily_key: false },
                 showWebSearchGrokKey: false,
@@ -8129,6 +8147,7 @@
                             this.webSearchForm.search_history_fallback_fetch_limit = Number.isInteger(data.search_history_fallback_fetch_limit)
                                 ? data.search_history_fallback_fetch_limit
                                 : 1000;
+                            this.webSearchForm.show_sources = data.show_sources !== false;
                             // 不回填 API Key（安全考虑）
                             this.webSearchForm.grok_api_key = '';
                             this.webSearchForm.tavily_api_key = '';
@@ -8152,6 +8171,7 @@
                         if (!Number.isNaN(fallbackLimit) && fallbackLimit >= 0) {
                             payload.search_history_fallback_fetch_limit = Math.floor(fallbackLimit);
                         }
+                        payload.show_sources = !!this.webSearchForm.show_sources;
 
                         const response = await fetch('/api/config/web-search', {
                             method: 'PUT',
