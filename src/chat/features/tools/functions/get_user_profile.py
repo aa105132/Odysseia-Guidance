@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import discord
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from src.chat.config import chat_config
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
@@ -12,6 +12,7 @@ from src.chat.features.tools.tool_metadata import tool_metadata
 from src.chat.utils.database import chat_db_manager
 from src.database.database import AsyncSessionLocal
 from src.database.models import CommunityMemberProfile
+from src.chat.features.tools.utils.resolve_user import resolve_username_to_id
 
 log = logging.getLogger(__name__)
 
