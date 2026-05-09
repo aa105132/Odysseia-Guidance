@@ -507,8 +507,11 @@ class AIChatCog(commands.Cog):
 
         # 显示"正在输入"状态，直到AI响应生成完毕
         response_text = None
-        async with message.channel.typing():
-            # 注意：这里我们将已经处理过的数据传递下去
+        try:
+            async with message.channel.typing():
+                response_text = await self.handle_chat_message(message, processed_data)
+        except discord.HTTPException:
+            # typing 被限流时静默降级，仍然正常处理消息
             response_text = await self.handle_chat_message(message, processed_data)
 
         # 即使 AI 选择沉默（stay_silent），也要递增 bot 连续对话计数
