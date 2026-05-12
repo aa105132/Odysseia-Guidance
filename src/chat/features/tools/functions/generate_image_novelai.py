@@ -185,9 +185,6 @@ async def _convert_imagen_prompt_to_novelai_prompt(
             return_error_text=False,
         )
         normalized = clamp_danbooru_tags(converted, max_tags=90)
-        if normalized == "[REJECTED: yueyue_nsfw_blocked]":
-            log.warning("NovelAI 提示词AI拒绝生成月月涩图标签")
-            return "[REJECTED: yueyue_nsfw_blocked]"
         if normalized:
             log.info(f"已完成 NovelAI 提示词{request_type}（标签数已限制为≤90）")
             return normalized
