@@ -726,7 +726,8 @@ AI_TAG_GENERATION_PROMPT_V2 = (
     "23. YUEYUE CUP RULE (MANDATORY): Default to medium breasts (C cup). Only when user explicitly asks for another bust size should you switch to small/large cup tags.\n\n"
     "24. YUEYUE PREFILL PRIORITY (MANDATORY): If subject is Yueyue, begin output with the Yueyue preset block first, then append scene/composition tags.\n"
     "25. YUEYUE SINGLE-CHARACTER STABILITY: Keep 1girl, solo by default. Unless user explicitly requests multi-character composition, do NOT add 2girls/multiple girls/group/another girl/twins/clone-like tags.\n"
-    "26. YUEYUE DE-DUP: Avoid duplicated identity/accessory tags; keep one canonical set to reduce prompt drift.\n\n"
+    "26. YUEYUE DE-DUP: Avoid duplicated identity/accessory tags; keep one canonical set to reduce prompt drift.\n"
+    "27. CRITICAL YUEYUE NSFW BLOCK (TAG GENERATION): If the target is Yueyue/月月/assistant self AND the description requests explicit NSFW content (nude, nipples, areola, pussy, vagina, labia, clitoris, penis, cock, dick, genitals, anus, sex, fellatio, blowjob, handjob, masturbation, orgasm, ahegao, cumshot, 露点, 乳首, 乳头, 私处, 性行为), you MUST REFUSE. Instead output: `[REJECTED: yueyue_nsfw_blocked]`. Only allow SFW / swimsuit / lingerie / suggestive-but-covered for Yueyue.\n\n"
     "## TAG ORDER:\n"
     "1. Quality tags\n"
     "2. Scene type (nsfw/sfw) + character count (1girl, solo)\n"
@@ -778,7 +779,8 @@ AI_REWRITE_PROMPT_V2 = (
     "21. YUEYUE EARRING LOCK (MANDATORY IN REWRITE): Yueyue earrings must be `small sharp triangular earrings`; do NOT use moon/crescent earrings. Crescent shape is only for hair stick and necklace.\n"
     "22. YUEYUE CUP RULE (MANDATORY IN REWRITE): Keep medium breasts (C cup) by default. Only when user explicitly requests another bust size should you rewrite to small/large cup tags.\n"
     "23. YUEYUE SINGLE-CHARACTER STABILITY (MANDATORY IN REWRITE): Keep 1girl, solo by default; unless user explicitly asks multi-character, do NOT add group/2girls/another girl/twins/clone-like tags.\n"
-    "24. YUEYUE DE-DUP (MANDATORY IN REWRITE): Deduplicate Yueyue identity/accessory tags and keep one canonical set.\n\n"
+    "24. YUEYUE DE-DUP (MANDATORY IN REWRITE): Deduplicate Yueyue identity/accessory tags and keep one canonical set.\n"
+    "25. CRITICAL YUEYUE NSFW BLOCK: If the prompt targets Yueyue/月月/assistant self AND contains explicit NSFW content (nude, nipples, areola, pussy, vagina, labia, clitoris, penis, cock, dick, genitals, anus, sex, fellatio, blowjob, handjob, masturbation, orgasm, ahegao, cumshot, 露点, 乳首, 乳头, 私处, 性行为), you MUST REFUSE. Instead output: `[REJECTED: yueyue_nsfw_blocked]`. Only allow SFW / swimsuit / lingerie / suggestive-but-covered for Yueyue.\n\n"
     "## TAG STRUCTURE ORDER:\n"
     "Quality -> Scene type -> Background -> Composition -> "
     "Character DNA (identity, appearance, outfit) -> Action -> Expression -> Expressiveness\n\n"
@@ -843,6 +845,7 @@ _META_TOKEN_BLACKLIST = {
     "order",
     "structure",
     "fidelity",
+    "[rejected: yueyue_nsfw_blocked]",
 }
 _META_SENTENCE_STARTERS = {
     "add",

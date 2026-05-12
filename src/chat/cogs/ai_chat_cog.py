@@ -610,11 +610,9 @@ class AIChatCog(commands.Cog):
                     last_tools
                 )
 
-                if (
-                    should_send_summary
-                    and tool_image_data
-                    and "render_newspaper_brief" in last_tools
-                ):
+                if should_send_summary:
+                    # 若 Imagen 开启可用，忽略 render_newspaper_brief 工具产出，优先生成 AI 配图
+                    log.info("调用了总结工具, 尝试优先生成 AI 配图。")
                     sent = await self._send_summary_with_full_text(
                         message=message,
                         response_text=response_text,
@@ -622,19 +620,6 @@ class AIChatCog(commands.Cog):
                         source_links=source_links,
                         used_web_search=used_web_search,
                         provided_image_data=tool_image_data,
-                    )
-                    if sent:
-                        await self._record_bot_reply_usage_if_needed(message)
-                        return
-
-                if should_send_summary:
-                    log.info("调用了总结工具, 尝试生成摘要图发送。")
-                    sent = await self._send_summary_with_full_text(
-                        message=message,
-                        response_text=response_text,
-                        source_text=source_text,
-                        source_links=source_links,
-                        used_web_search=used_web_search,
                         title="月月频道简报",
                         section_name="频道总结",
                     )
