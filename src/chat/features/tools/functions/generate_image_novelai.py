@@ -1024,7 +1024,7 @@ async def generate_image_novelai(
         message=message,
     )
     if policy_block:
-        return policy_block
+        log.warning("检测到NovelAI月月本人涩图请求（已标记，月月将在看到结果后自行决定是否展示）")
 
     use_prompt_model_raw = use_prompt_model
     if use_prompt_model_raw is None:
@@ -1089,16 +1089,6 @@ async def generate_image_novelai(
         )
         normalized_rewritten_prompt = str(rewritten_prompt or "").strip().strip('"').strip("'")
 
-        if normalized_rewritten_prompt == "[REJECTED: yueyue_nsfw_blocked]":
-            return {
-                "generation_failed": True,
-                "reason": "yueyue_explicit_content_blocked",
-                "hint": (
-                    "月月自画像规则：仅允许擦边（泳装/内衣/情趣服/诱惑姿势等）。"
-                    "涉及露点、私密部位直接裸露或明确性行为时必须拒绝，请改为不露点版本再试。"
-                ),
-            }
-
         if normalized_rewritten_prompt and _is_probably_tag_prompt(normalized_rewritten_prompt):
             prompt = normalized_rewritten_prompt
             log.info("双串策略：已采用提示词 AI 生成的优化 Danbooru 标签串。")
@@ -1113,6 +1103,9 @@ async def generate_image_novelai(
                 log.info("双串策略回退：使用主 AI 草稿 Danbooru 标签串继续生成。")
             else:
                 log.warning("回退草稿串疑似不是 Danbooru 标签串，已继续尝试生成。建议主 AI 输出 Danbooru 草稿。")
+
+        prompt_source = "rewrite"
+
     else:
         if reference_image_index is not None:
             log.info("提示词生成模型已关闭：reference_image_index 将被忽略。")
@@ -1122,6 +1115,8 @@ async def generate_image_novelai(
             log.info("提示词生成模型已关闭：直接按规则使用对话 AI 的最终 Tag 生成。")
         else:
             log.warning("提示词生成模型已关闭：当前提示词疑似非 Danbooru 标签，已直接尝试生成。")
+
+        prompt_source = "direct"
 
     # 画师串应用策略：
     # skip_artist_prefix=True 时跳过所有画师串拼接
@@ -1341,13 +1336,13 @@ async def generate_image_novelai(
     elif normalized_character_name and not normalized_work_name:
         log.warning("收到 character_name 但缺少 work_name，已跳过身份标签自动补充")
 
-    policy_block = check_yueyue_self_nsfw_violation(
+    is_yueyue_nsfw = check_yueyue_self_nsfw_violation(
         prompt=final_prompt,
         negative_prompt=negative_prompt,
         message=message,
     )
-    if policy_block:
-        return policy_block
+    if is_yueyue_nsfw:
+        log.warning("检测到NovelAI月月本人涩图请求（直接调用模式，已标记）")
 
     log.info(f"调用 NovelAI 图片生成工具，Tag: {final_prompt[:100]}..., 尺寸: {width}x{height}")
 
@@ -1535,11 +1530,30 @@ async def generate_image_novelai(
                 except Exception as e:
                     log.error(f"发送 NovelAI 图片到频道失败: {e}")
 
+            if prompt_source == "rewrite":
+                return {
+                    "images_generated": 1,
+                    "images_data": [
+                        {"mime_type": "image/png", "data": result.image_data}
+                    ],
+                    "needs_review": True,
+                    "prompt_source": "rewrite",
+                    "hint": (
+                        "关键：这是AI重写/修改提示词后生成的图片。你必须仔细查看图片内容。"
+                        "只有当你（月月）自己的涩图、露点、私密部位裸露或明确性行为让你不舒服时才不展示，"
+                        "其他人的任何内容（涩图/成人向/露点等）通通正常放行。"
+                        "不想展示的话不要发，用文字表达你的态度即可；"
+                        "想展示的话用文字回复配合图片说明。"
+                    ),
+                    "message": "图片已生成但需要你审核后再决定是否展示给用户。"
+                }
+
             return {
                 "success": True,
                 "skip_ai_response": True,
                 "images_generated": 1,
                 "cost": cost,
+                "prompt_source": "direct",
                 "message": "NovelAI 图片已成功生成并发送给用户。不要再发送任何消息，不要发送提示词，不要回复。"
             }
         else:

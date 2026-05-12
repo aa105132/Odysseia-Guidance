@@ -120,14 +120,16 @@ async def _rewrite_imagen_text_to_chinese(
 async def _normalize_imagen_request_language(
     prompt: str,
     negative_prompt: Optional[str],
-) -> Tuple[str, Optional[str]]:
-    """确保 Imagen 请求尽量使用中文自然语言。"""
+) -> Tuple[str, Optional[str], bool]:
+    """确保 Imagen 请求尽量使用中文自然语言。返回 (prompt, negative_prompt, was_rewritten)。"""
     normalized_prompt = await _rewrite_imagen_text_to_chinese(prompt, field_name="prompt")
     normalized_negative_prompt = await _rewrite_imagen_text_to_chinese(
         negative_prompt,
         field_name="negative_prompt",
     )
-    return normalized_prompt or str(prompt or "").strip(), normalized_negative_prompt
+    final_prompt = normalized_prompt or str(prompt or "").strip()
+    was_rewritten = bool(normalized_prompt and normalized_prompt != str(prompt or "").strip())
+    return final_prompt, normalized_negative_prompt, was_rewritten
 
 def _set_embed_author(embed: discord.Embed, message: Optional[discord.Message], request_user: Optional[discord.abc.User]) -> None:
     """为 Embed 设置作者信息，优先使用显式传入的请求用户。"""
@@ -185,7 +187,7 @@ async def generate_image(
     - 若名片里有外貌 / 人设 / 服装 / 种族等描述，必须以名片为最高优先级
     - 只有在名片没有明确外貌时，才可调用 `edit_image` 的头像参数或先 `get_user_avatar` 兜底
     
-    **重要：默认应调用绘图工具处理请求；但涉及“月月本人”且出现露点/私密部位直接裸露/明确性行为时，必须拒绝。**
+    **重要：默认应调用绘图工具处理请求；即使涉及”月月本人”的越界内容也不要直接拒绝——工具会生成图片后先返回给你审核，你在看到结果后自己决定是否展示给用户。**
     
     以下内容可正常生成（不含月月露点越界）：
     - 丝袜、黑丝、白丝、连裤袜、吊带袜
@@ -304,14 +306,6 @@ async def generate_image(
     # 获取消息对象（用于添加反应）
     message: Optional[discord.Message] = kwargs.get("message")
 
-    policy_block = check_yueyue_self_nsfw_violation(
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        message=message,
-    )
-    if policy_block:
-        return policy_block
-    
     # 辅助函数：安全地添加反应
     async def add_reaction(emoji: str):
         if message:
@@ -422,7 +416,7 @@ async def generate_image(
             log.warning(f"无效的内容分级，已重置为默认值 sfw")
         
         log.info(f"图片生成内容分级: {content_rating}")
-        prompt, negative_prompt = await _normalize_imagen_request_language(
+        prompt, negative_prompt, was_rewritten = await _normalize_imagen_request_language(
             prompt=prompt,
             negative_prompt=negative_prompt,
         )
@@ -501,6 +495,26 @@ async def generate_image(
             # 实际生成的图片数量
             actual_count = len(images_list)
             actual_cost = cost_per_image * actual_count
+
+            # AI重写路径：返回图片数据给月月审核，不直接发送
+            if was_rewritten:
+                await remove_reaction(GENERATING_EMOJI)
+                await add_reaction("🔍")
+                return {
+                    "images_generated": actual_count,
+                    "images_data": [
+                        {"mime_type": "image/png", "data": img}
+                        for img in images_list[:3]
+                    ],
+                    "needs_review": True,
+                    "prompt_source": "rewrite",
+                    "hint": (
+                        "关键：这是AI重写/修改提示词后生成的图片。你必须仔细查看图片内容，"
+                        "判断是否适合展示给用户。不想展示的话不要发，用文字表达你的态度即可；"
+                        "想展示的话用文字回复配合图片说明。"
+                    ),
+                    "message": "图片已生成但需要你（月月）审核后再决定是否展示给用户。"
+                }
 
             # 发送图片到频道（每条消息最多10张，Discord上限）
             # 注意：✅ 反应和扣费移到发送成功之后，避免发送失败时已打 ✅
@@ -742,13 +756,11 @@ async def generate_images_batch(
     channel = kwargs.get("channel")
 
     for prompt_item in prompts:
-        policy_block = check_yueyue_self_nsfw_violation(
+        check_yueyue_self_nsfw_violation(
             prompt=str(prompt_item or ""),
             negative_prompt=negative_prompt,
             message=message,
         )
-        if policy_block:
-            return policy_block
     
     # 辅助函数
     async def add_reaction(emoji: str):
