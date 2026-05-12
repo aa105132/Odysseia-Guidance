@@ -994,6 +994,8 @@ def clamp_danbooru_tags(raw_text: str, max_tags: int = 90) -> str:
     text = _prepare_danbooru_source_text(raw_text)
     if not text:
         return ""
+    if "[rejected: yueyue_nsfw_blocked]" in text.lower():
+        return "[REJECTED: yueyue_nsfw_blocked]"
 
     if max_tags <= 0:
         max_tags = 90

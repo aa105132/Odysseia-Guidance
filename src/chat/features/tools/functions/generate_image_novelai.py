@@ -185,6 +185,9 @@ async def _convert_imagen_prompt_to_novelai_prompt(
             return_error_text=False,
         )
         normalized = clamp_danbooru_tags(converted, max_tags=90)
+        if normalized == "[REJECTED: yueyue_nsfw_blocked]":
+            log.warning("NovelAI 提示词AI拒绝生成月月涩图标签")
+            return "[REJECTED: yueyue_nsfw_blocked]"
         if normalized:
             log.info(f"已完成 NovelAI 提示词{request_type}（标签数已限制为≤90）")
             return normalized
@@ -1088,6 +1091,16 @@ async def generate_image_novelai(
             reference_images=prompt_reference_images,
         )
         normalized_rewritten_prompt = str(rewritten_prompt or "").strip().strip('"').strip("'")
+
+        if normalized_rewritten_prompt == "[REJECTED: yueyue_nsfw_blocked]":
+            return {
+                "generation_failed": True,
+                "reason": "yueyue_explicit_content_blocked",
+                "hint": (
+                    "月月自画像规则：仅允许擦边（泳装/内衣/情趣服/诱惑姿势等）。"
+                    "涉及露点、私密部位直接裸露或明确性行为时必须拒绝，请改为不露点版本再试。"
+                ),
+            }
 
         if normalized_rewritten_prompt and _is_probably_tag_prompt(normalized_rewritten_prompt):
             prompt = normalized_rewritten_prompt
