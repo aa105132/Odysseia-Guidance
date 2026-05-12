@@ -378,6 +378,13 @@ class ChatSettingsService:
             chat_config.FEEDING_CONFIG["RESPONSE_IMAGE_URL"] = db_feeding_response_image_url
             log.info("  ✅ 投喂回应图片 URL: 已加载")
 
+        db_feeding_imagen_enabled = await self.db_manager.get_global_setting(
+            "feeding_imagen_enabled"
+        )
+        if db_feeding_imagen_enabled is not None:
+            chat_config.FEEDING_CONFIG["IMAGEN_ENABLED"] = db_feeding_imagen_enabled == "true"
+            log.info(f"  ✅ 投喂AI绘图: {'已启用' if chat_config.FEEDING_CONFIG['IMAGEN_ENABLED'] else '已禁用'}")
+
         db_confession_response_image_url = await self.db_manager.get_global_setting(
             "confession_response_image_url"
         )

@@ -3571,10 +3571,22 @@
                                    class="form-control">
                         </div>
 
+                        <div class="flex items-center justify-between p-3 bg-slate-800/30 rounded-lg">
+                            <div class="pr-6">
+                                <p class="font-medium">投喂 AI 绘图</p>
+                                <p class="text-sm text-slate-400">开启后，月月会在投喂评价时自动生成与食物互动的 AI 图片（需 Imagen 服务可用）</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" x-model="coinForm.feeding_imagen_enabled" class="sr-only peer">
+                                <div class="toggle-track toggle-track-violet"></div>
+                            </label>
+                        </div>
+
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">投喂回应图片 URL</label>
                             <input type="url" x-model="coinForm.feeding_response_image_url" placeholder="https://..."
                                    class="form-control">
+                            <p class="text-xs text-slate-500 mt-1" x-show="coinForm.feeding_imagen_enabled">AI 绘图已启用，此静态图片仅在绘图失败时作为备用</p>
                         </div>
 
                         <div>
@@ -4956,6 +4968,7 @@
                     chat_reward: 10,
                     max_loan: 1000,
                     feeding_response_image_url: '',
+                    feeding_imagen_enabled: false,
                     confession_response_image_url: '',
                     loan_thumbnail_url: '',
                     ghost_emotion_happy_url: '',
@@ -5539,6 +5552,7 @@
                         this.coinForm.chat_reward = this.config.coin.chat_reward;
                         this.coinForm.max_loan = this.config.coin.max_loan;
                         this.coinForm.feeding_response_image_url = this.config.coin.feeding_response_image_url || '';
+                        this.coinForm.feeding_imagen_enabled = this.config.coin.feeding_imagen_enabled || false;
                         this.coinForm.confession_response_image_url = this.config.coin.confession_response_image_url || '';
                         this.coinForm.loan_thumbnail_url = this.config.coin.loan_thumbnail_url || '';
                         this.coinForm.ghost_emotion_happy_url = this.config.coin.ghost_emotion_happy_url || '';
@@ -8242,6 +8256,7 @@
                                 chat_reward: parseInt(this.coinForm.chat_reward),
                                 max_loan: parseInt(this.coinForm.max_loan),
                                 feeding_response_image_url: (this.coinForm.feeding_response_image_url || '').trim(),
+                                feeding_imagen_enabled: this.coinForm.feeding_imagen_enabled,
                                 confession_response_image_url: (this.coinForm.confession_response_image_url || '').trim(),
                                 loan_thumbnail_url: (this.coinForm.loan_thumbnail_url || '').trim(),
                                 ghost_emotion_happy_url: (this.coinForm.ghost_emotion_happy_url || '').trim(),

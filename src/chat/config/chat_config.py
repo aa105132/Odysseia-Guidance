@@ -1123,6 +1123,7 @@ AFFECTION_CONFIG = {
 FEEDING_CONFIG = {
     "COOLDOWN_SECONDS": 10800,  # 5 minutes
     "RESPONSE_IMAGE_URL": "https://cdn.discordapp.com/attachments/1466427893809680560/1466712053413839032/1769761543935.png",  # 投喂回应的默认图片URL
+    "IMAGEN_ENABLED": _parse_bool_env("FEEDING_IMAGEN_ENABLED", "False"),  # 投喂AI绘图开关
 }
 
 # --- 忏悔功能 ---
@@ -1234,8 +1235,11 @@ PROMPT_CONFIG = {
         "3.  **评分与评价**: 对食物本身进行打分(1-10分),并给出一个简短的、符合你人设的评价(可以吐槽、夸奖或开玩笑)。\n\n"
         "## 输出格式\n"
         "在评价文本的最后,请严格按照以下格式附加上好感度和月光币奖励,不要添加任何额外说明:`<affection:好感度奖励;coins:月光币奖励>`\n\n"
+        "然后,你可以在最末尾添加一个绘图标签,描述你与这份食物互动的画面。用简短的英文描述场景,标签格式为:`<image_prompt:英文图片描述>`\n"
+        "描述应该是你（一位白发金眼的可爱少女）与食物互动的创意场景。你来决定怎么跟食物互动——可以开心地吃、嫌弃地推开、好奇地研究等等。\n"
+        "如果你不想画,可以不加这个标签。\n\n"
         "**示例**:\n"
-        "哼,这个看起来...还、还不错啦!我给10分!<affection:+5;coins:+50>"
+        "哼,这个看起来...还、还不错啦!我给10分!<affection:+5;coins:+50><image_prompt:a cute anime girl with white hair and golden eyes happily eating delicious sushi, chibi style, sparkly background>"
     ),
 }
 

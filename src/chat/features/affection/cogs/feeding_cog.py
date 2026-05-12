@@ -1,6 +1,7 @@
 import discord
 import json
 import io
+import re
 from discord import app_commands
 from discord.ext import commands
 
@@ -15,6 +16,7 @@ from src.chat.config import chat_config
 from src.chat.utils.prompt_utils import extract_persona_prompt, replace_emojis
 from src.config import DEVELOPER_USER_IDS
 from src.chat.services.event_service import event_service
+from src.chat.features.image_generation.services.gemini_imagen_service import gemini_imagen_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -93,8 +95,11 @@ class FeedingCog(commands.Cog):
                 )
                 return
 
-            # 使用正则表达式解析返回的文本
-            import re
+            # 提取 image_prompt 标签（在解析 affection/coins 之前）
+            image_prompt_match = re.search(r"<image_prompt:(.*?)>", response_text)
+            image_prompt_text = image_prompt_match.group(1).strip() if image_prompt_match else None
+            if image_prompt_match:
+                response_text = response_text.replace(image_prompt_match.group(0), "").strip()
 
             pattern = re.compile(
                 r"(.*?)<affection:([+-]?\d+);coins:([+-]?\d+)>", re.DOTALL
@@ -103,7 +108,6 @@ class FeedingCog(commands.Cog):
 
             if not match:
                 logger.error(f"解析投喂评价失败。原始文本: '{response_text}'")
-                # 如果解析失败，直接将 AI 的回复作为评价，并给予默认奖励
                 evaluation = response_text
                 affection_gain = 1
                 coin_gain = 10
@@ -111,6 +115,21 @@ class FeedingCog(commands.Cog):
                 evaluation = match.group(1).strip()
                 affection_gain = int(match.group(2))
                 coin_gain = int(match.group(3))
+
+            # AI 绘图：月月与食物互动的画面
+            generated_image_bytes = None
+            if (
+                FEEDING_CONFIG.get("IMAGEN_ENABLED")
+                and image_prompt_text
+                and gemini_imagen_service.is_available()
+            ):
+                try:
+                    generated_image_bytes = await gemini_imagen_service.generate_single_image(
+                        prompt=image_prompt_text,
+                        aspect_ratio="1:1",
+                    )
+                except Exception as img_err:
+                    logger.warning(f"投喂绘图失败，回退到静态贴纸: {img_err}")
 
             await self.affection_service.add_affection_points(user_id, affection_gain)
 
@@ -145,8 +164,12 @@ class FeedingCog(commands.Cog):
             # 从配置中获取图片 URL
             # --- 动态获取图片 ---
 
-            # 将用户上传的图片作为缩略图
-            file = discord.File(fp=io.BytesIO(image_bytes), filename=image.filename)
+            # 构建附件列表
+            attachments_to_send = []
+
+            # 用户上传的食物图片作为缩略图
+            food_file = discord.File(fp=io.BytesIO(image_bytes), filename=image.filename)
+            attachments_to_send.append(food_file)
             embed.set_thumbnail(url=f"attachment://{image.filename}")
 
             # 检查是否在豁免频道，如果是，则显示大图
@@ -155,18 +178,21 @@ class FeedingCog(commands.Cog):
                 or isinstance(interaction.channel, discord.Thread)
             )
             if is_unrestricted:
-                sticker_url = FEEDING_CONFIG.get("RESPONSE_IMAGE_URL")
-                if sticker_url:
-                    embed.set_image(url=sticker_url)
+                if generated_image_bytes:
+                    gen_file = discord.File(fp=io.BytesIO(generated_image_bytes), filename="yueyue_feeding.png")
+                    attachments_to_send.append(gen_file)
+                    embed.set_image(url="attachment://yueyue_feeding.png")
+                else:
+                    sticker_url = FEEDING_CONFIG.get("RESPONSE_IMAGE_URL")
+                    if sticker_url:
+                        embed.set_image(url=sticker_url)
 
-            # 添加页脚用于上下文识别
             embed.set_footer(text="月月对你的投喂做出回应...")
 
-            # 记录投喂事件
             await self.feeding_service.record_feeding(user_id)
 
             await interaction.edit_original_response(
-                content=None, embed=embed, attachments=[file]
+                content=None, embed=embed, attachments=attachments_to_send
             )
 
         except json.JSONDecodeError:
