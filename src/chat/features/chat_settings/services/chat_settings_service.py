@@ -385,6 +385,13 @@ class ChatSettingsService:
             chat_config.FEEDING_CONFIG["IMAGEN_ENABLED"] = db_feeding_imagen_enabled == "true"
             log.info(f"  ✅ 投喂AI绘图: {'已启用' if chat_config.FEEDING_CONFIG['IMAGEN_ENABLED'] else '已禁用'}")
 
+        db_summary_imagen_enabled = await self.db_manager.get_global_setting(
+            "summary_imagen_enabled"
+        )
+        if db_summary_imagen_enabled is not None:
+            chat_config.FEEDING_CONFIG["SUMMARY_IMAGEN_ENABLED"] = db_summary_imagen_enabled == "true"
+            log.info(f"  ✅ 总结AI配图: {'已启用' if chat_config.FEEDING_CONFIG['SUMMARY_IMAGEN_ENABLED'] else '已禁用'}")
+
         db_confession_response_image_url = await self.db_manager.get_global_setting(
             "confession_response_image_url"
         )

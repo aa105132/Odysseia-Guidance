@@ -1124,6 +1124,7 @@ FEEDING_CONFIG = {
     "COOLDOWN_SECONDS": 10800,  # 5 minutes
     "RESPONSE_IMAGE_URL": "https://cdn.discordapp.com/attachments/1466427893809680560/1466712053413839032/1769761543935.png",  # 投喂回应的默认图片URL
     "IMAGEN_ENABLED": _parse_bool_env("FEEDING_IMAGEN_ENABLED", "False"),  # 投喂AI绘图开关
+    "SUMMARY_IMAGEN_ENABLED": _parse_bool_env("SUMMARY_IMAGEN_ENABLED", "False"),  # 总结AI配图开关
 }
 
 # --- 忏悔功能 ---

@@ -623,6 +623,7 @@ class CoinConfigUpdate(BaseModel):
     ghost_ai_thumbnail_super_url: Optional[str] = None
     ghost_ai_win_thumbnail_url: Optional[str] = None
     feeding_imagen_enabled: Optional[bool] = None
+    summary_imagen_enabled: Optional[bool] = None
 
 
 class ModerationConfigUpdate(BaseModel):
@@ -809,6 +810,9 @@ async def get_all_config(token: str = Depends(verify_token)):
     db_feeding_imagen_enabled = await chat_db_manager.get_global_setting(
         "feeding_imagen_enabled"
     )
+    db_summary_imagen_enabled = await chat_db_manager.get_global_setting(
+        "summary_imagen_enabled"
+    )
 
     ghost_card_image_urls = get_ghost_card_image_urls()
     resolved_ghost_card_image_urls: Dict[str, str] = {}
@@ -935,6 +939,11 @@ async def get_all_config(token: str = Depends(verify_token)):
                 db_feeding_imagen_enabled == "true"
                 if db_feeding_imagen_enabled is not None
                 else chat_config.FEEDING_CONFIG.get("IMAGEN_ENABLED", False)
+            ),
+            "summary_imagen_enabled": (
+                db_summary_imagen_enabled == "true"
+                if db_summary_imagen_enabled is not None
+                else chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_ENABLED", False)
             ),
             "currency_name": "月光币",
         },
@@ -4420,6 +4429,11 @@ async def get_coin_config(token: str = Depends(verify_token)):
             if db_feeding_imagen_enabled is not None
             else chat_config.FEEDING_CONFIG.get("IMAGEN_ENABLED", False)
         ),
+        "summary_imagen_enabled": (
+            db_summary_imagen_enabled == "true"
+            if db_summary_imagen_enabled is not None
+            else chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_ENABLED", False)
+        ),
         "confession_response_image_url": (
             db_confession_response_image_url
             if db_confession_response_image_url is not None
@@ -4479,6 +4493,13 @@ async def update_coin_config(config: CoinConfigUpdate, token: str = Depends(veri
             "feeding_imagen_enabled", str(config.feeding_imagen_enabled).lower()
         )
         updated["feeding_imagen_enabled"] = config.feeding_imagen_enabled
+
+    if config.summary_imagen_enabled is not None:
+        chat_config.FEEDING_CONFIG["SUMMARY_IMAGEN_ENABLED"] = config.summary_imagen_enabled
+        await chat_db_manager.set_global_setting(
+            "summary_imagen_enabled", str(config.summary_imagen_enabled).lower()
+        )
+        updated["summary_imagen_enabled"] = config.summary_imagen_enabled
 
     if config.confession_response_image_url is not None:
         normalized = _normalize_url(config.confession_response_image_url, "忏悔回应图片 URL")

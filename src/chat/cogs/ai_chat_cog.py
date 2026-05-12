@@ -20,6 +20,9 @@ from src.database.services.dashboard_daily_stats_service import (
 from src.chat.features.tools.functions.summarize_channel import (
     text_to_newspaper_brief_image,
 )
+from src.chat.features.image_generation.services.gemini_imagen_service import (
+    gemini_imagen_service,
+)
 
 # 导入上下文服务
 
@@ -297,7 +300,7 @@ class AIChatCog(commands.Cog):
                 pass
 
     @staticmethod
-    def _should_send_newspaper_brief(last_tools: List[str]) -> bool:
+    def _should_send_summary_image(last_tools: List[str]) -> bool:
         normalized_tools = {
             str(tool_name or "").strip()
             for tool_name in last_tools
@@ -412,7 +415,81 @@ class AIChatCog(commands.Cog):
             await self._reply_sources_below_image(message, source_text, source_links)
         return True
 
-    async def _send_newspaper_brief_with_full_text(
+    async def _send_summary_image_reply(
+        self,
+        message: discord.Message,
+        body_text: str,
+        source_text: str,
+        source_links: List[tuple],
+        *,
+        used_web_search: bool,
+        provided_image_data: Optional[dict] = None,
+        title: str = "月月简报",
+        section_name: str = "搜索 / 总结",
+    ) -> bool:
+        image_bytes = None
+        image_filename = "summary-image.png"
+
+        if provided_image_data and provided_image_data.get("data"):
+            image_bytes = provided_image_data.get("data")
+        else:
+            # 优先尝试 Imagen 生图
+            summary_imagen_enabled = chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_ENABLED", False)
+            if summary_imagen_enabled and gemini_imagen_service.is_available():
+                imagen_prompt = (
+                    f"为以下频道总结生成一张有趣的插图。用中文描述画面：\n"
+                    f"总结内容：{body_text[:800]}\n"
+                    f"要求：画面上要自然地融入总结中的关键信息和数据，"
+                    f"风格可爱温馨，适合Discord社交平台展示，"
+                    f"画面里可以出现一只银白色高马尾的可爱银狐少女月月作为讲解者。"
+                )
+                try:
+                    log.info("尝试用 Imagen 生成总结插图")
+                    img = await gemini_imagen_service.generate_single_image(
+                        prompt=imagen_prompt,
+                        aspect_ratio="16:9",
+                    )
+                    if img:
+                        image_bytes = img
+                        image_filename = "summary-imagen.png"
+                except Exception as img_err:
+                    log.warning(f"Imagen 总结生图失败，回退到报纸图: {img_err}")
+
+            # Imagen 失败或不可用时回退到报纸图
+            if not image_bytes:
+                image_bytes = text_to_newspaper_brief_image(
+                    body=body_text,
+                    title=title,
+                    section_name=section_name,
+                )
+
+        if not image_bytes:
+            return False
+
+        with io.BytesIO(image_bytes) as image_file:
+            try:
+                await message.reply(
+                    file=discord.File(image_file, image_filename),
+                    mention_author=True,
+                )
+            except discord.HTTPException as error:
+                log.error(
+                    f"发送总结图片失败，"
+                    f"image_filename={image_filename}, "
+                    f"body_len={len(str(body_text or ''))}, "
+                    f"source_len={len(str(source_text or ''))}, "
+                    f"error={error}"
+                )
+                raise
+
+        await self._record_dashboard_delivery_stats(
+            channel_messages=1,
+            image_messages=1,
+        )
+        await self._reply_sources_below_image(message, source_text, source_links)
+        return True
+
+    async def _send_summary_with_full_text(
         self,
         message: discord.Message,
         response_text: str,
@@ -424,15 +501,15 @@ class AIChatCog(commands.Cog):
         title: str = "月月简报",
         section_name: str = "搜索 / 总结",
     ) -> bool:
-        sent = await self._send_newspaper_brief_reply(
+        sent = await self._send_summary_image_reply(
             message=message,
             body_text=response_text,
             source_text=source_text,
             source_links=source_links,
+            used_web_search=used_web_search,
             provided_image_data=provided_image_data,
             title=title,
             section_name=section_name,
-            send_sources=False,
         )
         if not sent:
             return False
@@ -529,16 +606,16 @@ class AIChatCog(commands.Cog):
                 tool_image_data = getattr(gemini_service, "last_tool_image_data", None)
                 source_links = list(getattr(gemini_service, "last_tool_source_links", []) or [])
                 body_text, source_text = self._extract_source_block(response_text)
-                should_send_newspaper_brief = self._should_send_newspaper_brief(
+                should_send_summary = self._should_send_summary_image(
                     last_tools
                 )
 
                 if (
-                    should_send_newspaper_brief
+                    should_send_summary
                     and tool_image_data
                     and "render_newspaper_brief" in last_tools
                 ):
-                    sent = await self._send_newspaper_brief_with_full_text(
+                    sent = await self._send_summary_with_full_text(
                         message=message,
                         response_text=response_text,
                         source_text=source_text,
@@ -550,9 +627,9 @@ class AIChatCog(commands.Cog):
                         await self._record_bot_reply_usage_if_needed(message)
                         return
 
-                if should_send_newspaper_brief:
-                    log.info("调用了总结工具, 尝试转为报纸摘要图发送。")
-                    sent = await self._send_newspaper_brief_with_full_text(
+                if should_send_summary:
+                    log.info("调用了总结工具, 尝试生成摘要图发送。")
+                    sent = await self._send_summary_with_full_text(
                         message=message,
                         response_text=response_text,
                         source_text=source_text,
@@ -564,7 +641,7 @@ class AIChatCog(commands.Cog):
                     if sent:
                         await self._record_bot_reply_usage_if_needed(message)
                         return
-                    log.error("频道总结报纸摘要图片生成失败，将作为文本尝试发送。")
+                    log.error("频道总结图片生成失败，将作为文本尝试发送。")
 
                 is_unrestricted = (
                     message.channel.id in chat_config.UNRESTRICTED_CHANNEL_IDS
