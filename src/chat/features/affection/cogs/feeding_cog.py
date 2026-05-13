@@ -193,9 +193,11 @@ class FeedingCog(commands.Cog):
 
             await self.feeding_service.record_feeding(user_id)
 
+            logger.info(f"准备发送投喂回复: attachments={len(attachments_to_send)}, 有生成图={generated_image_bytes is not None}")
             await interaction.edit_original_response(
                 content=None, embed=embed, attachments=attachments_to_send
             )
+            logger.info("投喂回复已发送到频道")
 
         except json.JSONDecodeError:
             logger.error(f"Failed to decode JSON response from Gemini: {response_text}")
