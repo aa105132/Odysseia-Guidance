@@ -441,6 +441,8 @@ class GeminiImagenService:
         resolution: str = "default",
         content_rating: str = "sfw",
         model_name_override: Optional[str] = None,
+        reference_image_bytes: Optional[bytes] = None,
+        reference_image_mime: str = "image/png",
         openai_image_size: Optional[str] = None,
         openai_response_format: Optional[str] = None,
         openai_stream: Optional[bool] = None,
@@ -496,6 +498,8 @@ class GeminiImagenService:
                 aspect_ratio=aspect_ratio,
                 number_of_images=number_of_images,
                 model_name=model_name,
+                reference_image_bytes=reference_image_bytes,
+                reference_image_mime=reference_image_mime,
                 openai_image_size=resolved_image_size,
                 openai_response_format=openai_response_format,
                 openai_stream=openai_stream,
@@ -511,6 +515,8 @@ class GeminiImagenService:
                 aspect_ratio=aspect_ratio,
                 number_of_images=number_of_images,
                 model_name=model_name,
+                reference_image_bytes=reference_image_bytes,
+                reference_image_mime=reference_image_mime,
             )
         else:
             # 默认使用 Gemini generateImages 专用接口
@@ -956,6 +962,8 @@ class GeminiImagenService:
         aspect_ratio: str,
         number_of_images: int,
         model_name: str,
+        reference_image_bytes: Optional[bytes] = None,
+        reference_image_mime: str = "image/png",
         openai_image_size: Optional[str] = None,
         openai_response_format: Optional[str] = None,
         openai_stream: Optional[bool] = None,
@@ -1004,6 +1012,8 @@ class GeminiImagenService:
             aspect_ratio=aspect_ratio,
             number_of_images=number_of_images,
             model_name=model_name,
+            reference_image_bytes=reference_image_bytes,
+            reference_image_mime=reference_image_mime,
             openai_response_format=openai_response_format,
             openai_stream=openai_stream,
         )
@@ -1015,6 +1025,8 @@ class GeminiImagenService:
         aspect_ratio: str,
         number_of_images: int,
         model_name: str,
+        reference_image_bytes: Optional[bytes] = None,
+        reference_image_mime: str = "image/png",
         openai_response_format: Optional[str] = None,
         openai_stream: Optional[bool] = None,
     ) -> Optional[List[bytes]]:
@@ -1035,6 +1047,19 @@ class GeminiImagenService:
             full_prompt += f"\n请避免：{negative_prompt}"
         if aspect_ratio != "1:1":
             full_prompt += f"\n宽高比：{aspect_ratio}"
+
+        # 构建消息内容（支持多模态：文本 + 可选参考图）
+        user_content = None
+        if reference_image_bytes:
+            import base64
+            user_content = []
+            user_content.append({"type": "text", "text": full_prompt})
+            image_b64 = base64.b64encode(reference_image_bytes).decode("utf-8")
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{reference_image_mime};base64,{image_b64}"}
+            })
+            log.info("[OpenAI格式] 已附加参考图作为视觉参考")
 
         log.info(f"[OpenAI格式] 正在使用 {model_name} 生成图像, 提示词: {prompt[:100]}...")
 
@@ -1058,7 +1083,7 @@ class GeminiImagenService:
             "messages": [
                 {
                     "role": "user",
-                    "content": full_prompt
+                    "content": user_content if user_content else full_prompt
                 }
             ],
             "max_tokens": 4096,
@@ -1911,34 +1936,23 @@ class GeminiImagenService:
         )
 
         for attempt in range(1, retry_max_attempts + 1):
-            if reference_image_bytes and self._api_format == "gemini_chat":
-                images = await self._generate_image_gemini_chat_format(
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    aspect_ratio=aspect_ratio,
-                    number_of_images=1,
-                    model_name=model_name_override or self._get_model_for_resolution(
-                        resolution=resolution, is_edit=False, content_rating=content_rating,
-                    ),
-                    reference_image_bytes=reference_image_bytes,
-                    reference_image_mime=reference_image_mime,
-                )
-            else:
-                images = await self.generate_image(
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    aspect_ratio=aspect_ratio,
-                    number_of_images=1,
-                    resolution=resolution,
-                    content_rating=content_rating,
-                    model_name_override=model_name_override,
-                    openai_image_size=openai_image_size,
-                    openai_response_format=openai_response_format,
-                    openai_stream=openai_stream,
-                    openai_quality=openai_quality,
-                    openai_style=openai_style,
-                    openai_image_api_mode=openai_image_api_mode,
-                )
+            images = await self.generate_image(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                aspect_ratio=aspect_ratio,
+                number_of_images=1,
+                resolution=resolution,
+                content_rating=content_rating,
+                model_name_override=model_name_override,
+                reference_image_bytes=reference_image_bytes,
+                reference_image_mime=reference_image_mime,
+                openai_image_size=openai_image_size,
+                openai_response_format=openai_response_format,
+                openai_stream=openai_stream,
+                openai_quality=openai_quality,
+                openai_style=openai_style,
+                openai_image_api_mode=openai_image_api_mode,
+            )
 
             if images and len(images) > 0:
                 if attempt > 1:
