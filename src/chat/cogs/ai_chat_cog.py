@@ -363,6 +363,17 @@ class AIChatCog(commands.Cog):
         )
         await self._suppress_link_previews(sent_messages)
 
+    async def _should_show_sources(self) -> bool:
+        """Dashboard可配置的消息源展示开关，默认开启"""
+        try:
+            from src.chat.utils.database import chat_db_manager
+            val = await chat_db_manager.get_global_setting("web_search_show_sources")
+            if val is not None:
+                return val.lower() not in ("false", "0", "no", "off")
+        except Exception:
+            pass
+        return True
+
     async def _send_newspaper_brief_reply(
         self,
         message: discord.Message,
