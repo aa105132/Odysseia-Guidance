@@ -627,6 +627,7 @@ class CoinConfigUpdate(BaseModel):
     summary_imagen_resolution: Optional[str] = None
     summary_imagen_model: Optional[str] = None
     feeding_cooldown_seconds: Optional[int] = None
+    feeding_daily_limit: Optional[int] = None
 
 
 class ModerationConfigUpdate(BaseModel):
@@ -965,6 +966,7 @@ async def get_all_config(token: str = Depends(verify_token)):
                 else chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_MODEL", "")
             ),
             "feeding_cooldown_seconds": chat_config.FEEDING_CONFIG.get("COOLDOWN_SECONDS", 0),
+            "feeding_daily_limit": chat_config.FEEDING_CONFIG.get("DAILY_LIMIT", 3),
             "currency_name": "月光币",
         },
         "moderation": {
@@ -4467,6 +4469,8 @@ async def get_coin_config(token: str = Depends(verify_token)):
         **resolved_ghost_card_image_urls,
         "currency_name": "月光币",
         "tax_rate": config.get("TRANSFER_TAX_RATE", 0.05),
+        "feeding_cooldown_seconds": chat_config.FEEDING_CONFIG.get("COOLDOWN_SECONDS", 0),
+        "feeding_daily_limit": chat_config.FEEDING_CONFIG.get("DAILY_LIMIT", 3),
     }
 
 
@@ -4543,6 +4547,15 @@ async def update_coin_config(config: CoinConfigUpdate, token: str = Depends(veri
             "feeding_cooldown_seconds", str(config.feeding_cooldown_seconds)
         )
         updated["feeding_cooldown_seconds"] = config.feeding_cooldown_seconds
+
+    if config.feeding_daily_limit is not None:
+        if config.feeding_daily_limit < 0:
+            raise HTTPException(400, "投喂每日上限不能为负数")
+        chat_config.FEEDING_CONFIG["DAILY_LIMIT"] = config.feeding_daily_limit
+        await chat_db_manager.set_global_setting(
+            "feeding_daily_limit", str(config.feeding_daily_limit)
+        )
+        updated["feeding_daily_limit"] = config.feeding_daily_limit
 
     if config.confession_response_image_url is not None:
         normalized = _normalize_url(config.confession_response_image_url, "忏悔回应图片 URL")

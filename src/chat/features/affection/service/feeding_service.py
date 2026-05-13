@@ -63,8 +63,9 @@ class FeedingService:
 
         feedings_today = count_row[0] if count_row else 0
 
-        if feedings_today >= 3:
-            return False, "你今天已经给我吃三次啦,肚子饱饱的,明天再说吧！"
+        daily_limit = FEEDING_CONFIG.get("DAILY_LIMIT", 3)
+        if daily_limit > 0 and feedings_today >= daily_limit:
+            return False, f"你今天已经给我吃{daily_limit}次啦,肚子饱饱的,明天再说吧！"
 
         return True, ""
 

@@ -449,6 +449,11 @@ class AIChatCog(commands.Cog):
             # 优先尝试 Imagen 生图
             summary_imagen_enabled = chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_ENABLED", False)
             if summary_imagen_enabled and gemini_imagen_service.is_available():
+                outfit_desc = chat_config.DAILY_OUTFIT_CONFIG.get("CURRENT_OUTFIT_DESCRIPTION", "")
+                outfit_hint = (
+                    f"还穿着以下服装：{outfit_desc}。请在画面中体现月月的今日穿着。"
+                    if outfit_desc else ""
+                )
                 imagen_prompt = (
                     f"为以下频道总结生成一张有趣的插图。用中文描述画面：\n"
                     f"总结内容：{body_text[:800]}\n"
@@ -458,6 +463,7 @@ class AIChatCog(commands.Cog):
                     f"银白色长发扎成高马尾,左眼淡绿色右眼淡蓝色异色瞳,白皙肤色,"
                     f"毛茸茸的白色狐耳内侧粉色,银白色蓬松大尾巴,"
                     f"高马尾处插着银色月牙发簪,两侧戴着细微尖三角形耳坠。"
+                    f"{outfit_hint}"
                 )
                 try:
                     log.info("尝试用 Imagen 生成总结插图")

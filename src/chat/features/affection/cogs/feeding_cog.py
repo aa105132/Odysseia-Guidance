@@ -83,6 +83,10 @@ class FeedingCog(commands.Cog):
                 prompt_service.get_prompt("SYSTEM_PROMPT")
             )
             base_prompt = PROMPT_CONFIG.get("feeding_prompt", "")
+            # 注入今日穿着到 image_prompt 描述要求中
+            outfit_desc = chat_config.DAILY_OUTFIT_CONFIG.get("CURRENT_OUTFIT_DESCRIPTION", "")
+            if outfit_desc:
+                base_prompt += f"\n\n## 重要：月月今日穿着\n{outfit_desc}\n请在 `<image_prompt>` 的图片描述中体现月月的今日穿着。"
             prompt = f"{persona_part}\n\n{base_prompt}"
 
             response_text = await self.gemini_service.generate_text_with_image(

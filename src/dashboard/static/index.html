@@ -3561,6 +3561,13 @@
                         </div>
 
                         <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">每日投喂上限（次）</label>
+                            <input type="number" x-model="coinForm.feeding_daily_limit" min="0"
+                                   class="form-control">
+                            <p class="text-xs text-slate-500 mt-1">每个用户每天最多投喂次数，设置为 0 则不限制</p>
+                        </div>
+
+                        <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">每日签到奖励</label>
                             <input type="number" x-model="coinForm.daily_reward" min="0"
                                    class="form-control">
@@ -5008,6 +5015,7 @@
                     summary_imagen_resolution: 'default',
                     summary_imagen_model: '',
                     feeding_cooldown_seconds: 0,
+                    feeding_daily_limit: 3,
                     confession_response_image_url: '',
                     loan_thumbnail_url: '',
                     ghost_emotion_happy_url: '',
@@ -5596,6 +5604,7 @@
                         this.coinForm.summary_imagen_resolution = this.config.coin.summary_imagen_resolution || 'default';
                         this.coinForm.summary_imagen_model = this.config.coin.summary_imagen_model || '';
                         this.coinForm.feeding_cooldown_seconds = this.config.coin.feeding_cooldown_seconds || 0;
+                        this.coinForm.feeding_daily_limit = this.config.coin.feeding_daily_limit ?? 3;
                         this.coinForm.confession_response_image_url = this.config.coin.confession_response_image_url || '';
                         this.coinForm.loan_thumbnail_url = this.config.coin.loan_thumbnail_url || '';
                         this.coinForm.ghost_emotion_happy_url = this.config.coin.ghost_emotion_happy_url || '';
@@ -8304,6 +8313,7 @@
                                 summary_imagen_resolution: this.coinForm.summary_imagen_resolution,
                                 summary_imagen_model: (this.coinForm.summary_imagen_model || '').trim(),
                                 feeding_cooldown_seconds: parseInt(this.coinForm.feeding_cooldown_seconds) || 0,
+                                feeding_daily_limit: parseInt(this.coinForm.feeding_daily_limit) ?? 3,
                                 confession_response_image_url: (this.coinForm.confession_response_image_url || '').trim(),
                                 loan_thumbnail_url: (this.coinForm.loan_thumbnail_url || '').trim(),
                                 ghost_emotion_happy_url: (this.coinForm.ghost_emotion_happy_url || '').trim(),

@@ -388,6 +388,16 @@ class ChatSettingsService:
             except (ValueError, TypeError):
                 log.warning(f"投喂冷却时间值无效: {db_feeding_cooldown}")
 
+        db_feeding_daily_limit = await self.db_manager.get_global_setting(
+            "feeding_daily_limit"
+        )
+        if db_feeding_daily_limit is not None:
+            try:
+                chat_config.FEEDING_CONFIG["DAILY_LIMIT"] = int(db_feeding_daily_limit)
+                log.info(f"  ✅ 投喂每日上限: {db_feeding_daily_limit}次")
+            except (ValueError, TypeError):
+                log.warning(f"投喂每日上限值无效: {db_feeding_daily_limit}")
+
         db_feeding_imagen_enabled = await self.db_manager.get_global_setting(
             "feeding_imagen_enabled"
         )
