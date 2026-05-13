@@ -307,7 +307,7 @@ class ChatService:
 
         except Exception as e:
             log.error(f"[ChatService] 处理聊天消息时出错: {e}", exc_info=True)
-            return "抱歉，处理你的消息时出现了问题，请稍后再试。"
+            return "呜…刚才脑子卡了一下，你再说一遍好不好？"
 
     def _format_ai_response(self, ai_response: str) -> str:
         """清理和格式化AI的原始回复。"""

@@ -38,21 +38,21 @@ class FeedingCog(commands.Cog):
         # 0. 检查频道是否被禁言
         if channel and await chat_db_manager.is_channel_muted(channel.id):
             await interaction.response.send_message(
-                "呜…我现在不能在这里说话啦…", ephemeral=True
+                "哼…这里被禁言了啦，我才不是不想理你！", ephemeral=True
             )
             return
 
         # 1. 检查是否在禁用的频道中
         if channel and channel.id in chat_config.DISABLED_INTERACTION_CHANNEL_IDS:
             await interaction.response.send_message(
-                "嘘... 在这里我需要保持安静，我们去别的地方聊吧？", ephemeral=True
+                "啧…这个地方不让说话，换别处找我！", ephemeral=True
             )
             return
 
         # 2. 检查是否在置顶的帖子中
         if isinstance(channel, discord.Thread) and channel.flags.pinned:
             await interaction.response.send_message(
-                "唔... 这个帖子被置顶了，一定是很重要的内容。我们不要在这里聊天，以免打扰到大家哦。",
+                "这种置顶帖很严肃的好不好，别在这里闹啦！",
                 ephemeral=True,
             )
             return
@@ -71,7 +71,7 @@ class FeedingCog(commands.Cog):
 
         if not image.content_type.startswith("image/"):
             await interaction.edit_original_response(
-                content="欸？这个不能吃啦，给我看看真正的食物图片嘛！"
+                content="笨蛋，这又不是吃的！给我看真的食物啦！"
             )
             return
 
@@ -95,7 +95,7 @@ class FeedingCog(commands.Cog):
 
             if not response_text:
                 await interaction.edit_original_response(
-                    content="抱歉，我有点累了，暂时无法评价呢。"
+                    content="呜…嚼不动了，脑子转不起来了，等会再喂嘛…"
                 )
                 return
 
@@ -200,12 +200,12 @@ class FeedingCog(commands.Cog):
         except json.JSONDecodeError:
             logger.error(f"Failed to decode JSON response from Gemini: {response_text}")
             await interaction.edit_original_response(
-                content="呜... 我、我有点尝不出来味道... 你能等一下再喂我吗？"
+                content="呜…这口味道怪怪的，尝不出来了…等下再喂好不好？"
             )
         except Exception as e:
             logger.error(f"Error processing feeding command: {e}")
             await interaction.edit_original_response(
-                content="啊呀，不小心噎着了！等、等我一下，稍后再试试看！"
+                content="咳咳…噎、噎到了！让我缓缓…等会再吃啦！"
             )
 
 

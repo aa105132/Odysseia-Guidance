@@ -51,7 +51,7 @@ class ImageGenerationCog(commands.Cog):
         # 检查服务是否已配置
         if not self.comfyui_service:
             await interaction.response.send_message(
-                "抱歉，图像生成服务当前未配置。", ephemeral=True
+                "哼…画画工具还没装好啦，用不了啦！", ephemeral=True
             )
             return
 
@@ -72,7 +72,7 @@ class ImageGenerationCog(commands.Cog):
             user_id, IMAGE_GENERATION_COST, "AI 图像生成"
         )
         if new_balance is None:
-            await interaction.followup.send("抱歉，扣费时发生错误，请稍后再试。")
+            await interaction.followup.send("呜…扣费的时候出了点岔子，等会再试嘛！")
             return
 
         try:
@@ -95,7 +95,7 @@ class ImageGenerationCog(commands.Cog):
                     user_id, IMAGE_GENERATION_COST, "图像生成失败返还"
                 )
                 await interaction.followup.send(
-                    "抱歉，图片生成失败，已返还你的月光币。"
+                    "呜…没画出来，月光币还给你啦！才不是我的画技问题！"
                 )
 
         except Exception as e:
@@ -105,7 +105,7 @@ class ImageGenerationCog(commands.Cog):
                 user_id, IMAGE_GENERATION_COST, "图像生成异常返还"
             )
             await interaction.followup.send(
-                "处理你的请求时发生了一个意料之外的错误，已返还你的月光币。"
+                "呜…出了点意外，画不了了，钱退给你啦！才不是我不想画！"
             )
 
 

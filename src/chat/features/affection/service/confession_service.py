@@ -48,7 +48,7 @@ class ConfessionService:
                     cooldown_message = f"{minutes}分钟"
                 return (
                     False,
-                    f"你的忏悔太频繁了，请在 **{cooldown_message}** 后再来吧！",
+                    f"喂喂，谁要一直听你忏悔啊…**{cooldown_message}** 以后再来！",
                 )
 
         # 2. 检查今天（北京时间）的忏悔次数
@@ -67,7 +67,7 @@ class ConfessionService:
         confessions_today = count_row[0] if count_row else 0
 
         if confessions_today >= 3:
-            return False, "今天已经忏悔三次了, 明天再说吧！"
+            return False, "今天说够多啦，我也不是天天想听你忏悔的…明天再来！"
 
         return True, ""
 

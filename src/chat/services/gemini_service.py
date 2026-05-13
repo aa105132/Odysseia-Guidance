@@ -223,7 +223,7 @@ def _api_key_handler(func: Callable) -> Callable:
         )
         if not kwargs.get("return_error_text", True):
             return None
-        return "呜...连续请求都失败了，服务可能暂时不太稳定，请稍后再试试吧 <委屈>"
+        return "呜…服务好像崩了，连续请求全挂了…等会再来戳我！<委屈>"
 
     return wrapper
 
@@ -3543,7 +3543,7 @@ class GeminiService:
             "OpenAI 工具调用循环达到最大次数 "
             f"{max_tool_calls}，且收尾无工具请求仍未得到文本响应"
         )
-        return "呜...思考太多次了，脑子有点转不过来，请重新问一下吧！"
+        return "呜…脑子转太多圈了，晕掉了啦！重新问一次好不好？"
     
     def _convert_conversation_to_openai_messages(self, final_conversation: List[Dict]) -> List[Dict]:
         """
@@ -4195,7 +4195,7 @@ class GeminiService:
         except Exception as e:
             log.error(f"Gemini SDK (自定义端点) 调用失败: {e}", exc_info=True)
             if return_error_text:
-                return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+                return "呜…AI服务好像抽风了，等会再试试嘛…才不是我不行！"
             return None
     
     @_api_key_handler
@@ -4351,12 +4351,12 @@ class GeminiService:
             if self._exception_chain_contains_timeout(e):
                 log.error(f"OpenAI 兼容 API (简单响应) 请求超时: {e}")
                 if return_error_text:
-                    return "抱歉，AI服务响应超时，请稍后再试。"
+                    return "呜…那边反应好慢，超时了啦！等会再找我好不好？"
                 return None
 
             log.error(f"OpenAI 兼容 API (简单响应) 调用失败: {e}", exc_info=True)
             if return_error_text:
-                return "抱歉，AI服务遇到了一个意料之外的错误，请稍后再试。"
+                return "呜…AI服务好像抽风了，等会再试试嘛…才不是我不行！"
             return None
 
     async def generate_thread_praise(

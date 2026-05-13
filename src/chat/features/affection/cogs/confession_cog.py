@@ -37,21 +37,21 @@ class ConfessionCog(commands.Cog):
         # 0. 检查频道是否被禁言
         if channel and await chat_db_manager.is_channel_muted(channel.id):
             await interaction.response.send_message(
-                "呜…我现在不能在这里说话啦…", ephemeral=True
+                "哼…这里被禁言了啦，我才不是不想理你！", ephemeral=True
             )
             return
 
         # 1. 检查是否在禁用的频道中
         if channel and channel.id in chat_config.DISABLED_INTERACTION_CHANNEL_IDS:
             await interaction.response.send_message(
-                "嘘... 在这里我需要保持安静，我们去别的地方聊吧？", ephemeral=True
+                "啧…这个地方不让说话，换别处找我！", ephemeral=True
             )
             return
 
         # 2. 检查是否在置顶的帖子中
         if isinstance(channel, discord.Thread) and channel.flags.pinned:
             await interaction.response.send_message(
-                "唔... 这个帖子被置顶了，一定是很重要的内容。我们不要在这里聊天，以免打扰到大家哦。",
+                "这种置顶帖很严肃的好不好，别在这里闹啦！",
                 ephemeral=True,
             )
             return
@@ -127,7 +127,7 @@ class ConfessionCog(commands.Cog):
 
             if not ai_response:
                 await interaction.followup.send(
-                    "月月现在似乎不想听你的忏悔，请稍后再试。", ephemeral=True
+                    "哼…我现在没心情听你说，等会再来！", ephemeral=True
                 )
                 return
 
@@ -189,7 +189,7 @@ class ConfessionCog(commands.Cog):
         except Exception as e:
             print(f"Error during confession: {e}")
             await interaction.followup.send(
-                "处理你的忏悔时出现了一个意想不到的错误。", ephemeral=True
+                "呜…脑子突然卡壳了，你的忏悔下次再说吧…才不是故意不听！", ephemeral=True
             )
 
 

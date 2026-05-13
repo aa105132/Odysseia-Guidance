@@ -1391,7 +1391,7 @@ WARMUP_MESSAGES = {
     "consent_decline_label": "谢谢,但下次算了",
     "consent_accept_response": "哼、哼!既然你这么说了,那我就勉为其难地经常来吧!<傲娇>\n||其实有点开心||\n如果你改变主意了,可以在商店找到枯萎月光花来赶走我...虽然我才不在意呢!",
     "consent_decline_response": "哼...好吧,既然你这么说了,那我以后就不来了。\n\n||有点失落||\n如果你想让我回来...可以在商店找到月光魔法花...才不是因为想回来呢!",
-    "consent_error_response": "呜...处理的时候好像出错了...",
+    "consent_error_response": "呜…手滑了一下出错了…才不是我的问题！",
 }
 
 # --- 频道禁言功能 ---

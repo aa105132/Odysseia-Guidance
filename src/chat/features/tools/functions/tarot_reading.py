@@ -90,10 +90,10 @@ async def tarot_reading(
             }
         else:
             log.error("塔罗牌占卜失败：未能生成图片或抽到牌。")
-            await channel.send("抱歉，塔罗牌占卜出了一点小问题，无法生成牌阵图片。")
+            await channel.send("呜…牌阵好像摆歪了，这次占卜没出图…等等再来问问好不好？")
             return {"error": "Failed to generate tarot image or draw cards."}
 
     except Exception as e:
         log.error("执行塔罗牌占卜时发生未知错误。", exc_info=True)
-        await channel.send("抱歉，塔罗牌占卜时遇到了一个意想不到的错误。")
+        await channel.send("呜…牌阵出了点意外，好像有东西干扰了占卜…下次再帮你算！")
         return {"error": f"An unexpected error occurred: {str(e)}"}

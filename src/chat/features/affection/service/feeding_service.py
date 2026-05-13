@@ -48,7 +48,7 @@ class FeedingService:
                     cooldown_message = f"{hours}小时{minutes}分钟"
                 else:
                     cooldown_message = f"{minutes}分钟"
-                return False, f"饱啦饱啦, **{cooldown_message}** 后再来吧！"
+                return False, f"哼…吃不下了啦，**{cooldown_message}** 以后再喂！"
 
         # 2. 检查今天（北京时间）的投喂次数
         start_of_today_utc = get_start_of_today_utc()
@@ -65,7 +65,7 @@ class FeedingService:
 
         daily_limit = FEEDING_CONFIG.get("DAILY_LIMIT", 3)
         if daily_limit > 0 and feedings_today >= daily_limit:
-            return False, f"你今天已经给我吃{daily_limit}次啦,肚子饱饱的,明天再说吧！"
+            return False, f"都喂了{daily_limit}次了还想喂！肚子要撑坏了，明天再来！"
 
         return True, ""
 

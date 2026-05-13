@@ -770,7 +770,7 @@ class AIChatCog(commands.Cog):
         except Exception as e:
             log.error(f"[AIChatCog] 处理@mention消息时发生顶层错误: {e}", exc_info=True)
             # 确保即使发生意外错误也有反馈
-            return "抱歉，处理你的请求时遇到了一个未知错误。"
+            return "呜…脑子突然卡壳了，你再说一遍？才不是我的问题呢！"
 
 
 async def setup(bot: commands.Bot):
