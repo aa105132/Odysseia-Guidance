@@ -594,6 +594,8 @@ class GeminiImagenService:
         aspect_ratio: str,
         number_of_images: int,
         model_name: str,
+        reference_image_bytes: Optional[bytes] = None,
+        reference_image_mime: str = "image/png",
     ) -> Optional[List[bytes]]:
         """
         使用 Gemini SDK 的 generate_content 多模态聊天接口生成图像
@@ -602,7 +604,7 @@ class GeminiImagenService:
         """
         config = app_config.GEMINI_IMAGEN_CONFIG
         streaming_enabled = config.get("STREAMING_ENABLED", False)
-        
+
         if streaming_enabled:
             return await self._generate_image_gemini_chat_format_streaming(
                 prompt=prompt,
@@ -610,14 +612,16 @@ class GeminiImagenService:
                 aspect_ratio=aspect_ratio,
                 number_of_images=number_of_images,
                 model_name=model_name,
+                reference_image_bytes=reference_image_bytes,
+                reference_image_mime=reference_image_mime,
             )
-        
+
         # 非流式请求的原有逻辑
         try:
             from google.genai import types
-            
+
             loop = asyncio.get_event_loop()
-            
+
             # 构建提示词
             full_prompt = f"请生成一张图片：{prompt}"
             if negative_prompt:
@@ -627,10 +631,17 @@ class GeminiImagenService:
 
             log.info(f"[Gemini Chat格式] 正在使用 {model_name} 生成图像, 提示词: {prompt[:100]}...")
 
+            # 构建消息内容（支持多模态：文本 + 可选参考图）
+            contents = [full_prompt]
+            if reference_image_bytes:
+                from google.genai import types as genai_types
+                contents = [
+                    genai_types.Part.from_bytes(data=reference_image_bytes, mime_type=reference_image_mime),
+                    full_prompt,
+                ]
+
             # 使用 generate_content 多模态接口
             def _sync_generate():
-                # 配置生成参数，请求返回图像
-                # 设置宽松的安全过滤级别
                 safety_settings = [
                     types.SafetySetting(
                         category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
@@ -649,29 +660,27 @@ class GeminiImagenService:
                         threshold="BLOCK_ONLY_HIGH"
                     ),
                 ]
-                
+
                 config = types.GenerateContentConfig(
-                    response_modalities=["IMAGE", "TEXT"],  # 请求返回图像
+                    response_modalities=["IMAGE", "TEXT"],
                     safety_settings=safety_settings,
                 )
-                
+
                 response = self._client.models.generate_content(
                     model=model_name,
-                    contents=full_prompt,
+                    contents=contents,
                     config=config,
                 )
                 return response
-            
+
             response = await loop.run_in_executor(self.executor, _sync_generate)
-            
-            # 解析响应，提取图像
+
             images = self._extract_images_from_gemini_response(response)
-            
+
             if images:
                 log.info(f"成功生成 {len(images)} 张图像")
                 return images
             else:
-                # 打印响应结构以便调试
                 log.warning("API 返回成功但没有找到图像数据")
                 if response:
                     log.debug(f"响应类型: {type(response)}")
@@ -690,24 +699,34 @@ class GeminiImagenService:
         aspect_ratio: str,
         number_of_images: int,
         model_name: str,
+        reference_image_bytes: Optional[bytes] = None,
+        reference_image_mime: str = "image/png",
     ) -> Optional[List[bytes]]:
         """
         使用 Gemini SDK 的流式 generate_content 接口生成图像
         通过流式传输可以更快地获取响应
-        
+
         修复: 完整收集所有 chunk 后再解析图像，避免分片数据问题
         """
         try:
             from google.genai import types
-            
+
             loop = asyncio.get_event_loop()
-            
-            # 构建提示词
+
+            # 构建消息内容（支持多模态）
             full_prompt = f"请生成一张图片：{prompt}"
             if negative_prompt:
                 full_prompt += f"\n\n请避免包含以下元素：{negative_prompt}"
             if aspect_ratio != "1:1":
                 full_prompt += f"\n\n图片宽高比：{aspect_ratio}"
+
+            contents = [full_prompt]
+            if reference_image_bytes:
+                from google.genai import types as genai_types
+                contents = [
+                    genai_types.Part.from_bytes(data=reference_image_bytes, mime_type=reference_image_mime),
+                    full_prompt,
+                ]
 
             log.info(f"[Gemini Chat格式-流式] 正在使用 {model_name} 生成图像, 提示词: {prompt[:100]}...")
 
@@ -746,7 +765,7 @@ class GeminiImagenService:
                 try:
                     stream_response = self._client.models.generate_content_stream(
                         model=model_name,
-                        contents=full_prompt,
+                        contents=contents,
                         config=gen_config,
                     )
                     
@@ -1863,6 +1882,8 @@ class GeminiImagenService:
         resolution: str = "default",
         content_rating: str = "sfw",
         model_name_override: Optional[str] = None,
+        reference_image_bytes: Optional[bytes] = None,
+        reference_image_mime: str = "image/png",
         openai_image_size: Optional[str] = None,
         openai_response_format: Optional[str] = None,
         openai_stream: Optional[bool] = None,
@@ -1879,6 +1900,8 @@ class GeminiImagenService:
             aspect_ratio: 宽高比
             resolution: 分辨率 ("default", "2k", "4k")
             content_rating: 内容分级 ("sfw" 安全内容, "nsfw" 成人内容)
+            reference_image_bytes: 参考图片的字节数据（可选，如投喂的食物图）
+            reference_image_mime: 参考图片的MIME类型
 
         Returns:
             成功时返回图像字节数据，失败时返回 None
@@ -1888,28 +1911,40 @@ class GeminiImagenService:
         )
 
         for attempt in range(1, retry_max_attempts + 1):
-            images = await self.generate_image(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                aspect_ratio=aspect_ratio,
-                number_of_images=1,
-                resolution=resolution,
-                content_rating=content_rating,
-                model_name_override=model_name_override,
-                openai_image_size=openai_image_size,
-                openai_response_format=openai_response_format,
-                openai_stream=openai_stream,
-                openai_quality=openai_quality,
-                openai_style=openai_style,
-                openai_image_api_mode=openai_image_api_mode,
-            )
+            if reference_image_bytes and self._api_format == "gemini_chat":
+                images = await self._generate_image_gemini_chat_format(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    aspect_ratio=aspect_ratio,
+                    number_of_images=1,
+                    model_name=model_name_override or self._get_model_for_resolution(
+                        resolution=resolution, is_edit=False, content_rating=content_rating,
+                    ),
+                    reference_image_bytes=reference_image_bytes,
+                    reference_image_mime=reference_image_mime,
+                )
+            else:
+                images = await self.generate_image(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    aspect_ratio=aspect_ratio,
+                    number_of_images=1,
+                    resolution=resolution,
+                    content_rating=content_rating,
+                    model_name_override=model_name_override,
+                    openai_image_size=openai_image_size,
+                    openai_response_format=openai_response_format,
+                    openai_stream=openai_stream,
+                    openai_quality=openai_quality,
+                    openai_style=openai_style,
+                    openai_image_api_mode=openai_image_api_mode,
+                )
 
             if images and len(images) > 0:
                 if attempt > 1:
                     log.info(
                         f"图片空回重试成功（第 {attempt}/{retry_max_attempts} 次）"
                     )
-                # 返回最后一张图片（通常是完整图，第一张可能是缩略图）
                 return images[-1]
 
             if attempt < retry_max_attempts:
