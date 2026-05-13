@@ -399,6 +399,13 @@ class ChatSettingsService:
             chat_config.FEEDING_CONFIG["SUMMARY_IMAGEN_RESOLUTION"] = db_summary_imagen_resolution
             log.info(f"  ✅ 总结配图分辨率: {db_summary_imagen_resolution}")
 
+        db_summary_imagen_model = await self.db_manager.get_global_setting(
+            "summary_imagen_model"
+        )
+        if db_summary_imagen_model is not None:
+            chat_config.FEEDING_CONFIG["SUMMARY_IMAGEN_MODEL"] = db_summary_imagen_model
+            log.info(f"  ✅ 总结配图模型: {db_summary_imagen_model}")
+
         db_confession_response_image_url = await self.db_manager.get_global_setting(
             "confession_response_image_url"
         )

@@ -1126,6 +1126,7 @@ FEEDING_CONFIG = {
     "IMAGEN_ENABLED": _parse_bool_env("FEEDING_IMAGEN_ENABLED", "False"),  # 投喂AI绘图开关
     "SUMMARY_IMAGEN_ENABLED": _parse_bool_env("SUMMARY_IMAGEN_ENABLED", "False"),  # 总结AI配图开关
     "SUMMARY_IMAGEN_RESOLUTION": os.getenv("SUMMARY_IMAGEN_RESOLUTION", "default"),  # 总结配图分辨率: default/2k/4k
+    "SUMMARY_IMAGEN_MODEL": os.getenv("SUMMARY_IMAGEN_MODEL", ""),  # 总结配图指定模型，留空用分辨率自动匹配
 }
 
 # --- 忏悔功能 ---

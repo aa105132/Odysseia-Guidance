@@ -3603,6 +3603,13 @@
                             <p class="text-xs text-slate-500 mt-1">含大量中文文字时建议选 4K，否则文字可能出现乱码</p>
                         </div>
 
+                        <div x-show="coinForm.summary_imagen_enabled">
+                            <label class="block text-sm font-medium text-slate-300 mb-2">总结配图模型</label>
+                            <input type="text" x-model="coinForm.summary_imagen_model" placeholder="留空则按分辨率自动匹配"
+                                   class="form-control">
+                            <p class="text-xs text-slate-500 mt-1">覆盖默认模型，如 agy-gemini-3-pro-image-4k。留空使用分辨率匹配的默认模型</p>
+                        </div>
+
                         <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">投喂回应图片 URL</label>
                             <input type="url" x-model="coinForm.feeding_response_image_url" placeholder="https://..."
@@ -4992,6 +4999,7 @@
                     feeding_imagen_enabled: false,
                     summary_imagen_enabled: false,
                     summary_imagen_resolution: 'default',
+                    summary_imagen_model: '',
                     confession_response_image_url: '',
                     loan_thumbnail_url: '',
                     ghost_emotion_happy_url: '',
@@ -5578,6 +5586,7 @@
                         this.coinForm.feeding_imagen_enabled = this.config.coin.feeding_imagen_enabled || false;
                         this.coinForm.summary_imagen_enabled = this.config.coin.summary_imagen_enabled || false;
                         this.coinForm.summary_imagen_resolution = this.config.coin.summary_imagen_resolution || 'default';
+                        this.coinForm.summary_imagen_model = this.config.coin.summary_imagen_model || '';
                         this.coinForm.confession_response_image_url = this.config.coin.confession_response_image_url || '';
                         this.coinForm.loan_thumbnail_url = this.config.coin.loan_thumbnail_url || '';
                         this.coinForm.ghost_emotion_happy_url = this.config.coin.ghost_emotion_happy_url || '';
@@ -8284,6 +8293,7 @@
                                 feeding_imagen_enabled: this.coinForm.feeding_imagen_enabled,
                                 summary_imagen_enabled: this.coinForm.summary_imagen_enabled,
                                 summary_imagen_resolution: this.coinForm.summary_imagen_resolution,
+                                summary_imagen_model: (this.coinForm.summary_imagen_model || '').trim(),
                                 confession_response_image_url: (this.coinForm.confession_response_image_url || '').trim(),
                                 loan_thumbnail_url: (this.coinForm.loan_thumbnail_url || '').trim(),
                                 ghost_emotion_happy_url: (this.coinForm.ghost_emotion_happy_url || '').trim(),
