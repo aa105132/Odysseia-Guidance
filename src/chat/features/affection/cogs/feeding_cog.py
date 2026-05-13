@@ -172,20 +172,14 @@ class FeedingCog(commands.Cog):
             attachments_to_send.append(food_file)
             embed.set_thumbnail(url=f"attachment://{image.filename}")
 
-            # 检查是否在豁免频道，如果是，则显示大图
-            is_unrestricted = (
-                interaction.channel.id in chat_config.UNRESTRICTED_CHANNEL_IDS
-                or isinstance(interaction.channel, discord.Thread)
-            )
-            if is_unrestricted:
-                if generated_image_bytes:
-                    gen_file = discord.File(fp=io.BytesIO(generated_image_bytes), filename="yueyue_feeding.png")
-                    attachments_to_send.append(gen_file)
-                    embed.set_image(url="attachment://yueyue_feeding.png")
-                else:
-                    sticker_url = FEEDING_CONFIG.get("RESPONSE_IMAGE_URL")
-                    if sticker_url:
-                        embed.set_image(url=sticker_url)
+            if generated_image_bytes:
+                gen_file = discord.File(fp=io.BytesIO(generated_image_bytes), filename="yueyue_feeding.png")
+                attachments_to_send.append(gen_file)
+                embed.set_image(url="attachment://yueyue_feeding.png")
+            else:
+                sticker_url = FEEDING_CONFIG.get("RESPONSE_IMAGE_URL")
+                if sticker_url:
+                    embed.set_image(url=sticker_url)
 
             embed.set_footer(text="月月对你的投喂做出回应...")
 
