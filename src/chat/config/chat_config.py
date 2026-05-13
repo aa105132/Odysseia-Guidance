@@ -1009,6 +1009,8 @@ API_RETRY_CONFIG = {
     # OpenAI 兼容对话链路超时（秒）
     "OPENAI_COMPAT_CHAT_TIMEOUT_SECONDS": _parse_int_env("OPENAI_COMPAT_CHAT_TIMEOUT_SECONDS", 180),
     "OPENAI_COMPAT_SIMPLE_TIMEOUT_SECONDS": _parse_int_env("OPENAI_COMPAT_SIMPLE_TIMEOUT_SECONDS", 120),
+    # 对话请求总超时（秒），从收到用户消息到返回AI回复的全局上限。设为0则不限制。
+    "TOTAL_TIMEOUT_SECONDS": _parse_int_env("OPENAI_COMPAT_TOTAL_TIMEOUT_SECONDS", 300),
 }
 
 # 定义不同安全风险等级对应的信誉惩罚值

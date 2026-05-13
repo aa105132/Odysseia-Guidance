@@ -1734,6 +1734,78 @@ class GeminiService:
         AI 回复生成的分发器。
         如果选择了自定义模型，则优先尝试自定义端点；如果失败，则自动回退到官方 API。
         """
+        total_timeout = app_config.API_RETRY_CONFIG.get("TOTAL_TIMEOUT_SECONDS", 300)
+        if total_timeout > 0:
+            try:
+                return await asyncio.wait_for(
+                    self._generate_response_impl(
+                        user_id=user_id,
+                        guild_id=guild_id,
+                        message=message,
+                        channel=channel,
+                        replied_message=replied_message,
+                        images=images,
+                        user_name=user_name,
+                        channel_context=channel_context,
+                        world_book_entries=world_book_entries,
+                        personal_summary=personal_summary,
+                        affection_status=affection_status,
+                        user_profile_data=user_profile_data,
+                        guild_name=guild_name,
+                        location_name=location_name,
+                        model_name=model_name,
+                        discord_message=discord_message,
+                        user_id_for_settings=user_id_for_settings,
+                    ),
+                    timeout=total_timeout,
+                )
+            except asyncio.TimeoutError:
+                log.error(
+                    f"对话请求总超时 ({total_timeout}s)，"
+                    f"user_id={user_id}, model={model_name}"
+                )
+                return "呜…这次想太久了，脑子转不过来，换简单点的问我好不好？"
+        return await self._generate_response_impl(
+            user_id=user_id,
+            guild_id=guild_id,
+            message=message,
+            channel=channel,
+            replied_message=replied_message,
+            images=images,
+            user_name=user_name,
+            channel_context=channel_context,
+            world_book_entries=world_book_entries,
+            personal_summary=personal_summary,
+            affection_status=affection_status,
+            user_profile_data=user_profile_data,
+            guild_name=guild_name,
+            location_name=location_name,
+            model_name=model_name,
+            discord_message=discord_message,
+            user_id_for_settings=user_id_for_settings,
+        )
+
+    async def _generate_response_impl(
+        self,
+        user_id: int,
+        guild_id: int,
+        message: str,
+        channel: Optional[Any] = None,
+        replied_message: Optional[str] = None,
+        images: Optional[List[Dict]] = None,
+        user_name: str = "用户",
+        channel_context: Optional[List[Dict]] = None,
+        world_book_entries: Optional[List[Dict]] = None,
+        personal_summary: Optional[str] = None,
+        affection_status: Optional[Dict[str, Any]] = None,
+        user_profile_data: Optional[Dict[str, Any]] = None,
+        guild_name: str = "未知服务器",
+        location_name: str = "未知位置",
+        model_name: Optional[str] = None,
+        discord_message: Optional[Any] = None,  # Discord Message对象，用于工具调用时添加反应
+        user_id_for_settings: Optional[str] = None,
+    ) -> str:
+        """generate_response 的实现。被 asyncio.wait_for 包裹以实现总超时。"""
         self._reset_last_tool_outputs()
 
         # 判断是否应该使用自定义端点：
