@@ -127,8 +127,6 @@ class FeedingCog(commands.Cog):
                     generated_image_bytes = await gemini_imagen_service.generate_single_image(
                         prompt=image_prompt_text,
                         aspect_ratio="1:1",
-                        reference_image_bytes=image_bytes,
-                        reference_image_mime=image.content_type,
                     )
                 except Exception as img_err:
                     logger.warning(f"投喂绘图失败，回退到静态贴纸: {img_err}")
