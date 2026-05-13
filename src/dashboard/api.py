@@ -626,6 +626,7 @@ class CoinConfigUpdate(BaseModel):
     summary_imagen_enabled: Optional[bool] = None
     summary_imagen_resolution: Optional[str] = None
     summary_imagen_model: Optional[str] = None
+    feeding_cooldown_seconds: Optional[int] = None
 
 
 class ModerationConfigUpdate(BaseModel):
@@ -963,6 +964,7 @@ async def get_all_config(token: str = Depends(verify_token)):
                 if db_summary_imagen_model is not None
                 else chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_MODEL", "")
             ),
+            "feeding_cooldown_seconds": chat_config.FEEDING_CONFIG.get("COOLDOWN_SECONDS", 0),
             "currency_name": "月光币",
         },
         "moderation": {
@@ -4532,6 +4534,15 @@ async def update_coin_config(config: CoinConfigUpdate, token: str = Depends(veri
         chat_config.FEEDING_CONFIG["SUMMARY_IMAGEN_MODEL"] = model
         await chat_db_manager.set_global_setting("summary_imagen_model", model)
         updated["summary_imagen_model"] = model
+
+    if config.feeding_cooldown_seconds is not None:
+        if config.feeding_cooldown_seconds < 0:
+            raise HTTPException(400, "投喂冷却时间不能为负数")
+        chat_config.FEEDING_CONFIG["COOLDOWN_SECONDS"] = config.feeding_cooldown_seconds
+        await chat_db_manager.set_global_setting(
+            "feeding_cooldown_seconds", str(config.feeding_cooldown_seconds)
+        )
+        updated["feeding_cooldown_seconds"] = config.feeding_cooldown_seconds
 
     if config.confession_response_image_url is not None:
         normalized = _normalize_url(config.confession_response_image_url, "忏悔回应图片 URL")

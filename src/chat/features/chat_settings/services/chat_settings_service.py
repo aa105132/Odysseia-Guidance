@@ -378,6 +378,16 @@ class ChatSettingsService:
             chat_config.FEEDING_CONFIG["RESPONSE_IMAGE_URL"] = db_feeding_response_image_url
             log.info("  ✅ 投喂回应图片 URL: 已加载")
 
+        db_feeding_cooldown = await self.db_manager.get_global_setting(
+            "feeding_cooldown_seconds"
+        )
+        if db_feeding_cooldown is not None:
+            try:
+                chat_config.FEEDING_CONFIG["COOLDOWN_SECONDS"] = int(db_feeding_cooldown)
+                log.info(f"  ✅ 投喂冷却时间: {db_feeding_cooldown}秒")
+            except (ValueError, TypeError):
+                log.warning(f"投喂冷却时间值无效: {db_feeding_cooldown}")
+
         db_feeding_imagen_enabled = await self.db_manager.get_global_setting(
             "feeding_imagen_enabled"
         )

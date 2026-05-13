@@ -3554,6 +3554,13 @@
                         </div>
                         
                         <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">投喂冷却时间（秒）</label>
+                            <input type="number" x-model="coinForm.feeding_cooldown_seconds" min="0"
+                                   class="form-control">
+                            <p class="text-xs text-slate-500 mt-1">设置为 0 则关闭冷却限制，用户可连续投喂</p>
+                        </div>
+
+                        <div>
                             <label class="block text-sm font-medium text-slate-300 mb-2">每日签到奖励</label>
                             <input type="number" x-model="coinForm.daily_reward" min="0"
                                    class="form-control">
@@ -5000,6 +5007,7 @@
                     summary_imagen_enabled: false,
                     summary_imagen_resolution: 'default',
                     summary_imagen_model: '',
+                    feeding_cooldown_seconds: 0,
                     confession_response_image_url: '',
                     loan_thumbnail_url: '',
                     ghost_emotion_happy_url: '',
@@ -5587,6 +5595,7 @@
                         this.coinForm.summary_imagen_enabled = this.config.coin.summary_imagen_enabled || false;
                         this.coinForm.summary_imagen_resolution = this.config.coin.summary_imagen_resolution || 'default';
                         this.coinForm.summary_imagen_model = this.config.coin.summary_imagen_model || '';
+                        this.coinForm.feeding_cooldown_seconds = this.config.coin.feeding_cooldown_seconds || 0;
                         this.coinForm.confession_response_image_url = this.config.coin.confession_response_image_url || '';
                         this.coinForm.loan_thumbnail_url = this.config.coin.loan_thumbnail_url || '';
                         this.coinForm.ghost_emotion_happy_url = this.config.coin.ghost_emotion_happy_url || '';
@@ -8294,6 +8303,7 @@
                                 summary_imagen_enabled: this.coinForm.summary_imagen_enabled,
                                 summary_imagen_resolution: this.coinForm.summary_imagen_resolution,
                                 summary_imagen_model: (this.coinForm.summary_imagen_model || '').trim(),
+                                feeding_cooldown_seconds: parseInt(this.coinForm.feeding_cooldown_seconds) || 0,
                                 confession_response_image_url: (this.coinForm.confession_response_image_url || '').trim(),
                                 loan_thumbnail_url: (this.coinForm.loan_thumbnail_url || '').trim(),
                                 ghost_emotion_happy_url: (this.coinForm.ghost_emotion_happy_url || '').trim(),

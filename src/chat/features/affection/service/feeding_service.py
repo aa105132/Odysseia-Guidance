@@ -32,13 +32,13 @@ class FeedingService:
         )
 
         now_utc = datetime.now(timezone.utc)
-        if last_feeding_row:
-            # fromisoformat 产生的是 naive datetime，但我们知道它代表 UTC
+        cooldown_seconds = FEEDING_CONFIG.get("COOLDOWN_SECONDS", 0)
+        if cooldown_seconds > 0 and last_feeding_row:
             last_feeding_time = datetime.fromisoformat(last_feeding_row[0]).replace(
                 tzinfo=timezone.utc
             )
             time_since_last_feeding = now_utc - last_feeding_time
-            cooldown_duration = timedelta(seconds=FEEDING_CONFIG["COOLDOWN_SECONDS"])
+            cooldown_duration = timedelta(seconds=cooldown_seconds)
             if time_since_last_feeding < cooldown_duration:
                 remaining_time = cooldown_duration - time_since_last_feeding
                 hours, remainder = divmod(remaining_time.seconds, 3600)
