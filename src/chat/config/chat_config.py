@@ -1125,6 +1125,7 @@ FEEDING_CONFIG = {
     "RESPONSE_IMAGE_URL": "https://cdn.discordapp.com/attachments/1466427893809680560/1466712053413839032/1769761543935.png",  # 投喂回应的默认图片URL
     "IMAGEN_ENABLED": _parse_bool_env("FEEDING_IMAGEN_ENABLED", "False"),  # 投喂AI绘图开关
     "SUMMARY_IMAGEN_ENABLED": _parse_bool_env("SUMMARY_IMAGEN_ENABLED", "False"),  # 总结AI配图开关
+    "SUMMARY_IMAGEN_RESOLUTION": os.getenv("SUMMARY_IMAGEN_RESOLUTION", "default"),  # 总结配图分辨率: default/2k/4k
 }
 
 # --- 忏悔功能 ---

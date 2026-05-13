@@ -392,6 +392,13 @@ class ChatSettingsService:
             chat_config.FEEDING_CONFIG["SUMMARY_IMAGEN_ENABLED"] = db_summary_imagen_enabled == "true"
             log.info(f"  ✅ 总结AI配图: {'已启用' if chat_config.FEEDING_CONFIG['SUMMARY_IMAGEN_ENABLED'] else '已禁用'}")
 
+        db_summary_imagen_resolution = await self.db_manager.get_global_setting(
+            "summary_imagen_resolution"
+        )
+        if db_summary_imagen_resolution is not None:
+            chat_config.FEEDING_CONFIG["SUMMARY_IMAGEN_RESOLUTION"] = db_summary_imagen_resolution
+            log.info(f"  ✅ 总结配图分辨率: {db_summary_imagen_resolution}")
+
         db_confession_response_image_url = await self.db_manager.get_global_setting(
             "confession_response_image_url"
         )

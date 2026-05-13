@@ -445,9 +445,11 @@ class AIChatCog(commands.Cog):
                 )
                 try:
                     log.info("尝试用 Imagen 生成总结插图")
+                    summary_resolution = chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_RESOLUTION", "default")
                     img = await gemini_imagen_service.generate_single_image(
                         prompt=imagen_prompt,
                         aspect_ratio="16:9",
+                        resolution=summary_resolution,
                     )
                     if img:
                         image_bytes = img
