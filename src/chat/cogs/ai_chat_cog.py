@@ -352,6 +352,8 @@ class AIChatCog(commands.Cog):
     async def _reply_sources_below_image(
         self, message: discord.Message, source_text: str, source_links: List[tuple]
     ) -> None:
+        if not await self._should_show_sources():
+            return
         formatted_sources = self._format_source_links(source_links)
         final_source_text = formatted_sources or str(source_text or "").strip()
         if not final_source_text:
