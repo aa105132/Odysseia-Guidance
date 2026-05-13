@@ -490,7 +490,6 @@ class AIChatCog(commands.Cog):
             channel_messages=1,
             image_messages=1,
         )
-        await self._reply_sources_below_image(message, source_text, source_links)
         return True
 
     async def _send_summary_with_full_text(
