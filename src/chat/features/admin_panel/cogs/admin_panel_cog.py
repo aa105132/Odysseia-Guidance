@@ -82,7 +82,7 @@ class AdminPanelCog(commands.Cog):
         """db_view 命令的错误处理程序"""
         if isinstance(error, app_commands.CheckFailure):
             await interaction.response.send_message(
-                "抱歉，您没有权限使用此命令。", ephemeral=True
+                "哼…这个命令可不是谁都能用的，你没有权限啦！", ephemeral=True
             )
         else:
             log.error(f"执行 db_view 命令时发生未处理的错误: {error}", exc_info=True)

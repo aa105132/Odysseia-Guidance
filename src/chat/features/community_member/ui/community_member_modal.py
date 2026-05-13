@@ -116,7 +116,7 @@ class CommunityMemberUploadModal(discord.ui.Modal, title="上传社区成员档�
 
                 if new_balance is None:
                     await interaction.followup.send(
-                        "抱歉，你的余额似乎不足，购买失败。", ephemeral=True
+                        "唔…月光币不够啦，等你攒够了再来吧！", ephemeral=True
                     )
                     return
         # --- 扣款逻辑结束 ---

@@ -698,15 +698,15 @@ Discord ID: {profile_user_id}
                 try:
                     user = await self.bot.fetch_user(user_id)
                     embed = discord.Embed(
-                        title="【呜...有个坏消息】",
-                        description=f"那个...你提交的 **{data.get('name', '未知档案')}** 大家好像不太满意，没能通过...别灰心嘛！",
+                        title="【哼…有个坏消息】",
+                        description=f"你提交的 **{data.get('name', '未知档案')}** 大家好像不太满意，没能通过…不过别灰心啦，又不是什么大不了的事！",
                         color=discord.Color.red(),
                     )
                     embed.add_field(
-                        name="钱钱还你啦",
-                        value=f"买这个花掉的 **{price}** 月光币，我已经偷偷塞回你的口袋里啦。",
+                        name="钱还你啦",
+                        value=f"买这个花掉的 **{price}** 月光币，我已经悄悄塞回你口袋了。才不是心疼你呢，只是公事公办！",
                     )
-                    embed.set_footer(text="下次再试试看嘛！")
+                    embed.set_footer(text="别灰心，下次再试试看啦！")
                     await user.send(embed=embed)
                     log.info(f"已向用户 {user_id} 发送退款通知。")
                 except discord.Forbidden:
