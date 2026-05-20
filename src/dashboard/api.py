@@ -750,9 +750,27 @@ async def get_all_config(token: str = Depends(verify_token)):
     """获取所有配置"""
     from src.chat.utils.database import chat_db_manager
 
-    # 获取当前 API URL 和 Key（部分隐藏）
-    ai_api_url = os.getenv("GEMINI_API_BASE_URL", "")
-    ai_api_key = os.getenv("GEMINI_API_KEYS", "")
+    # 获取当前 API URL、Key 和格式（部分隐藏）。
+    # /api/config/all 是保存后刷新表单的来源，必须优先读取数据库持久化值，
+    # 否则前端拿不到 api_format 时会回退到 Gemini 官方。
+    db_ai_api_url = await chat_db_manager.get_global_setting("gemini_api_url")
+    db_ai_api_key = await chat_db_manager.get_global_setting("gemini_api_key")
+    db_ai_api_format = await chat_db_manager.get_global_setting("ai_api_format")
+    ai_api_url = (
+        db_ai_api_url
+        or getattr(chat_config, "_db_api_url", None)
+        or os.getenv("GEMINI_API_BASE_URL", "")
+    )
+    ai_api_key = (
+        db_ai_api_key
+        or getattr(chat_config, "_db_api_key", None)
+        or os.getenv("GEMINI_API_KEYS", "")
+    )
+    ai_api_format = (
+        db_ai_api_format
+        or getattr(chat_config, "_db_api_format", None)
+        or "gemini"
+    )
     imagen_api_key = os.getenv("GEMINI_IMAGEN_API_KEY", "") or ai_api_key
 
     voice_config = chat_config.VOICE_CONFIG
@@ -843,6 +861,7 @@ async def get_all_config(token: str = Depends(verify_token)):
             "api_url": ai_api_url,
             "api_key_masked": ai_masked_key,
             "has_api_key": bool(ai_api_key),
+            "api_format": ai_api_format,
             "available_models": [
                 "gemini-3-flash-custom",
                 "gemini-3-pro-preview-custom",
