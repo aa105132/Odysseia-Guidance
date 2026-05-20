@@ -104,6 +104,127 @@ def test_generate_openai_format_keeps_grok_on_images_api(monkeypatch):
     assert result is None
 
 
+
+
+def test_generate_openai_format_reference_image_skips_images_api(monkeypatch):
+    """带参考图时不能走 /images/generations，否则参考图会被丢弃。"""
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
+    service = GeminiImagenService()
+
+    async def _unexpected_images_api(**kwargs):
+        raise AssertionError("带参考图的生成不应走 /images/generations")
+
+    captured = {}
+    expected = [b"generated-from-reference"]
+
+    async def _fake_chat_completions(**kwargs):
+        captured.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(
+        service, "_generate_image_openai_images_api_format", _unexpected_images_api
+    )
+    monkeypatch.setattr(
+        service,
+        "_generate_image_openai_chat_completions_format",
+        _fake_chat_completions,
+    )
+
+    result = asyncio.run(
+        service._generate_image_openai_format(
+            prompt="月月正在吃用户投喂的食物",
+            negative_prompt=None,
+            aspect_ratio="1:1",
+            number_of_images=1,
+            model_name="grok-imagine-1.0",
+            reference_image_bytes=b"food-reference",
+            reference_image_mime="image/jpeg",
+        )
+    )
+
+    assert result == expected
+    assert captured["reference_image_bytes"] == b"food-reference"
+    assert captured["reference_image_mime"] == "image/jpeg"
+
+
+def test_openai_chat_completions_reference_image_disables_streaming(monkeypatch):
+    """参考图优先级高于流式配置，确保请求体里真实携带 image_url。"""
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "STREAMING_ENABLED", True)
+
+    service = GeminiImagenService()
+    service._client = {
+        "api_key": "test-key",
+        "base_url": "http://localhost:8000/v1",
+    }
+
+    async def _unexpected_streaming(**kwargs):
+        raise AssertionError("带参考图时不应走不支持参考图的流式分支")
+
+    monkeypatch.setattr(
+        service, "_generate_image_openai_format_streaming", _unexpected_streaming
+    )
+
+    generated = b"generated-image"
+    encoded = base64.b64encode(generated).decode("ascii")
+    captured = {}
+
+    class _FakeResponse:
+        status = 200
+        headers = {"Content-Type": "application/json"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def text(self):
+            return '{"data":[{"b64_json":"' + encoded + '"}]}'
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, headers=None, json=None, timeout=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["payload"] = json
+            captured["timeout"] = timeout
+            return _FakeResponse()
+
+    monkeypatch.setattr(
+        "src.chat.features.image_generation.services.gemini_imagen_service.aiohttp.ClientSession",
+        lambda: _FakeSession(),
+    )
+
+    result = asyncio.run(
+        service._generate_image_openai_chat_completions_format(
+            prompt="月月正在吃用户投喂的食物",
+            negative_prompt=None,
+            aspect_ratio="1:1",
+            number_of_images=1,
+            model_name="grok-imagine-1.0",
+            reference_image_bytes=b"food-reference",
+            reference_image_mime="image/jpeg",
+            openai_stream=True,
+        )
+    )
+
+    assert result == [generated]
+    assert captured["url"] == "http://localhost:8000/v1/chat/completions"
+
+    content = captured["payload"]["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith(
+        "data:image/jpeg;base64,"
+    )
+    assert "stream" not in captured["payload"]
+
 def test_edit_openai_format_keeps_grok_on_images_api(monkeypatch):
     monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
     service = GeminiImagenService()

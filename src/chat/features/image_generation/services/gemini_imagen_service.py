@@ -978,6 +978,13 @@ class GeminiImagenService:
             model_name=model_name,
             mode_override=openai_image_api_mode,
         )
+        if reference_image_bytes and resolved_mode == "images_api":
+            log.info(
+                "检测到参考图，/images/generations 无法携带参考图，"
+                "已切换到 chat/completions 多模态路由。"
+            )
+            resolved_mode = "chat_completions"
+
         if resolved_mode == "images_api":
             images = await self._generate_image_openai_images_api_format(
                 prompt=prompt,
@@ -1062,6 +1069,12 @@ class GeminiImagenService:
             log.info("[OpenAI格式] 已附加参考图作为视觉参考")
 
         log.info(f"[OpenAI格式] 正在使用 {model_name} 生成图像, 提示词: {prompt[:100]}...")
+
+        if reference_image_bytes and streaming_enabled:
+            log.info(
+                "检测到参考图，关闭 OpenAI 图片流式路由以保留多模态 image_url 输入。"
+            )
+            streaming_enabled = False
 
         if streaming_enabled:
             return await self._generate_image_openai_format_streaming(
