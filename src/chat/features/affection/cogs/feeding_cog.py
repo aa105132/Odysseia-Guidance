@@ -112,9 +112,10 @@ class FeedingCog(commands.Cog):
 
             if not match:
                 logger.error(f"解析投喂评价失败。原始文本: '{response_text}'")
-                evaluation = response_text
-                affection_gain = 1
-                coin_gain = 10
+                await interaction.edit_original_response(
+                    content="呜…这口我没尝明白，评价格式也乱掉了，等会再喂我一次好不好？"
+                )
+                return
             else:
                 evaluation = match.group(1).strip()
                 affection_gain = int(match.group(2))

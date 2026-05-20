@@ -154,6 +154,14 @@ def build_gemini_service_stubs() -> tuple[dict[str, types.ModuleType], types.Mod
         "temperature": 0.0,
         "max_output_tokens": 256,
     }
+    chat_config_module.GEMINI_VISION_GEN_CONFIG = {
+        "temperature": 0.0,
+        "max_output_tokens": 256,
+    }
+    chat_config_module.IMAGE_PROCESSING_CONFIG = {
+        "MAX_IMAGES_PER_MESSAGE": 9,
+        "GIF_MAX_FRAMES": 4,
+    }
     chat_config_module.CUSTOM_GEMINI_ENDPOINTS = {}
     chat_config_module.MODEL_GENERATION_CONFIG = {
         "default": {"temperature": 1.0, "max_output_tokens": 1024}
@@ -380,6 +388,123 @@ def test_generate_simple_response_respects_explicit_openai_format_for_v1beta_pro
         service._generate_simple_with_gemini_custom.assert_not_called()
         service._generate_simple_with_gemini_key_rotation.assert_not_called()
 
+
+
+
+def test_generate_simple_response_defaults_to_openai_for_non_gemini_configured_url():
+    stub_modules, app_config = build_gemini_service_stubs()
+
+    with load_module_with_stubs(
+        "src/chat/services/gemini_service.py",
+        stub_modules,
+        environ={"GOOGLE_API_KEYS_LIST": "test-key"},
+    ) as module:
+        service = module.GeminiService()
+        app_config._db_api_format = None
+        app_config._db_api_url = "https://bufan.live/v1"
+        app_config._db_api_key = "test-key"
+        app_config.CUSTOM_GEMINI_ENDPOINTS = {}
+
+        service._generate_simple_with_openai_compatible = AsyncMock(return_value="openai-ok")
+        service._generate_simple_with_gemini_custom = AsyncMock(return_value="gemini-custom")
+        service._generate_simple_with_gemini_key_rotation = AsyncMock(return_value="gemini-rotation")
+
+        result = asyncio.run(
+            service.generate_simple_response(
+                prompt="hello",
+                generation_config={},
+                model_name="deepseek-expert-chat",
+                return_error_text=False,
+            )
+        )
+
+        assert result == "openai-ok"
+        service._generate_simple_with_openai_compatible.assert_awaited_once()
+        service._generate_simple_with_gemini_custom.assert_not_called()
+        service._generate_simple_with_gemini_key_rotation.assert_not_called()
+
+
+def test_generate_text_with_image_defaults_to_openai_for_non_gemini_configured_url():
+    stub_modules, app_config = build_gemini_service_stubs()
+
+    with load_module_with_stubs(
+        "src/chat/services/gemini_service.py",
+        stub_modules,
+        environ={"GOOGLE_API_KEYS_LIST": "test-key"},
+    ) as module:
+        service = module.GeminiService()
+        app_config._db_api_format = None
+        app_config._db_api_url = "https://bufan.live/v1"
+        app_config._db_api_key = "test-key"
+        service._generate_simple_with_openai_compatible = AsyncMock(return_value="评价<affection:+1;coins:+10>")
+
+        result = asyncio.run(
+            service.generate_text_with_image(
+                prompt="看看这份投喂",
+                image_bytes=b"fake-image",
+                mime_type="image/png",
+            )
+        )
+
+        assert result == "评价<affection:+1;coins:+10>"
+        service._generate_simple_with_openai_compatible.assert_awaited_once()
+
+def test_generate_text_with_image_uses_openai_compatible_route_when_configured():
+    stub_modules, app_config = build_gemini_service_stubs()
+
+    with load_module_with_stubs(
+        "src/chat/services/gemini_service.py",
+        stub_modules,
+        environ={"GOOGLE_API_KEYS_LIST": "test-key"},
+    ) as module:
+        service = module.GeminiService()
+        app_config._db_api_format = "openai"
+        app_config._db_api_url = "https://bufan.live/v1"
+        app_config._db_api_key = "test-key"
+        service._generate_simple_with_openai_compatible = AsyncMock(return_value="评价<affection:+1;coins:+10>")
+
+        result = asyncio.run(
+            service.generate_text_with_image(
+                prompt="看看这份投喂",
+                image_bytes=b"fake-image",
+                mime_type="image/png",
+            )
+        )
+
+        assert result == "评价<affection:+1;coins:+10>"
+        service._generate_simple_with_openai_compatible.assert_awaited_once()
+        call_kwargs = service._generate_simple_with_openai_compatible.await_args.kwargs
+        assert call_kwargs["api_url"] == "https://bufan.live/v1"
+        assert call_kwargs["api_key"] == "test-key"
+        assert call_kwargs["images"] == [
+            {"data": b"fake-image", "mime_type": "image/png"}
+        ]
+
+
+def test_generate_confession_response_uses_openai_compatible_route_when_configured():
+    stub_modules, app_config = build_gemini_service_stubs()
+
+    with load_module_with_stubs(
+        "src/chat/services/gemini_service.py",
+        stub_modules,
+        environ={"GOOGLE_API_KEYS_LIST": "test-key"},
+    ) as module:
+        service = module.GeminiService()
+        app_config._db_api_format = "openai"
+        app_config._db_api_url = "https://bufan.live/v1"
+        app_config._db_api_key = "test-key"
+        app_config.GEMINI_CONFESSION_GEN_CONFIG = {"temperature": 0.2, "max_output_tokens": 128}
+        service.generate_simple_response = AsyncMock(return_value="忏悔回应")
+
+        result = asyncio.run(service.generate_confession_response("忏悔内容"))
+
+        assert result == "忏悔回应"
+        service.generate_simple_response.assert_awaited_once_with(
+            prompt="忏悔内容",
+            generation_config={"temperature": 0.2, "max_output_tokens": 128},
+            model_name=service.default_model_name,
+            return_error_text=False,
+        )
 
 def test_world_book_find_entries_uses_query_rewrite_before_search():
     stub_modules, fake_gemini_service, fake_knowledge_search_service = (

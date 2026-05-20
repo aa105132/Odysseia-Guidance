@@ -4092,19 +4092,20 @@ class GeminiService:
         Returns:
             生成的文本字符串，如果失败则返回 None。
         """
-        # 获取 API 格式配置（支持调用方覆盖）
-        raw_api_format = api_format or getattr(app_config, "_db_api_format", None) or "gemini"
-        resolved_api_format = self._normalize_api_format(raw_api_format)
+        # 获取 API 格式配置（支持调用方覆盖）。未显式设置格式时，先等解析出 URL 后再按 URL 推断。
+        raw_api_format = api_format or getattr(app_config, "_db_api_format", None)
         normalized_raw_api_format = str(raw_api_format or "").strip().lower()
-        if normalized_raw_api_format not in {
+        if normalized_raw_api_format and normalized_raw_api_format not in {
             "gemini",
             "openai",
             "openai_compatible",
             "openai-compatible",
         }:
             log.warning(
-                f"generate_simple_response 收到未知 api_format={normalized_raw_api_format}，回退为 gemini"
+                f"generate_simple_response 收到未知 api_format={normalized_raw_api_format}，将按 URL 自动推断"
             )
+            raw_api_format = None
+            normalized_raw_api_format = ""
 
         # 先确定请求模型，再尝试做“别名 -> 实际模型名”解析
         requested_model_name = model_name or self.default_model_name
@@ -4144,6 +4145,21 @@ class GeminiService:
                 or getattr(app_config, "_db_api_key", None)
                 or os.getenv("GEMINI_API_KEYS", "")
             )
+
+        if raw_api_format:
+            resolved_api_format = self._normalize_api_format(raw_api_format)
+        else:
+            resolved_url_lower = str(resolved_api_url or "").lower()
+            is_gemini_url = any(
+                marker in resolved_url_lower
+                for marker in ("generativelanguage.googleapis.com", "aiplatform.googleapis.com", "/v1beta")
+            )
+            resolved_api_format = "gemini" if is_gemini_url else "openai"
+            if resolved_api_url:
+                log.info(
+                    "generate_simple_response 未显式设置 API 格式，已根据 URL 自动推断为: %s",
+                    resolved_api_format,
+                )
 
         route_name = "gemini_key_rotation"
         if resolved_api_format == "openai" and resolved_api_url and resolved_api_key:
@@ -4545,25 +4561,60 @@ class GeminiService:
         """检查AI服务是否可用"""
         return self.key_rotation_service is not None
 
-    @_api_key_handler
     async def generate_text_with_image(
         self, prompt: str, image_bytes: bytes, mime_type: str, client: Any = None
     ) -> Optional[str]:
         """
         一个用于简单图文生成的精简方法。
-        不涉及对话历史或上下文，仅根据输入提示和图片生成文本。
-        非常适合用于如“投喂”等一次性功能。
-
-        Args:
-            prompt: 提供给模型的输入提示。
-            image_bytes: 图片的字节数据。
-            mime_type: 图片的 MIME 类型 (e.g., 'image/jpeg', 'image/png').
-
-        Returns:
-            生成的文本字符串，如果失败则返回 None。
+        默认沿用 Dashboard 的 API 格式配置；OpenAI 兼容模式下直接走
+        chat/completions 多模态，避免投喂等功能误入旧 Gemini SDK 密钥轮换。
         """
-        if not client:
-            raise ValueError("装饰器未能提供客户端实例。")
+        configured_format = getattr(app_config, "_db_api_format", None)
+        resolved_api_url = getattr(app_config, "_db_api_url", None) or os.getenv(
+            "GEMINI_API_BASE_URL", ""
+        )
+        resolved_api_key = getattr(app_config, "_db_api_key", None) or os.getenv(
+            "GEMINI_API_KEYS", ""
+        )
+        if configured_format:
+            resolved_api_format = self._normalize_api_format(configured_format)
+        else:
+            resolved_url_lower = str(resolved_api_url or "").lower()
+            is_gemini_url = any(
+                marker in resolved_url_lower
+                for marker in ("generativelanguage.googleapis.com", "aiplatform.googleapis.com", "/v1beta")
+            )
+            resolved_api_format = "gemini" if is_gemini_url else "openai"
+        final_model_name = self.default_model_name
+
+        if resolved_api_format == "openai" and resolved_api_url and resolved_api_key:
+            log.info(
+                "generate_text_with_image 使用 OpenAI 兼容 API: %s..., 模型: %s",
+                str(resolved_api_url)[:30],
+                final_model_name,
+            )
+            return await self._generate_simple_with_openai_compatible(
+                prompt=prompt,
+                generation_config=app_config.GEMINI_VISION_GEN_CONFIG.copy(),
+                model_name=final_model_name,
+                api_url=resolved_api_url,
+                api_key=resolved_api_key,
+                images=[{"data": image_bytes, "mime_type": mime_type}],
+                return_error_text=False,
+            )
+
+        if client is None:
+            if resolved_api_format == "gemini" and resolved_api_key:
+                client = self._create_client_with_key(resolved_api_key)
+            else:
+                log.error(
+                    "generate_text_with_image 缺少可用客户端或 OpenAI 兼容配置: "
+                    "api_format=%s, api_url=%s, has_key=%s",
+                    resolved_api_format,
+                    bool(resolved_api_url),
+                    bool(resolved_api_key),
+                )
+                return None
 
         request_contents: List[Any] = [prompt]
         try:
@@ -4602,7 +4653,7 @@ class GeminiService:
         )
 
         response = await client.aio.models.generate_content(
-            model=self.default_model_name, contents=request_contents, config=gen_config
+            model=final_model_name, contents=request_contents, config=gen_config
         )
 
         if response.parts:
@@ -4621,21 +4672,15 @@ class GeminiService:
     ) -> Optional[str]:
         """
         专用于生成忏悔回应的方法。
-        优先使用 Dashboard 中配置的自定义 API URL 和 Key，
-        如果未配置则回退到官方 API 密钥池。
+        统一复用 generate_simple_response，使 Dashboard 的 OpenAI 兼容格式配置
+        对忏悔功能同样生效，避免误入旧 Gemini SDK 密钥轮换。
         """
-        # 检查是否有 Dashboard 配置的自定义端点
-        global_api_url = getattr(app_config, '_db_api_url', None)
-        global_api_key = getattr(app_config, '_db_api_key', None)
-        
-        if global_api_url and global_api_key:
-            # 使用 Dashboard 配置的自定义端点
-            log.info(f"忏悔功能: 使用 Dashboard 配置的自定义端点: {global_api_url[:30]}...")
-            return await self._generate_confession_with_custom_endpoint(prompt, global_api_url, global_api_key)
-        else:
-            # 回退到官方 API 密钥池
-            log.info("忏悔功能: 使用官方 API 密钥池")
-            return await self._generate_confession_with_official_api(prompt)
+        return await self.generate_simple_response(
+            prompt=prompt,
+            generation_config=app_config.GEMINI_CONFESSION_GEN_CONFIG.copy(),
+            model_name=self.default_model_name,
+            return_error_text=False,
+        )
     
     async def _generate_confession_with_custom_endpoint(
         self, prompt: str, api_url: str, api_key: str
