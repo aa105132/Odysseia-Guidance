@@ -20,3 +20,8 @@ def test_feeding_prompt_requires_specific_food_details():
     assert "具体食物名称和视觉细节" in text
     assert "不能只写“食物/料理/投喂”" in text
 
+def test_feeding_passes_discord_attachment_url_to_vision_model():
+    text = Path("src", "chat", "features", "affection", "cogs", "feeding_cog.py").read_text(encoding="utf-8")
+
+    assert "image_url=image.url" in text
+

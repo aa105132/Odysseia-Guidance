@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import base64
+import io
 import copy
 import os
 import sys
@@ -8,6 +10,7 @@ import types
 from unittest.mock import MagicMock
 
 import pytest
+from PIL import Image
 
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -338,6 +341,48 @@ class _SuccessResponse:
 
 
 
+def test_openai_image_content_parts_normalizes_real_images_for_vision():
+    buffer = io.BytesIO()
+    image = Image.new("RGB", (2600, 1800), "white")
+    image.save(buffer, format="PNG")
+
+    parts = GeminiService._build_openai_image_content_parts(
+        [{"data": buffer.getvalue(), "mime_type": "image/png"}]
+    )
+
+    assert len(parts) == 1
+    image_url = parts[0]["image_url"]
+    assert image_url["url"].startswith("data:image/jpeg;base64,")
+    assert image_url["detail"] == "high"
+
+    decoded = base64.b64decode(image_url["url"].split(",", 1)[1])
+    with Image.open(io.BytesIO(decoded)) as normalized_image:
+        assert normalized_image.format == "JPEG"
+        assert max(normalized_image.size) <= 2048
+
+
+def test_openai_image_content_parts_prefers_public_image_url():
+    parts = GeminiService._build_openai_image_content_parts(
+        [
+            {
+                "url": "https://cdn.discordapp.com/attachments/1/2/food.png",
+                "data": b"not-a-real-image",
+                "mime_type": "image/png",
+            }
+        ]
+    )
+
+    assert parts == [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "https://cdn.discordapp.com/attachments/1/2/food.png",
+                "detail": "high",
+            },
+        }
+    ]
+
+
 def test_generate_text_with_image_openai_uses_current_model_and_sends_image(monkeypatch):
     service = GeminiService()
     captured_payloads = []
@@ -395,6 +440,139 @@ def test_generate_text_with_image_openai_uses_current_model_and_sends_image(monk
     assert content[0]["type"] == "text"
     assert content[1]["type"] == "image_url"
     assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_generate_text_with_image_sends_url_and_base64_together(monkeypatch):
+    service = GeminiService()
+    captured_payloads = []
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (10, 10), "white").save(buffer, format="PNG")
+
+    class _FakeResponse:
+        status = 200
+        headers = {"Content-Type": "application/json"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def text(self):
+            import json
+
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "看到了，是草莓蛋糕<affection:+1;coins:+1>",
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, headers=None, json=None, timeout=None):
+            captured_payloads.append(copy.deepcopy(json))
+            return _FakeResponse()
+
+    module = sys.modules["src.chat.services.gemini_service"]
+    monkeypatch.setattr(module.aiohttp, "ClientSession", lambda: _FakeSession())
+    monkeypatch.setattr(module.app_config, "_db_api_format", "openai", raising=False)
+    monkeypatch.setattr(module.app_config, "_db_api_url", "https://example.com/v1", raising=False)
+    monkeypatch.setattr(module.app_config, "_db_api_key", "test-key", raising=False)
+    monkeypatch.setattr(module.app_config, "GEMINI_MODEL", "grok-4.20", raising=False)
+    monkeypatch.setitem(module.app_config.PROMPT_CONFIG, "model", "grok-4.20")
+
+    result = asyncio.run(
+        service.generate_text_with_image(
+            prompt="请评价这张投喂图片",
+            image_bytes=buffer.getvalue(),
+            mime_type="image/png",
+            image_url="https://cdn.discordapp.com/attachments/1/2/food.png",
+        )
+    )
+
+    assert result.startswith("看到了，是草莓蛋糕")
+    assert len(captured_payloads) == 1
+    content = captured_payloads[0]["messages"][-1]["content"]
+    image_urls = [part["image_url"]["url"] for part in content if part["type"] == "image_url"]
+    assert image_urls[0] == "https://cdn.discordapp.com/attachments/1/2/food.png"
+    assert image_urls[1].startswith("data:image/jpeg;base64,")
+
+
+def test_generate_text_with_image_returns_none_when_model_still_misses_image(monkeypatch):
+    service = GeminiService()
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (10, 10), "white").save(buffer, format="PNG")
+
+    class _FakeResponse:
+        status = 200
+        headers = {"Content-Type": "application/json"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def text(self):
+            import json
+
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "<image_missing>",
+                            }
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, headers=None, json=None, timeout=None):
+            return _FakeResponse()
+
+    module = sys.modules["src.chat.services.gemini_service"]
+    monkeypatch.setattr(module.aiohttp, "ClientSession", lambda: _FakeSession())
+    monkeypatch.setattr(module.app_config, "_db_api_format", "openai", raising=False)
+    monkeypatch.setattr(module.app_config, "_db_api_url", "https://example.com/v1", raising=False)
+    monkeypatch.setattr(module.app_config, "_db_api_key", "test-key", raising=False)
+    monkeypatch.setattr(module.app_config, "GEMINI_MODEL", "grok-4.20", raising=False)
+    monkeypatch.setitem(module.app_config.PROMPT_CONFIG, "model", "grok-4.20")
+
+    result = asyncio.run(
+        service.generate_text_with_image(
+            prompt="请评价这张投喂图片",
+            image_bytes=buffer.getvalue(),
+            mime_type="image/png",
+            image_url="https://cdn.discordapp.com/attachments/1/2/food.png",
+        )
+    )
+
+    assert result is None
 
 
 def test_openai_compat_request_retries_after_connection_refused(monkeypatch):

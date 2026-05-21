@@ -1023,6 +1023,33 @@ class GeminiService:
         return self.default_model_name
 
     @staticmethod
+    def _looks_like_vision_missing_response(response_text: Optional[str]) -> bool:
+        """判断模型回复是否像是没有实际看到随请求发送的图片。"""
+        if not response_text:
+            return False
+
+        normalized = str(response_text).strip().lower()
+        markers = (
+            "<image_missing>",
+            "image_missing",
+            "没看到图",
+            "看不到图",
+            "没有看到图",
+            "没有图片",
+            "图片呢",
+            "忘放",
+            "空空如也",
+            "空气",
+            "真正的美食图片",
+            "发出来",
+            "no image",
+            "can't see",
+            "cannot see",
+            "empty plate",
+        )
+        return any(marker in normalized for marker in markers)
+
+    @staticmethod
     def _extract_unsupported_param_from_error(error_message: str) -> Optional[str]:
         if not error_message:
             return None
@@ -1142,7 +1169,71 @@ class GeminiService:
         return payload
 
     @staticmethod
+    def _normalize_openai_vision_image(
+        img_bytes: bytes,
+        mime_type: str,
+    ) -> tuple[bytes, str, Dict[str, Any]]:
+        """把输入图片转成 OpenAI 兼容网关更稳定识别的 JPEG。"""
+        original_size = len(img_bytes)
+        original_mime_type = str(mime_type or "image/png").strip() or "image/png"
+        max_dimension = int(
+            app_config.IMAGE_PROCESSING_CONFIG.get("OPENAI_VISION_MAX_DIMENSION", 2048)
+            or 2048
+        )
+        max_dimension = max(512, min(max_dimension, 4096))
+
+        try:
+            frames, frame_meta = extract_image_frames_for_ai(
+                image_bytes=img_bytes,
+                mime_type=original_mime_type,
+                max_gif_frames=1,
+            )
+            frame = frames[0]
+            if frame.mode not in ("RGB", "RGBA"):
+                frame = frame.convert("RGBA")
+
+            if frame.mode == "RGBA":
+                background = Image.new("RGB", frame.size, (255, 255, 255))
+                background.paste(frame, mask=frame.getchannel("A"))
+                frame = background
+            else:
+                frame = frame.convert("RGB")
+
+            if frame.width > max_dimension or frame.height > max_dimension:
+                frame.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+
+            with io.BytesIO() as output_buffer:
+                frame.save(output_buffer, format="JPEG", quality=90, optimize=True)
+                normalized_bytes = output_buffer.getvalue()
+
+            meta = {
+                "normalized": True,
+                "original_size": original_size,
+                "normalized_size": len(normalized_bytes),
+                "original_mime_type": original_mime_type,
+                "mime_type": "image/jpeg",
+                "width": frame.width,
+                "height": frame.height,
+                "source_format": frame_meta.get("source_format"),
+            }
+            return normalized_bytes, "image/jpeg", meta
+        except Exception as exc:
+            log.warning(
+                "OpenAI 视觉图片规范化失败，将回退原始图片: %s",
+                exc,
+                exc_info=True,
+            )
+            return img_bytes, original_mime_type, {
+                "normalized": False,
+                "original_size": original_size,
+                "normalized_size": original_size,
+                "original_mime_type": original_mime_type,
+                "mime_type": original_mime_type,
+            }
+
+    @classmethod
     def _build_openai_image_content_parts(
+        cls,
         images: Optional[List[Dict[str, Any]]],
     ) -> List[Dict[str, Any]]:
         """构建 OpenAI 兼容消息中的图片 content parts。"""
@@ -1154,19 +1245,55 @@ class GeminiService:
 
         for img_data in images[:max_images]:
             try:
+                direct_url = str(
+                    img_data.get("url") or img_data.get("image_url") or ""
+                ).strip()
+                if direct_url:
+                    parsed_url = urlparse(direct_url)
+                    if direct_url.startswith("data:image") or parsed_url.scheme in {"http", "https"}:
+                        parts.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": direct_url,
+                                    "detail": "high",
+                                },
+                            }
+                        )
+                        log.info(
+                            "已构建 OpenAI 视觉图片 URL part: scheme=%s, host=%s",
+                            parsed_url.scheme or "data",
+                            parsed_url.netloc or "inline",
+                        )
+                        continue
+                    log.warning("OpenAI 视觉图片 URL 格式不支持，尝试回退字节数据。")
+
                 img_bytes = img_data.get("data") or img_data.get("bytes")
                 if not img_bytes:
                     continue
 
                 mime_type = str(img_data.get("mime_type") or "image/png").strip() or "image/png"
-                img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+                vision_bytes, vision_mime_type, image_meta = cls._normalize_openai_vision_image(
+                    img_bytes=img_bytes,
+                    mime_type=mime_type,
+                )
+                img_base64 = base64.b64encode(vision_bytes).decode("utf-8")
                 parts.append(
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:{mime_type};base64,{img_base64}"
+                            "url": f"data:{vision_mime_type};base64,{img_base64}",
+                            "detail": "high",
                         },
                     }
+                )
+                log.info(
+                    "已构建 OpenAI 视觉图片 part: mime=%s -> %s, size=%s -> %s, normalized=%s",
+                    image_meta.get("original_mime_type"),
+                    image_meta.get("mime_type"),
+                    image_meta.get("original_size"),
+                    image_meta.get("normalized_size"),
+                    image_meta.get("normalized"),
                 )
             except Exception as e:
                 log.warning(f"构建 OpenAI 图片 part 失败，已跳过该图片: {e}")
@@ -4612,7 +4739,12 @@ class GeminiService:
         return self.key_rotation_service is not None
 
     async def generate_text_with_image(
-        self, prompt: str, image_bytes: bytes, mime_type: str, client: Any = None
+        self,
+        prompt: str,
+        image_bytes: bytes,
+        mime_type: str,
+        client: Any = None,
+        image_url: Optional[str] = None,
     ) -> Optional[str]:
         """
         一个用于简单图文生成的精简方法。
@@ -4639,19 +4771,34 @@ class GeminiService:
 
         if resolved_api_format == "openai" and resolved_api_url and resolved_api_key:
             log.info(
-                "generate_text_with_image 使用 OpenAI 兼容 API: %s..., 模型: %s",
+                "generate_text_with_image 使用 OpenAI 兼容 API: %s..., 模型: %s, has_image_url=%s, image_bytes=%s",
                 str(resolved_api_url)[:30],
                 final_model_name,
+                bool(image_url),
+                len(image_bytes or b""),
             )
-            return await self._generate_simple_with_openai_compatible(
+            image_payloads = []
+            if image_url:
+                image_payloads.append({"url": image_url, "mime_type": mime_type})
+            image_payloads.append({"data": image_bytes, "mime_type": mime_type})
+
+            generated_text = await self._generate_simple_with_openai_compatible(
                 prompt=prompt,
                 generation_config=app_config.GEMINI_VISION_GEN_CONFIG.copy(),
                 model_name=final_model_name,
                 api_url=resolved_api_url,
                 api_key=resolved_api_key,
-                images=[{"data": image_bytes, "mime_type": mime_type}],
+                images=image_payloads,
                 return_error_text=False,
             )
+
+            if self._looks_like_vision_missing_response(generated_text):
+                log.warning(
+                    "OpenAI 视觉模型回复像是没有看到图片；本次投喂/图文评价将返回明确失败提示，避免误判为空盘。"
+                )
+                return None
+
+            return generated_text
 
         if client is None:
             if resolved_api_format == "gemini" and resolved_api_key:
