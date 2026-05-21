@@ -106,6 +106,53 @@ def test_generate_openai_format_keeps_grok_on_images_api(monkeypatch):
 
 
 
+
+
+def test_generate_openai_format_reference_image_uses_images_edits(monkeypatch):
+    """带参考图时应优先走 /images/edits，而不是丢图的 /images/generations。"""
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
+    service = GeminiImagenService()
+
+    async def _unexpected_generations(**kwargs):
+        raise AssertionError("带参考图的投喂生图不应走 /images/generations")
+
+    async def _unexpected_chat(**kwargs):
+        raise AssertionError("单张参考图应优先使用 /images/edits 传 image 字段")
+
+    captured = {}
+    expected = b"edited-from-reference"
+
+    async def _fake_edits(**kwargs):
+        captured.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(
+        service, "_generate_image_openai_images_api_format", _unexpected_generations
+    )
+    monkeypatch.setattr(
+        service, "_generate_image_openai_chat_completions_format", _unexpected_chat
+    )
+    monkeypatch.setattr(service, "_edit_image_openai_images_api_format", _fake_edits)
+
+    result = asyncio.run(
+        service._generate_image_openai_format(
+            prompt="银狐少女认真吃用户投喂的食物",
+            negative_prompt=None,
+            aspect_ratio="1:1",
+            number_of_images=1,
+            model_name="grok-imagine-1.0",
+            reference_image_bytes=b"food-reference",
+            reference_image_mime="image/jpeg",
+        )
+    )
+
+    assert result == [expected]
+    assert captured["reference_images"] == [
+        {"data": b"food-reference", "mime_type": "image/jpeg"}
+    ]
+    assert "必须以参考图里的真实食物为准" in captured["edit_prompt"]
+
+
 def test_generate_openai_format_reference_image_skips_images_api(monkeypatch):
     """带参考图时不能走 /images/generations，否则参考图会被丢弃。"""
     monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")

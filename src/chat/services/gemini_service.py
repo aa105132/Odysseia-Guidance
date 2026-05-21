@@ -829,7 +829,7 @@ class GeminiService:
                 {
                     "type": "text",
                     "text": (
-                        f"已获取用户头像{identity_hint}。"
+                        f"已获取用户头像参考图{identity_hint}。"
                         "如果还需要获取其他人的头像，继续调用 get_user_avatar；"
                         "全部头像获取完毕后立即开始画图，不要再做多余的查询。"
                     ),
@@ -1002,6 +1002,25 @@ class GeminiService:
             if isinstance(model_name, str) and 'nothinking' in model_name.lower():
                 return True
         return False
+
+    def _get_current_model_name(self) -> str:
+        """读取当前生效模型，避免长期存活的 Service 继续使用启动时旧模型。"""
+        prompt_config_model = None
+        prompt_config = getattr(app_config, "PROMPT_CONFIG", None)
+        if isinstance(prompt_config, dict):
+            prompt_config_model = prompt_config.get("model")
+
+        for candidate in (
+            getattr(app_config, "_db_model", None),
+            prompt_config_model,
+            getattr(app_config, "GEMINI_MODEL", None),
+            self.default_model_name,
+        ):
+            candidate_text = str(candidate or "").strip()
+            if candidate_text:
+                return candidate_text
+
+        return self.default_model_name
 
     @staticmethod
     def _extract_unsupported_param_from_error(error_message: str) -> Optional[str]:
@@ -3460,16 +3479,26 @@ class GeminiService:
                                     current_turn_tool_names=current_turn_tool_names,
                                 )
                         else:
-                            executed_tool_signatures.add(call_signature)
-                            executed_new_tool_in_this_turn = True
-                            tool_result = await self._execute_openai_tool_call(
-                                tool_name=tool_name,
-                                tool_args=tool_args,
-                                channel=channel,
-                                user_id=user_id,
-                                discord_message=discord_message,
-                                current_turn_tool_names=current_turn_tool_names,
-                            )
+                            if call_signature in executed_tool_signatures:
+                                blocked_tool_call_in_this_turn = True
+                                log.warning(
+                                    f"OpenAI 工具循环中检测到重复工具参数，已拦截：{tool_name}"
+                                )
+                                tool_result = self._build_duplicate_tool_call_skip_message(
+                                    tool_name,
+                                    "检测到相同参数的重复工具请求。",
+                                )
+                            else:
+                                executed_tool_signatures.add(call_signature)
+                                executed_new_tool_in_this_turn = True
+                                tool_result = await self._execute_openai_tool_call(
+                                    tool_name=tool_name,
+                                    tool_args=tool_args,
+                                    channel=channel,
+                                    user_id=user_id,
+                                    discord_message=discord_message,
+                                    current_turn_tool_names=current_turn_tool_names,
+                                )
 
                         # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
                         if tool_name == "web_search" and web_search_executed and discord_message:
@@ -3573,6 +3602,27 @@ class GeminiService:
 
                 # 没有工具调用，返回最终响应
                 raw_response = message_response.get("content", "")
+                if not str(raw_response or "").strip():
+                    finish_reason = choice.get("finish_reason")
+                    usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+                    usage_summary = (
+                        f"usage={{prompt_tokens={usage.get('prompt_tokens')}, "
+                        f"completion_tokens={usage.get('completion_tokens')}, "
+                        f"total_tokens={usage.get('total_tokens')}}}"
+                    )
+                    if iteration_tools:
+                        log.warning(
+                            "OpenAI 兼容 API 返回空文本且没有工具调用；"
+                            f"finish_reason={finish_reason}, {usage_summary}。"
+                            "将禁用工具补发一次纯文本请求。"
+                        )
+                        force_text_response_without_tools = True
+                        continue
+                    log.warning(
+                        "OpenAI 兼容 API 无工具请求仍返回空文本；"
+                        f"finish_reason={finish_reason}, {usage_summary}。"
+                    )
+                    return "呜…上游这次返回了空内容，没有吐出能发送的回复；再问一次试试？"
 
                 # 记录调用的工具
                 if called_tool_names:
@@ -4585,7 +4635,7 @@ class GeminiService:
                 for marker in ("generativelanguage.googleapis.com", "aiplatform.googleapis.com", "/v1beta")
             )
             resolved_api_format = "gemini" if is_gemini_url else "openai"
-        final_model_name = self.default_model_name
+        final_model_name = self._get_current_model_name()
 
         if resolved_api_format == "openai" and resolved_api_url and resolved_api_key:
             log.info(

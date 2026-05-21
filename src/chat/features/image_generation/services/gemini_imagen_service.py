@@ -979,9 +979,48 @@ class GeminiImagenService:
             mode_override=openai_image_api_mode,
         )
         if reference_image_bytes and resolved_mode == "images_api":
-            log.info(
-                "检测到参考图，/images/generations 无法携带参考图，"
-                "已切换到 chat/completions 多模态路由。"
+            base_edit_prompt = self._build_openai_image_prompt(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                aspect_ratio=None,
+            )
+            edit_prompt = (
+                "必须以参考图里的真实食物为准，保留食物的主要外观、颜色、摆盘和份量；"
+                "不要凭空改成空盘、甜点或其他食物。\n"
+                f"{base_edit_prompt}"
+            )
+            try:
+                edited_image = await self._edit_image_openai_images_api_format(
+                    reference_images=[
+                        {
+                            "data": reference_image_bytes,
+                            "mime_type": reference_image_mime,
+                        }
+                    ],
+                    edit_prompt=edit_prompt,
+                    aspect_ratio=aspect_ratio,
+                    model_name=model_name,
+                    openai_image_size=openai_image_size,
+                    openai_response_format=openai_response_format,
+                    # 参考图必须真实进入 multipart image 字段，先禁用流式避免网关丢图。
+                    openai_stream=False,
+                    openai_quality=openai_quality,
+                    openai_style=openai_style,
+                )
+            except Exception as exc:
+                log.warning(
+                    "OpenAI /images/edits 参考图路由异常，将按配置决定是否回退: %s",
+                    exc,
+                    exc_info=True,
+                )
+                edited_image = None
+            if edited_image:
+                return [edited_image]
+            if self._normalize_openai_image_api_mode(openai_image_api_mode) != "auto":
+                return None
+            log.warning(
+                "OpenAI /images/edits 参考图路由未拿到结果，"
+                "回退到 chat/completions 多模态路由再试一次。"
             )
             resolved_mode = "chat_completions"
 

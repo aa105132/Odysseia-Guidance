@@ -336,6 +336,67 @@ class _SuccessResponse:
         return self._body
 
 
+
+
+def test_generate_text_with_image_openai_uses_current_model_and_sends_image(monkeypatch):
+    service = GeminiService()
+    captured_payloads = []
+    encoded = "5Zu+54mH5bey5pS25Yiw"
+
+    class _FakeResponse:
+        status = 200
+        headers = {"Content-Type": "application/json"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def text(self):
+            return (
+                '{"choices":[{"message":{"role":"assistant",'
+                '"content":"看到了，是一盘菜<affection:+1;coins:+1>"}}]}'
+            )
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, headers=None, json=None, timeout=None):
+            captured_payloads.append(copy.deepcopy(json))
+            return _FakeResponse()
+
+    module = sys.modules["src.chat.services.gemini_service"]
+    monkeypatch.setattr(module.aiohttp, "ClientSession", lambda: _FakeSession())
+    monkeypatch.setattr(module.app_config, "_db_api_format", "openai", raising=False)
+    monkeypatch.setattr(module.app_config, "_db_api_url", "https://example.com/v1", raising=False)
+    monkeypatch.setattr(module.app_config, "_db_api_key", "test-key", raising=False)
+    monkeypatch.setattr(module.app_config, "GEMINI_MODEL", "grok-4.20", raising=False)
+    monkeypatch.setitem(module.app_config.PROMPT_CONFIG, "model", "grok-4.20")
+
+    result = asyncio.run(
+        service.generate_text_with_image(
+            prompt="请评价这张投喂图片",
+            image_bytes=encoded.encode("utf-8"),
+            mime_type="image/jpeg",
+        )
+    )
+
+    assert result.startswith("看到了，是一盘菜")
+    assert captured_payloads
+    payload = captured_payloads[0]
+    assert payload["model"] == "grok-4.20"
+    content = payload["messages"][-1]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
 def test_openai_compat_request_retries_after_connection_refused(monkeypatch):
     service = GeminiService()
     events = [
@@ -418,6 +479,30 @@ def test_openai_compat_request_failure_message_contains_attempts(monkeypatch):
 
     assert "after 1/1 attempts" in str(exc_info.value)
 
+
+
+
+def test_openai_decode_accepts_direct_empty_usage_response():
+    service = GeminiService()
+
+    result = service._decode_openai_chat_completion_response(
+        response_text=(
+            '{"id":"chatcmpl-empty","object":"chat.completion",'
+            '"choices":[{"index":0,"message":{"role":"assistant","content":""},'
+            '"finish_reason":"stop"}],"usage":{"prompt_tokens":0,'
+            '"completion_tokens":0,"total_tokens":0}}'
+        ),
+        content_type="application/json",
+        log_prefix="OpenAI compat empty usage test",
+    )
+
+    assert result["choices"][0]["message"]["content"] == ""
+    assert result["choices"][0]["finish_reason"] == "stop"
+    assert result["usage"] == {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
 
 def test_openai_compat_request_auto_parses_sse_text_chunks(monkeypatch):
     service = GeminiService()
@@ -506,6 +591,91 @@ def test_openai_compat_request_auto_parses_sse_tool_calls(monkeypatch):
     assert tool_call["function"]["name"] == "web_search"
     assert tool_call["function"]["arguments"] == '{"q":"hello"}'
     assert result["choices"][0]["finish_reason"] == "tool_calls"
+
+
+
+
+def test_openai_tool_loop_retries_empty_assistant_content_without_tools(monkeypatch):
+    service = GeminiService()
+    captured_payloads = []
+    responses = iter(
+        [
+            {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": ""},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                },
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "可以，我来教你下载小说工具。",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 8,
+                    "total_tokens": 18,
+                },
+            },
+        ]
+    )
+
+    async def _fake_load_context(_user_id):
+        return None
+
+    async def _fake_post_openai_chat_completion_with_fallback(**kwargs):
+        captured_payloads.append(copy.deepcopy(kwargs["payload"]))
+        return next(responses)
+
+    async def _fake_post_process_response(raw_response, user_id, guild_id):
+        return raw_response
+
+    monkeypatch.setattr(service, "_load_novelai_preset_context", _fake_load_context)
+    monkeypatch.setattr(service, "_load_comfyui_choice_context", _fake_load_context)
+    monkeypatch.setattr(
+        service,
+        "_convert_tools_to_openai_format",
+        lambda *_args, **_kwargs: [{"type": "function", "function": {"name": "web_search"}}],
+    )
+    monkeypatch.setattr(
+        service,
+        "_post_openai_chat_completion_with_fallback",
+        _fake_post_openai_chat_completion_with_fallback,
+    )
+    monkeypatch.setattr(service, "_post_process_response", _fake_post_process_response)
+    monkeypatch.setattr(
+        sys.modules["src.chat.services.gemini_service"].prompt_service,
+        "build_chat_prompt",
+        lambda **kwargs: [{"role": "user", "parts": [kwargs["message"]]}],
+    )
+
+    result = asyncio.run(
+        service._generate_with_openai_compatible(
+            user_id=1,
+            guild_id=1,
+            message="快教我怎么下载小说工具",
+            model_name="grok-4.20-beta",
+            api_url="https://example.com/v1",
+            api_key="test-key",
+        )
+    )
+
+    assert result == "可以，我来教你下载小说工具。"
+    assert len(captured_payloads) == 2
+    assert "tools" in captured_payloads[0]
+    assert "tools" not in captured_payloads[1]
 
 
 def test_openai_tool_loop_skips_duplicate_web_fetch(monkeypatch):
