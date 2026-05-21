@@ -17,11 +17,29 @@ def test_feeding_prompt_requires_specific_food_details():
     text = Path("src", "chat", "config", "chat_config.py").read_text(encoding="utf-8")
 
     assert "不要凭空说盘子空空如也" in text
-    assert "具体食物名称和视觉细节" in text
+    assert "具体食物名称或非食物主体及视觉细节" in text
     assert "不能只写“食物/料理/投喂”" in text
 
 def test_feeding_passes_discord_attachment_url_to_vision_model():
     text = Path("src", "chat", "features", "affection", "cogs", "feeding_cog.py").read_text(encoding="utf-8")
 
     assert "image_url=image.url" in text
+
+def test_feeding_imagen_runs_even_without_model_image_prompt():
+    text = Path("src", "chat", "features", "affection", "cogs", "feeding_cog.py").read_text(encoding="utf-8")
+
+    condition_start = text.index('if (', text.index('# AI 绘图'))
+    condition_end = text.index('):', condition_start)
+    condition = text[condition_start:condition_end]
+
+    assert 'and image_prompt_text' not in condition
+    assert 'fallback_image_prompt_text' in text
+    assert 'image_prompt_text or fallback_image_prompt_text' in text
+
+
+def test_feeding_prompt_requires_image_prompt_for_non_food_too():
+    text = Path("src", "chat", "config", "chat_config.py").read_text(encoding="utf-8")
+
+    assert "不管图片是不是食物" in text
+    assert "必须输出`<image_prompt:" in text
 

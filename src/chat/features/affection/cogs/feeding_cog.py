@@ -124,16 +124,24 @@ class FeedingCog(commands.Cog):
                 affection_gain = int(match.group(2))
                 coin_gain = int(match.group(3))
 
-            # AI 绘图：月月与食物互动的画面
+            # AI 绘图：月月与投喂图片互动的画面。即使图片不是食物，也由月月自己决定互动方式。
+            fallback_image_prompt_text = (
+                "银白色长发扎成高马尾的可爱银狐少女月月正在认真观察用户投喂的参考图片，"
+                "左眼淡绿色右眼淡蓝色异色瞳，白皙肤色，毛茸茸的白色狐耳内侧粉色，"
+                "银白色蓬松大尾巴，马尾处插着银色月牙发簪，两侧戴着细微尖三角形耳坠。"
+                "请以参考图内容为核心道具或画面主题：如果是食物就吃掉或评价；"
+                "如果不是食物，就吐槽、研究、摆弄、举起来展示或用可爱的方式互动。"
+                "Q版风格，温暖明亮，画面里要能看出参考图的主要元素。"
+            )
+            effective_image_prompt_text = image_prompt_text or fallback_image_prompt_text
             generated_image_bytes = None
             if (
                 FEEDING_CONFIG.get("IMAGEN_ENABLED")
-                and image_prompt_text
                 and gemini_imagen_service.is_available()
             ):
                 try:
                     generated_image_bytes = await gemini_imagen_service.generate_single_image(
-                        prompt=image_prompt_text,
+                        prompt=effective_image_prompt_text,
                         aspect_ratio="1:1",
                         reference_image_bytes=image_bytes,
                         reference_image_mime=image.content_type,
