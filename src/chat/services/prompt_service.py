@@ -272,6 +272,55 @@ class PromptService:
 
         return prompt_template
 
+    def _format_recent_chat_history(
+        self,
+        history: List[Dict[str, Any]],
+        user_name: str,
+    ) -> Optional[str]:
+        """将最近聊天历史格式化为稳定的 <recent_chat> 上下文块。"""
+        if not history:
+            return None
+
+        beijing_tz = timezone(timedelta(hours=8))
+        lines: List[str] = []
+
+        for msg in history:
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role") or "unknown")
+            parts = msg.get("parts", [])
+            if isinstance(parts, list):
+                text = " ".join(str(p) for p in parts if isinstance(p, (str, int, float, bool)))
+            else:
+                text = str(parts or "")
+            text = text.strip()
+            if not text:
+                continue
+
+            time_str = ""
+            ts = msg.get("timestamp")
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    time_str = f"[{dt.astimezone(beijing_tz).strftime('%H:%M')}] "
+                except (AttributeError, TypeError, ValueError):
+                    pass
+
+            speaker = user_name if role == "user" else "月月"
+            lines.append(f"{time_str}{speaker}: {text}")
+
+        if not lines:
+            return None
+
+        return (
+            f'<recent_chat user="{user_name}">\n'
+            f"这是你和 {user_name} 最近的对话记录：\n"
+            + "\n".join(lines)
+            + "\n</recent_chat>"
+        )
+
     def build_chat_prompt(
         self,
         user_name: str,
@@ -289,6 +338,7 @@ class PromptService:
         channel: Optional[Any] = None,  # 新增 channel 参数
         user_id: Optional[int] = None,  # 新增 user_id 参数用于用户识别
         thread_first_post_context: Optional[str] = None,
+        recent_chat_history: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """
         构建用于AI聊天的分层对话历史。
@@ -427,6 +477,15 @@ class PromptService:
                 }
             )
             final_conversation.append({"role": "model", "parts": ["这事我知道了"]})
+
+        # --- 3. 最近聊天历史注入（好感度与频道历史之前） ---
+        if recent_chat_history:
+            recent_chat_text = self._format_recent_chat_history(
+                recent_chat_history, user_name
+            )
+            if recent_chat_text:
+                final_conversation.append({"role": "user", "parts": [recent_chat_text]})
+                final_conversation.append({"role": "model", "parts": ["我记得了"]})
 
         # --- 3. 频道历史上下文注入 ---
         if channel_context:

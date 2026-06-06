@@ -167,6 +167,15 @@ class ChatService:
                 )
 
             # --- 新增：集中获取仍需直接进入 prompt 的轻量上下文 ---
+            recent_chat_history = None
+            if user_profile_data:
+                try:
+                    recent_chat_history = await personal_memory_service.get_recent_chat_history(
+                        author.id, limit=10
+                    )
+                except Exception as hist_error:
+                    log.error(f"获取用户 {author.id} 最近聊天历史失败: {hist_error}")
+
             affection_status = await affection_service.get_affection_status(author.id)
 
             # 3. --- 好感度与奖励更新（前置） ---
@@ -236,6 +245,7 @@ class ChatService:
                 discord_message=message,  # 传递Discord Message对象，用于工具调用时添加反应
                 user_id_for_settings=user_id_for_settings,  # 传递用于工具设置的用户ID
                 fallback_query=rag_query,  # 供 gather_context 工具无 query 时使用
+                recent_chat_history=recent_chat_history,
             )
 
             if not ai_response:
