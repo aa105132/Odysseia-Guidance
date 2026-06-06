@@ -89,6 +89,9 @@ class ToolService:
         message: Optional[discord.Message] = None,
         user_id_for_settings: Optional[str] = None,
         current_turn_tool_names: Optional[List[str]] = None,
+        user_name: Optional[str] = None,
+        fallback_query: Optional[str] = None,
+        channel_context: Optional[List[Dict[str, Any]]] = None,
     ) -> types.Part:
         """
         执行单个工具调用，并以可发送回 Gemini 模型的格式返回结果。
@@ -101,6 +104,9 @@ class ToolService:
             log_detailed: 是否记录详细日志。
             user_id_for_settings: 用于检查工具设置的用户ID（通常是帖子所有者的ID）。
             current_turn_tool_names: 当前这轮模型计划执行的工具名列表。
+            user_name: 当前消息作者的显示名，供上下文工具使用。
+            fallback_query: 当前消息合并回复内容后的备用检索词。
+            channel_context: 已格式化的频道历史，供知识库查询重写使用。
 
         Returns:
             一个格式化为 FunctionResponse 的 Part 对象，其中包含工具的输出。
@@ -205,6 +211,23 @@ class ToolService:
                     tool_args["thread_id"] = channel.id
                     if log_detailed:
                         log.info(f"检测到帖子上下文，已注入 'thread_id': {channel.id}")
+
+            if user_name is not None:
+                tool_args["user_name"] = user_name
+                if log_detailed:
+                    log.info(f"已注入 'user_name': {user_name}")
+
+            if fallback_query is not None:
+                tool_args["fallback_query"] = fallback_query
+                if log_detailed:
+                    log.info("已注入 'fallback_query'。")
+
+            if channel_context is not None:
+                tool_args["channel_context"] = channel_context
+                if log_detailed:
+                    log.info(
+                        f"已注入 'channel_context'，长度: {len(channel_context)}"
+                    )
 
             # 注入 message 对象（用于添加反应等）
             if message:

@@ -124,10 +124,6 @@ class ChatService:
         user_profile_data = await world_book_service.get_profile_by_discord_id(
             author.id
         )
-        personal_summary = None
-        if user_profile_data:
-            personal_summary = user_profile_data.get("personal_summary")
-
         user_content = processed_data["user_content"]
         replied_content = processed_data["replied_content"]
         image_data_list = processed_data["image_data_list"]
@@ -153,17 +149,24 @@ class ChatService:
                 # replied_content 已包含 "> [回复 xxx]:" 等格式
                 rag_query = f"{replied_content}\n{user_content}"
 
-            log.info(f"为 RAG 搜索生成的查询: '{rag_query}'")
+            log.info(f"为 gather_context 工具准备的备用检索查询: '{rag_query}'")
 
-            world_book_entries = await world_book_service.find_entries(
-                latest_query=rag_query,  # 使用合并后的查询
-                user_id=author.id,
-                guild_id=guild_id,
-                user_name=author.display_name,
-                conversation_history=channel_context,
-            )
+            # 确保短期对话块在模型工具检索前已存在。
+            # 该调用只有状态准备副作用，不再把动态记忆直接注入 prompt。
+            try:
+                await personal_memory_service.check_and_create_block_before_reply(
+                    user_id=author.id
+                )
+            except AttributeError:
+                # 当前 PersonalMemoryService 版本尚无独立块创建逻辑，短期历史会由工具读取现有 profile.history。
+                log.debug("PersonalMemoryService 暂未实现 check_and_create_block_before_reply，已跳过。")
+            except Exception as block_error:
+                log.error(
+                    f"创建用户 {author.id} 的对话块时出错，已跳过本次块预创建: {block_error}",
+                    exc_info=True,
+                )
 
-            # --- 新增：集中获取所有上下文数据 ---
+            # --- 新增：集中获取仍需直接进入 prompt 的轻量上下文 ---
             affection_status = await affection_service.get_affection_status(author.id)
 
             # 3. --- 好感度与奖励更新（前置） ---
@@ -223,8 +226,8 @@ class ChatService:
                 images=image_data_list if image_data_list else None,
                 user_name=author.display_name,
                 channel_context=channel_context,
-                world_book_entries=world_book_entries,
-                personal_summary=personal_summary,
+                world_book_entries=None,
+                personal_summary=None,
                 affection_status=affection_status,
                 user_profile_data=user_profile_data,
                 guild_name=guild_name,
@@ -232,6 +235,7 @@ class ChatService:
                 model_name=current_model,  # 传递模型名称
                 discord_message=message,  # 传递Discord Message对象，用于工具调用时添加反应
                 user_id_for_settings=user_id_for_settings,  # 传递用于工具设置的用户ID
+                fallback_query=rag_query,  # 供 gather_context 工具无 query 时使用
             )
 
             if not ai_response:

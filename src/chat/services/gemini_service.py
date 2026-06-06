@@ -1875,6 +1875,7 @@ class GeminiService:
         model_name: Optional[str] = None,
         discord_message: Optional[Any] = None,  # Discord Message对象，用于工具调用时添加反应
         user_id_for_settings: Optional[str] = None,
+        fallback_query: Optional[str] = None,
     ) -> str:
         """
         AI 回复生成的分发器。
@@ -1902,6 +1903,7 @@ class GeminiService:
                         model_name=model_name,
                         discord_message=discord_message,
                         user_id_for_settings=user_id_for_settings,
+                        fallback_query=fallback_query,
                     ),
                     timeout=total_timeout,
                 )
@@ -1929,6 +1931,7 @@ class GeminiService:
             model_name=model_name,
             discord_message=discord_message,
             user_id_for_settings=user_id_for_settings,
+            fallback_query=fallback_query,
         )
 
     async def _generate_response_impl(
@@ -1950,6 +1953,7 @@ class GeminiService:
         model_name: Optional[str] = None,
         discord_message: Optional[Any] = None,  # Discord Message对象，用于工具调用时添加反应
         user_id_for_settings: Optional[str] = None,
+        fallback_query: Optional[str] = None,
     ) -> str:
         """generate_response 的实现。被 asyncio.wait_for 包裹以实现总超时。"""
         self._reset_last_tool_outputs()
@@ -2014,6 +2018,7 @@ class GeminiService:
                 model_name=direct_model_name,
                 discord_message=discord_message,
                 user_id_for_settings=user_id_for_settings,
+                fallback_query=fallback_query,
             )
 
         if use_custom_endpoint:
@@ -2043,6 +2048,7 @@ class GeminiService:
                         model_name=model_name,
                         discord_message=discord_message,
                         user_id_for_settings=user_id_for_settings,
+                        fallback_query=fallback_query,
                     )
                 except Exception as e:
                     last_exception = e
@@ -2078,6 +2084,7 @@ class GeminiService:
                     model_name=fallback_model_name,
                     discord_message=discord_message,
                     user_id_for_settings=user_id_for_settings,
+                    fallback_query=fallback_query,
                 )
 
             log.warning(
@@ -2104,6 +2111,7 @@ class GeminiService:
                 model_name=fallback_model_name,  # 关键：使用固定的回退模型
                 discord_message=discord_message,
                 user_id_for_settings=user_id_for_settings,
+                fallback_query=fallback_query,
             )
 
         # 对于非自定义模型或回退失败后的默认路径
@@ -2128,6 +2136,7 @@ class GeminiService:
             model_name=model_name,
             discord_message=discord_message,
             user_id_for_settings=user_id_for_settings,
+            fallback_query=fallback_query,
         )
 
     async def _generate_with_custom_endpoint(
@@ -2149,6 +2158,7 @@ class GeminiService:
         model_name: Optional[str] = None,
         discord_message: Optional[Any] = None,
         user_id_for_settings: Optional[str] = None,
+        fallback_query: Optional[str] = None,
     ) -> str:
         """
         [新增] 使用自定义端点 (例如公益站) 生成 AI 回复。
@@ -2224,6 +2234,7 @@ class GeminiService:
                 discord_message=discord_message,
                 api_url=endpoint_config["base_url"],
                 api_key=endpoint_config["api_key"],
+                fallback_query=fallback_query,
             )
         
         # Gemini 格式：使用 Gemini SDK
@@ -2340,6 +2351,7 @@ class GeminiService:
             client=client,
             discord_message=discord_message,
             user_id_for_settings=user_id_for_settings,
+            fallback_query=fallback_query,
         )
 
     @_api_key_handler
@@ -2363,6 +2375,7 @@ class GeminiService:
         client: Any = None,
         discord_message: Optional[Any] = None,
         user_id_for_settings: Optional[str] = None,
+        fallback_query: Optional[str] = None,
     ) -> str:
         """
         [重构] 使用官方 API 密钥池生成 AI 回复。
@@ -2392,6 +2405,7 @@ class GeminiService:
             client=client,
             discord_message=discord_message,
             user_id_for_settings=user_id_for_settings,
+            fallback_query=fallback_query,
         )
 
     async def _load_novelai_preset_context(self, user_id: int) -> Dict[str, List[str]]:
@@ -2590,6 +2604,7 @@ class GeminiService:
         client: Any,
         discord_message: Optional[Any] = None,
         user_id_for_settings: Optional[str] = None,
+        fallback_query: Optional[str] = None,
     ) -> str:
         """
         [新增] 核心的 AI 生成周期，包含上下文构建、工具调用循环和响应处理。
@@ -2889,6 +2904,9 @@ class GeminiService:
                         message=discord_message,
                         user_id_for_settings=user_id_for_settings,
                         current_turn_tool_names=current_turn_tool_names,
+                        user_name=user_name,
+                        fallback_query=fallback_query,
+                        channel_context=channel_context,
                     )
                 )
                 coroutine_indices.append(len(prepared_results) - 1)
@@ -3344,6 +3362,7 @@ class GeminiService:
         discord_message: Optional[Any] = None,
         api_url: str = "",
         api_key: str = "",
+        fallback_query: Optional[str] = None,
     ) -> str:
         """
         使用 OpenAI 兼容的 API 生成回复。
@@ -3604,6 +3623,9 @@ class GeminiService:
                                     user_id=user_id,
                                     discord_message=discord_message,
                                     current_turn_tool_names=current_turn_tool_names,
+                                    user_name=user_name,
+                                    fallback_query=fallback_query,
+                                    channel_context=channel_context,
                                 )
                         else:
                             if call_signature in executed_tool_signatures:
@@ -3625,6 +3647,9 @@ class GeminiService:
                                     user_id=user_id,
                                     discord_message=discord_message,
                                     current_turn_tool_names=current_turn_tool_names,
+                                    user_name=user_name,
+                                    fallback_query=fallback_query,
+                                    channel_context=channel_context,
                                 )
 
                         # web_search 执行完成，先移除 🔍 再加 ☑️ reaction
@@ -3867,6 +3892,9 @@ class GeminiService:
         user_id: Optional[int] = None,
         discord_message: Optional[Any] = None,
         current_turn_tool_names: Optional[List[str]] = None,
+        user_name: Optional[str] = None,
+        fallback_query: Optional[str] = None,
+        channel_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
         """
         执行 OpenAI 格式的工具调用。
@@ -3982,6 +4010,12 @@ class GeminiService:
                     for name in current_turn_tool_names
                     if str(name).strip()
                 ]
+            if user_name is not None:
+                tool_args["user_name"] = user_name
+            if fallback_query is not None:
+                tool_args["fallback_query"] = fallback_query
+            if channel_context is not None:
+                tool_args["channel_context"] = channel_context
             
             # 执行工具
             result = await tool_function(**tool_args)
