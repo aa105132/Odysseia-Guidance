@@ -306,3 +306,42 @@ def test_generate_video_uses_v1_video_generate_payload(monkeypatch):
         "resolution": "720p",
         "stream": True,
     }
+
+
+
+def test_extract_video_from_response_supports_nested_outputs_dict():
+    service = VideoGenerationService()
+    result = service._extract_video_from_response(
+        {
+            "id": "outer_id",
+            "status": "success",
+            "data": {
+                "id": "inner_id",
+                "status": "succeed",
+                "outputs": [
+                    {
+                        "type": "video",
+                        "url": "https://artifact.anycap.cloud/a/art_MZIrhc4k00FO0jfFLNkB",
+                        "mime_type": "video/mp4",
+                    }
+                ],
+            },
+        },
+        "url",
+    )
+
+    assert result is not None
+    assert result.url == "https://artifact.anycap.cloud/a/art_MZIrhc4k00FO0jfFLNkB"
+    assert result.post_id == "outer_id"
+
+
+def test_extract_video_from_response_supports_video_tag_src_without_extension():
+    service = VideoGenerationService()
+    html = '<video controls playsinline src="https://artifact.anycap.cloud/a/art_rRv4KNaqMqvdZyBi6LE8" style="max-width:100%;height:auto;"></video>'
+    result = service._extract_video_from_response(
+        {"choices": [{"message": {"content": html}}]},
+        "url",
+    )
+
+    assert result is not None
+    assert result.url == "https://artifact.anycap.cloud/a/art_rRv4KNaqMqvdZyBi6LE8"

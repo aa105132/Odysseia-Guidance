@@ -500,6 +500,31 @@ class VideoGenerationService:
                     if isinstance(revised_prompt, str) and revised_prompt and not text_content:
                         text_content = revised_prompt
 
+            nested_data = data.get("data")
+            if isinstance(nested_data, dict):
+                for url_key in ("url", "video_url", "download_url"):
+                    direct_url = nested_data.get(url_key)
+                    if isinstance(direct_url, str) and direct_url:
+                        video_urls.append(direct_url)
+                nested_outputs = nested_data.get("outputs")
+                if isinstance(nested_outputs, list):
+                    for item in nested_outputs:
+                        if not isinstance(item, dict):
+                            continue
+                        for url_key in ("url", "video_url", "download_url"):
+                            direct_url = item.get(url_key)
+                            if isinstance(direct_url, str) and direct_url:
+                                video_urls.append(direct_url)
+
+            if isinstance(data.get("outputs"), list):
+                for item in data["outputs"]:
+                    if not isinstance(item, dict):
+                        continue
+                    for url_key in ("url", "video_url", "download_url"):
+                        direct_url = item.get(url_key)
+                        if isinstance(direct_url, str) and direct_url:
+                            video_urls.append(direct_url)
+
             if isinstance(data.get("output"), list):
                 for item in data["output"]:
                     if not isinstance(item, dict):
@@ -549,6 +574,15 @@ class VideoGenerationService:
             return VideoResult(
                 url=video_urls[0],
                 text_response=text_content if text_content else None,
+                format_type="url",
+            )
+
+        video_src_pattern = r'<video[^>]+src=["\'](https?://[^"\']+)["\']'
+        src_matches = re.findall(video_src_pattern, text_content, re.IGNORECASE)
+        if src_matches:
+            return VideoResult(
+                url=src_matches[0],
+                text_response=text_content,
                 format_type="url",
             )
 
