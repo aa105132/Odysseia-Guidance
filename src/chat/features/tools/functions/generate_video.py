@@ -8,6 +8,7 @@
 
 import logging
 import io
+import re
 import discord
 from typing import Optional, List, Dict, Any
 
@@ -19,6 +20,52 @@ log = logging.getLogger(__name__)
 GENERATING_EMOJI = "🎬"  # 正在生成
 SUCCESS_EMOJI = "✅"      # 生成成功
 FAILED_EMOJI = "❌"       # 生成失败
+
+
+def _looks_like_english_video_prompt(prompt: str) -> bool:
+    """粗略判断视频提示词是否主要由英文短语组成。"""
+    text = str(prompt or "").strip()
+    if not text:
+        return False
+
+    ascii_words = re.findall(r"[A-Za-z]{3,}", text)
+    cjk_chars = re.findall(r"[\u4e00-\u9fff]", text)
+    if len(ascii_words) < 5:
+        return False
+
+    english_chars = sum(len(word) for word in ascii_words)
+    return english_chars >= 24 and len(cjk_chars) <= max(2, english_chars // 20)
+
+
+def _ensure_chinese_video_prompt(prompt: str, *, is_image_to_video: bool, duration: int) -> str:
+    """把明显英文的视频提示词包进中文分镜约束，避免直接把英文堆词发给上游。"""
+    original_prompt = str(prompt or "").strip()
+    if not _looks_like_english_video_prompt(original_prompt):
+        return original_prompt
+
+    normalized_duration = max(1, int(duration or 6))
+    midpoint = max(2, min(5, normalized_duration // 2))
+    ending_start = max(midpoint + 1, normalized_duration - 2)
+    style_note = "视觉风格参考：电影感、写实三维动画、手持跟拍记录感。"
+
+    if is_image_to_video:
+        return (
+            "基于首帧图像生成视频：保持参考图中角色外观、服装、背景、构图和画风一致。"
+            f"{style_note}"
+            f"0-{midpoint}秒，画面从首帧稳定开始，主体身份保持一致，只有头发、衣物、光影和背景细节自然轻微运动；"
+            f"{midpoint}-{ending_start}秒，镜头缓慢推进或轻微手持跟拍，主体按照原始意图做出自然动作，表情、视线和姿态平滑变化；"
+            f"{ending_start}-{normalized_duration}秒，动作延续并稳定收束，画面保持连贯。"
+            "不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
+        )
+
+    return (
+        "生成中文分镜视频："
+        f"{style_note}"
+        f"0-{midpoint}秒，先建立主体、场景和氛围，镜头稳定起幅后缓慢推进；"
+        f"{midpoint}-{ending_start}秒，主体动作逐渐展开，补充表情、视线、衣物、光影和环境细节的二级动画；"
+        f"{ending_start}-{normalized_duration}秒，镜头轻微移动并让动作自然收束。"
+        "整体保持电影感、写实质感和连续运镜；不要文字，不要水印，不要闪烁，不要画面跳变。"
+    )
 
 def _video_size_to_ratio_label(size: Optional[str]) -> str:
     """将内部尺寸值转换为用户可读的宽高比。"""
@@ -65,7 +112,7 @@ async def generate_video(
     **kwargs
 ) -> dict:
     """
-    使用AI生成视频。当用户请求生成、制作视频时调用此工具。
+    使用AI生成视频，prompt 必须使用中文自然语言分镜提示词。当用户请求生成、制作视频时调用此工具。
     支持两种模式：文生视频（纯文字描述）和图生视频（基于图片生成动态视频）。
     也支持直接从Discord自定义表情、贴纸（Sticker）或用户头像提取图片生成视频。
     
@@ -82,7 +129,7 @@ async def generate_video(
     - 用户说"用我和他的头像做成视频" → avatar_user_ids + use_reference_image=True
     
     Args:
-        prompt: 视频描述提示词，用中文自然语言描述即可。
+        prompt: 视频描述提示词，必须使用中文自然语言分镜描述，禁止写成英文标签词或英文句子。
                 描述要点：
                 - 描述视频中的主体（人物、动物、物体等）
                 - 描述动作和运动（走路、飞翔、旋转等）
@@ -94,7 +141,7 @@ async def generate_video(
 
                 **【视频提示词分镜技能 - 生成前必须套用】**
                 - 先判断模式：用户说“把这张图动起来/参考上图/做成动画/用这张图生成视频”时，必须设置 use_reference_image=True，并让提示词以“基于首帧图像生成……”开头。
-                - 提示词要像导演分镜，不要只写一句氛围词；必须写清主体、场景、动作主线、二级动画、表情变化、镜头运动、时间节奏和画面约束。
+                - 提示词要像导演分镜，不要只写一句氛围词；必须写清主体、场景、动作主线、二级动画、表情变化、镜头运动、时间节奏和画面约束。禁止输出“Cinematic / 3D realistic / vlog style”等英文堆词，类似含义要改写成“电影感、写实三维动画、手持跟拍记录感”等中文。
                 - 基础结构：①主体与首帧锁定，保持角色外观、服装、背景、构图和画风一致；②主动作，如转身、抬手、奔跑、回头、靠近、停顿；③二级动画，如发梢、衣摆、披风、尾巴、光影、雾气、尘埃、水面轻微运动；④表情与视线，如眨眼、眸光变化、微笑、惊讶、凝视镜头；⑤运镜与焦点，如缓慢推进、拉远、横移、弧形环绕、低角度仰拍、过肩跟拍、焦点从前景转到主体；⑥负面约束：不要文字、不要水印、不要闪烁、不要变脸、不要肢体畸变、不要背景乱变。
                 - 时长超过 6 秒或用户明确要 10 秒以上时，要拆成 2-4 个连续时间片，例如“0-2秒……，2-5秒……，5-8秒……，8-10秒……”，每段动作要顺接，不能跳镜、串镜或只写总描述。
                 - 图生视频尤其要强调“保持首帧构图和角色身份一致，只让指定元素自然动起来”；如用户给了多张参考图，要说明哪些主体保留、哪些元素参与运动。
@@ -500,7 +547,14 @@ async def generate_video(
                 "hint": "用户没有发送图片。请用自己的语气告诉用户，如果想要将图片做成视频，需要先发送一张图片给你，或者回复一张图片并说明想要的效果。也可以使用纯文字描述来生成视频。"
             }
 
-    mode_str = "图生视频" if (reference_image or reference_images) else "文生视频"
+    is_image_to_video = bool(reference_image or reference_images)
+    prompt = _ensure_chinese_video_prompt(
+        prompt,
+        is_image_to_video=is_image_to_video,
+        duration=duration,
+    )
+
+    mode_str = "图生视频" if is_image_to_video else "文生视频"
     video_count = max(1, default_video_count)
     log.info(
         f"调用视频生成工具 ({mode_str})，提示词: {prompt[:100]}...，时长: {duration}s，"

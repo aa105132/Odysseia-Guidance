@@ -97,6 +97,60 @@ SELF_AVATAR_REFERENCE_KEYWORDS = (
 )
 
 
+
+
+def _extract_docstring_param_descriptions(doc: str) -> Dict[str, str]:
+    """从 Google 风格 Args 段落中提取参数说明，用于工具 schema。"""
+    descriptions: Dict[str, str] = {}
+    if not doc:
+        return descriptions
+
+    lines = doc.splitlines()
+    in_args = False
+    current_name: Optional[str] = None
+    current_lines: List[str] = []
+
+    def flush_current() -> None:
+        nonlocal current_name, current_lines
+        if not current_name:
+            return
+        description = "\n".join(line.rstrip() for line in current_lines).strip()
+        if description:
+            descriptions[current_name] = description
+        current_name = None
+        current_lines = []
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped == "Args:":
+            in_args = True
+            continue
+        if not in_args:
+            continue
+        if stripped in {"Returns:", "Raises:", "Yields:"}:
+            flush_current()
+            break
+        if not stripped:
+            if current_name:
+                current_lines.append("")
+            continue
+
+        leading_spaces = len(raw_line) - len(raw_line.lstrip(" "))
+        if leading_spaces >= 4 and ":" in stripped:
+            candidate_name, candidate_desc = stripped.split(":", 1)
+            candidate_name = candidate_name.strip()
+            if candidate_name.isidentifier():
+                flush_current()
+                current_name = candidate_name
+                current_lines = [candidate_desc.strip()] if candidate_desc.strip() else []
+                continue
+
+        if current_name:
+            current_lines.append(stripped)
+
+    flush_current()
+    return descriptions
+
 def _extract_tool_prompt_text(tool_args: Dict[str, Any]) -> str:
     """从工具参数里提取最核心的提示词文本。"""
     for key in ("edit_prompt", "prompt", "description", "instruction"):
@@ -3277,6 +3331,7 @@ class GeminiService:
                 # 构建参数模式
                 properties = {}
                 required = []
+                param_descriptions = _extract_docstring_param_descriptions(doc)
                 
                 # 尝试获取类型提示
                 try:
@@ -3330,6 +3385,10 @@ class GeminiService:
                             except:
                                 param_schema = {"type": "object"}
                     
+                    param_description = param_descriptions.get(param_name)
+                    if param_description:
+                        param_schema["description"] = param_description
+
                     properties[param_name] = param_schema
                     
                     # 检查是否为必需参数
