@@ -50,7 +50,7 @@ class DBManagementView(discord.ui.View):
                 label="通用知识", value="general_knowledge", emoji="📚"
             ),
             discord.SelectOption(
-                label="月光币管理", value="coin_management", emoji="🪙"
+                label="灵石管理", value="coin_management", emoji="🪙"
             ),
             discord.SelectOption(label="工作管理", value="work_events", emoji="💼"),
             discord.SelectOption(

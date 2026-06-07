@@ -108,17 +108,17 @@ class RedEnvelopeView(ui.View):
                 embed.title = f"{self.dm_title}已开启"
                 embed.color = discord.Color.gold()
                 embed.description = (
-                    f"你收到了 **{amount} 月光币**。\n\n"
+                    f"你收到了 **{amount} 灵石**。\n\n"
                     f"> {self.blessing_text}"
                 )
                 await interaction.response.edit_message(embed=embed, view=self)
             else:
                 await interaction.response.send_message(
-                    f"你收到了 **{amount} 月光币**。\n\n> {self.blessing_text}",
+                    f"你收到了 **{amount} 灵石**。\n\n> {self.blessing_text}",
                     ephemeral=True,
                 )
 
-            log.info(f"用户 {self.user_id} 领取新春红包成功，获得 {amount} 月光币")
+            log.info(f"用户 {self.user_id} 领取新春红包成功，获得 {amount} 灵石")
 
         except Exception as e:
             log.error(f"处理红包领取时出错: {e}", exc_info=True)

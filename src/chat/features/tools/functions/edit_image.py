@@ -549,7 +549,7 @@ async def edit_image(
                 "reason": "insufficient_balance",
                 "cost": cost,
                 "balance": balance,
-                "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点月光币再来。"
+                "hint": f"用户灵石不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点灵石再来。"
             }
 
     log.info(f"调用图生图工具，编辑指令: {edit_prompt[:100]}...")
@@ -741,9 +741,9 @@ async def edit_image(
                     await coin_service.remove_coins(
                         parsed_user_id, cost, f"AI图生图: {edit_prompt[:30]}..."
                     )
-                    log.info(f"用户 {parsed_user_id} 图生图成功，扣除 {cost} 月光币")
+                    log.info(f"用户 {parsed_user_id} 图生图成功，扣除 {cost} 灵石")
                 except Exception as e:
-                    log.error(f"扣除月光币失败: {e}")
+                    log.error(f"扣除灵石失败: {e}")
 
             return {
                 "success": True,

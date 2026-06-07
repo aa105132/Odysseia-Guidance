@@ -479,11 +479,11 @@ class BlackjackGame:
         lines.append(f"   > {player_cards_str}")
         
         lines.append("")
-        lines.append(f"💰 **当前下注**：`{self.bet}` 月光币")
+        lines.append(f"💰 **当前下注**：`{self.bet}` 灵石")
         
         # 显示保险信息
         if self.has_insurance:
-            lines.append(f"🛡️ **保险**：`{self.insurance_bet}` 月光币")
+            lines.append(f"🛡️ **保险**：`{self.insurance_bet}` 灵石")
         
         return "\n".join(lines)
 
@@ -540,12 +540,12 @@ class BlackjackGame:
         if self.has_insurance:
             if self.insurance_payout > 0:
                 insurance_profit = self.insurance_payout - self.insurance_bet
-                lines.append(f"🛡️ **保险结算**：月月21点！获得 **+{insurance_profit}** 月光币")
+                lines.append(f"🛡️ **保险结算**：月月21点！获得 **+{insurance_profit}** 灵石")
             else:
-                lines.append(f"🛡️ **保险结算**：月月非21点，损失 **-{self.insurance_bet}** 月光币")
+                lines.append(f"🛡️ **保险结算**：月月非21点，损失 **-{self.insurance_bet}** 灵石")
         
         lines.extend([
-            f"**💰 最终赔付**：**{total_payout}** 月光币 (`{profit_text}`)",
+            f"**💰 最终赔付**：**{total_payout}** 灵石 (`{profit_text}`)",
             "",
             f"> 💬 **月月**：「{self.get_dealer_remark()}」",
             "━━━━━━━━━━━━━━━━━━━━━"
@@ -580,7 +580,7 @@ class BlackjackGame:
         self.result = GameResult.PLAYER_SURRENDER
         self.payout = self.bet // 2  # 返还一半赌注
         
-        return True, f"您选择投降，返还一半赌注 ({self.payout} 月光币)"
+        return True, f"您选择投降，返还一半赌注 ({self.payout} 灵石)"
     
     def reset_for_new_round(self):
         """重置游戏以开始新一轮"""

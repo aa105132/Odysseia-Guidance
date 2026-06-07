@@ -1012,7 +1012,7 @@ async def generate_image_comfyui(
                 return {
                     'generation_failed': True,
                     'reason': 'insufficient_balance',
-                    'hint': f'用户余额不足（需要 {image_cost} 月光币，当前 {balance}）。请提醒用户先获取月光币。',
+                    'hint': f'用户余额不足（需要 {image_cost} 灵石，当前 {balance}）。请提醒用户先获取灵石。',
                 }
         except Exception as error:
             log.warning(f'ComfyUI 余额检查失败: {error}')

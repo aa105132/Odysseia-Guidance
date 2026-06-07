@@ -21,6 +21,7 @@ alembic
 # Data Processing & AI
 langchain-text-splitters
 numpy==1.26.4
+opencv-python-headless
 soundfile
 
 # Web UI 依赖

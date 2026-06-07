@@ -95,18 +95,18 @@ class DailyPanel(BasePanel):
 
             if net_win_loss > 1000:
                 blackjack_comment = (
-                    f"今天赢麻了！从各位赌怪身上净赚 **{net_win_loss}** 枚月光币！"
+                    f"今天赢麻了！从各位赌怪身上净赚 **{net_win_loss}** 枚灵石！"
                 )
             elif net_win_loss > 0:
                 blackjack_comment = (
-                    f"今天运气不错，小赚了 **{net_win_loss}** 枚月光币。明天继续！"
+                    f"今天运气不错，小赚了 **{net_win_loss}** 枚灵石。明天继续！"
                 )
             elif net_win_loss == 0:
                 blackjack_comment = "今天赌场风平浪静，还没开张呢。"
             elif net_win_loss >= -1000:
-                blackjack_comment = f"可恶！今天竟然亏了 **{-net_win_loss}** 枚月光币！你们这些赌怪别太嚣张了！"
+                blackjack_comment = f"可恶！今天竟然亏了 **{-net_win_loss}** 枚灵石！你们这些赌怪别太嚣张了！"
             else:
-                blackjack_comment = f"今天要破产了呜呜呜...竟然被大家卷走了 **{-net_win_loss}** 枚月光币！"
+                blackjack_comment = f"今天要破产了呜呜呜...竟然被大家卷走了 **{-net_win_loss}** 枚灵石！"
 
             embed.add_field(name="赌场风云", value=blackjack_comment, inline=False)
 

@@ -199,11 +199,30 @@ class ContextService:
 
                 # 其他 bot 的消息可能是纯 embed（内容为空），但仍需让 AI 知道该 bot 存在
                 has_embeds = bool(getattr(msg, "embeds", None))
-                if not clean_content and not msg.attachments:
+                sticker_items = list(
+                    getattr(msg, "stickers", None)
+                    or getattr(msg, "sticker_items", None)
+                    or []
+                )
+                has_stickers = bool(sticker_items)
+                if not clean_content and not msg.attachments and not has_stickers:
                     if msg.author.bot and has_embeds:
                         clean_content = "[发送了嵌入内容]"
                     else:
                         continue
+
+                sticker_info = ""
+                if has_stickers:
+                    sticker_names = [
+                        str(getattr(sticker, "name", "") or "未命名贴纸")
+                        for sticker in sticker_items[:3]
+                    ]
+                    if len(sticker_items) > 3:
+                        sticker_names.append("等")
+                    sticker_info = (
+                        f"[发送了{len(sticker_items)}个贴纸: "
+                        f"{'、'.join(sticker_names)}] "
+                    )
 
                 # --- 新增：处理回复关系 ---
                 reply_info = ""
@@ -238,7 +257,7 @@ class ContextService:
 
                     # 统一历史消息中机器人和用户的回复格式，解决主语混淆问题
                     bot_message_content = (
-                        f"[{msg.author.display_name}<{msg.author.id}>]: {reply_info}{clean_content}"
+                        f"[{msg.author.display_name}<{msg.author.id}>]: {sticker_info}{reply_info}{clean_content}"
                     )
                     model_messages_buffer.append(bot_message_content)
                 else:
@@ -253,7 +272,7 @@ class ContextService:
                         model_messages_buffer = []
 
                     # 处理图片附件信息
-                    attachment_info = ""
+                    media_info_parts = []
                     if msg.attachments:
                         image_attachments = [
                             att for att in msg.attachments
@@ -261,7 +280,14 @@ class ContextService:
                         ]
                         if image_attachments:
                             # 标记用户发送了图片，让 AI 知道可以使用 edit_image 工具
-                            attachment_info = f"[发送了{len(image_attachments)}张图片] "
+                            media_info_parts.append(
+                                f"[发送了{len(image_attachments)}张图片]"
+                            )
+                    if sticker_info:
+                        media_info_parts.append(sticker_info.strip())
+                    attachment_info = (
+                        f"{' '.join(media_info_parts)} " if media_info_parts else ""
+                    )
 
                     # 格式化用户消息，符合用户期望的 [用户名]:xxxx 或 [用户名][回复xxx]:xxxx
                     # 恢复旧版格式，冒号始终在用户名后

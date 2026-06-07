@@ -30,7 +30,7 @@ OPENAI_IMAGE_PARAM_KEYS = (
 def _build_model_options(generation_type: str, current_resolution: str = "default", current_rating: str = "sfw") -> List[discord.SelectOption]:
     """
     构建模型选项列表，根据生成类型返回可用的分辨率+内容分级组合。
-    
+
     对于图片生成（image / edit_image）：返回 分辨率 × 内容分级 的组合
     对于视频生成（video）：视频目前没有分辨率和内容分级选项，不显示下拉菜单
     """
@@ -65,7 +65,7 @@ class EditPromptModal(discord.ui.Modal):
     def __init__(self, current_prompt: str, regenerate_callback: Callable[..., Awaitable]):
         super().__init__(title="修改提示词重新生成")
         self.regenerate_callback = regenerate_callback
-        
+
         self.prompt_input = discord.ui.TextInput(
             label="提示词",
             style=discord.TextStyle.paragraph,
@@ -82,9 +82,9 @@ class EditPromptModal(discord.ui.Modal):
         if not new_prompt:
             await interaction.response.send_message("提示词不能为空哦！", ephemeral=True)
             return
-        
+
         await interaction.response.defer()
-        
+
         try:
             await self.regenerate_callback(
                 interaction=interaction,
@@ -101,7 +101,7 @@ class EditPromptModal(discord.ui.Modal):
 class RegenerateView(discord.ui.View):
     """
     重新生成交互视图（对话工具调用版本）
-    
+
     提供：
     1. 重新生成按钮 - 使用相同参数重新生成
     2. 修改提示词按钮 - 弹出模态框修改提示词后重新生成
@@ -120,7 +120,7 @@ class RegenerateView(discord.ui.View):
         self.generation_type = generation_type
         self.original_params = original_params
         self.user_id = user_id
-        
+
         # 为图片类型添加"切换到 NovelAI"按钮
         if generation_type in ("image", "edit_image"):
             novelai_button = discord.ui.Button(
@@ -130,7 +130,7 @@ class RegenerateView(discord.ui.View):
             )
             novelai_button.callback = self._switch_to_novelai
             self.add_item(novelai_button)
-        
+
         # 为图片类型添加模型选择下拉菜单
         if generation_type in ("image", "edit_image"):
             current_resolution = original_params.get("resolution", "default")
@@ -166,7 +166,7 @@ class RegenerateView(discord.ui.View):
     async def regenerate_same(self, interaction: discord.Interaction, button: discord.ui.Button):
         """使用相同参数重新生成"""
         await interaction.response.defer()
-        
+
         try:
             await self._do_regenerate(
                 interaction=interaction,
@@ -197,10 +197,10 @@ class RegenerateView(discord.ui.View):
     async def _on_model_select(self, interaction: discord.Interaction):
         """处理模型选择下拉菜单的回调"""
         await interaction.response.defer()
-        
+
         selected_value = self.model_select.values[0]  # 格式: "resolution|rating"
         resolution, rating = selected_value.split("|")
-        
+
         try:
             await self._do_regenerate(
                 interaction=interaction,
@@ -248,11 +248,11 @@ class RegenerateView(discord.ui.View):
         prompt = new_prompt if new_prompt else self.original_params.get("prompt", "")
         # 使用点击者的用户ID进行扣费
         clicker_user_id = interaction.user.id
-        
+
         # 应用模型覆盖
         resolution = override_resolution or self.original_params.get("resolution", "default")
         content_rating = override_rating or self.original_params.get("content_rating", "sfw")
-        
+
         if self.generation_type == "image":
             await self._regenerate_image(channel, interaction, prompt, clicker_user_id, resolution, content_rating)
         elif self.generation_type == "edit_image":
@@ -271,7 +271,7 @@ class RegenerateView(discord.ui.View):
     ):
         """重新生成图片"""
         from src.chat.features.tools.functions.generate_image import generate_image
-        
+
         params = self.original_params.copy()
         params["prompt"] = prompt
         params["channel"] = channel
@@ -280,7 +280,7 @@ class RegenerateView(discord.ui.View):
         params["content_rating"] = content_rating
         params["preview_message"] = "正在重新生成图片..."
         params["success_message"] = params.get("original_success_message", "重新生成完成~")
-        
+
         # 获取 bot 实例
         if hasattr(interaction, "client"):
             params["bot"] = interaction.client
@@ -288,13 +288,13 @@ class RegenerateView(discord.ui.View):
         for key in OPENAI_IMAGE_PARAM_KEYS:
             if key in self.original_params:
                 params[key] = self.original_params.get(key)
-        
+
         # 不传入 message（因为这是按钮交互，不是原始消息）
         params.pop("message", None)
         params.pop("original_success_message", None)
-        
+
         result = await generate_image(**params)
-        
+
         if result and result.get("generation_failed"):
             hint = result.get("hint", "生成失败了，请稍后再试。")
             try:
@@ -388,7 +388,7 @@ class RegenerateView(discord.ui.View):
                 balance = await coin_service.get_balance(clicker_user_id)
                 if balance < cost:
                     await interaction.followup.send(
-                        f"月光币不足哦~需要 {cost} 个,你只有 {balance} 个呢。",
+                        f"灵石不足哦~需要 {cost} 个,你只有 {balance} 个呢。",
                         ephemeral=True
                     )
                     return
@@ -416,7 +416,7 @@ class RegenerateView(discord.ui.View):
                 )
 
                 if edited_image_bytes:
-                    # 扣除月光币
+                    # 扣除灵石
                     await coin_service.remove_coins(
                         clicker_user_id, cost, f"AI图生图重新生成: {prompt[:30]}..."
                     )
@@ -555,10 +555,10 @@ class RegenerateView(discord.ui.View):
 class SlashCommandRegenerateView(discord.ui.View):
     """
     斜杠命令重新生成交互视图
-    
+
     用于 /画图、/图生图、/video 等斜杠命令的结果消息
     重新生成时直接在当前频道调用对应的工具函数
-    
+
     提供：
     1. 重新生成按钮
     2. 修改提示词按钮
@@ -577,7 +577,7 @@ class SlashCommandRegenerateView(discord.ui.View):
         self.generation_type = generation_type
         self.original_params = original_params
         self.user_id = user_id
-        
+
         # 为图片类型添加"切换到 NovelAI"按钮
         if generation_type in ("image", "image_edit"):
             novelai_button = discord.ui.Button(
@@ -587,7 +587,7 @@ class SlashCommandRegenerateView(discord.ui.View):
             )
             novelai_button.callback = self._switch_to_novelai
             self.add_item(novelai_button)
-        
+
         # 为图片类型添加模型选择下拉菜单
         if generation_type in ("image", "image_edit"):
             current_resolution = original_params.get("resolution", "default")
@@ -647,10 +647,10 @@ class SlashCommandRegenerateView(discord.ui.View):
     async def _on_model_select(self, interaction: discord.Interaction):
         """处理模型选择下拉菜单的回调"""
         await interaction.response.defer()
-        
+
         selected_value = self.model_select.values[0]
         resolution, rating = selected_value.split("|")
-        
+
         try:
             await self._do_slash_regenerate(
                 interaction,
@@ -696,7 +696,7 @@ class SlashCommandRegenerateView(discord.ui.View):
         prompt = new_prompt if new_prompt else self.original_params.get("prompt", "")
         # 使用点击者的用户ID进行扣费
         clicker_user_id = interaction.user.id
-        
+
         # 应用模型覆盖
         resolution = override_resolution or self.original_params.get("resolution", "default")
         content_rating = override_rating or self.original_params.get("content_rating", "sfw")
@@ -719,7 +719,7 @@ class SlashCommandRegenerateView(discord.ui.View):
     ):
         """斜杠命令重新生成图片"""
         from src.chat.features.tools.functions.generate_image import generate_image
-        
+
         params = {
             "prompt": prompt,
             "negative_prompt": self.original_params.get("negative_prompt"),
@@ -737,9 +737,9 @@ class SlashCommandRegenerateView(discord.ui.View):
         for key in OPENAI_IMAGE_PARAM_KEYS:
             if key in self.original_params:
                 params[key] = self.original_params.get(key)
-        
+
         result = await generate_image(**params)
-        
+
         if result and result.get("generation_failed"):
             hint = result.get("hint", "生成失败了，请稍后再试。")
             try:
@@ -833,7 +833,7 @@ class SlashCommandRegenerateView(discord.ui.View):
                 balance = await coin_service.get_balance(clicker_user_id)
                 if balance < cost:
                     await interaction.followup.send(
-                        f"月光币不足哦~需要 {cost} 个,你只有 {balance} 个呢。",
+                        f"灵石不足哦~需要 {cost} 个,你只有 {balance} 个呢。",
                         ephemeral=True
                     )
                     return
@@ -861,7 +861,7 @@ class SlashCommandRegenerateView(discord.ui.View):
                 )
 
                 if edited_image_bytes:
-                    # 扣除月光币
+                    # 扣除灵石
                     await coin_service.remove_coins(
                         clicker_user_id, cost, f"AI图生图重新生成: {prompt[:30]}..."
                     )
@@ -1040,7 +1040,7 @@ async def _do_novelai_regenerate(
             balance = await coin_service.get_balance(user_id)
             if balance < cost:
                 await interaction.followup.send(
-                    f"月光币不足（需要 {cost}，当前 {balance}）",
+                    f"灵石不足（需要 {cost}，当前 {balance}）",
                     ephemeral=True,
                 )
                 return
@@ -1072,7 +1072,7 @@ async def _do_novelai_regenerate(
                 user_id, cost, f"NovelAI生图(切换): {novelai_prompt[:25]}..."
             )
         except Exception as e:
-            log.error(f"扣除月光币失败: {e}")
+            log.error(f"扣除灵石失败: {e}")
 
     # 构建 Embed
     embed = discord.Embed(
@@ -1091,7 +1091,7 @@ async def _do_novelai_regenerate(
         value=f"{result.width}x{result.height}",
         inline=True,
     )
-    embed.set_footer(text=f"消耗 {cost} 月光币 | {model_name}")
+    embed.set_footer(text=f"消耗 {cost} 灵石 | {model_name}")
 
     image_file = discord.File(
         io.BytesIO(result.image_data),

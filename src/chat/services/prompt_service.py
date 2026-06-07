@@ -12,7 +12,7 @@ import re
 from src.chat.config.prompts import PROMPT_CONFIG
 from src.chat.config import chat_config
 from src.chat.services.event_service import event_service
-from src.chat.utils.image_utils import extract_image_frames_for_ai
+from src.chat.utils.image_utils import extract_image_frames_for_ai, extract_video_frames_for_ai
 from src.config import MASTER_USER_ID
 
 log = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class PromptService:
     def _build_gif_storyboard_image(
         self, frames: List[Image.Image], max_frame_side: int = 240
     ) -> Image.Image:
-        """将 GIF 关键帧拼接为从左到右的时间序列图。"""
+        """将 GIF/视频关键帧拼接为从左到右的时间序列图。"""
         if not frames:
             raise ValueError("没有可用于拼接的关键帧。")
 
@@ -669,8 +669,8 @@ class PromptService:
                 {
                     "role": "user",
                     "parts": [
-                        "绘图路由提示：检测到用户当前消息或回复上下文中存在图片。"
-                        "涉及画图请求时，请先观察图片内容（角色、画风、构图、色调），"
+                        "绘图路由提示：检测到用户当前消息或回复上下文中存在图片/视频。"
+                        "涉及画图请求时，请先观察画面内容（角色、画风、构图、色调），"
                         "再判断工具：明确改原图才用 edit_image；"
                         f"参考画风/元素新画一张优先 {default_new_image_tool}。"
                         "若调用 edit_image：按意图设置 reference_image_mode（single/multi/auto），"
@@ -689,6 +689,10 @@ class PromptService:
             "gif" in (img.get("mime_type", "") or "").lower()
             for img in attachment_images
         )
+        has_video_attachment = any(
+            (img.get("mime_type", "") or "").lower().startswith("video/")
+            for img in attachment_images
+        )
 
         if has_gif_attachment:
             final_conversation.append(
@@ -705,6 +709,24 @@ class PromptService:
                 {
                     "role": "model",
                     "parts": ["收到，我会直接基于自动拆帧结果分析 GIF。"],
+                }
+            )
+
+        if has_video_attachment:
+            final_conversation.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        "系统提示：检测到用户消息中含视频附件。"
+                        "系统会自动把视频均匀抽取成关键帧并拼成时间序列图，"
+                        "你直接基于这些帧按时间顺序分析即可。"
+                    ],
+                }
+            )
+            final_conversation.append(
+                {
+                    "role": "model",
+                    "parts": ["收到，我会直接基于自动抽帧结果分析视频。"],
                 }
             )
 
@@ -780,11 +802,45 @@ class PromptService:
 
         # 追加所有附件图片到末尾
         gif_max_frames = chat_config.IMAGE_PROCESSING_CONFIG.get("GIF_MAX_FRAMES", 4)
+        video_max_frames = chat_config.IMAGE_PROCESSING_CONFIG.get(
+            "VIDEO_MAX_FRAMES", gif_max_frames
+        )
         for img_data in attachment_images:
             try:
+                mime_type = (img_data.get("mime_type", "") or "").lower()
+
+                if mime_type.startswith("video/"):
+                    frames, frame_meta = extract_video_frames_for_ai(
+                        video_bytes=img_data["data"],
+                        mime_type=mime_type,
+                        max_video_frames=video_max_frames,
+                    )
+
+                    duration = frame_meta.get("duration_seconds")
+                    duration_text = f"，约 {duration}s" if duration else ""
+                    current_user_parts.append(
+                        f"[用户发送了一个视频{duration_text}，系统已自动抽帧：{frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))}]"
+                    )
+
+                    try:
+                        storyboard_image = self._build_gif_storyboard_image(frames)
+                        current_user_parts.append(storyboard_image)
+                        current_user_parts.append(
+                            "[上图为视频时间序列拼图，F1→Fn代表时间从头到尾，请基于该单张拼图分析动作、镜头和画面变化]"
+                        )
+                    except Exception as storyboard_error:
+                        log.warning(
+                            f"视频时间序列拼图生成失败，将仅使用关键帧: {storyboard_error}"
+                        )
+                        current_user_parts.append(frames[0])
+                        current_user_parts.append(
+                            "[视频拼图失败，已回退为首帧参考图]"
+                        )
+                    continue
+
                 frames, frame_meta = extract_image_frames_for_ai(
                     image_bytes=img_data["data"],
-                    mime_type=img_data.get("mime_type", ""),
+                    mime_type=mime_type,
                     max_gif_frames=gif_max_frames,
                 )
 
@@ -822,8 +878,11 @@ class PromptService:
             cleaned_user_parts = []
             for part in current_user_parts:
                 if isinstance(part, str):
+                    cleaned_part = context_service.clean_message_content(part, guild)
+                    # 测试或降级环境里 context_service 可能被 mock 成非字符串返回值；
+                    # 保持 prompt parts 类型稳定，避免把 MagicMock 等对象传给模型。
                     cleaned_user_parts.append(
-                        context_service.clean_message_content(part, guild)
+                        cleaned_part if isinstance(cleaned_part, str) else part
                     )
                 else:
                     cleaned_user_parts.append(part)
@@ -1034,21 +1093,49 @@ class PromptService:
             包含图像数据的对话轮字典
         """
         # 创建文本部分
-        text_part = f"这是工具获取的图像内容，MIME类型: {mime_type}"
+        is_video = (mime_type or "").lower().startswith("video/")
+        media_label = "视频" if is_video else "图像"
+        text_part = f"这是工具获取的{media_label}内容，MIME类型: {mime_type}"
         if description:
             text_part += f"\n描述: {description}"
 
         try:
-            frames, frame_meta = extract_image_frames_for_ai(
-                image_bytes=image_data,
-                mime_type=mime_type,
-                max_gif_frames=chat_config.IMAGE_PROCESSING_CONFIG.get(
-                    "GIF_MAX_FRAMES", 4
-                ),
-            )
+            if is_video:
+                frames, frame_meta = extract_video_frames_for_ai(
+                    video_bytes=image_data,
+                    mime_type=mime_type,
+                    max_video_frames=chat_config.IMAGE_PROCESSING_CONFIG.get(
+                        "VIDEO_MAX_FRAMES",
+                        chat_config.IMAGE_PROCESSING_CONFIG.get("GIF_MAX_FRAMES", 4),
+                    ),
+                )
+            else:
+                frames, frame_meta = extract_image_frames_for_ai(
+                    image_bytes=image_data,
+                    mime_type=mime_type,
+                    max_gif_frames=chat_config.IMAGE_PROCESSING_CONFIG.get(
+                        "GIF_MAX_FRAMES", 4
+                    ),
+                )
 
             parts: List[Any] = [text_part]
-            if frame_meta.get("is_animated"):
+            if frame_meta.get("is_video"):
+                duration = frame_meta.get("duration_seconds")
+                duration_text = f"，约 {duration}s" if duration else ""
+                parts.append(
+                    f"检测到视频输入{duration_text}，系统已自动抽帧 {frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))}。"
+                )
+
+                try:
+                    parts.append(self._build_gif_storyboard_image(frames))
+                    parts.append("上图为视频时间序列拼图（F1→Fn），请直接基于该单张拼图分析。")
+                except Exception as storyboard_error:
+                    log.warning(
+                        f"工具视频上下文的拼图生成失败，将仅使用关键帧: {storyboard_error}"
+                    )
+                    parts.append(frames[0])
+                    parts.append("视频拼图失败，已回退为首帧参考图。")
+            elif frame_meta.get("is_animated"):
                 parts.append(
                     f"检测到GIF动图输入，系统已自动拆帧 {frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))}。"
                 )

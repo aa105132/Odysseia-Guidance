@@ -203,7 +203,7 @@ novelaiForm: {
 6. 默认步数/CFG Scale/尺寸
 7. SMEA / SMEA+DYN 开关
 8. CFG Rescale 数值
-9. 生成成本（月光币）
+9. 生成成本（灵石）
 10. UC Preset 选择
 11. 测试连接按钮
 12. 保存按钮

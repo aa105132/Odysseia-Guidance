@@ -39,7 +39,7 @@ class GeminiImagenCog(commands.Cog):
         negative_prompt="你不希望在图片中出现的内容(可选)",
         aspect_ratio="图片宽高比",
         count="生成图片数量 (1-20张)",
-        resolution="图片分辨率 (默认/2K/4K，高分辨率需要更多月光币)",
+        resolution="图片分辨率 (默认/2K/4K，高分辨率需要更多灵石)",
         content_rating="内容分级 (SFW安全内容/NSFW成人内容)",
     )
     @app_commands.rename(
@@ -128,7 +128,7 @@ class GeminiImagenCog(commands.Cog):
         balance = await coin_service.get_balance(user_id)
         if balance < total_cost:
             await interaction.response.send_message(
-                f"你的月光币余额不足！生成 {count} 张图片需要 {total_cost} 月光币，你当前只有 {balance}。",
+                f"你的灵石余额不足！生成 {count} 张图片需要 {total_cost} 灵石，你当前只有 {balance}。",
                 ephemeral=True,
             )
             return
@@ -142,9 +142,9 @@ class GeminiImagenCog(commands.Cog):
                 f"用户 {user_id} 请求 Gemini Imagen 生成 {count} 张图片, "
                 f"提示词: {prompt[:100]}..., 宽高比: {aspect_ratio}"
             )
-            
+
             import asyncio
-            
+
             async def generate_ai_response():
                 """让 AI 根据用户请求生成个性化回复"""
                 try:
@@ -168,7 +168,7 @@ class GeminiImagenCog(commands.Cog):
                 except Exception as e:
                     log.warning(f"生成 AI 回复失败: {e}")
                 return None
-            
+
             # 并行生成所有图片 + AI 回复
             image_tasks = [
                 gemini_imagen_service.generate_single_image(
@@ -180,18 +180,18 @@ class GeminiImagenCog(commands.Cog):
                 )
                 for _ in range(count)
             ]
-            
+
             # 并发执行所有任务
             all_results = await asyncio.gather(
                 *image_tasks,
                 generate_ai_response(),
                 return_exceptions=True
             )
-            
+
             # 分离结果：最后一个是 AI 回复，其余是图片
             ai_response = all_results[-1]
             image_results = all_results[:-1]
-            
+
             # 收集成功的图片
             images = []
             for result in image_results:
@@ -199,7 +199,7 @@ class GeminiImagenCog(commands.Cog):
                     log.warning(f"图片生成失败: {result}")
                 elif result:
                     images.append(result)
-            
+
             if isinstance(ai_response, Exception):
                 log.warning(f"AI 回复异常: {ai_response}")
                 ai_response = None
@@ -246,18 +246,18 @@ class GeminiImagenCog(commands.Cog):
                         value=ai_response[:1024],
                         inline=False,
                     )
-                
+
                 imagen_model = gemini_imagen_service._get_model_for_resolution(
                     resolution=resolution, is_edit=False, content_rating=content_rating
                 )
                 if actual_count < count:
-                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance} | 模型: {imagen_model}")
+                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 灵石 | 余额: {new_balance} | 模型: {imagen_model}")
                 else:
-                    embed.set_footer(text=f"消耗 {actual_cost} 月光币 | 余额: {new_balance} | 模型: {imagen_model}")
-                
+                    embed.set_footer(text=f"消耗 {actual_cost} 灵石 | 余额: {new_balance} | 模型: {imagen_model}")
+
                 # 创建重新生成按钮
                 from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView
-                
+
                 regenerate_view = SlashCommandRegenerateView(
                     generation_type="image",
                     original_params={
@@ -270,7 +270,7 @@ class GeminiImagenCog(commands.Cog):
                     },
                     user_id=user_id,
                 )
-                
+
                 # 发送图片（每条消息最多10张；仅 NSFW 带遮罩）
                 MAX_FILES_PER_MESSAGE = 10
                 first_batch = True
@@ -314,7 +314,7 @@ class GeminiImagenCog(commands.Cog):
         edit_prompt="描述你想要如何修改这张图片",
         aspect_ratio="输出图片的宽高比",
         count="生成图片数量 (1-20)",
-        resolution="图片分辨率 (默认/2K/4K，高分辨率需要更多月光币)",
+        resolution="图片分辨率 (默认/2K/4K，高分辨率需要更多灵石)",
         content_rating="内容分级 (SFW安全内容/NSFW成人内容)",
     )
     @app_commands.rename(
@@ -423,7 +423,7 @@ class GeminiImagenCog(commands.Cog):
         balance = await coin_service.get_balance(user_id)
         if balance < total_cost:
             await interaction.response.send_message(
-                f"你的月光币余额不足！图生图 {count} 张需要 {total_cost} 月光币，你当前只有 {balance}。",
+                f"你的灵石余额不足！图生图 {count} 张需要 {total_cost} 灵石，你当前只有 {balance}。",
                 ephemeral=True,
             )
             return
@@ -469,10 +469,10 @@ class GeminiImagenCog(commands.Cog):
             reference_mime_type = reference_images_mime_types[0]
 
             log.info(f"/图生图 实际参考图数量: {len(reference_images_payload)}")
-            
+
             # 3. 并行调用：图生图 + AI 个性化回复
             import asyncio
-            
+
             async def generate_ai_response():
                 """让 AI 根据用户请求生成个性化回复"""
                 try:
@@ -496,7 +496,7 @@ class GeminiImagenCog(commands.Cog):
                 except Exception as e:
                     log.warning(f"生成 AI 回复失败: {e}")
                 return None
-            
+
             # 并行生成所有图片 + AI 回复
             edit_tasks = [
                 gemini_imagen_service.edit_image(
@@ -510,18 +510,18 @@ class GeminiImagenCog(commands.Cog):
                 )
                 for _ in range(count)
             ]
-            
+
             # 并发执行所有任务
             all_results = await asyncio.gather(
                 *edit_tasks,
                 generate_ai_response(),
                 return_exceptions=True
             )
-            
+
             # 分离结果
             ai_response = all_results[-1]
             edit_results = all_results[:-1]
-            
+
             # 收集成功的图片
             images = []
             for result in edit_results:
@@ -529,7 +529,7 @@ class GeminiImagenCog(commands.Cog):
                     log.warning(f"图生图失败: {result}")
                 elif result:
                     images.append(result)
-            
+
             if isinstance(ai_response, Exception):
                 log.warning(f"AI 回复异常: {ai_response}")
                 ai_response = None
@@ -570,18 +570,18 @@ class GeminiImagenCog(commands.Cog):
                         value=ai_response[:1024],
                         inline=False,
                     )
-                
+
                 edit_imagen_model = gemini_imagen_service._get_model_for_resolution(
                     resolution=resolution, is_edit=True, content_rating=content_rating
                 )
                 if actual_count < count:
-                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 月光币 | 余额: {new_balance} | 模型: {edit_imagen_model}")
+                    embed.set_footer(text=f"成功生成 {actual_count}/{count} 张 | 消耗 {actual_cost} 灵石 | 余额: {new_balance} | 模型: {edit_imagen_model}")
                 else:
-                    embed.set_footer(text=f"消耗 {actual_cost} 月光币 | 余额: {new_balance} | 模型: {edit_imagen_model}")
-                
+                    embed.set_footer(text=f"消耗 {actual_cost} 灵石 | 余额: {new_balance} | 模型: {edit_imagen_model}")
+
                 # 创建重新生成按钮（保留参考图数据，确保继续走图生图链路）
                 from src.chat.features.tools.ui.regenerate_view import SlashCommandRegenerateView
-                
+
                 regenerate_view = SlashCommandRegenerateView(
                     generation_type="image_edit",
                     original_params={
@@ -598,7 +598,7 @@ class GeminiImagenCog(commands.Cog):
                     },
                     user_id=user_id,
                 )
-                
+
                 # 发送图片（每条消息最多10张；仅 NSFW 带遮罩）
                 MAX_FILES_PER_MESSAGE = 10
                 first_batch = True

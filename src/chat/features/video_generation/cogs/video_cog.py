@@ -275,7 +275,7 @@ class VideoGenerationPanelView(discord.ui.View):
         cost = VIDEO_GEN_CONFIG.get("VIDEO_GENERATION_COST", 10)
         embed.set_footer(
             text=(
-                f"每次生成预计消耗 {cost} 月光币 | 默认质量 high=720P | "
+                f"每次生成预计消耗 {cost} 灵石 | 默认质量 high=720P | "
                 "上游已支持 5~30 秒服务端自动链式扩展"
             )
         )
@@ -452,7 +452,7 @@ class VideoGenerationCog(commands.Cog):
         balance = await coin_service.get_balance(user_id)
         if balance < cost:
             await interaction.followup.send(
-                f"你的月光币余额不足！生成视频需要 {cost} 月光币，你当前只有 {balance}。",
+                f"你的灵石余额不足！生成视频需要 {cost} 灵石，你当前只有 {balance}。",
                 ephemeral=True,
             )
             return
@@ -500,7 +500,7 @@ class VideoGenerationCog(commands.Cog):
             reason=f"视频生成: {prompt[:50]}",
         )
         if new_balance is None:
-            await interaction.followup.send("月光币扣除失败，余额不足。", ephemeral=True)
+            await interaction.followup.send("灵石扣除失败，余额不足。", ephemeral=True)
             return
 
         await self._send_video_result(
@@ -558,7 +558,7 @@ class VideoGenerationCog(commands.Cog):
         post_id_text = f" | post_id: {result.post_id}" if result.post_id else ""
         embed.set_footer(
             text=(
-                f"消耗 {cost} 月光币 | 余额: {new_balance} | {footer_extra} | "
+                f"消耗 {cost} 灵石 | 余额: {new_balance} | {footer_extra} | "
                 f"模型: {explicit_model_name or '自动'}{post_id_text}"
             )
         )

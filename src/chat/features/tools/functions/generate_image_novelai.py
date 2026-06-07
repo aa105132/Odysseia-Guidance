@@ -998,7 +998,7 @@ async def generate_image_novelai(
                 "reason": "insufficient_balance",
                 "cost": cost,
                 "balance": balance,
-                "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够。"
+                "hint": f"用户灵石不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够。"
             }
 
     # 对话场景：双串策略（主 AI 草稿串 + 提示词 AI 优化串）
@@ -1430,15 +1430,15 @@ async def generate_image_novelai(
             # 添加成功反应
             await add_reaction("✅")
 
-            # 扣除月光币
+            # 扣除灵石
             if parsed_user_id is not None and cost > 0:
                 try:
                     await coin_service.remove_coins(
                         parsed_user_id, cost, f"NovelAI生图: {final_prompt[:25]}..."
                     )
-                    log.info(f"用户 {parsed_user_id} NovelAI 生图成功，扣除 {cost} 月光币")
+                    log.info(f"用户 {parsed_user_id} NovelAI 生图成功，扣除 {cost} 灵石")
                 except Exception as e:
-                    log.error(f"扣除月光币失败: {e}")
+                    log.error(f"扣除灵石失败: {e}")
 
             # 发送图片到频道
             if channel:
@@ -1483,7 +1483,7 @@ async def generate_image_novelai(
                         inline=False,
                     )
                     embed.set_footer(
-                        text=f"消耗 {cost} 月光币 | {sampler} | {model_name}"
+                        text=f"消耗 {cost} 灵石 | {sampler} | {model_name}"
                     )
 
                     image_file = discord.File(
@@ -2639,7 +2639,7 @@ async def _regenerate_novelai(
         balance = await coin_service.get_balance(billing_user_id)
         if balance < cost:
             await interaction.followup.send(
-                f"月光币不足（需要 {cost}，当前 {balance}）",
+                f"灵石不足（需要 {cost}，当前 {balance}）",
                 ephemeral=True,
             )
             return
@@ -2678,7 +2678,7 @@ async def _regenerate_novelai(
                 billing_user_id, cost, f"NovelAI重新生图: {final_prompt[:25]}..."
             )
         except Exception as e:
-            log.error(f"扣除月光币失败: {e}")
+            log.error(f"扣除灵石失败: {e}")
 
     # 构建 Embed
     embed = discord.Embed(
@@ -2708,7 +2708,7 @@ async def _regenerate_novelai(
         inline=False,
     )
     embed.set_footer(
-        text=f"消耗 {cost} 月光币 | {sampler} | {model_name}"
+        text=f"消耗 {cost} 灵石 | {sampler} | {model_name}"
     )
 
     image_file = discord.File(
@@ -2799,7 +2799,7 @@ async def _regenerate_with_imagen(
         balance = await coin_service.get_balance(billing_user_id)
         if balance < cost_per_image:
             await interaction.followup.send(
-                f"月光币不足（需要 {cost_per_image}，当前 {balance}）",
+                f"灵石不足（需要 {cost_per_image}，当前 {balance}）",
                 ephemeral=True,
             )
             return
@@ -2827,7 +2827,7 @@ async def _regenerate_with_imagen(
                 billing_user_id, cost_per_image, f"Imagen生图(切换): {imagen_prompt[:25]}..."
             )
         except Exception as e:
-            log.error(f"扣除月光币失败: {e}")
+            log.error(f"扣除灵石失败: {e}")
 
     imagen_model_name = gemini_imagen_service._get_model_for_resolution(
         resolution=resolution, is_edit=False, content_rating=content_rating
@@ -2844,7 +2844,7 @@ async def _regenerate_with_imagen(
     )
     embed.set_footer(
         text=(
-            f"消耗 {cost_per_image} 月光币 | 模型: {imagen_model_name} | "
+            f"消耗 {cost_per_image} 灵石 | 模型: {imagen_model_name} | "
             f"{resolution_text} | {content_rating.upper()} | 引擎: Gemini Imagen"
         )
     )

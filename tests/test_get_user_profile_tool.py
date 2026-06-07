@@ -47,10 +47,13 @@ fake_discord_module.Guild = object
 fake_discord_module.Member = object
 fake_discord_module.User = object
 fake_discord_module.Client = object
+fake_discord_module.abc = types.SimpleNamespace(User=object)
 sys.modules.setdefault("discord", fake_discord_module)
 
 fake_sqlalchemy_module = types.ModuleType("sqlalchemy")
 fake_sqlalchemy_module.select = lambda *args, **kwargs: None
+fake_sqlalchemy_module.func = types.SimpleNamespace(count=lambda *args, **kwargs: None)
+fake_sqlalchemy_module.or_ = lambda *args, **kwargs: None
 sys.modules.setdefault("sqlalchemy", fake_sqlalchemy_module)
 
 tool_module = importlib.import_module("src.chat.features.tools.functions.get_user_profile")
@@ -195,7 +198,7 @@ def test_get_user_profile_supports_card_queries(monkeypatch):
     assert result["profile"]["bio"]["background"] == "爱打游戏"
     assert result["profile"]["bio"]["personal_memory_summary"] == "喜欢聊天，也会记住熟人。"
     assert result["profile"]["currency"]["amount"] == 321
-    assert result["profile"]["balance"]["name"] == "月光币"
+    assert result["profile"]["balance"]["name"] == "灵石"
     assert result["profile"]["inventory"]["total_item_types"] == 2
     assert result["profile"]["inventory"]["total_quantity"] == 3
     assert result["profile"]["activity_stats"]["coin_transaction_count"] == 7

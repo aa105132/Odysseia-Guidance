@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-月光币中心 UI 组件
+灵石中心 UI 组件
 整合余额查看、签到、排行榜、破产补贴、21点入口等功能
 """
 
@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 
 class CoinCenterView(ui.View):
-    """月光币中心主视图"""
+    """灵石中心主视图"""
     
     def __init__(self, bot: commands.Bot, user: discord.User | discord.Member):
         super().__init__(timeout=180)
@@ -43,15 +43,15 @@ class CoinCenterView(ui.View):
             already_checked_in = last_date >= today
         
         embed = discord.Embed(
-            title="🌙 月光币中心",
-            description=f"欢迎来到月光币中心，{self.user.mention}！",
+            title="🌙 灵石中心",
+            description=f"欢迎来到灵石中心，{self.user.mention}！",
             color=discord.Color.gold()
         )
         
         # 余额信息
         embed.add_field(
             name="💰 当前余额",
-            value=f"**{balance:,}** 月光币",
+            value=f"**{balance:,}** 灵石",
             inline=True
         )
         
@@ -78,12 +78,12 @@ class CoinCenterView(ui.View):
         
         # 奖励说明
         embed.add_field(
-            name="📖 月光币获取方式",
+            name="📖 灵石获取方式",
             value=(
-                f"• **每日签到**: {COIN_CONFIG['DAILY_CHECKIN_REWARD_MIN']}-{COIN_CONFIG['DAILY_CHECKIN_REWARD_MAX']} 月光币\n"
+                f"• **每日签到**: {COIN_CONFIG['DAILY_CHECKIN_REWARD_MIN']}-{COIN_CONFIG['DAILY_CHECKIN_REWARD_MAX']} 灵石\n"
                 f"  └ 连签奖励: 每天+{COIN_CONFIG['DAILY_CHECKIN_STREAK_BONUS']}，最高+{COIN_CONFIG['DAILY_CHECKIN_MAX_STREAK_BONUS']}\n"
-                f"• **每日首次对话**: {COIN_CONFIG['DAILY_FIRST_CHAT_REWARD']} 月光币\n"
-                f"• **发布帖子**: {COIN_CONFIG['FORUM_POST_REWARD']} 月光币\n"
+                f"• **每日首次对话**: {COIN_CONFIG['DAILY_FIRST_CHAT_REWARD']} 灵石\n"
+                f"• **发布帖子**: {COIN_CONFIG['FORUM_POST_REWARD']} 灵石\n"
                 f"• **21点游戏**: 赌一把试试运气！"
             ),
             inline=False
@@ -93,7 +93,7 @@ class CoinCenterView(ui.View):
         if balance < COIN_CONFIG["BANKRUPTCY_THRESHOLD"]:
             embed.add_field(
                 name="💸 破产救济",
-                value=f"余额低于 {COIN_CONFIG['BANKRUPTCY_THRESHOLD']} 可领取 **{COIN_CONFIG['BANKRUPTCY_SUBSIDY']}** 月光币补贴！",
+                value=f"余额低于 {COIN_CONFIG['BANKRUPTCY_THRESHOLD']} 可领取 **{COIN_CONFIG['BANKRUPTCY_SUBSIDY']}** 灵石补贴！",
                 inline=False
             )
         
@@ -107,8 +107,8 @@ class CoinCenterView(ui.View):
         leaderboard = await coin_service.get_leaderboard(limit=20)
         
         embed = discord.Embed(
-            title="🏆 月光币排行榜",
-            description="显示拥有最多月光币的用户",
+            title="🏆 灵石排行榜",
+            description="显示拥有最多灵石的用户",
             color=discord.Color.gold()
         )
         
@@ -143,7 +143,7 @@ class CoinCenterView(ui.View):
                 else:
                     medal = f"#{i}"
                 
-                leaderboard_text += f"{medal} **{username}**: {balance:,} 月光币\n"
+                leaderboard_text += f"{medal} **{username}**: {balance:,} 灵石\n"
             
             total_pages = max(1, (len(leaderboard) + 9) // 10)
             embed.add_field(
@@ -155,7 +155,7 @@ class CoinCenterView(ui.View):
         # 显示当前用户排名
         user_rank = await coin_service.get_user_rank(self.user.id)
         user_balance = await coin_service.get_balance(self.user.id)
-        embed.set_footer(text=f"你的排名: 第{user_rank}名 | 余额: {user_balance:,} 月光币")
+        embed.set_footer(text=f"你的排名: 第{user_rank}名 | 余额: {user_balance:,} 灵石")
         
         return embed
     
@@ -249,7 +249,7 @@ class CoinCenterView(ui.View):
         
         if balance < COIN_CONFIG["BLACKJACK_MIN_BET"]:
             await interaction.response.send_message(
-                f"❌ 余额不足！至少需要 **{COIN_CONFIG['BLACKJACK_MIN_BET']}** 月光币才能玩21点。",
+                f"❌ 余额不足！至少需要 **{COIN_CONFIG['BLACKJACK_MIN_BET']}** 灵石才能玩21点。",
                 ephemeral=True
             )
             return
@@ -266,8 +266,8 @@ class CoinCenterView(ui.View):
                 "• 两张牌21点是「黑杰克」，赔率1.5倍\n"
                 "• 加倍：只能在前两张牌时使用，加倍下注后只能再抽一张\n"
                 "• 投降：只能在前两张牌时使用，返还一半赌注\n\n"
-                f"💰 你的余额：**{balance}** 月光币\n"
-                f"📊 下注范围：**{COIN_CONFIG['BLACKJACK_MIN_BET']}** - **{COIN_CONFIG['BLACKJACK_MAX_BET']}** 月光币"
+                f"💰 你的余额：**{balance}** 灵石\n"
+                f"📊 下注范围：**{COIN_CONFIG['BLACKJACK_MIN_BET']}** - **{COIN_CONFIG['BLACKJACK_MAX_BET']}** 灵石"
             ),
             color=discord.Color.gold()
         )

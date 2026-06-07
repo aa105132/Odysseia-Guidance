@@ -32,6 +32,14 @@ IMAGE_EXT_TO_MIME = {
     ".bmp": "image/bmp",
     ".avif": "image/avif",
 }
+VIDEO_EXT_TO_MIME = {
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".m4v": "video/mp4",
+    ".avi": "video/x-msvideo",
+    ".mkv": "video/x-matroska",
+}
 TEXT_ATTACHMENT_MAX_BYTES = 3 * 1024 * 1024
 TEXT_ATTACHMENT_EXTENSIONS = {
     ".txt",
@@ -152,7 +160,7 @@ class MessageProcessor:
         return modified_content, emoji_images
 
     def _guess_mime_type_from_url(self, url: str) -> Optional[str]:
-        """根据 URL 后缀推断 MIME 类型。"""
+        """根据 URL 后缀推断图片 MIME 类型。"""
         try:
             parsed = urlparse(url.strip())
             path = (parsed.path or "").lower()
@@ -163,6 +171,11 @@ class MessageProcessor:
             if path.endswith(ext):
                 return mime
         return None
+
+    def _guess_video_mime_type_from_filename(self, filename: str) -> Optional[str]:
+        """根据附件文件名推断视频 MIME 类型。"""
+        ext = Path(filename or "").suffix.lower()
+        return VIDEO_EXT_TO_MIME.get(ext)
 
     def _extract_image_urls_from_text(self, text: str) -> List[str]:
         """从文本中提取 URL（支持 Markdown 链接和裸链接），并保持顺序去重。"""
@@ -416,27 +429,11 @@ class MessageProcessor:
             )
             image_data_list.extend(embed_images)
 
-        # 提取贴纸/动图图片（Discord 贴纸不在 attachments 中）
-        if getattr(message, "stickers", None) and not image_data_list:
-            try:
-                from src.chat.features.tools.utils.discord_image_utils import fetch_sticker_image
-                for sticker in message.stickers:
-                    sticker_image = await fetch_sticker_image(sticker)
-                    if sticker_image and sticker_image.get("data"):
-                        image_data_list.append(
-                            {
-                                "mime_type": sticker_image.get("mime_type", "image/png"),
-                                "data": sticker_image["data"],
-                                "source": "sticker",
-                            }
-                        )
-                        log.info(
-                            f"已提取贴纸图片: {sticker.name} (ID: {sticker.id}), "
-                            f"MIME: {sticker_image.get('mime_type')}, "
-                            f"大小: {len(sticker_image['data'])} bytes"
-                        )
-            except Exception as e:
-                log.warning(f"提取贴纸图片失败: {e}")
+        # 提取贴纸/动图图片（Discord 贴纸不在 attachments 中）。
+        # 不再要求 image_data_list 为空：用户可能同时发图和贴纸，二者都应进入视觉上下文。
+        image_data_list.extend(
+            await self._extract_sticker_images_from_message(message, source="sticker")
+        )
 
         replied_message_content = ""
         if message.reference and message.reference.message_id:
@@ -509,6 +506,22 @@ class MessageProcessor:
                                         snapshot.attachments,
                                         label="转发消息包含文本附件",
                                     )
+                                )
+
+                            snapshot_sticker_images = (
+                                await self._extract_sticker_images_from_message(
+                                    snapshot,
+                                    source="replied_attachment",
+                                )
+                            )
+                            if snapshot_sticker_images:
+                                image_data_list.extend(snapshot_sticker_images)
+                                sticker_names = [
+                                    img.get("sticker_name") or "未命名贴纸"
+                                    for img in snapshot_sticker_images[:3]
+                                ]
+                                snapshot_content_parts.append(
+                                    f"[转发消息包含贴纸: {'、'.join(sticker_names)}]"
                                 )
 
                         snapshot_full_text = "\n".join(
@@ -675,26 +688,25 @@ class MessageProcessor:
                                 img["source"] = "replied_attachment"
                             image_data_list.extend(replied_embed_images)
 
-                        # 从回复消息中提取贴纸图片
-                        if getattr(ref_msg, "stickers", None) and not any(
-                            img.get("source") == "replied_attachment"
-                            for img in image_data_list
-                        ):
-                            try:
-                                from src.chat.features.tools.utils.discord_image_utils import fetch_sticker_image
-                                for sticker in ref_msg.stickers:
-                                    sticker_image = await fetch_sticker_image(sticker)
-                                    if sticker_image and sticker_image.get("data"):
-                                        image_data_list.append(
-                                            {
-                                                "mime_type": sticker_image.get("mime_type", "image/png"),
-                                                "data": sticker_image["data"],
-                                                "source": "replied_attachment",
-                                            }
-                                        )
-                                        log.info(f"已从回复消息提取贴纸图片: {sticker.name}")
-                            except Exception as e:
-                                log.warning(f"从回复消息提取贴纸图片失败: {e}")
+                        # 从回复消息中提取贴纸图片。贴纸不是 attachments，必须单独读取；
+                        # 即使回复消息已有图片附件，也保留贴纸，避免“贴纸看不到”。
+                        replied_sticker_images = (
+                            await self._extract_sticker_images_from_message(
+                                ref_msg,
+                                source="replied_attachment",
+                            )
+                        )
+                        if replied_sticker_images:
+                            image_data_list.extend(replied_sticker_images)
+                            if not replied_message_content:
+                                sticker_names = [
+                                    img.get("sticker_name") or "未命名贴纸"
+                                    for img in replied_sticker_images[:3]
+                                ]
+                                replied_message_content = (
+                                    f"> [{ref_msg.author.display_name}]:\n"
+                                    f"> [发送了贴纸: {'、'.join(sticker_names)}]\n\n"
+                                )
 
             except (discord.NotFound, discord.Forbidden):
                 log.warning(
@@ -803,28 +815,130 @@ class MessageProcessor:
 
         return image_data_list
 
+    @staticmethod
+    def _get_message_stickers(message: Any) -> List[Any]:
+        """兼容不同 discord.py 版本/对象形态，读取消息中的贴纸列表。"""
+        stickers = getattr(message, "stickers", None)
+        if stickers is None:
+            stickers = getattr(message, "sticker_items", None)
+        if not stickers:
+            return []
+        return list(stickers)
+
+    async def _extract_sticker_images_from_message(
+        self,
+        message: Any,
+        source: str,
+    ) -> List[Dict[str, Any]]:
+        """从 Discord 消息贴纸中提取可供视觉模型识别的图片数据。"""
+        sticker_images: List[Dict[str, Any]] = []
+        stickers = self._get_message_stickers(message)
+        if not stickers:
+            return sticker_images
+
+        try:
+            from src.chat.features.tools.utils.discord_image_utils import (
+                fetch_sticker_image,
+            )
+
+            for sticker in stickers:
+                sticker_image = await fetch_sticker_image(sticker)
+                if not sticker_image or not sticker_image.get("data"):
+                    log.info(
+                        f"贴纸暂时无法转为图片输入，已跳过: "
+                        f"{getattr(sticker, 'name', '未知贴纸')} "
+                        f"(ID: {getattr(sticker, 'id', 'unknown')})"
+                    )
+                    continue
+
+                sticker_images.append(
+                    {
+                        "mime_type": sticker_image.get("mime_type", "image/png"),
+                        "data": sticker_image["data"],
+                        "source": source,
+                        "filename": sticker_image.get("filename"),
+                        "sticker_id": str(getattr(sticker, "id", "")),
+                        "sticker_name": getattr(sticker, "name", ""),
+                    }
+                )
+                log.info(
+                    f"已提取贴纸图片: {getattr(sticker, 'name', '未知贴纸')} "
+                    f"(ID: {getattr(sticker, 'id', 'unknown')}), "
+                    f"MIME: {sticker_image.get('mime_type')}, "
+                    f"大小: {len(sticker_image['data'])} bytes"
+                )
+        except Exception as e:
+            log.warning(f"提取贴纸图片失败: {e}")
+
+        return sticker_images
+
     async def _extract_images_from_attachments(
         self, attachments: List[discord.Attachment]
     ) -> List[Dict[str, Any]]:
-        """从附件列表中提取图片数据。"""
+        """从附件列表中提取图片/视频数据。视频会在 PromptService 中抽帧成拼图。"""
         image_data_list = []
+        max_video_bytes = int(
+            chat_config.IMAGE_PROCESSING_CONFIG.get(
+                "VIDEO_MAX_BYTES", 64 * 1024 * 1024
+            )
+            or 64 * 1024 * 1024
+        )
         for attachment in attachments:
-            if attachment.content_type and attachment.content_type.startswith("image/"):
+            content_type = (
+                (getattr(attachment, "content_type", "") or "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
+            filename = getattr(attachment, "filename", "未命名附件")
+            guessed_video_mime = self._guess_video_mime_type_from_filename(filename)
+            is_image_attachment = bool(content_type and content_type.startswith("image/"))
+            is_video_attachment = bool(
+                (content_type and content_type.startswith("video/"))
+                or guessed_video_mime
+            )
+
+            if is_image_attachment or is_video_attachment:
+                if is_video_attachment:
+                    attachment_size = getattr(attachment, "size", None)
+                    if isinstance(attachment_size, int) and attachment_size > max_video_bytes:
+                        log.info(
+                            f"视频附件超过 {max_video_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {filename}"
+                        )
+                        continue
+
                 try:
-                    image_bytes = await attachment.read()
-                    if image_bytes:
+                    media_bytes = await attachment.read()
+                    if media_bytes:
+                        if is_video_attachment and len(media_bytes) > max_video_bytes:
+                            log.info(
+                                f"视频附件读取后超过 {max_video_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {filename}"
+                            )
+                            continue
+
+                        if is_video_attachment:
+                            resolved_mime_type = (
+                                content_type
+                                if content_type.startswith("video/")
+                                else guessed_video_mime
+                                or "video/mp4"
+                            )
+                        else:
+                            resolved_mime_type = content_type or "image/png"
                         image_data_list.append(
                             {
-                                "mime_type": attachment.content_type,
-                                "data": image_bytes,
+                                "mime_type": resolved_mime_type,
+                                "data": media_bytes,
                                 "source": "attachment",
+                                "filename": filename,
                             }
                         )
+                        media_kind = "视频" if is_video_attachment else "图片"
                         log.debug(
-                            f"成功读取图片附件: {attachment.filename}, 大小: {len(image_bytes)} 字节"
+                            f"成功读取{media_kind}附件: {filename}, 大小: {len(media_bytes)} 字节"
                         )
                 except Exception as e:
-                    log.error(f"读取图片附件 {attachment.filename} 时出错: {e}")
+                    log.error(f"读取媒体附件 {filename} 时出错: {e}")
         return image_data_list
 
     def _clean_message_content(

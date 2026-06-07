@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 
 class CoinCog(commands.Cog):
-    """处理与月光币相关的事件和命令"""
+    """处理与灵石相关的事件和命令"""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -66,7 +66,7 @@ class CoinCog(commands.Cog):
             reason = f"在频道 {channel_name} 发布新帖"
             new_balance = await coin_service.add_coins(author.id, reward_amount, reason)
             log.info(
-                f"[CoinCog] 用户 {author.name} ({author.id}) 因发帖获得 {reward_amount} 月光币。新余额: {new_balance}"
+                f"[CoinCog] 用户 {author.name} ({author.id}) 因发帖获得 {reward_amount} 灵石。新余额: {new_balance}"
             )
 
         except Exception as e:
@@ -74,17 +74,17 @@ class CoinCog(commands.Cog):
                 f"[CoinCog] 处理帖子 {thread.id} 的发帖奖励时出错: {e}", exc_info=True
             )
 
-    @app_commands.command(name="月光币", description="打开月光币中心 - 签到、排行榜、21点等功能")
+    @app_commands.command(name="灵石", description="打开灵石中心 - 签到、排行榜、21点等功能")
     async def coin_center(self, interaction: discord.Interaction):
-        """斜杠命令：打开月光币中心"""
+        """斜杠命令：打开灵石中心"""
         try:
             view = CoinCenterView(self.bot, interaction.user)
             embed = await view.create_main_embed()
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-            log.info(f"用户 {interaction.user.id} 打开了月光币中心")
+            log.info(f"用户 {interaction.user.id} 打开了灵石中心")
         except Exception as e:
-            log.error(f"打开月光币中心时出错: {e}", exc_info=True)
-            error_message = "打开月光币中心时发生错误，请稍后再试。"
+            log.error(f"打开灵石中心时出错: {e}", exc_info=True)
+            error_message = "打开灵石中心时发生错误，请稍后再试。"
             if interaction.response.is_done():
                 await interaction.followup.send(error_message, ephemeral=True)
             else:

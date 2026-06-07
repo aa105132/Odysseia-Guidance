@@ -11,7 +11,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# --- 月光币服务 ---
+# --- 灵石服务 ---
 from src.chat.features.odysseia_coin.service.coin_service import coin_service
 from src.chat.features.games.config import blackjack_config
 from src.chat.features.games.services.blackjack_service import blackjack_service
@@ -413,7 +413,7 @@ async def get_public_config():
 @app.get("/api/user")
 async def get_user_info(user_id: int = Depends(get_current_user_id)):
     """
-    API: 获取当前用户信息，包括月光币余额。
+    API: 获取当前用户信息，包括灵石余额。
     """
     log.info(f"正在获取用户 {user_id} 的余额")
     try:
@@ -1578,7 +1578,7 @@ async def multi_continue_ready(
             if new_balance is None:
                 raise HTTPException(
                     status_code=402,
-                    detail=f"余额不足，继续准备需要 {continue_bet} 月光币",
+                    detail=f"余额不足，继续准备需要 {continue_bet} 灵石",
                 )
             deducted_amount = continue_bet
 

@@ -199,7 +199,7 @@ async def _resolve_user(bot: discord.Client, target_id: int) -> Optional[discord
 
 @tool_metadata(
     name="查询资料",
-    description="查询用户名片、个人记忆、月光币、背包、头像、加入时间等资料",
+    description="查询用户名片、个人记忆、灵石、背包、头像、加入时间等资料",
     emoji="👤",
     category="用户信息",
 )
@@ -221,9 +221,9 @@ async def get_user_profile(
       - `bio`: 名片正文（personality/background/preferences，用户自己填写的自我介绍）
       - `long_term_memory`: **长期记忆**（AI 自动生成的对该用户的记忆摘要，包含"长期记忆"和"近期动态"两部分）。查"某人的长期记忆/记忆"时用这个字段，不是 bio
       - `inventory`: 背包物品
-      - `currency`: 月光币余额
+      - `currency`: 灵石余额
       - `join_date`: 入服时间、Discord 账号创建时间、名片创建时间
-      - `activity_stats`: 记忆相关统计、背包概览、月光币流水条数
+      - `activity_stats`: 记忆相关统计、背包概览、灵石流水条数
       - `avatar`: 头像 URL
       - `roles`: 服务器角色
     - **名片 vs 长期记忆的区别**：`bio` 是用户自己写的自我介绍/人设；`long_term_memory` 是你对该用户的记忆（由 AI 自动总结生成）。两者是不同的东西，请根据用户的请求选择正确的字段
@@ -345,7 +345,7 @@ async def get_user_profile(
         try:
             balance_amount = await coin_service.get_balance(target_id)
         except Exception as exc:
-            warning = f"读取月光币余额时出错: {exc}"
+            warning = f"读取灵石余额时出错: {exc}"
             result["warnings"].append(warning)
             log.error(warning, exc_info=True)
 
@@ -417,7 +417,7 @@ async def get_user_profile(
             elif query_name == "currency":
                 currency_payload = {
                     "amount": balance_amount,
-                    "name": chat_config.COIN_CONFIG.get("CURRENCY_NAME", "月光币"),
+                    "name": chat_config.COIN_CONFIG.get("CURRENCY_NAME", "灵石"),
                 }
                 profile_data["currency"] = currency_payload
                 profile_data["balance"] = currency_payload
@@ -449,7 +449,7 @@ async def get_user_profile(
                 try:
                     transaction_count = await coin_service.get_transaction_count(target_id)
                 except Exception as exc:
-                    warning = f"读取月光币流水统计时出错: {exc}"
+                    warning = f"读取灵石流水统计时出错: {exc}"
                     result["warnings"].append(warning)
                     log.error(warning, exc_info=True)
 

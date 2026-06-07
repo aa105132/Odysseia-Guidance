@@ -45,7 +45,11 @@ from src.chat.features.chat_settings.services.chat_settings_service import (
     chat_settings_service,
 )
 from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
-from src.chat.utils.image_utils import sanitize_image, extract_image_frames_for_ai
+from src.chat.utils.image_utils import (
+    sanitize_image,
+    extract_image_frames_for_ai,
+    extract_video_frames_for_ai,
+)
 from src.database.services.token_usage_service import token_usage_service
 from src.database.database import AsyncSessionLocal
 
@@ -1488,7 +1492,7 @@ class GeminiService:
     def _build_gemini_parts_from_images(
         images: Optional[List[Dict[str, Any]]],
     ) -> List[types.Part]:
-        """构建 Gemini SDK 的图片 parts，支持 GIF 拆帧。"""
+        """构建 Gemini SDK 的图片 parts，支持 GIF/视频拆帧。"""
         if not images:
             return []
 
@@ -1503,13 +1507,34 @@ class GeminiService:
                     continue
 
                 mime_type = str(img_data.get("mime_type") or "image/png").strip() or "image/png"
-                frames, frame_meta = extract_image_frames_for_ai(
-                    image_bytes=img_bytes,
-                    mime_type=mime_type,
-                    max_gif_frames=max_gif_frames,
-                )
+                if mime_type.lower().startswith("video/"):
+                    frames, frame_meta = extract_video_frames_for_ai(
+                        video_bytes=img_bytes,
+                        mime_type=mime_type,
+                        max_video_frames=app_config.IMAGE_PROCESSING_CONFIG.get(
+                            "VIDEO_MAX_FRAMES", max_gif_frames
+                        ),
+                    )
+                else:
+                    frames, frame_meta = extract_image_frames_for_ai(
+                        image_bytes=img_bytes,
+                        mime_type=mime_type,
+                        max_gif_frames=max_gif_frames,
+                    )
 
-                if frame_meta.get("is_animated"):
+                if frame_meta.get("is_video"):
+                    sampled_frames = frame_meta.get("sampled_frames", len(frames))
+                    total_frames = frame_meta.get("total_frames", len(frames))
+                    duration = frame_meta.get("duration_seconds")
+                    duration_text = f"，约 {duration}s" if duration else ""
+                    parts.append(
+                        types.Part(
+                            text=(
+                                f"参考媒体{idx}为视频{duration_text}，已抽取关键帧 {sampled_frames}/{total_frames} 参与分析。"
+                            )
+                        )
+                    )
+                elif frame_meta.get("is_animated"):
                     sampled_frames = frame_meta.get("sampled_frames", len(frames))
                     total_frames = frame_meta.get("total_frames", len(frames))
                     parts.append(
@@ -2465,11 +2490,13 @@ class GeminiService:
                 mime_type = (img_data.get("mime_type") or "").lower()
                 is_attachment_source = source in ("attachment", "replied_attachment")
                 is_gif_image = "gif" in mime_type
+                is_video_media = mime_type.startswith("video/")
 
-                # GIF 需要在 prompt_service 中进行拆帧，不能在这里先净化成静态 WEBP。
-                if is_attachment_source and is_gif_image:
+                # GIF/视频需要在 prompt_service 中进行拆帧，不能在这里先净化成静态 WEBP。
+                if is_attachment_source and (is_gif_image or is_video_media):
+                    media_kind = "视频" if is_video_media else "GIF"
                     log.info(
-                        f"第 {idx}/{len(images_to_process)} 张图片为 GIF，保留原图用于后续自动拆帧。"
+                        f"第 {idx}/{len(images_to_process)} 个媒体为 {media_kind}，保留原文件用于后续自动拆帧。"
                     )
                     sanitized_images_for_endpoint.append(img_data)
                     continue

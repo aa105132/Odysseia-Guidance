@@ -325,7 +325,7 @@ async def fetch_sticker_image(sticker: discord.StickerItem) -> Optional[Dict[str
     Discord 贴纸支持多种格式：PNG、APNG、Lottie（JSON）、GIF
     - 标准贴纸：https://media.discordapp.net/stickers/{id}.png
     - 动态贴纸：可能是 APNG 或 GIF
-    - Lottie 贴纸：不适合作为图片参考，跳过
+    - Lottie 贴纸：优先尝试 Discord 静态预览图，失败再跳过
     
     Args:
         sticker: Discord StickerItem 对象
@@ -341,62 +341,94 @@ async def fetch_sticker_image(sticker: discord.StickerItem) -> Optional[Dict[str
     # StickerItem 可能没有 format_type，需要安全获取
     format_type = getattr(sticker, 'format', None)
     
-    # Lottie 贴纸是矢量动画（JSON），不适合作为图片参考
-    if format_type and hasattr(format_type, 'value') and format_type.value == 3:
-        log.warning(f"贴纸 {sticker.name} 是 Lottie 格式，不支持作为图片参考")
-        return None
-    
-    # 尝试直接使用 sticker.url（如果可用）
-    sticker_url = getattr(sticker, 'url', None)
-    if sticker_url:
+    format_value = getattr(format_type, "value", None)
+    is_lottie = format_value == 3
+
+    def _is_image_content_type(content_type: str) -> bool:
+        return (content_type or "").split(";", 1)[0].strip().lower().startswith("image/")
+
+    def _ext_from_content_type(content_type: str, fallback: str) -> str:
+        normalized = (content_type or "").split(";", 1)[0].strip().lower()
+        if "gif" in normalized:
+            return "gif"
+        if "webp" in normalized:
+            return "webp"
+        if "jpeg" in normalized or "jpg" in normalized:
+            return "jpg"
+        return fallback
+
+    async def _download_sticker_candidate(
+        url: str,
+        expected_mime: str,
+        ext: str,
+    ) -> Optional[Dict[str, Any]]:
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(str(sticker_url), timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        content_type = resp.headers.get('Content-Type', 'image/png')
-                        ext = "png"
-                        if "gif" in content_type:
-                            ext = "gif"
-                        elif "webp" in content_type:
-                            ext = "webp"
-                        elif "apng" in content_type:
-                            ext = "png"
-                        log.info(f"成功通过 sticker.url 下载贴纸图片: {sticker_url}, 大小: {len(data)} bytes")
-                        return {
-                            "data": data,
-                            "mime_type": content_type.split(';')[0].strip(),
-                            "filename": f"sticker_{sticker_id}.{ext}",
-                        }
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status != 200:
+                        return None
+
+                    data = await resp.read()
+                    content_type = resp.headers.get("Content-Type", expected_mime)
+                    if not _is_image_content_type(content_type):
+                        log.debug(
+                            f"贴纸地址返回非图片内容，已跳过: {url}, "
+                            f"Content-Type: {content_type}"
+                        )
+                        return None
+
+                    mime_type = content_type.split(";", 1)[0].strip() or expected_mime
+                    resolved_ext = _ext_from_content_type(content_type, ext)
+                    log.info(
+                        f"成功下载贴纸图片: {url}, MIME: {mime_type}, "
+                        f"大小: {len(data)} bytes"
+                    )
+                    return {
+                        "data": data,
+                        "mime_type": mime_type,
+                        "filename": f"sticker_{sticker_id}.{resolved_ext}",
+                    }
         except Exception as e:
-            log.debug(f"通过 sticker.url 下载失败: {e}")
-    
-    # 回退：尝试多种 CDN URL 格式
-    cdn_urls = [
+            log.debug(f"尝试下载贴纸地址失败: {url}, 错误: {e}")
+            return None
+
+        return None
+
+    # 尝试直接使用 sticker.url（如果可用）。Lottie 的 sticker.url 通常是 JSON，
+    # 所以放到候选列表里但会通过 Content-Type 校验过滤掉。
+    sticker_url = getattr(sticker, 'url', None)
+
+    # 回退：尝试多种 CDN URL 格式。media.discordapp.net 有机会给 Lottie
+    # 贴纸返回可渲染的静态预览图，不能因为 format=LOTTIE 就提前放弃。
+    cdn_urls: List[Tuple[str, str, str]] = [
         (f"https://media.discordapp.net/stickers/{sticker_id}.png?size=512", "image/png", "png"),
         (f"https://media.discordapp.net/stickers/{sticker_id}.gif?size=512", "image/gif", "gif"),
         (f"https://media.discordapp.net/stickers/{sticker_id}.webp?size=512", "image/webp", "webp"),
         (f"https://cdn.discordapp.com/stickers/{sticker_id}.png?size=512", "image/png", "png"),
         (f"https://cdn.discordapp.com/stickers/{sticker_id}.gif?size=512", "image/gif", "gif"),
     ]
-    
+
+    if sticker_url:
+        direct_candidate = (str(sticker_url), "image/png", "png")
+        if is_lottie:
+            cdn_urls.append(direct_candidate)
+        else:
+            cdn_urls.insert(0, direct_candidate)
+
     for url, mime, ext in cdn_urls:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        log.info(f"成功通过 CDN 下载贴纸图片: {url}, 大小: {len(data)} bytes")
-                        return {
-                            "data": data,
-                            "mime_type": mime,
-                            "filename": f"sticker_{sticker_id}.{ext}",
-                        }
-        except Exception as e:
-            log.debug(f"尝试下载贴纸 {ext} 格式失败: {e}")
-            continue
+        result = await _download_sticker_candidate(url, mime, ext)
+        if result:
+            return result
     
-    log.warning(f"所有格式尝试均失败，无法下载贴纸 ID: {sticker_id}")
+    if is_lottie:
+        log.warning(
+            f"贴纸 {sticker.name} 是 Lottie 格式，且未找到可用静态预览图，已跳过"
+        )
+    else:
+        log.warning(f"所有格式尝试均失败，无法下载贴纸 ID: {sticker_id}")
     return None
 
 

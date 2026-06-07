@@ -101,18 +101,18 @@ def _build_action_embed(
     )
     embed.add_field(
         name="💰 当前下注",
-        value=f"**{game.bet}** 月光币",
+        value=f"**{game.bet}** 灵石",
         inline=True,
     )
     embed.add_field(
         name="💳 你的余额",
-        value=f"**{balance}** 月光币",
+        value=f"**{balance}** 灵石",
         inline=True,
     )
     if game.has_insurance:
         embed.add_field(
             name="🛡️ 当前保险",
-            value=f"**{game.insurance_bet}** 月光币",
+            value=f"**{game.insurance_bet}** 灵石",
             inline=True,
         )
     embed.set_footer(text=footer_text)
@@ -229,7 +229,7 @@ class BetModal(ui.Modal, title="下注金额"):
     
     bet_input = ui.TextInput(
         label="请输入下注金额",
-        placeholder="输入月光币数量...",
+        placeholder="输入灵石数量...",
         min_length=1,
         max_length=10,
         required=True
@@ -251,14 +251,14 @@ class BetModal(ui.Modal, title="下注金额"):
             
             if bet_amount < min_bet:
                 await interaction.response.send_message(
-                    f"❌ 下注金额太少！最低下注 **{min_bet}** 月光币。", ephemeral=True
+                    f"❌ 下注金额太少！最低下注 **{min_bet}** 灵石。", ephemeral=True
                 )
                 return
             
             # 只有设置了max_bet才检查上限
             if max_bet is not None and bet_amount > max_bet:
                 await interaction.response.send_message(
-                    f"❌ 下注金额太多！最高下注 **{max_bet}** 月光币。\n月月可不想被你赢太多！", ephemeral=True
+                    f"❌ 下注金额太多！最高下注 **{max_bet}** 灵石。\n月月可不想被你赢太多！", ephemeral=True
                 )
                 return
             
@@ -267,12 +267,12 @@ class BetModal(ui.Modal, title="下注金额"):
             
             if balance < bet_amount:
                 await interaction.response.send_message(
-                    f"❌ 余额不足！你只有 **{balance}** 月光币，但想下注 **{bet_amount}**。",
+                    f"❌ 余额不足！你只有 **{balance}** 灵石，但想下注 **{bet_amount}**。",
                     ephemeral=True
                 )
                 return
             
-            # 扣除月光币
+            # 扣除灵石
             new_balance = await coin_service.remove_coins(
                 user_id, bet_amount, "21点游戏下注"
             )
@@ -282,7 +282,7 @@ class BetModal(ui.Modal, title="下注金额"):
             success, message = game.start_game(bet_amount)
             
             if not success:
-                # 退还月光币
+                # 退还灵石
                 await coin_service.add_coins(user_id, bet_amount, "21点下注失败退还")
                 await interaction.response.send_message(
                     f"❌ {message}", ephemeral=True
@@ -356,7 +356,7 @@ class InsuranceDecisionView(ui.View):
             balance = await coin_service.get_balance(self.game.player_id)
             if balance < insurance_cost:
                 await interaction.response.send_message(
-                    f"❌ 余额不足购买保险！需要 **{insurance_cost}** 月光币，你只有 **{balance}**。",
+                    f"❌ 余额不足购买保险！需要 **{insurance_cost}** 灵石，你只有 **{balance}**。",
                     ephemeral=True
                 )
                 return
@@ -515,7 +515,7 @@ class GamePlayView(ui.View):
             
             if balance < original_bet:
                 await interaction.response.send_message(
-                    f"❌ 余额不足以加倍！需要 **{original_bet}** 月光币，你只有 **{balance}**。",
+                    f"❌ 余额不足以加倍！需要 **{original_bet}** 灵石，你只有 **{balance}**。",
                     ephemeral=True
                 )
                 return
@@ -664,7 +664,7 @@ class GameEndView(ui.View):
         
         embed = discord.Embed(
             title="🎰 21点游戏结束",
-            description=f"感谢游玩！\n\n💰 你的余额：**{balance}** 月光币",
+            description=f"感谢游玩！\n\n💰 你的余额：**{balance}** 灵石",
             color=discord.Color.blue()
         )
         
@@ -724,13 +724,13 @@ def create_game_embed(game: BlackjackGame, balance: int) -> discord.Embed:
     
     embed.add_field(
         name="💰 当前下注",
-        value=f"**{game.bet}** 月光币",
+        value=f"**{game.bet}** 灵石",
         inline=True
     )
     
     embed.add_field(
         name="💳 你的余额",
-        value=f"**{balance}** 月光币",
+        value=f"**{balance}** 灵石",
         inline=True
     )
     
@@ -740,7 +740,7 @@ def create_game_embed(game: BlackjackGame, balance: int) -> discord.Embed:
             name="🛡️ 保险选择",
             value=(
                 f"月月明牌是 **A**，现在可以选择是否购买保险。\n"
-                f"保险费用：**{insurance_cost}** 月光币（原注一半）"
+                f"保险费用：**{insurance_cost}** 灵石（原注一半）"
             ),
             inline=False
         )
@@ -804,7 +804,7 @@ def create_result_embed(game: BlackjackGame, balance: int) -> discord.Embed:
     
     embed.add_field(
         name="💳 当前余额",
-        value=f"**{balance}** 月光币",
+        value=f"**{balance}** 灵石",
         inline=True
     )
     

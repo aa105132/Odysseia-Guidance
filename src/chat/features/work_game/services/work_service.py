@@ -87,9 +87,9 @@ class WorkService:
             message += f"{outcome_description}\n"
 
         if reward > 0:
-            message += f"\n你获得了 **{reward}** 月光币。"
+            message += f"\n你获得了 **{reward}** 灵石。"
         elif reward < 0:
-            message += f"\n你损失了 **{-reward}** 月光币。"
+            message += f"\n你损失了 **{-reward}** 灵石。"
         else:
             message += "\n你今天一无所获，白忙活了一场。"
 
@@ -97,7 +97,7 @@ class WorkService:
         if is_streak_achieved:
             streak_reward = WorkConfig.STREAK_REWARD
             total_reward += streak_reward
-            message += f"\n\n🎉 **全勤奖励！** 你已连续打工 **{WorkConfig.STREAK_DAYS}** 天，额外获得 **{streak_reward}** 月光币！"
+            message += f"\n\n🎉 **全勤奖励！** 你已连续打工 **{WorkConfig.STREAK_DAYS}** 天，额外获得 **{streak_reward}** 灵石！"
             message += "\n你的连续打工记录已重置，期待你再次达成！"
         else:
             message += f"\n\n*你已连续打工 **{new_streak_days}** 天。*"

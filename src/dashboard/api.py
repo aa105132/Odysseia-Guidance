@@ -83,7 +83,7 @@ class ImagenConfigUpdate(BaseModel):
     # - 'gemini_chat': Gemini 多模态聊天接口（支持图像生成的代理）
     # - 'openai': OpenAI 兼容的 chat/completions 接口
     api_format: Optional[str] = None
-    # 月光币成本配置
+    # 灵石成本配置
     generation_cost: Optional[int] = None  # 文生图成本
     edit_cost: Optional[int] = None  # 图生图成本
     max_images: Optional[int] = None  # 单次最大图片数量
@@ -986,7 +986,7 @@ async def get_all_config(token: str = Depends(verify_token)):
             ),
             "feeding_cooldown_seconds": chat_config.FEEDING_CONFIG.get("COOLDOWN_SECONDS", 0),
             "feeding_daily_limit": chat_config.FEEDING_CONFIG.get("DAILY_LIMIT", 3),
-            "currency_name": "月光币",
+            "currency_name": "灵石",
         },
         "moderation": {
             "warning_threshold": chat_config.BLACKLIST_WARNING_THRESHOLD,
@@ -1806,7 +1806,7 @@ async def update_imagen_config(config: ImagenConfigUpdate, token: str = Depends(
         # 写入数据库
         await chat_db_manager.set_global_setting("imagen_api_format", config.api_format)
     
-    # 月光币成本配置
+    # 灵石成本配置
     if config.generation_cost is not None:
         if config.generation_cost < 0:
             raise HTTPException(400, "文生图成本不能为负数")
@@ -4486,7 +4486,7 @@ async def get_coin_config(token: str = Depends(verify_token)):
             else config.get("LOAN_THUMBNAIL_URL", "")
         ),
         **resolved_ghost_card_image_urls,
-        "currency_name": "月光币",
+        "currency_name": "灵石",
         "tax_rate": config.get("TRANSFER_TAX_RATE", 0.05),
         "feeding_cooldown_seconds": chat_config.FEEDING_CONFIG.get("COOLDOWN_SECONDS", 0),
         "feeding_daily_limit": chat_config.FEEDING_CONFIG.get("DAILY_LIMIT", 3),

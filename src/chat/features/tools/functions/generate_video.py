@@ -422,6 +422,7 @@ async def generate_video(
         ),
     )
     cost = VIDEO_GEN_CONFIG.get("VIDEO_GENERATION_COST", 10)
+    currency_name = app_config.COIN_CONFIG.get("CURRENCY_NAME", "灵石")
     default_video_count = max(1, int(VIDEO_GEN_CONFIG.get("DEFAULT_NUMBER_OF_VIDEOS", 1)))
     max_concurrent_video_tasks = max(1, int(VIDEO_GEN_CONFIG.get("MAX_CONCURRENT_VIDEO_TASKS", 3)))
 
@@ -493,7 +494,7 @@ async def generate_video(
                     "reason": "insufficient_balance",
                     "cost": estimated_cost,
                     "balance": balance,
-                    "hint": f"用户月光币不足（需要{estimated_cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点月光币再来。"
+                    "hint": f"用户{currency_name}不足（需要{estimated_cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点{currency_name}再来。"
                 }
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
@@ -867,17 +868,19 @@ async def generate_video(
 
         actual_count = len(success_results)
         actual_cost = cost * actual_count
+        charged_cost: Optional[int] = None
 
-        # 扣除月光币（按实际成功数量）
+        # 扣除灵石（按实际成功数量）
         if user_id and actual_cost > 0:
             try:
                 user_id_int = int(user_id)
                 await coin_service.remove_coins(
                     user_id_int, actual_cost, f"AI视频生成x{actual_count}: {prompt[:25]}..."
                 )
-                log.info(f"用户 {user_id_int} 生成视频成功 {actual_count} 个，扣除 {actual_cost} 月光币")
+                charged_cost = actual_cost
+                log.info(f"用户 {user_id_int} 生成视频成功 {actual_count} 个，扣除 {actual_cost} {currency_name}")
             except Exception as e:
-                log.error(f"扣除月光币失败: {e}")
+                log.error(f"扣除{currency_name}失败: {e}")
 
         # 发送视频到频道
         if channel:
@@ -946,8 +949,16 @@ async def generate_video(
                             quality,
                             app_config.VIDEO_GEN_QUALITY_TO_RESOLUTION["high"],
                         )
+                        footer_parts = [
+                            f"模型: {video_model_name}",
+                            f"时长: {duration}s",
+                            f"宽高比: {_video_size_to_ratio_label(size)}",
+                            f"质量: {quality}({resolution_text})",
+                        ]
+                        if charged_cost is not None:
+                            footer_parts.append(f"消耗: {charged_cost} {currency_name}")
                         prompt_embed.set_footer(
-                            text=f"模型: {video_model_name} | 时长: {duration}s | 宽高比: {_video_size_to_ratio_label(size)} | 质量: {quality}({resolution_text})"
+                            text=" | ".join(footer_parts)
                         )
 
                         if result.url:

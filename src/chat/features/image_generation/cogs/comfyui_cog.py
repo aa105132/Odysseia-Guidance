@@ -1677,7 +1677,7 @@ class ComfyUICog(commands.Cog):
         )
 
         cost = ComfyUICog._get_image_cost()
-        embed.set_footer(text=f'生成成本: {cost} 月光币 | 支持多 LoRA 与 <wlr:...> 语法')
+        embed.set_footer(text=f'生成成本: {cost} 灵石 | 支持多 LoRA 与 <wlr:...> 语法')
         return embed
 
     @staticmethod
@@ -1983,7 +1983,7 @@ class ComfyUICog(commands.Cog):
         balance = await coin_service.get_balance(user_id)
         if balance < cost:
             await interaction.followup.send(
-                f'你的月光币余额不足，生成一张图片需要 {cost}，当前余额 {balance}。',
+                f'你的灵石余额不足，生成一张图片需要 {cost}，当前余额 {balance}。',
                 ephemeral=True,
             )
             return
@@ -2050,13 +2050,13 @@ class ComfyUICog(commands.Cog):
 
         if not media_result:
             await coin_service.add_coins(user_id, cost, 'ComfyUI 生成失败返还')
-            await interaction.followup.send('图片生成失败，已返还月光币。', ephemeral=True)
+            await interaction.followup.send('图片生成失败，已返还灵石。', ephemeral=True)
             return
 
         media_bytes = media_result.get('bytes')
         if not isinstance(media_bytes, bytes) or not media_bytes:
             await coin_service.add_coins(user_id, cost, 'ComfyUI 空结果返还')
-            await interaction.followup.send('生成失败（输出为空），已返还月光币。', ephemeral=True)
+            await interaction.followup.send('生成失败（输出为空），已返还灵石。', ephemeral=True)
             return
 
         media_kind = str(media_result.get('media_kind') or 'image').strip().lower()
@@ -2078,7 +2078,7 @@ class ComfyUICog(commands.Cog):
         )
         embed.add_field(name='提示词', value=f'```\n{prompt_with_lora[:1016]}\n```', inline=False)
 
-        footer_parts = [f'消耗 {cost} 月光币', f'余额 {new_balance}']
+        footer_parts = [f'消耗 {cost} 灵石', f'余额 {new_balance}']
         steps_value = payload.get('steps')
         cfg_value = payload.get('cfg')
         width_value = payload.get('width')
@@ -2135,7 +2135,7 @@ class ComfyUICog(commands.Cog):
         except Exception as error:
             await coin_service.add_coins(user_id, cost, 'ComfyUI 发送失败返还')
             log.error(f'ComfyUI 面板发送图片失败: {error}', exc_info=True)
-            await interaction.followup.send('图片生成成功但发送失败，已返还月光币。', ephemeral=True)
+            await interaction.followup.send('图片生成成功但发送失败，已返还灵石。', ephemeral=True)
             return
 
         if media_kind == 'video':

@@ -20,7 +20,7 @@ class LeaderboardButton(discord.ui.Button[ViewT]):
 
 
 class LeaderboardView(discord.ui.View):
-    """排行榜视图，显示月光币和卖屁股次数排行榜"""
+    """排行榜视图，显示灵石和卖屁股次数排行榜"""
 
     def __init__(
         self,
@@ -33,7 +33,7 @@ class LeaderboardView(discord.ui.View):
         self.author = author
         self.main_view = main_view
         self.current_page = 0
-        self.leaderboard_type = "coins"  # 默认显示月光币排行榜
+        self.leaderboard_type = "coins"  # 默认显示灵石排行榜
         self.total_pages = 1
         self.leaderboard_data = []
 
@@ -65,7 +65,7 @@ class LeaderboardView(discord.ui.View):
         self._initialized = True
 
     async def get_coin_leaderboard(self, limit: int = 20) -> List[Dict[str, Any]]:
-        """获取月光币排行榜数据"""
+        """获取灵石排行榜数据"""
         query = """
             SELECT user_id, balance 
             FROM user_coins 
@@ -139,8 +139,8 @@ class LeaderboardView(discord.ui.View):
             await self.refresh_leaderboard()
 
         if self.leaderboard_type == "coins":
-            title = "💰 月光币排行榜"
-            description = "显示拥有最多月光币的用户"
+            title = "💰 灵石排行榜"
+            description = "显示拥有最多灵石的用户"
         else:
             title = "🥵 卖屁股次数排行榜"
             description = "显示卖屁股次数最多的用户"
@@ -172,7 +172,7 @@ class LeaderboardView(discord.ui.View):
 
                 value_text = f"{entry['value']}"
                 if self.leaderboard_type == "coins":
-                    value_text += " 月光币"
+                    value_text += " 灵石"
                 else:
                     value_text += " 次"
 
@@ -198,15 +198,15 @@ class LeaderboardView(discord.ui.View):
 
 
 class CoinsLeaderboardButton(LeaderboardButton["LeaderboardView"]):
-    """月光币排行榜按钮"""
+    """灵石排行榜按钮"""
 
     def __init__(self):
         super().__init__(
-            label="月光币榜", style=discord.ButtonStyle.primary, emoji="💰", row=0
+            label="灵石榜", style=discord.ButtonStyle.primary, emoji="💰", row=0
         )
 
     async def callback(self, interaction: discord.Interaction):
-        """切换到月光币排行榜"""
+        """切换到灵石排行榜"""
         self.view.leaderboard_type = "coins"
         self.view.current_page = 0
         await self.view.refresh_leaderboard()

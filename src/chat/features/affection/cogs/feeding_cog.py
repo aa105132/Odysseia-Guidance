@@ -151,7 +151,7 @@ class FeedingCog(commands.Cog):
 
             await self.affection_service.add_affection_points(user_id, affection_gain)
 
-            # 只有当 coin_gain 是正数时才增加月光币
+            # 只有当 coin_gain 是正数时才增加灵石
             if coin_gain > 0:
                 await self.coin_service.add_coins(user_id, coin_gain, reason="投喂奖励")
 
@@ -161,7 +161,7 @@ class FeedingCog(commands.Cog):
             # 格式化系统提示，仅在获得奖励时显示
             system_message = ""
             if coin_gain > 0:
-                system_message = f"> 你获得了 {coin_gain} 枚月光币！"
+                system_message = f"> 你获得了 {coin_gain} 枚灵石！"
 
             # 创建 Embed
             embed_description = evaluation_with_emojis

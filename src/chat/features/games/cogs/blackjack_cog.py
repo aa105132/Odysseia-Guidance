@@ -58,17 +58,17 @@ class BlackjackCog(commands.Cog):
         
         if balance < min_bet:
             await interaction.response.send_message(
-                f"❌ 余额不足！至少需要 **{min_bet}** 月光币才能玩21点。\n"
-                f"你目前只有 **{balance}** 月光币，去赚点钱再来吧~",
+                f"❌ 余额不足！至少需要 **{min_bet}** 灵石才能玩21点。\n"
+                f"你目前只有 **{balance}** 灵石，去赚点钱再来吧~",
                 ephemeral=True
             )
             return
         
         # 构建下注范围显示
         if max_bet is None:
-            bet_range = f"**{min_bet}** 月光币起，无上限"
+            bet_range = f"**{min_bet}** 灵石起，无上限"
         else:
-            bet_range = f"**{min_bet}** - **{max_bet}** 月光币"
+            bet_range = f"**{min_bet}** - **{max_bet}** 灵石"
         
         # 创建欢迎嵌入
         embed = discord.Embed(
@@ -82,7 +82,7 @@ class BlackjackCog(commands.Cog):
                 "• 两张牌21点是「黑杰克」，赔率1.5倍\n"
                 "• 加倍：只能在前两张牌时使用，加倍下注后只能再抽一张\n"
                 "• 投降：只能在前两张牌时使用，返还一半赌注\n\n"
-                f"💰 你的余额：**{balance}** 月光币\n"
+                f"💰 你的余额：**{balance}** 灵石\n"
                 f"📊 下注范围：{bet_range}"
             ),
             color=discord.Color.gold()
@@ -99,15 +99,15 @@ class BlackjackCog(commands.Cog):
         
         log.info(f"用户 {user_id} 打开了21点游戏")
 
-    @app_commands.command(name="余额", description="查看你的月光币余额")
+    @app_commands.command(name="余额", description="查看你的灵石余额")
     async def blackjack_balance(self, interaction: discord.Interaction):
         """查看余额命令"""
         user_id = interaction.user.id
         balance = await coin_service.get_balance(user_id)
         
         embed = discord.Embed(
-            title="💰 月光币余额",
-            description=f"你目前拥有 **{balance}** 月光币",
+            title="💰 灵石余额",
+            description=f"你目前拥有 **{balance}** 灵石",
             color=discord.Color.blue()
         )
         

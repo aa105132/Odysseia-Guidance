@@ -614,6 +614,68 @@ def test_generate_video_tool_infers_duration_from_prompt_timeline(monkeypatch):
     assert captured["duration"] == 10
 
 
+def test_generate_video_tool_displays_charged_currency_in_embed_footer(monkeypatch):
+    sent_messages = []
+    removed = []
+
+    class _FakeVideoService:
+        def is_available(self):
+            return True
+
+        async def generate_video(self, **kwargs):
+            return VideoResult(text_response="ok", post_id="post_1")
+
+    class _FakeCoinService:
+        async def get_balance(self, user_id):
+            return 999
+
+        async def remove_coins(self, user_id, amount, reason):
+            removed.append((user_id, amount, reason))
+            return 999 - amount
+
+    class _FakeChannel:
+        async def send(self, **kwargs):
+            sent_messages.append(kwargs)
+            return SimpleNamespace(id=1)
+
+    class _FakeRegenerateView:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "VIDEO_GENERATION_COST", 10)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_NUMBER_OF_VIDEOS", 1)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_CONCURRENT_VIDEO_TASKS", 1)
+    monkeypatch.setitem(app_config.COIN_CONFIG, "CURRENCY_NAME", "灵石")
+    monkeypatch.setattr(video_service_module, "video_service", _FakeVideoService())
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.odysseia_coin.service.coin_service",
+        SimpleNamespace(coin_service=_FakeCoinService()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.tools.ui.regenerate_view",
+        SimpleNamespace(RegenerateView=_FakeRegenerateView),
+    )
+
+    result = asyncio.run(
+        generate_video_tool(
+            prompt="生成一只猫跑步的视频",
+            duration=6,
+            channel=_FakeChannel(),
+            user_id="123456",
+        )
+    )
+
+    assert result["success"] is True
+    assert removed[0][0] == 123456
+    assert removed[0][1] == 10
+    assert sent_messages
+    footer_text = sent_messages[0]["embed"].footer.text
+    assert "消耗: 10 灵石" in footer_text
+
+
 def test_generate_video_tool_does_not_fallback_to_message_image_when_avatar_missing(monkeypatch):
     class _FakeVideoService:
         def is_available(self):

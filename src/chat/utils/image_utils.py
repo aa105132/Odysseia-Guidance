@@ -1,5 +1,7 @@
 import io
 import logging
+import os
+import tempfile
 from PIL import Image
 from typing import Tuple, List, Dict, Any
 
@@ -97,6 +99,107 @@ def extract_image_frames_for_ai(
             "frame_indices": frame_indices,
             "source_format": source_format,
         }
+
+
+def _video_suffix_from_mime_type(mime_type: str) -> str:
+    normalized = (mime_type or "").split(";", 1)[0].strip().lower()
+    return {
+        "video/mp4": ".mp4",
+        "video/webm": ".webm",
+        "video/quicktime": ".mov",
+        "video/x-msvideo": ".avi",
+        "video/x-matroska": ".mkv",
+    }.get(normalized, ".mp4")
+
+
+def extract_video_frames_for_ai(
+    video_bytes: bytes,
+    mime_type: str = "video/mp4",
+    max_video_frames: int = 4,
+) -> Tuple[List[Image.Image], Dict[str, Any]]:
+    """
+    将视频抽取为适合模型识别的关键帧列表。
+
+    视频文件先写入临时文件，再通过 OpenCV 均匀抽样关键帧；
+    输出为 PIL Image 列表，供上层拼接成“类似 GIF 的时间序列拼图”。
+    """
+    if not video_bytes:
+        raise ValueError("输入视频为空，无法提取帧。")
+
+    safe_max_frames = max(1, int(max_video_frames or 1))
+    temp_path = ""
+    cap = None
+
+    try:
+        import cv2  # type: ignore
+
+        suffix = _video_suffix_from_mime_type(mime_type)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(video_bytes)
+            temp_path = temp_file.name
+
+        cap = cv2.VideoCapture(temp_path)
+        if not cap or not cap.isOpened():
+            raise ValueError("OpenCV 无法打开视频文件。")
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        frame_indices = (
+            _calculate_sample_indices(total_frames, safe_max_frames)
+            if total_frames > 0
+            else list(range(safe_max_frames))
+        )
+
+        extracted_frames: List[Image.Image] = []
+        successful_indices: List[int] = []
+
+        for idx in frame_indices:
+            if total_frames > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ok, frame_bgr = cap.read()
+            if not ok or frame_bgr is None:
+                log.warning(f"提取视频第 {idx} 帧失败。")
+                continue
+
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            if isinstance(frame_rgb, Image.Image):
+                frame = frame_rgb.convert("RGB")
+            else:
+                frame = Image.fromarray(frame_rgb).convert("RGB")
+            extracted_frames.append(frame)
+            successful_indices.append(idx)
+
+        if not extracted_frames:
+            raise ValueError("未能从视频中提取任何可用帧。")
+
+        duration_seconds = (
+            round(total_frames / fps, 3)
+            if total_frames > 0 and fps > 0
+            else None
+        )
+        return extracted_frames, {
+            "is_video": True,
+            "is_animated": True,
+            "total_frames": total_frames or len(extracted_frames),
+            "sampled_frames": len(extracted_frames),
+            "frame_indices": successful_indices,
+            "fps": fps,
+            "duration_seconds": duration_seconds,
+            "source_format": (mime_type or "video/mp4"),
+        }
+    except ImportError as exc:
+        raise RuntimeError("缺少 opencv-python-headless，无法抽取视频帧。") from exc
+    finally:
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def sanitize_image(image_bytes: bytes) -> Tuple[bytes, str]:
