@@ -225,28 +225,73 @@ class VideoGenerationService:
         reference_image_url: Optional[str],
     ) -> Optional[Any]:
         """构建视频接口所需的参考图字段，优先返回 data URI。"""
+        image_references = await self._build_image_references(
+            image_data=image_data,
+            image_mime_type=image_mime_type,
+            reference_images=reference_images,
+            reference_image_url=reference_image_url,
+        )
+        return image_references[0] if image_references else None
+
+    async def _build_image_references(
+        self,
+        *,
+        image_data: Optional[bytes],
+        image_mime_type: Optional[str],
+        reference_images: Optional[List[Dict[str, Any]]],
+        reference_image_url: Optional[str],
+    ) -> List[Any]:
+        """构建视频接口所需的多参考图字段，优先把图片转为 data URI。"""
+        image_references: List[Any] = []
+        seen_reference_keys = set()
+
+        def _append_reference(reference: Any) -> None:
+            if reference is None:
+                return
+            if isinstance(reference, dict):
+                key = ("url", str(reference.get("image_url") or ""))
+            else:
+                key = ("value", str(reference or ""))
+            if not key[1] or key in seen_reference_keys:
+                return
+            seen_reference_keys.add(key)
+            image_references.append(reference)
+
+        async def _append_url_reference(raw_url: str) -> None:
+            normalized_url = str(raw_url or "").strip()
+            if not normalized_url:
+                return
+            if normalized_url.startswith("data:"):
+                _append_reference(normalized_url)
+                return
+            if normalized_url.startswith(("http://", "https://")):
+                data_uri = await self._download_reference_image_as_data_uri(normalized_url)
+                if data_uri:
+                    _append_reference(data_uri)
+                    return
+                _append_reference({"image_url": normalized_url})
+                return
+            log.warning("参考图 URL 格式无效，已忽略: %s", normalized_url[:120])
+
         if isinstance(reference_image_url, str):
-            normalized_url = reference_image_url.strip()
-            if normalized_url:
-                if normalized_url.startswith("data:"):
-                    return normalized_url
-                if normalized_url.startswith(("http://", "https://")):
-                    data_uri = await self._download_reference_image_as_data_uri(normalized_url)
-                    if data_uri:
-                        return data_uri
-                    return {"image_url": normalized_url}
-                log.warning("参考图 URL 格式无效，已忽略: %s", normalized_url[:120])
+            await _append_url_reference(reference_image_url)
 
         normalized_reference_images: List[Dict[str, Any]] = []
         if reference_images and isinstance(reference_images, list):
             for ref in reference_images:
-                if isinstance(ref, dict) and ref.get("data"):
+                if not isinstance(ref, dict):
+                    continue
+                if ref.get("data"):
                     normalized_reference_images.append(
                         {
                             "data": ref["data"],
                             "mime_type": ref.get("mime_type", "image/png"),
                         }
                     )
+                    continue
+                ref_url = ref.get("url") or ref.get("image_url") or ref.get("data_uri")
+                if isinstance(ref_url, str):
+                    await _append_url_reference(ref_url)
 
         if not normalized_reference_images and image_data:
             normalized_reference_images.append(
@@ -256,16 +301,12 @@ class VideoGenerationService:
                 }
             )
 
-        if not normalized_reference_images:
-            return None
+        for reference in normalized_reference_images:
+            image_b64 = base64.b64encode(reference["data"]).decode("utf-8")
+            mime_type = reference.get("mime_type", "image/png")
+            _append_reference(f"data:{mime_type};base64,{image_b64}")
 
-        if len(normalized_reference_images) > 1:
-            log.info("当前上游视频链路仅使用第 1 张参考图，其余参考图将忽略")
-
-        first_reference = normalized_reference_images[0]
-        image_b64 = base64.b64encode(first_reference["data"]).decode("utf-8")
-        mime_type = first_reference.get("mime_type", "image/png")
-        return f"data:{mime_type};base64,{image_b64}"
+        return image_references
 
     def _extract_json_candidates_from_stream_text(self, raw_text: str) -> List[dict]:
         """从 SSE/流式文本中提取可能的 JSON payload。"""
@@ -329,6 +370,7 @@ class VideoGenerationService:
         size: Optional[str] = None,
         quality: Optional[str] = None,
         reference_image_url: Optional[str] = None,
+        generate_audio: Optional[bool] = None,
     ) -> Optional[VideoResult]:
         """生成视频（支持文生视频和图生视频）"""
         if not self.is_available():
@@ -347,12 +389,14 @@ class VideoGenerationService:
         )
         normalized_size = self._normalize_size(size)
         normalized_quality = self._normalize_quality(quality)
-        image_reference = await self._build_image_reference(
+        should_generate_audio = True if generate_audio is None else bool(generate_audio)
+        image_references = await self._build_image_references(
             image_data=image_data,
             image_mime_type=image_mime_type,
             reference_images=reference_images,
             reference_image_url=reference_image_url,
         )
+        image_reference = image_references[0] if image_references else None
 
         default_model = config.get("MODEL_NAME", "grok-imagine-1.0-video")
         if image_reference:
@@ -386,17 +430,25 @@ class VideoGenerationService:
                 "aspect_ratio": self._size_to_aspect_ratio(normalized_size),
                 "resolution": self._quality_to_resolution(normalized_quality),
                 "format": "mp4",
-                "generate_audio": False if is_image_to_video else True,
+                "generate_audio": should_generate_audio,
                 "stream": True,
             }
             if image_reference is not None:
-                if isinstance(image_reference, dict) and image_reference.get("image_url"):
-                    image_url = image_reference["image_url"]
+                payload_images: List[str] = []
+                for reference in image_references:
+                    if isinstance(reference, dict) and reference.get("image_url"):
+                        payload_images.append(reference["image_url"])
+                    elif isinstance(reference, str) and reference:
+                        payload_images.append(reference)
+
+                first_reference = image_references[0]
+                if isinstance(first_reference, dict) and first_reference.get("image_url"):
+                    image_url = first_reference["image_url"]
                     payload["first_frame_url"] = image_url
-                    payload["images"] = [image_url]
-                elif isinstance(image_reference, str):
-                    payload["first_frame_resource_path"] = image_reference
-                    payload["images"] = [image_reference]
+                elif isinstance(first_reference, str):
+                    payload["first_frame_resource_path"] = first_reference
+                if payload_images:
+                    payload["images"] = payload_images
         else:
             payload = {
                 "model": model_name,
@@ -404,9 +456,12 @@ class VideoGenerationService:
                 "size": normalized_size,
                 "seconds": normalized_duration,
                 "quality": normalized_quality,
+                "generate_audio": should_generate_audio,
                 "stream": True,
             }
             if image_reference is not None:
+                if len(image_references) > 1:
+                    log.info("当前 /v1/videos 旧链路仅支持单参考图，已使用第 1 张")
                 payload["image_reference"] = image_reference
 
         retry_502_max_attempts = max(

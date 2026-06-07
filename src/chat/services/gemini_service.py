@@ -885,7 +885,9 @@ class GeminiService:
                     "text": (
                         f"已获取用户头像参考图{identity_hint}。"
                         "如果还需要获取其他人的头像，继续调用 get_user_avatar；"
-                        "全部头像获取完毕后立即开始画图，不要再做多余的查询。"
+                        "全部头像获取完毕后立即开始画图或生成视频，不要再做多余的查询。"
+                        "做图生视频时调用 generate_video(use_reference_image=True, avatar_user_id=...)；"
+                        "多人头像视频把所有 user_id 放到 avatar_user_ids。"
                     ),
                 },
                 *image_parts,
@@ -3037,7 +3039,9 @@ class GeminiService:
                     if actual_tool_name == "get_user_avatar":
                         response_hint = (
                             "已获取用户头像。如果还需要获取其他人的头像，继续调用 get_user_avatar；"
-                            "全部头像获取完毕后立即开始画图，不要再做多余的查询。"
+                            "全部头像获取完毕后立即开始画图或生成视频，不要再做多余的查询。"
+                            "做图生视频时调用 generate_video(use_reference_image=True, avatar_user_id=...)；"
+                            "多人头像视频把所有 user_id 放到 avatar_user_ids。"
                         )
                     elif actual_tool_name == "render_newspaper_brief":
                         response_hint = (
@@ -3372,6 +3376,8 @@ class GeminiService:
                                     param_schema = {"type": "string"}
                                 elif first_arg == int:
                                     param_schema = {"type": "integer"}
+                                elif get_origin(first_arg) == list or first_arg == list:
+                                    param_schema = {"type": "array", "items": {"type": "string"}}
                                 elif hasattr(first_arg, '__mro__') and BaseModel in first_arg.__mro__:
                                     # Pydantic 模型
                                     try:
@@ -3992,10 +3998,20 @@ class GeminiService:
                 cached_image_bytes = bytes(cached_image_bytes)
 
             if (
-                normalized_tool_name == "generate_image_novelai"
+                normalized_tool_name in ("generate_image_novelai", "generate_video")
                 and tool_args.get("reference_image_index") in (None, "")
                 and not tool_args.get("_prepared_reference_images")
                 and not tool_args.get("_prepared_reference_image")
+                and not (
+                    normalized_tool_name == "generate_video"
+                    and (
+                        tool_args.get("avatar_user_id")
+                        or tool_args.get("avatar_user_ids")
+                        or tool_args.get("avatar_username")
+                        or tool_args.get("avatar_usernames")
+                        or tool_args.get("reference_image_url")
+                    )
+                )
                 and cached_tool_image.get("tool_name") == "get_user_avatar"
                 and isinstance(cached_image_bytes, bytes)
                 and cached_image_bytes
@@ -4008,12 +4024,16 @@ class GeminiService:
                         ).strip()
                         or "image/png",
                         "source": "tool:get_user_avatar",
+                        "filename": "avatar_reference.png",
                     }
                 ]
-                tool_args["reference_image_index"] = 1
+                if normalized_tool_name == "generate_image_novelai":
+                    tool_args["reference_image_index"] = 1
+                if normalized_tool_name == "generate_video":
+                    tool_args["use_reference_image"] = True
                 log.info(
-                    "已为 generate_image_novelai 自动注入用户头像参考图，"
-                    "提示词AI将基于头像生成更匹配的人物外观。"
+                    "已为 %s 自动注入用户头像参考图，提示词AI将基于头像生成更匹配的人物外观。",
+                    normalized_tool_name,
                 )
 
             wants_self_avatar_reference = _requests_self_avatar_reference(tool_args)
@@ -4033,6 +4053,21 @@ class GeminiService:
             ):
                 tool_args["avatar_user_id"] = str(discord_message.author.id)
                 log.info("检测到“我的头像”类请求，已为 edit_image 自动注入当前用户头像。")
+
+            if (
+                normalized_tool_name == "generate_video"
+                and wants_self_avatar_reference
+                and not tool_args.get("avatar_user_id")
+                and not tool_args.get("avatar_user_ids")
+                and not tool_args.get("avatar_username")
+                and not tool_args.get("avatar_usernames")
+                and not has_prepared_reference
+                and discord_message is not None
+                and getattr(discord_message, "author", None) is not None
+            ):
+                tool_args["avatar_user_id"] = str(discord_message.author.id)
+                tool_args["use_reference_image"] = True
+                log.info("检测到“我的头像”类请求，已为 generate_video 自动注入当前用户头像。")
 
             if (
                 normalized_tool_name == "generate_image_novelai"

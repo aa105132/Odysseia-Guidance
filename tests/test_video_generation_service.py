@@ -5,6 +5,7 @@ import inspect
 import json
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,7 @@ from src.chat.features.tools.functions.generate_video import (
 )
 from src.chat.features.video_generation.services.video_service import (
     VideoGenerationService,
+    VideoResult,
 )
 
 
@@ -88,7 +90,13 @@ def test_generate_video_tool_exposes_new_video_params():
     assert "quality" in signature.parameters
     assert "model" in signature.parameters
     assert "reference_image_url" in signature.parameters
+    assert "avatar_username" in signature.parameters
+    assert "avatar_usernames" in signature.parameters
+    assert "reference_image_mode" in signature.parameters
+    assert "max_reference_images" in signature.parameters
+    assert "generate_audio" in signature.parameters
     assert signature.parameters["quality"].default == "high"
+    assert signature.parameters["generate_audio"].default is True
 
 
 def test_extract_video_from_response_supports_data_array():
@@ -159,6 +167,7 @@ def test_generate_video_uses_v1_videos_payload(monkeypatch):
     assert recorder["json"]["size"] == "1792x1024"
     assert recorder["json"]["seconds"] == 18
     assert recorder["json"]["quality"] == "standard"
+    assert recorder["json"]["generate_audio"] is True
     assert recorder["json"]["stream"] is True
     assert recorder["json"]["image_reference"].startswith("data:image/png;base64,")
 
@@ -407,10 +416,160 @@ def test_video_generate_endpoint_includes_image_aliases_for_i2v(monkeypatch):
     assert recorder["json"]["duration"] == 5
     assert recorder["json"]["model"] == "seedance-2-fast-i2v"
     assert recorder["json"]["mode"] == "image-to-video"
-    assert recorder["json"]["generate_audio"] is False
+    assert recorder["json"]["generate_audio"] is True
     assert "image_reference" not in recorder["json"]
     assert recorder["json"]["first_frame_resource_path"].startswith("data:image/png;base64,")
     assert recorder["json"]["images"][0].startswith("data:image/png;base64,")
+
+
+def test_video_generate_endpoint_sends_multiple_reference_images(monkeypatch):
+    recorder = {}
+    payload = {"id": "vid_multi_i2v", "data": {"outputs": [{"url": "https://example.com/i2v-multi"}]}}
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "API_KEY", "test-key")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "BASE_URL", "http://localhost:8000/v1/video/generate")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MODEL_NAME", "seedance-2-fast")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "I2V_MODEL_NAME", "seedance-2-fast-i2v")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "VIDEO_FORMAT", "url")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_SIZE", "1280x720")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_QUALITY", "high")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_DURATION", 30)
+    monkeypatch.setattr(
+        video_service_module.aiohttp,
+        "ClientSession",
+        lambda: _FakeClientSession(recorder, payload),
+    )
+
+    service = VideoGenerationService()
+    service._client = {"api_key": "test-key", "base_url": "http://localhost:8000/v1/video/generate"}
+
+    result = asyncio.run(
+        service.generate_video(
+            prompt="让两张参考图中的角色自然互动",
+            duration=8,
+            reference_images=[
+                {"data": b"first-image", "mime_type": "image/png"},
+                {"data": b"second-image", "mime_type": "image/jpeg"},
+            ],
+        )
+    )
+
+    assert result is not None
+    assert recorder["json"]["mode"] == "image-to-video"
+    assert recorder["json"]["generate_audio"] is True
+    assert len(recorder["json"]["images"]) == 2
+    assert recorder["json"]["first_frame_resource_path"] == recorder["json"]["images"][0]
+    assert recorder["json"]["images"][0].startswith("data:image/png;base64,")
+    assert recorder["json"]["images"][1].startswith("data:image/jpeg;base64,")
+
+
+def test_video_generate_endpoint_allows_explicit_muted_i2v(monkeypatch):
+    recorder = {}
+    payload = {"id": "vid_muted_i2v", "data": {"outputs": [{"url": "https://example.com/i2v-muted"}]}}
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "API_KEY", "test-key")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "BASE_URL", "http://localhost:8000/v1/video/generate")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MODEL_NAME", "seedance-2-fast")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "I2V_MODEL_NAME", "seedance-2-fast-i2v")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "VIDEO_FORMAT", "url")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_SIZE", "1280x720")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_QUALITY", "high")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_DURATION", 30)
+    monkeypatch.setattr(
+        video_service_module.aiohttp,
+        "ClientSession",
+        lambda: _FakeClientSession(recorder, payload),
+    )
+
+    service = VideoGenerationService()
+    service._client = {"api_key": "test-key", "base_url": "http://localhost:8000/v1/video/generate"}
+
+    result = asyncio.run(
+        service.generate_video(
+            prompt="让图里的猫安静地眨眼",
+            duration=5,
+            image_data=b"fake-image",
+            image_mime_type="image/png",
+            generate_audio=False,
+        )
+    )
+
+    assert result is not None
+    assert recorder["json"]["mode"] == "image-to-video"
+    assert recorder["json"]["generate_audio"] is False
+
+
+def test_generate_video_tool_resolves_avatar_usernames_as_multi_references(monkeypatch):
+    captured = {}
+
+    class _FakeVideoService:
+        def is_available(self):
+            return True
+
+        async def generate_video(self, **kwargs):
+            captured.update(kwargs)
+            return VideoResult(url="https://example.com/generated.mp4")
+
+    class _FakeMessage:
+        id = 1
+        guild = object()
+        reference = None
+
+        async def add_reaction(self, emoji):
+            return None
+
+        async def remove_reaction(self, emoji, user):
+            return None
+
+    async def _fake_resolve_username_to_id(guild, username):
+        return {"小明": "111", "小红": "222"}.get(username), None
+
+    async def _fake_fetch_avatar_image(user_id, bot=None, guild=None):
+        return {
+            "data": f"avatar-{user_id}".encode("utf-8"),
+            "mime_type": "image/png",
+            "filename": f"avatar_{user_id}.png",
+        }
+
+    import src.chat.features.tools.utils.resolve_user as resolve_user_module
+    import src.chat.features.tools.utils.discord_image_utils as discord_image_utils_module
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_NUMBER_OF_VIDEOS", 1)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_CONCURRENT_VIDEO_TASKS", 1)
+    monkeypatch.setattr(video_service_module, "video_service", _FakeVideoService())
+    monkeypatch.setattr(resolve_user_module, "resolve_username_to_id", _fake_resolve_username_to_id)
+    monkeypatch.setattr(discord_image_utils_module, "fetch_avatar_image", _fake_fetch_avatar_image)
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.odysseia_coin.service.coin_service",
+        SimpleNamespace(coin_service=SimpleNamespace()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.tools.ui.regenerate_view",
+        SimpleNamespace(RegenerateView=object),
+    )
+
+    result = asyncio.run(
+        generate_video_tool(
+            prompt="基于两位用户头像生成二次元动画视频：0-3秒两人看向镜头，3-6秒自然挥手。不要文字，不要水印。",
+            duration=6,
+            use_reference_image=True,
+            avatar_usernames=["小明", "小红"],
+            message=_FakeMessage(),
+        )
+    )
+
+    assert result["success"] is True
+    assert result["mode"] == "图生视频"
+    assert captured["generate_audio"] is True
+    assert captured["image_data"] == b"avatar-111"
+    assert len(captured["reference_images"]) == 2
+    assert captured["reference_images"][0]["data"] == b"avatar-111"
+    assert captured["reference_images"][1]["data"] == b"avatar-222"
 
 
 def test_video_generate_endpoint_downloads_reference_url_as_data_uri(monkeypatch):
@@ -446,6 +605,7 @@ def test_video_generate_endpoint_downloads_reference_url_as_data_uri(monkeypatch
     assert result is not None
     assert recorder["get_url"] == "https://example.com/cat.jpg"
     assert recorder["json"]["mode"] == "image-to-video"
+    assert recorder["json"]["generate_audio"] is True
     assert recorder["json"]["first_frame_resource_path"].startswith("data:image/jpeg;base64,")
     assert recorder["json"]["images"] == [recorder["json"]["first_frame_resource_path"]]
     assert "first_frame_url" not in recorder["json"]

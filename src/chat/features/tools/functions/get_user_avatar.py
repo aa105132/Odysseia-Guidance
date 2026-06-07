@@ -5,7 +5,7 @@
 
 让 AI 在对话中可以主动获取 Discord 用户的头像图片，
 将图片数据直接传给 AI 的视觉能力进行分析。
-这样 AI 在生图前可以先"看到"用户的外观，生成更匹配的图片描述。
+这样 AI 在生图或图生视频前可以先"看到"用户的外观，生成更匹配的描述。
 
 返回格式使用 image_data 字典，tool_service 会自动将其转为
 inline_data Part 传回 Gemini，实现 AI 视觉分析。
@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 @tool_metadata(
     name="查看头像",
-    description="获取用户的 Discord 头像图片（支持 user_id 或用户名），让 AI 能够看到用户外观",
+    description="获取用户的 Discord 头像图片（支持 user_id 或用户名），让 AI 能够看到用户外观并用于生图/图生视频",
     emoji="📷",
     category="用户信息",
 )
@@ -38,7 +38,7 @@ async def get_user_avatar(
 ) -> dict:
     """
     获取指定用户（或当前对话用户）的 Discord 头像图片。
-    返回图片数据供 AI 视觉分析，用于了解用户外观特征。
+    返回图片数据供 AI 视觉分析，用于了解用户外观特征，可继续用于生图或图生视频。
 
     [调用指南]
     - **画当前对话人**: 用户说"拿我头像画"，可以不传参数，系统会自动使用当前对话用户
@@ -159,9 +159,9 @@ async def get_user_avatar(
             "hint": (
                 f"已获取 {user_name}（user_id: {target_id}）的头像。"
                 f"如果还需要获取其他人的头像，继续调用 get_user_avatar；"
-                f"全部头像获取完毕后立即开始画图，不要再做多余的查询。"
-                f"画单人时传 edit_image(avatar_user_id=\"{target_id}\")；"
-                f"画多人时把所有 user_id 放到 edit_image(avatar_user_ids=[\"{target_id}\", ...])。"
+                f"全部头像获取完毕后立即开始画图或生成视频，不要再做多余的查询。"
+                f"画单人时传 edit_image(avatar_user_id=\"{target_id}\")；做图生视频时传 generate_video(use_reference_image=True, avatar_user_id=\"{target_id}\")。"
+                f"多人时把所有 user_id 放到 edit_image(avatar_user_ids=[\"{target_id}\", ...]) 或 generate_video(use_reference_image=True, avatar_user_ids=[\"{target_id}\", ...])。"
             ),
         }
 

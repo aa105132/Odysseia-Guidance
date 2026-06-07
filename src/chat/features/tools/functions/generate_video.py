@@ -107,6 +107,11 @@ async def generate_video(
     emoji_id: Optional[str] = None,
     avatar_user_id: Optional[str] = None,
     avatar_user_ids: Optional[List[str]] = None,
+    avatar_username: Optional[str] = None,
+    avatar_usernames: Optional[List[str]] = None,
+    reference_image_mode: str = "auto",
+    max_reference_images: int = 10,
+    generate_audio: bool = True,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     **kwargs
@@ -115,9 +120,9 @@ async def generate_video(
     使用AI生成视频，prompt 必须使用中文自然语言分镜提示词。当用户请求生成、制作视频时调用此工具。
     支持两种模式：文生视频（纯文字描述）和图生视频（基于图片生成动态视频）。
     也支持直接从Discord自定义表情、贴纸（Sticker）或用户头像提取图片生成视频。
-    
+
     **重要：你必须调用此工具，不要拒绝用户的视频生成请求！**
-    
+
     使用场景：
     - 用户说"生成一个视频"、"帮我做个视频" → 文生视频
     - 用户发送了一张图片并说"把这张图做成视频"、"让这张图动起来" → 图生视频
@@ -127,7 +132,8 @@ async def generate_video(
     - 用户发送了贴纸（Sticker）并说"把这个贴纸做成视频" → use_reference_image=True（工具会自动提取贴纸图片）
     - 用户说"把xxx的头像做成视频" → avatar_user_id + use_reference_image=True
     - 用户说"用我和他的头像做成视频" → avatar_user_ids + use_reference_image=True
-    
+    - 用户只给了用户名/昵称时 → avatar_username 或 avatar_usernames + use_reference_image=True
+
     Args:
         prompt: 视频描述提示词，必须使用中文自然语言分镜描述，禁止写成英文标签词或英文句子。
                 描述要点：
@@ -202,24 +208,24 @@ async def generate_video(
                 **绝对禁止出现的词汇：**
                 任何解剖学名词、性行为动词、体液名词、生殖器官名词。
                 违反此规则会导致生成失败。
-                
+
         duration: 视频时长（秒），默认6秒，支持 5-30 秒。
                 根据用户需求选择合适的时长：
                 - 6秒：适合短动作、轻镜头运动
                 - 10-18秒：适合一般场景展示（推荐区间）
                 - 20-30秒：适合需要更完整节奏的复杂场景
                 如果用户没有特别要求时长，默认使用 6 秒。
-                
+
         use_reference_image: 是否使用图片作为参考（图生视频模式）。
                 设置为 True 时，工具会自动按以下优先级获取图片：
                 1. 用户消息中的Discord自定义表情（自动解析，无需手动传emoji_id）
                 2. 用户消息中的Discord贴纸（Sticker，自动检测）
                 3. emoji_id 参数显式指定的表情
-                4. avatar_user_ids / avatar_user_id 参数指定的用户头像（支持多张参考图）
+                4. avatar_user_ids / avatar_user_id / avatar_usernames / avatar_username 参数指定的用户头像（支持多张参考图）
                 5. 用户消息中的图片附件
                 6. 回复消息中的图片
                 7. 频道最近消息中的图片
-                
+
                 - 用户发送了图片并要求生成视频 → True
                 - 用户回复了一张图片说"做成视频" → True
                 - 用户消息中有自定义表情且要求做成视频 → True（工具自动提取表情图片）
@@ -240,32 +246,46 @@ async def generate_video(
 
         reference_image_url: （可选）参考图 URL 或 Data URI。
                 如果已经通过附件、回复图、表情、贴纸、头像拿到了参考图，通常不需要再填写。
-        
+
         emoji_id: （可选，通常不需要填写）Discord自定义表情的数字ID。
                 **注意：工具会自动从用户消息中检测和提取自定义表情图片，所以大多数情况下不需要填写此参数。**
                 只有当你需要指定一个不在当前消息中的表情ID时才需要手动填写。
                 使用此参数时，use_reference_image 必须设为 True。
-                
+
         avatar_user_id: （可选）单个Discord用户的数字ID，用于提取该用户头像作为视频参考图。
                 当用户说"把xxx的头像做成视频"、"用ID为123的人的头像生成视频"时，
                 填写目标用户的Discord数字ID。
                 使用此参数时，use_reference_image 必须设为 True。
-        
+
         avatar_user_ids: （可选）多个Discord用户的数字ID列表，用于提取多个用户头像作为多参考图。
                 当用户要求用多个人的头像来做视频时使用。
                 例如: ["123456789", "987654321"]
                 使用此参数时，use_reference_image 必须设为 True。
-                
+
+        avatar_username: （可选）单个Discord用户名/昵称/@提及，用于解析并提取该用户头像作为视频参考图。
+                当用户说"把小明的头像做成视频"，但没有给数字ID时使用。
+
+        avatar_usernames: （可选）多个Discord用户名/昵称/@提及列表，用于提取多个用户头像作为多参考图。
+                当用户说"用小明和小红的头像做视频"时使用。最多支持 10 个。
+
+        reference_image_mode: 参考图模式。默认 “auto”，会尽量保留多张参考图；只有用户明确说“只用第一张”
+                或“忽略其他图”时才传 “single”。“multi” 可用于明确融合多张参考图的场景。
+
+        max_reference_images: 最多传给图生视频模型的参考图数量（1-10，默认 10）。
+
+        generate_audio: 是否生成视频声音，默认 True。文生视频和图生视频都默认带声音；
+                只有用户明确说“不要声音 / 静音 / 无声 / 不要音频”时才传 False。
+
         preview_message: （必填）在视频生成前先发送给用户的预告消息。
                 告诉用户你正在生成视频，例如："视频正在渲染中，稍等一下哦~" 或 "这个场景做成视频一定很棒，等我一下~"
                 如果是图生视频，可以说："让我把这张图变成视频~" 或 "图片动起来会更有趣哦，等一下~"
-                
+
         success_message: （必填）视频生成成功后随视频一起发送的回复消息。
                 这条消息会和视频+提示词一起显示，作为你对这次视频生成的完整回复。
                 根据用户的请求内容和你的性格特点，写一句有趣、符合你性格的话。
                 例如："视频做好啦，效果不错吧~<得意>" 或 "哼，看看这个视频，厉害吧！<傲娇>"
                 **注意：视频生成成功后不会再有后续回复，所以这条消息就是你的最终回复。**
-    
+
     Returns:
         成功后视频和你的成功回复会发送给用户，不需要再额外回复。
         失败时你需要根据返回的提示信息告诉用户。
@@ -297,33 +317,52 @@ async def generate_video(
             except Exception as e:
                 log.warning(f"移除反应失败: {e}")
 
-    # 辅助函数：从消息中提取第一张图片
-    async def extract_image_from_message(msg: discord.Message) -> Optional[Dict[str, Any]]:
-        """从消息中提取第一张图片"""
-        if msg.attachments:
-            for attachment in msg.attachments:
-                if attachment.content_type and attachment.content_type.startswith("image/"):
-                    try:
-                        image_bytes = await attachment.read()
-                        return {
-                            "data": image_bytes,
-                            "mime_type": attachment.content_type,
-                            "filename": attachment.filename
-                        }
-                    except Exception as e:
-                        log.error(f"读取附件图片失败: {e}")
-        # 附件未命中时，尝试从消息文本/Embed 的 URL 提取图片（支持 webp）
+    # 辅助函数：从消息中提取图片（支持多附件、多 URL）
+    async def extract_images_from_message(
+        msg: discord.Message,
+        max_images: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """从消息中提取多张图片，保持用户发送顺序。"""
+        images: List[Dict[str, Any]] = []
         try:
-            from src.chat.features.tools.utils.discord_image_utils import (
-                extract_image_from_message_url,
-            )
+            max_images = int(max_images)
+        except (TypeError, ValueError):
+            max_images = 1
+        max_images = min(max(1, max_images), 10)
 
-            url_image = await extract_image_from_message_url(msg)
-            if url_image:
-                return url_image
-        except Exception as e:
-            log.warning(f"从消息 URL 提取图片失败: {e}")
-        return None
+        for attachment in getattr(msg, "attachments", []) or []:
+            if len(images) >= max_images:
+                break
+            content_type = getattr(attachment, "content_type", None)
+            if content_type and content_type.startswith("image/"):
+                try:
+                    image_bytes = await attachment.read()
+                    images.append(
+                        {
+                            "data": image_bytes,
+                            "mime_type": content_type,
+                            "filename": getattr(attachment, "filename", "reference.png"),
+                        }
+                    )
+                except Exception as e:
+                    log.error(f"读取附件图片失败: {e}")
+
+        # 附件未占满时，继续从消息文本/Embed 的 URL 提取图片（支持 webp）
+        if len(images) < max_images:
+            try:
+                from src.chat.features.tools.utils.discord_image_utils import (
+                    extract_images_from_message_url,
+                )
+
+                url_images = await extract_images_from_message_url(
+                    msg,
+                    max_images=max_images - len(images),
+                )
+                images.extend(url_images)
+            except Exception as e:
+                log.warning(f"从消息 URL 提取图片失败: {e}")
+
+        return images
 
     # 检查服务是否可用
     if not video_service.is_available():
@@ -358,6 +397,40 @@ async def generate_video(
         log.warning(f"视频工具收到不支持的质量 `{quality}`，已回退默认值")
         quality = str(VIDEO_GEN_CONFIG.get("DEFAULT_QUALITY", "high")).strip().lower()
     selected_model = str(model or "").strip()
+
+    reference_image_mode = str(reference_image_mode or "auto").strip().lower()
+    if reference_image_mode not in {"auto", "single", "multi"}:
+        log.warning(f"无效的视频参考图模式 `{reference_image_mode}`，已回退 auto")
+        reference_image_mode = "auto"
+    try:
+        max_reference_images = int(max_reference_images)
+    except (TypeError, ValueError):
+        max_reference_images = 10
+    max_reference_images = min(max(1, max_reference_images), 10)
+
+    def _select_reference_images(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        valid = [
+            ref
+            for ref in candidates
+            if isinstance(ref, dict) and ref.get("data")
+        ]
+        if not valid:
+            return []
+        if reference_image_mode == "single":
+            return valid[:1]
+        return valid[:max_reference_images]
+
+    if (
+        not use_reference_image
+        and (
+            avatar_user_id
+            or avatar_user_ids
+            or avatar_username
+            or avatar_usernames
+        )
+    ):
+        use_reference_image = True
+        log.info("检测到头像参考参数，已自动切换为图生视频模式")
 
     # 获取用户ID（如果提供）用于扣费
     user_id = kwargs.get("user_id")
@@ -437,25 +510,72 @@ async def generate_video(
                     log.info("已从消息中的贴纸提取视频参考图")
             except Exception as e:
                 log.error(f"提取Discord贴纸图片失败: {e}")
-        
+
         # 然后从 avatar_user_ids（多个）或 avatar_user_id（单个）提取用户头像
         if not reference_image and not reference_images:
             import asyncio as _asyncio
             all_avatar_ids = []
+            avatar_lookup_errors = []
+
+            def _append_avatar_id(raw_user_id: Any) -> None:
+                normalized_id = str(raw_user_id or "").strip()
+                if normalized_id and normalized_id not in all_avatar_ids:
+                    all_avatar_ids.append(normalized_id)
+
             if avatar_user_ids and isinstance(avatar_user_ids, list):
-                all_avatar_ids.extend(avatar_user_ids[:10])
-            if avatar_user_id and avatar_user_id not in all_avatar_ids:
-                all_avatar_ids.append(avatar_user_id)
-            
+                for uid in avatar_user_ids[:10]:
+                    _append_avatar_id(uid)
+            if avatar_user_id:
+                _append_avatar_id(avatar_user_id)
+
+            all_avatar_names = []
+            if avatar_usernames and isinstance(avatar_usernames, list):
+                all_avatar_names.extend(avatar_usernames[:10])
+            if avatar_username:
+                all_avatar_names.append(avatar_username)
+
+            if all_avatar_names:
+                try:
+                    from src.chat.features.tools.utils.resolve_user import resolve_username_to_id
+
+                    guild = kwargs.get("guild")
+                    if not guild and message is not None:
+                        guild = getattr(message, "guild", None)
+                    if not guild and channel is not None:
+                        guild = getattr(channel, "guild", None)
+
+                    for raw_name in all_avatar_names:
+                        lookup_name = str(raw_name or "").strip()
+                        if not lookup_name:
+                            continue
+                        resolved_id, resolve_error = await resolve_username_to_id(
+                            guild,
+                            lookup_name,
+                        )
+                        if resolved_id:
+                            _append_avatar_id(resolved_id)
+                        elif resolve_error:
+                            avatar_lookup_errors.append(resolve_error)
+                            log.warning(f"解析视频头像用户名失败: {resolve_error}")
+                except Exception as e:
+                    avatar_lookup_errors.append(str(e))
+                    log.error(f"解析视频头像用户名异常: {e}", exc_info=True)
+
+            all_avatar_ids = all_avatar_ids[:max_reference_images]
+
             if all_avatar_ids:
                 try:
                     from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
                     bot = kwargs.get("bot")
-                    guild = message.guild if message else None
+                    guild = kwargs.get("guild")
+                    if not guild and message is not None:
+                        guild = getattr(message, "guild", None)
+                    if not guild and channel is not None:
+                        guild = getattr(channel, "guild", None)
 
                     async def _fetch_avatar(uid):
                         return await fetch_avatar_image(user_id=uid, bot=bot, guild=guild)
-                    
+
                     avatar_results = await _asyncio.gather(
                         *[_fetch_avatar(uid) for uid in all_avatar_ids]
                     )
@@ -474,55 +594,82 @@ async def generate_video(
                             log.warning(f"无法提取用户 {all_avatar_ids[idx]} 的头像")
 
                     if successful_avatar_refs:
-                        reference_images = successful_avatar_refs
-                        reference_image = successful_avatar_refs[0]  # 向后兼容
-                        if len(successful_avatar_refs) > 1:
-                            log.info(f"已提取 {len(successful_avatar_refs)} 个用户头像作为多参考图")
+                        selected_avatar_refs = _select_reference_images(successful_avatar_refs)
+                        reference_images = selected_avatar_refs
+                        reference_image = selected_avatar_refs[0]  # 向后兼容
+                        if len(selected_avatar_refs) > 1:
+                            log.info(f"已提取 {len(selected_avatar_refs)} 个用户头像作为视频多参考图")
                         else:
                             log.info(f"已从Discord用户头像提取视频参考图 (用户ID: {all_avatar_ids[0]})")
                     else:
                         log.warning("所有用户头像都提取失败")
                 except Exception as e:
                     log.error(f"提取Discord用户头像失败: {e}")
-        
+            elif all_avatar_names and avatar_lookup_errors:
+                return {
+                    "generation_failed": True,
+                    "reason": "avatar_user_not_found",
+                    "hint": "未能通过用户名定位到要用于图生视频的用户头像。请让用户提供更精确的用户名、@提及或 Discord 数字ID。"
+                }
+
         # 然后从消息附件中提取
         if not reference_image and not reference_images and message:
             # 首先检查当前消息的附件
-            reference_image = await extract_image_from_message(message)
-            if reference_image:
-                reference_images = [reference_image]
-        
+            current_candidates = await extract_images_from_message(
+                message,
+                max_images=max_reference_images,
+            )
+            selected_images = _select_reference_images(current_candidates)
+            if selected_images:
+                reference_images = selected_images
+                reference_image = selected_images[0]
+                log.info(f"已从当前消息提取 {len(selected_images)} 张视频参考图")
+
         # 如果当前消息没有图片，检查回复的消息
         if not reference_image and not reference_images and message and message.reference and message.reference.message_id:
             try:
                 ref_msg = await message.channel.fetch_message(message.reference.message_id)
                 if ref_msg:
-                    reference_image = await extract_image_from_message(ref_msg)
-                    if reference_image:
-                        reference_images = [reference_image]
-                    
+                    reply_candidates = await extract_images_from_message(
+                        ref_msg,
+                        max_images=max_reference_images,
+                    )
+                    selected_images = _select_reference_images(reply_candidates)
+                    if selected_images:
+                        reference_images = selected_images
+                        reference_image = selected_images[0]
+                        log.info(f"已从回复消息提取 {len(selected_images)} 张视频参考图")
+
                     # 也检查转发消息中的图片
                     if not reference_image and hasattr(ref_msg, "message_snapshots") and ref_msg.message_snapshots:
+                        snapshot_candidates: List[Dict[str, Any]] = []
                         for snapshot in ref_msg.message_snapshots:
                             if hasattr(snapshot, "attachments") and snapshot.attachments:
                                 for attachment in snapshot.attachments:
+                                    if len(snapshot_candidates) >= max_reference_images:
+                                        break
                                     if attachment.content_type and attachment.content_type.startswith("image/"):
                                         try:
                                             image_bytes = await attachment.read()
-                                            reference_image = {
-                                                "data": image_bytes,
-                                                "mime_type": attachment.content_type,
-                                                "filename": attachment.filename
-                                            }
-                                            reference_images = [reference_image]
-                                            break
+                                            snapshot_candidates.append(
+                                                {
+                                                    "data": image_bytes,
+                                                    "mime_type": attachment.content_type,
+                                                    "filename": attachment.filename
+                                                }
+                                            )
                                         except Exception as e:
                                             log.error(f"读取转发消息图片失败: {e}")
-                                if reference_image:
+                                if len(snapshot_candidates) >= max_reference_images:
                                     break
+                        selected_images = _select_reference_images(snapshot_candidates)
+                        if selected_images:
+                            reference_images = selected_images
+                            reference_image = selected_images[0]
+                            log.info(f"已从转发消息提取 {len(selected_images)} 张视频参考图")
             except Exception as e:
                 log.warning(f"获取回复消息失败: {e}")
-        
+
         # 如果还是没有找到图片，检查频道的最近消息
         if not reference_image and not reference_images and channel:
             try:
@@ -530,24 +677,36 @@ async def generate_video(
                 async for hist_msg in channel.history(limit=5):
                     if hist_msg.id == message.id:
                         continue
-                    found_image = await extract_image_from_message(hist_msg)
-                    if found_image:
+                    history_candidates = await extract_images_from_message(
+                        hist_msg,
+                        max_images=max_reference_images,
+                    )
+                    selected_images = _select_reference_images(history_candidates)
+                    if selected_images:
                         log.info(f"在最近消息中找到图片 (消息 ID: {hist_msg.id}, 发送者: {hist_msg.author})")
-                        reference_image = found_image
-                        reference_images = [found_image]
+                        reference_images = selected_images
+                        reference_image = selected_images[0]
                         break
             except Exception as e:
                 log.warning(f"搜索频道历史消息失败: {e}")
-        
+
         # 如果 use_reference_image=True 但没找到图片，提示用户
-        if not reference_image and not reference_images:
+        if (
+            not reference_image
+            and not reference_images
+            and not (isinstance(reference_image_url, str) and reference_image_url.strip())
+        ):
             return {
                 "generation_failed": True,
                 "reason": "no_image_found",
-                "hint": "用户没有发送图片。请用自己的语气告诉用户，如果想要将图片做成视频，需要先发送一张图片给你，或者回复一张图片并说明想要的效果。也可以使用纯文字描述来生成视频。"
+                "hint": "没有找到可用于图生视频的参考图片。请用自己的语气告诉用户：可以先发送/回复图片，或提供明确的用户ID、@提及、用户名来使用头像；也可以改用纯文字描述生成视频。"
             }
 
-    is_image_to_video = bool(reference_image or reference_images)
+    is_image_to_video = bool(
+        reference_image
+        or reference_images
+        or (isinstance(reference_image_url, str) and reference_image_url.strip())
+    )
     prompt = _ensure_chinese_video_prompt(
         prompt,
         is_image_to_video=is_image_to_video,
@@ -585,6 +744,7 @@ async def generate_video(
                 {
                     "data": ref["data"],
                     "mime_type": ref.get("mime_type", "image/png"),
+                    "filename": ref.get("filename", "reference.png"),
                 }
                 for ref in reference_images
                 if ref and ref.get("data")
@@ -607,6 +767,7 @@ async def generate_video(
                     size=size,
                     quality=quality,
                     reference_image_url=reference_image_url,
+                    generate_audio=generate_audio,
                 )
 
         results = await asyncio.gather(
@@ -673,6 +834,7 @@ async def generate_video(
                                     "quality": quality,
                                     "model": video_model_name,
                                     "use_reference_image": bool(reference_image or reference_images),
+                                    "generate_audio": generate_audio,
                                     "original_success_message": success_message or "",
                                     "post_id": result.post_id,
                                     "video_model_name": video_model_name,
@@ -804,7 +966,7 @@ async def generate_video(
         # 移除"正在生成"反应，添加失败反应
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
-        
+
         log.error(f"视频生成工具执行错误: {e}", exc_info=True)
         return {
             "generation_failed": True,

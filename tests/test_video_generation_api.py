@@ -22,6 +22,10 @@ def test_generate_video_tool_signature_exposes_new_api_params():
     assert "quality" in signature.parameters
     assert "model" in signature.parameters
     assert "reference_image_url" in signature.parameters
+    assert "avatar_username" in signature.parameters
+    assert "avatar_usernames" in signature.parameters
+    assert "generate_audio" in signature.parameters
+    assert signature.parameters["generate_audio"].default is True
 
 
 def test_video_service_posts_to_v1_videos_with_expected_payload(monkeypatch):
@@ -95,6 +99,7 @@ def test_video_service_posts_to_v1_videos_with_expected_payload(monkeypatch):
     assert captured["kwargs"]["json"]["size"] == "1792x1024"
     assert captured["kwargs"]["json"]["seconds"] == 18
     assert captured["kwargs"]["json"]["quality"] == "high"
+    assert captured["kwargs"]["json"]["generate_audio"] is True
     assert captured["kwargs"]["json"]["stream"] is True
     assert captured["kwargs"]["json"]["image_reference"].startswith(
         "data:image/png;base64,"
