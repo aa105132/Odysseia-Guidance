@@ -20,6 +20,19 @@ GENERATING_EMOJI = "🎬"  # 正在生成
 SUCCESS_EMOJI = "✅"      # 生成成功
 FAILED_EMOJI = "❌"       # 生成失败
 
+def _video_size_to_ratio_label(size: Optional[str]) -> str:
+    """将内部尺寸值转换为用户可读的宽高比。"""
+    ratio_map = {
+        "1280x720": "16:9",
+        "1792x1024": "16:9",
+        "720x1280": "9:16",
+        "1024x1792": "9:16",
+        "1024x1024": "1:1",
+    }
+    normalized = str(size or "").strip()
+    return ratio_map.get(normalized, normalized or "16:9")
+
+
 def _set_embed_author(embed: discord.Embed, message: Optional[discord.Message], request_user: Optional[discord.abc.User]) -> None:
     """为 Embed 设置作者信息，优先使用显式传入的请求用户。"""
     author_user = request_user
@@ -157,8 +170,8 @@ async def generate_video(
                 - 用户说"用xxx的头像做视频" → True + avatar_user_id
                 - 用户纯文字描述要求生成视频 → False
 
-        size: （可选）视频画幅尺寸。
-                可用值：`1280x720`、`720x1280`、`1792x1024`、`1024x1792`、`1024x1024`。
+        size: （可选）视频宽高比/内部尺寸。
+                可用值：`1280x720`、`720x1280`、`1792x1024`、`1024x1792`、`1024x1024`，界面会显示为 `16:9`、`9:16`、`1:1`。
                 默认 `1280x720`。
 
         quality: （可选）视频质量。
@@ -480,7 +493,7 @@ async def generate_video(
     video_count = max(1, default_video_count)
     log.info(
         f"调用视频生成工具 ({mode_str})，提示词: {prompt[:100]}...，时长: {duration}s，"
-        f"尺寸: {size}，质量: {quality}，模型: {selected_model or 'auto'}，默认并发生成数量: {video_count}"
+        f"宽高比: {_video_size_to_ratio_label(size)}，质量: {quality}，模型: {selected_model or 'auto'}，默认并发生成数量: {video_count}"
     )
 
     # 添加"正在生成"反应
@@ -642,7 +655,7 @@ async def generate_video(
                             app_config.VIDEO_GEN_QUALITY_TO_RESOLUTION["high"],
                         )
                         prompt_embed.set_footer(
-                            text=f"模型: {video_model_name} | 时长: {duration}s | 画幅: {size} | 质量: {quality}({resolution_text})"
+                            text=f"模型: {video_model_name} | 时长: {duration}s | 宽高比: {_video_size_to_ratio_label(size)} | 质量: {quality}({resolution_text})"
                         )
 
                         if result.url:

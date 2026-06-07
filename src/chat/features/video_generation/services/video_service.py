@@ -91,12 +91,14 @@ class VideoGenerationService:
         self._initialize_client()
 
     def _resolve_videos_endpoint(self) -> str:
-        """根据 BASE_URL 推导最终的视频生成端点，强制走 /v1/videos。"""
+        """根据 BASE_URL 推导最终的视频生成端点。"""
         raw_base_url = str(self._client["base_url"]).strip().rstrip("/")
         if not raw_base_url:
             raise ValueError("视频生成 BASE_URL 为空")
 
         base_url = raw_base_url
+        if base_url.endswith("/v1/video/generate"):
+            return base_url
         if base_url.endswith("/v1/videos") or base_url.endswith("/videos"):
             return base_url
 
@@ -115,8 +117,9 @@ class VideoGenerationService:
             return f"{base_url}/videos"
         return f"{base_url}/v1/videos"
 
-    def _normalize_duration(self, duration: Any) -> int:
+    def _normalize_duration(self, duration: Any, min_seconds: Optional[int] = None) -> int:
         """将时长限制到当前允许范围。"""
+        effective_min = int(min_seconds or app_config.VIDEO_GEN_MIN_SECONDS)
         config_max = int(
             app_config.VIDEO_GEN_CONFIG.get(
                 "MAX_DURATION", app_config.VIDEO_GEN_MAX_SECONDS
@@ -124,13 +127,13 @@ class VideoGenerationService:
         )
         effective_max = min(
             app_config.VIDEO_GEN_MAX_SECONDS,
-            max(app_config.VIDEO_GEN_MIN_SECONDS, config_max),
+            max(effective_min, config_max),
         )
         try:
             parsed_duration = int(duration)
         except (TypeError, ValueError):
-            parsed_duration = app_config.VIDEO_GEN_MIN_SECONDS
-        return min(max(app_config.VIDEO_GEN_MIN_SECONDS, parsed_duration), effective_max)
+            parsed_duration = effective_min
+        return min(max(effective_min, parsed_duration), effective_max)
 
     def _normalize_size(self, size: Optional[str]) -> str:
         """规范化画幅尺寸。"""
@@ -147,6 +150,25 @@ class VideoGenerationService:
             log.warning("视频尺寸不受支持，已回退到默认值: %s", normalized_size)
             return default_size
         return normalized_size
+
+    def _is_video_generate_endpoint(self, endpoint: str) -> bool:
+        """判断是否为 /v1/video/generate 兼容端点。"""
+        return str(endpoint or "").rstrip("/").endswith("/v1/video/generate")
+
+    def _size_to_ratio(self, size: str) -> str:
+        """将内部 size 映射为 /v1/video/generate 使用的 ratio。"""
+        ratio_map = {
+            "1280x720": "16:9",
+            "720x1280": "9:16",
+            "1792x1024": "16:9",
+            "1024x1792": "9:16",
+            "1024x1024": "1:1",
+        }
+        return ratio_map.get(str(size or "").strip(), "16:9")
+
+    def _quality_to_resolution(self, quality: str) -> str:
+        """将内部 quality 映射为 /v1/video/generate 使用的 resolution。"""
+        return "480p" if str(quality or "").strip().lower() == "standard" else "720p"
 
     def _normalize_quality(self, quality: Optional[str]) -> str:
         """规范化视频质量。"""
@@ -210,6 +232,57 @@ class VideoGenerationService:
         mime_type = first_reference.get("mime_type", "image/png")
         return f"data:{mime_type};base64,{image_b64}"
 
+    def _extract_json_candidates_from_stream_text(self, raw_text: str) -> List[dict]:
+        """从 SSE/流式文本中提取可能的 JSON payload。"""
+        candidates: List[dict] = []
+        for raw_line in str(raw_text or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("data:"):
+                line = line[5:].strip()
+            if not line or line == "[DONE]":
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                log.debug("视频流式片段不是合法 JSON，已跳过: %s", line[:200])
+                continue
+            if isinstance(payload, dict):
+                candidates.append(payload)
+        return candidates
+
+    async def _read_video_response_payload(
+        self,
+        response: aiohttp.ClientResponse,
+        video_format: str,
+    ) -> Optional[dict]:
+        """读取视频 API 响应，兼容普通 JSON 与 SSE/流式心跳。"""
+        content_type = str(getattr(response, "headers", {}).get("content-type", "")).lower()
+        is_stream_response = "text/event-stream" in content_type
+
+        if not is_stream_response:
+            try:
+                return await response.json()
+            except Exception:
+                raw_text = await response.text()
+                stream_candidates = self._extract_json_candidates_from_stream_text(raw_text)
+                if stream_candidates:
+                    return stream_candidates[-1]
+                return json.loads(raw_text)
+
+        last_payload: Optional[dict] = None
+        async for raw_chunk in response.content:
+            if not raw_chunk:
+                continue
+            chunk_text = raw_chunk.decode("utf-8", errors="replace")
+            for payload in self._extract_json_candidates_from_stream_text(chunk_text):
+                last_payload = payload
+                if self._extract_video_from_response(payload, video_format) is not None:
+                    return payload
+
+        return last_payload
+
     async def generate_video(
         self,
         prompt: str,
@@ -232,7 +305,11 @@ class VideoGenerationService:
 
         config = app_config.VIDEO_GEN_CONFIG
         video_format = config.get("VIDEO_FORMAT", "url")
-        normalized_duration = self._normalize_duration(duration)
+        endpoint = self._resolve_videos_endpoint()
+        endpoint_min_duration = 1 if self._is_video_generate_endpoint(endpoint) else None
+        normalized_duration = self._normalize_duration(
+            duration, min_seconds=endpoint_min_duration
+        )
         normalized_size = self._normalize_size(size)
         normalized_quality = self._normalize_quality(quality)
         image_reference = self._build_image_reference(
@@ -254,7 +331,6 @@ class VideoGenerationService:
         if model_override and str(model_override).strip():
             model_name = str(model_override).strip()
 
-        endpoint = self._resolve_videos_endpoint()
         log.info(
             "使用模型 %s 生成视频 (%s), 时长: %ss, size: %s, quality: %s, endpoint: %s",
             model_name,
@@ -265,15 +341,28 @@ class VideoGenerationService:
             endpoint,
         )
 
-        payload: Dict[str, Any] = {
-            "model": model_name,
-            "prompt": prompt.strip(),
-            "size": normalized_size,
-            "seconds": normalized_duration,
-            "quality": normalized_quality,
-        }
-        if image_reference is not None:
-            payload["image_reference"] = image_reference
+        if self._is_video_generate_endpoint(endpoint):
+            payload: Dict[str, Any] = {
+                "model": model_name,
+                "prompt": prompt.strip(),
+                "duration": normalized_duration,
+                "ratio": self._size_to_ratio(normalized_size),
+                "resolution": self._quality_to_resolution(normalized_quality),
+                "stream": True,
+            }
+            if image_reference is not None:
+                payload["image_reference"] = image_reference
+        else:
+            payload = {
+                "model": model_name,
+                "prompt": prompt.strip(),
+                "size": normalized_size,
+                "seconds": normalized_duration,
+                "quality": normalized_quality,
+                "stream": True,
+            }
+            if image_reference is not None:
+                payload["image_reference"] = image_reference
 
         retry_502_max_attempts = max(
             1, int(config.get("RETRY_502_MAX_ATTEMPTS", 3))
@@ -305,7 +394,12 @@ class VideoGenerationService:
                             status_code = response.status
 
                             if status_code == 200:
-                                data = await response.json()
+                                data = await self._read_video_response_payload(
+                                    response, video_format
+                                )
+                                if not isinstance(data, dict):
+                                    log.warning("视频生成 API 流式响应未返回有效 JSON payload")
+                                    data = {}
                                 video_result = self._extract_video_from_response(
                                     data, video_format
                                 )

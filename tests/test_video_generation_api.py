@@ -95,6 +95,7 @@ def test_video_service_posts_to_v1_videos_with_expected_payload(monkeypatch):
     assert captured["kwargs"]["json"]["size"] == "1792x1024"
     assert captured["kwargs"]["json"]["seconds"] == 18
     assert captured["kwargs"]["json"]["quality"] == "high"
+    assert captured["kwargs"]["json"]["stream"] is True
     assert captured["kwargs"]["json"]["image_reference"].startswith(
         "data:image/png;base64,"
     )

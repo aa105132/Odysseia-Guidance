@@ -27,6 +27,19 @@ from src.chat.features.video_generation.services.video_service import (
 log = logging.getLogger(__name__)
 
 
+def _video_size_to_ratio_label(size: Optional[str]) -> str:
+    """将内部尺寸值转换为用户可读的宽高比。"""
+    ratio_map = {
+        "1280x720": "16:9",
+        "1792x1024": "16:9",
+        "720x1280": "9:16",
+        "1024x1792": "9:16",
+        "1024x1024": "1:1",
+    }
+    normalized = str(size or "").strip()
+    return ratio_map.get(normalized, normalized or "16:9")
+
+
 def _normalize_duration(value: Optional[int]) -> int:
     if value is None:
         return app_config.VIDEO_GEN_MIN_SECONDS
@@ -81,11 +94,11 @@ class VideoOptionsModal(discord.ui.Modal, title="设置主参数"):
             max_length=3,
         )
         self.size_input = discord.ui.TextInput(
-            label="画幅尺寸",
+            label="宽高比",
             style=discord.TextStyle.short,
             required=True,
             default=self.parent_view.size,
-            placeholder="1280x720 / 720x1280 / 1792x1024 / 1024x1792 / 1024x1024",
+            placeholder="16:9 / 9:16 / 1:1（也兼容 1280x720 等旧值）",
             max_length=20,
         )
         self.quality_input = discord.ui.TextInput(
@@ -121,7 +134,7 @@ class VideoOptionsModal(discord.ui.Modal, title="设置主参数"):
         if size not in app_config.VIDEO_GEN_ALLOWED_SIZES:
             allowed_sizes = "、".join(app_config.VIDEO_GEN_ALLOWED_SIZES)
             await interaction.response.send_message(
-                f"画幅尺寸不支持，请使用：{allowed_sizes}",
+                f"宽高比不支持，请使用：16:9、9:16、1:1（也兼容：{allowed_sizes}）",
                 ephemeral=True,
             )
             return
@@ -248,7 +261,7 @@ class VideoGenerationPanelView(discord.ui.View):
         embed.add_field(name="📝 视频描述", value=prompt_preview, inline=False)
 
         embed.add_field(name="⏱️ 时长", value=f"{self.duration} 秒", inline=True)
-        embed.add_field(name="📐 画幅", value=self.size, inline=True)
+        embed.add_field(name="📐 宽高比", value=_video_size_to_ratio_label(self.size), inline=True)
         embed.add_field(
             name="🎞️ 质量",
             value=f"{self.quality}（{self.resolution_label}）",
@@ -500,7 +513,7 @@ class VideoGenerationCog(commands.Cog):
             new_balance=new_balance,
             title="AI 视频生成",
             footer_extra=(
-                f"时长: {normalized_duration}s | 画幅: {normalized_size} | "
+                f"时长: {normalized_duration}s | 宽高比: {_video_size_to_ratio_label(normalized_size)} | "
                 f"质量: {normalized_quality}({app_config.VIDEO_GEN_QUALITY_TO_RESOLUTION.get(normalized_quality, '720p')})"
             ),
             with_regenerate_view=True,
