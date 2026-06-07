@@ -289,7 +289,7 @@ def test_generate_video_uses_v1_video_generate_payload(monkeypatch):
     result = asyncio.run(
         service.generate_video(
             prompt="一只猫在雪地里奔跑，电影感镜头",
-            duration=5,
+            duration=10,
             size="1280x720",
             quality="high",
         )
@@ -300,10 +300,13 @@ def test_generate_video_uses_v1_video_generate_payload(monkeypatch):
     assert recorder["url"] == "http://localhost:8000/v1/video/generate"
     assert recorder["json"] == {
         "model": "your-video-model",
+        "mode": "text-to-video",
         "prompt": "一只猫在雪地里奔跑，电影感镜头",
-        "duration": 5,
-        "ratio": "16:9",
+        "duration": 10,
+        "aspect_ratio": "16:9",
         "resolution": "720p",
+        "format": "mp4",
+        "generate_audio": True,
         "stream": True,
     }
 
@@ -382,5 +385,8 @@ def test_video_generate_endpoint_includes_image_aliases_for_i2v(monkeypatch):
     assert result is not None
     assert recorder["json"]["duration"] == 5
     assert recorder["json"]["model"] == "seedance-2-fast-i2v"
-    assert recorder["json"]["image_reference"].startswith("data:image/png;base64,")
-    assert recorder["json"]["image"].startswith("data:image/png;base64,")
+    assert recorder["json"]["mode"] == "image-to-video"
+    assert recorder["json"]["generate_audio"] is False
+    assert "image_reference" not in recorder["json"]
+    assert recorder["json"]["first_frame_resource_path"].startswith("data:image/png;base64,")
+    assert recorder["json"]["images"][0].startswith("data:image/png;base64,")

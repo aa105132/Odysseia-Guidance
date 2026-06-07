@@ -155,16 +155,16 @@ class VideoGenerationService:
         """判断是否为 /v1/video/generate 兼容端点。"""
         return str(endpoint or "").rstrip("/").endswith("/v1/video/generate")
 
-    def _size_to_ratio(self, size: str) -> str:
-        """将内部 size 映射为 /v1/video/generate 使用的 ratio。"""
-        ratio_map = {
+    def _size_to_aspect_ratio(self, size: str) -> str:
+        """将内部 size 映射为 /v1/video/generate 使用的 aspect_ratio。"""
+        aspect_ratio_map = {
             "1280x720": "16:9",
             "720x1280": "9:16",
             "1792x1024": "16:9",
             "1024x1792": "9:16",
             "1024x1024": "1:1",
         }
-        return ratio_map.get(str(size or "").strip(), "16:9")
+        return aspect_ratio_map.get(str(size or "").strip(), "16:9")
 
     def _quality_to_resolution(self, quality: str) -> str:
         """将内部 quality 映射为 /v1/video/generate 使用的 resolution。"""
@@ -342,21 +342,26 @@ class VideoGenerationService:
         )
 
         if self._is_video_generate_endpoint(endpoint):
+            is_image_to_video = image_reference is not None
             payload: Dict[str, Any] = {
                 "model": model_name,
+                "mode": "image-to-video" if is_image_to_video else "text-to-video",
                 "prompt": prompt.strip(),
                 "duration": normalized_duration,
-                "ratio": self._size_to_ratio(normalized_size),
+                "aspect_ratio": self._size_to_aspect_ratio(normalized_size),
                 "resolution": self._quality_to_resolution(normalized_quality),
+                "format": "mp4",
+                "generate_audio": False if is_image_to_video else True,
                 "stream": True,
             }
             if image_reference is not None:
-                payload["image_reference"] = image_reference
                 if isinstance(image_reference, dict) and image_reference.get("image_url"):
-                    payload["image_url"] = image_reference["image_url"]
-                    payload["image"] = image_reference["image_url"]
+                    image_url = image_reference["image_url"]
+                    payload["first_frame_url"] = image_url
+                    payload["images"] = [image_url]
                 elif isinstance(image_reference, str):
-                    payload["image"] = image_reference
+                    payload["first_frame_resource_path"] = image_reference
+                    payload["images"] = [image_reference]
         else:
             payload = {
                 "model": model_name,
