@@ -61,6 +61,27 @@ class _FakeClientSession:
         return _FakePostContext(_FakeResponse(self._payload))
 
 
+class _FakeGetResponse:
+    status = 200
+    headers = {"Content-Type": "image/jpeg"}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def read(self):
+        return b"fake-downloaded-image"
+
+
+class _FakeClientSessionWithGet(_FakeClientSession):
+    def get(self, url, timeout=None):
+        self._recorder["get_url"] = url
+        self._recorder["get_timeout"] = timeout
+        return _FakeGetResponse()
+
+
 def test_generate_video_tool_exposes_new_video_params():
     signature = inspect.signature(generate_video_tool)
     assert "size" in signature.parameters
@@ -390,3 +411,41 @@ def test_video_generate_endpoint_includes_image_aliases_for_i2v(monkeypatch):
     assert "image_reference" not in recorder["json"]
     assert recorder["json"]["first_frame_resource_path"].startswith("data:image/png;base64,")
     assert recorder["json"]["images"][0].startswith("data:image/png;base64,")
+
+
+def test_video_generate_endpoint_downloads_reference_url_as_data_uri(monkeypatch):
+    recorder = {}
+    payload = {"id": "vid_i2v_url", "data": {"outputs": [{"url": "https://example.com/i2v-url"}]}}
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "API_KEY", "test-key")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "BASE_URL", "http://localhost:8000/v1/video/generate")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MODEL_NAME", "seedance-2-fast")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "I2V_MODEL_NAME", "")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "VIDEO_FORMAT", "url")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_SIZE", "1280x720")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_QUALITY", "high")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_DURATION", 30)
+    monkeypatch.setattr(
+        video_service_module.aiohttp,
+        "ClientSession",
+        lambda: _FakeClientSessionWithGet(recorder, payload),
+    )
+
+    service = VideoGenerationService()
+    service._client = {"api_key": "test-key", "base_url": "http://localhost:8000/v1/video/generate"}
+
+    result = asyncio.run(
+        service.generate_video(
+            prompt="让图里的猫自然动起来",
+            duration=5,
+            reference_image_url="https://example.com/cat.jpg",
+        )
+    )
+
+    assert result is not None
+    assert recorder["get_url"] == "https://example.com/cat.jpg"
+    assert recorder["json"]["mode"] == "image-to-video"
+    assert recorder["json"]["first_frame_resource_path"].startswith("data:image/jpeg;base64,")
+    assert recorder["json"]["images"] == [recorder["json"]["first_frame_resource_path"]]
+    assert "first_frame_url" not in recorder["json"]

@@ -184,7 +184,39 @@ class VideoGenerationService:
             return default_quality
         return normalized_quality
 
-    def _build_image_reference(
+    async def _download_reference_image_as_data_uri(self, image_url: str) -> Optional[str]:
+        """下载参考图并转为 data URI，避免上游无法自行拉取外链。"""
+        normalized_url = str(image_url or "").strip()
+        if not normalized_url.startswith(("http://", "https://")):
+            return None
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    normalized_url,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                ) as response:
+                    if response.status != 200:
+                        log.warning(
+                            "下载视频参考图失败，状态码: %s, url: %s",
+                            response.status,
+                            normalized_url[:160],
+                        )
+                        return None
+                    image_bytes = await response.read()
+                    if not image_bytes:
+                        log.warning("下载视频参考图为空: %s", normalized_url[:160])
+                        return None
+                    content_type = str(response.headers.get("Content-Type") or "").split(";")[0].strip()
+                    if not content_type.startswith("image/"):
+                        content_type = "image/png"
+                    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+                    return f"data:{content_type};base64,{image_b64}"
+        except Exception as exc:
+            log.warning("下载视频参考图异常，保留原 URL 兜底: %s", exc)
+            return None
+
+    async def _build_image_reference(
         self,
         *,
         image_data: Optional[bytes],
@@ -192,13 +224,16 @@ class VideoGenerationService:
         reference_images: Optional[List[Dict[str, Any]]],
         reference_image_url: Optional[str],
     ) -> Optional[Any]:
-        """构建 /v1/videos 所需的 image_reference 字段。"""
+        """构建视频接口所需的参考图字段，优先返回 data URI。"""
         if isinstance(reference_image_url, str):
             normalized_url = reference_image_url.strip()
             if normalized_url:
                 if normalized_url.startswith("data:"):
                     return normalized_url
                 if normalized_url.startswith(("http://", "https://")):
+                    data_uri = await self._download_reference_image_as_data_uri(normalized_url)
+                    if data_uri:
+                        return data_uri
                     return {"image_url": normalized_url}
                 log.warning("参考图 URL 格式无效，已忽略: %s", normalized_url[:120])
 
@@ -312,7 +347,7 @@ class VideoGenerationService:
         )
         normalized_size = self._normalize_size(size)
         normalized_quality = self._normalize_quality(quality)
-        image_reference = self._build_image_reference(
+        image_reference = await self._build_image_reference(
             image_data=image_data,
             image_mime_type=image_mime_type,
             reference_images=reference_images,
