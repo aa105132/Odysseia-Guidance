@@ -614,6 +614,59 @@ def test_generate_video_tool_infers_duration_from_prompt_timeline(monkeypatch):
     assert captured["duration"] == 10
 
 
+def test_generate_video_tool_does_not_fallback_to_message_image_when_avatar_missing(monkeypatch):
+    class _FakeVideoService:
+        def is_available(self):
+            return True
+
+        async def generate_video(self, **kwargs):
+            raise AssertionError("头像失败时不应继续调用视频生成服务")
+
+    class _FakeAttachment:
+        content_type = "image/png"
+        filename = "unrelated.png"
+
+        async def read(self):
+            raise AssertionError("头像失败时不应读取无关消息图片")
+
+    fake_message = SimpleNamespace(
+        id=1,
+        guild=None,
+        content="",
+        stickers=[],
+        attachments=[_FakeAttachment()],
+        reference=None,
+    )
+
+    async def _fake_fetch_avatar_image(*args, **kwargs):
+        return None
+
+    import src.chat.features.tools.utils.discord_image_utils as discord_image_utils_module
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_NUMBER_OF_VIDEOS", 1)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_CONCURRENT_VIDEO_TASKS", 1)
+    monkeypatch.setattr(video_service_module, "video_service", _FakeVideoService())
+    monkeypatch.setattr(discord_image_utils_module, "fetch_avatar_image", _fake_fetch_avatar_image)
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.odysseia_coin.service.coin_service",
+        SimpleNamespace(coin_service=SimpleNamespace()),
+    )
+
+    result = asyncio.run(
+        generate_video_tool(
+            prompt="基于指定用户头像生成 0-10 秒特摄变身视频",
+            use_reference_image=True,
+            avatar_user_id="1172726720378446080",
+            message=fake_message,
+        )
+    )
+
+    assert result["generation_failed"] is True
+    assert result["reason"] == "avatar_image_not_found"
+
+
 def test_video_generate_endpoint_downloads_reference_url_as_data_uri(monkeypatch):
     recorder = {}
     payload = {"id": "vid_i2v_url", "data": {"outputs": [{"url": "https://example.com/i2v-url"}]}}

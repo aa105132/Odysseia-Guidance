@@ -160,6 +160,7 @@ async def get_user_avatar(
                 f"已获取 {user_name}（user_id: {target_id}）的头像。"
                 f"如果还需要获取其他人的头像，继续调用 get_user_avatar；"
                 f"全部头像获取完毕后立即开始画图或生成视频，不要再做多余的查询。"
+                f"传 Discord user_id 时必须用字符串，禁止裸数字。"
                 f"画单人时传 edit_image(avatar_user_id=\"{target_id}\")；做图生视频时传 generate_video(use_reference_image=True, avatar_user_id=\"{target_id}\")。"
                 f"多人时把所有 user_id 放到 edit_image(avatar_user_ids=[\"{target_id}\", ...]) 或 generate_video(use_reference_image=True, avatar_user_ids=[\"{target_id}\", ...])。"
             ),

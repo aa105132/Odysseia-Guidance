@@ -359,6 +359,7 @@ class GeminiService:
 
         self.last_called_tools: List[str] = []
         self.last_tool_image_data: Optional[Dict[str, Any]] = None
+        self.last_tool_images_data: List[Dict[str, Any]] = []
         self.last_tool_source_links: List[tuple] = []
 
         log.info("--- 工具加载完成 (模块化) ---")
@@ -375,6 +376,7 @@ class GeminiService:
         self.tool_service.bot = bot
         self.last_called_tools = []
         self.last_tool_image_data = None
+        self.last_tool_images_data = []
         self.last_tool_source_links = []
         log.info("Discord Bot 实例已成功注入 ToolService。")
 
@@ -806,11 +808,135 @@ class GeminiService:
         if not isinstance(raw_image_bytes, bytes) or not raw_image_bytes:
             return None
 
-        return {
+        payload = {
             "mime_type": image_info.get("mime_type", "image/png"),
             "data": raw_image_bytes,
             "tool_name": tool_name,
         }
+        user_info = tool_result.get("user_info")
+        if isinstance(user_info, dict):
+            payload["user_info"] = {
+                key: value
+                for key, value in user_info.items()
+                if not isinstance(value, (bytes, bytearray, memoryview))
+            }
+        return payload
+
+    def _remember_tool_image_payload(self, image_payload: Dict[str, Any]) -> None:
+        """缓存本轮已获取的工具图片，供后续生成工具按 ID 复用。"""
+        if not isinstance(image_payload, dict) or not image_payload.get("data"):
+            return
+
+        user_info = image_payload.get("user_info")
+        cache_key = None
+        if isinstance(user_info, dict) and user_info.get("user_id"):
+            cache_key = f"user:{user_info.get('user_id')}"
+        else:
+            cache_key = f"{image_payload.get('tool_name')}:{len(image_payload.get('data', b''))}"
+
+        deduped = [
+            item
+            for item in self.last_tool_images_data
+            if item.get("_cache_key") != cache_key
+        ]
+        cached_item = dict(image_payload)
+        cached_item["_cache_key"] = cache_key
+        deduped.append(cached_item)
+        self.last_tool_images_data = deduped[-10:]
+
+    @staticmethod
+    def _normalize_discord_id_text(value: Any) -> str:
+        """把工具参数中的 Discord ID 规范成数字字符串。"""
+        if value is None:
+            return ""
+        text = str(value).strip()
+        if not text:
+            return ""
+        match = re.fullmatch(r"<@!?(\d+)>", text)
+        if match:
+            return match.group(1)
+        return re.sub(r"\D", "", text)
+
+    @classmethod
+    def _discord_ids_match_allowing_float_rounding(cls, expected: Any, actual: Any) -> bool:
+        """比较 Discord snowflake，兼容模型把超大 ID 当数字导致的低位舍入。"""
+        expected_text = cls._normalize_discord_id_text(expected)
+        actual_text = cls._normalize_discord_id_text(actual)
+        if not expected_text or not actual_text:
+            return False
+        if expected_text == actual_text:
+            return True
+        try:
+            expected_int = int(expected_text)
+            actual_int = int(actual_text)
+        except ValueError:
+            return False
+        # Discord snowflake 远大于 JS 安全整数；LLM/兼容层若按 number 表达，低位可能被舍入。
+        return (
+            expected_int > 2**53
+            and actual_int > 2**53
+            and abs(expected_int - actual_int) <= 4096
+        )
+
+    def _select_cached_avatar_references_for_tool_args(
+        self, tool_args: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """按 generate_video 的头像参数，从本轮已获取头像缓存中挑选参考图。"""
+        cached_avatars = [
+            item
+            for item in self.last_tool_images_data
+            if item.get("tool_name") == "get_user_avatar" and item.get("data")
+        ]
+        if not cached_avatars:
+            return []
+
+        requested_ids: List[Any] = []
+        avatar_user_ids = tool_args.get("avatar_user_ids")
+        if isinstance(avatar_user_ids, list):
+            requested_ids.extend(avatar_user_ids)
+        elif avatar_user_ids not in (None, ""):
+            requested_ids.append(avatar_user_ids)
+
+        avatar_user_id = tool_args.get("avatar_user_id")
+        if avatar_user_id not in (None, ""):
+            requested_ids.append(avatar_user_id)
+
+        selected: List[Dict[str, Any]] = []
+        if requested_ids:
+            for requested_id in requested_ids:
+                for cached in cached_avatars:
+                    cached_user_info = cached.get("user_info") or {}
+                    cached_user_id = (
+                        cached_user_info.get("user_id")
+                        if isinstance(cached_user_info, dict)
+                        else None
+                    )
+                    if self._discord_ids_match_allowing_float_rounding(
+                        cached_user_id,
+                        requested_id,
+                    ):
+                        selected.append(cached)
+                        break
+        else:
+            selected = cached_avatars
+
+        normalized_refs: List[Dict[str, Any]] = []
+        seen_keys = set()
+        for item in selected:
+            cache_key = item.get("_cache_key") or id(item)
+            if cache_key in seen_keys:
+                continue
+            seen_keys.add(cache_key)
+            normalized_refs.append(
+                {
+                    "data": item["data"],
+                    "mime_type": str(item.get("mime_type") or "image/png").strip()
+                    or "image/png",
+                    "source": "tool:get_user_avatar",
+                    "filename": item.get("filename") or "avatar_reference.png",
+                }
+            )
+        return normalized_refs
 
     @classmethod
     def _sanitize_tool_result_for_history(
@@ -886,8 +1012,9 @@ class GeminiService:
                         f"已获取用户头像参考图{identity_hint}。"
                         "如果还需要获取其他人的头像，继续调用 get_user_avatar；"
                         "全部头像获取完毕后立即开始画图或生成视频，不要再做多余的查询。"
-                        "做图生视频时调用 generate_video(use_reference_image=True, avatar_user_id=...)；"
-                        "多人头像视频把所有 user_id 放到 avatar_user_ids。"
+                        "传 Discord user_id 时必须用字符串，禁止裸数字。"
+                        "做图生视频时调用 generate_video(use_reference_image=True, avatar_user_id=\"...\")；"
+                        "多人头像视频把所有 user_id 字符串放到 avatar_user_ids。"
                     ),
                 },
                 *image_parts,
@@ -920,6 +1047,7 @@ class GeminiService:
         # 清理上一轮工具状态，避免一次性的格式化工具影响后续普通对话。
         self.last_called_tools = []
         self.last_tool_image_data = None
+        self.last_tool_images_data = []
         self.last_tool_source_links = []
 
     @staticmethod
@@ -3040,8 +3168,9 @@ class GeminiService:
                         response_hint = (
                             "已获取用户头像。如果还需要获取其他人的头像，继续调用 get_user_avatar；"
                             "全部头像获取完毕后立即开始画图或生成视频，不要再做多余的查询。"
-                            "做图生视频时调用 generate_video(use_reference_image=True, avatar_user_id=...)；"
-                            "多人头像视频把所有 user_id 放到 avatar_user_ids。"
+                            "传 Discord user_id 时必须用字符串，禁止裸数字。"
+                            "做图生视频时调用 generate_video(use_reference_image=True, avatar_user_id=\"...\")；"
+                            "多人头像视频把所有 user_id 字符串放到 avatar_user_ids。"
                         )
                     elif actual_tool_name == "render_newspaper_brief":
                         response_hint = (
@@ -3766,6 +3895,7 @@ class GeminiService:
                         )
                         if extracted_tool_image:
                             self.last_tool_image_data = extracted_tool_image
+                            self._remember_tool_image_payload(extracted_tool_image)
 
                         tool_result_for_history = self._sanitize_tool_result_for_history(
                             tool_result
@@ -3996,6 +4126,24 @@ class GeminiService:
                 cached_image_bytes = cached_image_bytes.tobytes()
             elif isinstance(cached_image_bytes, bytearray):
                 cached_image_bytes = bytes(cached_image_bytes)
+
+            if (
+                normalized_tool_name in ("edit_image", "generate_video")
+                and not tool_args.get("_prepared_reference_images")
+                and not tool_args.get("_prepared_reference_image")
+            ):
+                cached_avatar_refs = self._select_cached_avatar_references_for_tool_args(
+                    tool_args
+                )
+                if cached_avatar_refs:
+                    tool_args["_prepared_reference_images"] = cached_avatar_refs
+                    if normalized_tool_name == "generate_video":
+                        tool_args["use_reference_image"] = True
+                    log.info(
+                        "已为 %s 复用本轮 get_user_avatar 获取到的 %s 张头像参考图。",
+                        normalized_tool_name,
+                        len(cached_avatar_refs),
+                    )
 
             if (
                 normalized_tool_name in ("generate_image_novelai", "generate_video")

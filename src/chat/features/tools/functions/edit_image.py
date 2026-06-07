@@ -68,10 +68,10 @@ async def edit_image(
     - 但如果用户要画的是”某个人 / 某个昵称 / 某个成员 / @某人 / 指定用户本人设定”：
       先从上下文 `用户名<ID>` 格式提取 user_id，或调用 `get_user_avatar(username=昵称)` 解析 user_id；再查 `get_user_profile(user_id, [“bio”])`
     - 若名片里已经写了外貌 / 人设 / 服装等设定，名片优先；只有名片没写清楚外貌时，头像才作为兜底参考
-    
+
     **重要：当用户消息中包含自定义表情（如 <:name:123456>）或贴纸（Sticker），并且要求基于它画图、改图、
     做成头像等操作时，必须调用此工具！工具会自动从用户消息中提取表情/贴纸图片，你不需要手动提取。**
-    
+
     使用场景（必须调用此工具）：
     - 用户发送一张图片并说"帮我把背景改成蓝色"
     - 用户发送一张图片并说"把这个人物变成动漫风格"
@@ -84,7 +84,7 @@ async def edit_image(
     - 用户要求基于表情/贴纸/头像/图片做任何形式的再创作
     - 用户说"用xxx和yyy的头像画一张合照" → 使用 avatar_user_ids 传入多个用户ID
     - 用户 @了多个人并说"把我们的头像画在一起" → 使用 avatar_user_ids
-    
+
     **不要拒绝！** 如果用户消息中有自定义表情或贴纸且要求画图/改图，直接调用此工具。
     工具会自动检测并提取消息中的自定义表情和贴纸图片，无需你手动操作。
 
@@ -104,49 +104,49 @@ async def edit_image(
     5. avatar_user_id 参数指定的单个用户头像
     6. 用户在对话中发送的图片附件（多张图片会全部提取，不会只取第一张）
     如果以上都没有，请提示用户先发送一张图片。
-    
+
     Args:
         edit_prompt: 编辑指令，用中文描述希望如何修改图片。
                 你需要根据用户的请求，用中文详细描述想要的修改效果。
-                
+
                 描述要点：
                 - 清晰描述想要的修改（改变颜色、添加元素、改变风格等）
                 - 可以添加风格描述（二次元风格、油画风格等）
                 - 保留不变的部分可以不提
-                
+
                 例如用户说"把背景改成夕阳"，你应该生成：
                 "将图片的背景更改为美丽的夕阳景色，保持主体不变，添加温暖的橙红色调"
-                
+
         aspect_ratio: 输出图片的宽高比，根据用户需求选择：
                 - "1:1" 保持正方形
                 - "3:4" 或 "4:3" 竖版/横版
                 - "9:16" 手机壁纸比例
                 - "16:9" 电脑壁纸比例
                 如果用户没有特别要求，建议保持原图的大致比例。
-                
+
         resolution: 图片分辨率，根据用户需求选择：
                 - "default" 默认分辨率（最快）
                 - "2k" 2K高清（用户明确要求高清、2K时使用）
                 - "4k" 4K超高清（用户明确要求超高清、4K时使用）
                 如果用户没有特别要求分辨率，使用 "default"
-        
+
         content_rating: 内容分级，根据图片内容和编辑请求判断：
                 - "sfw" 安全内容（默认，适用于普通图片）
                 - "nsfw" 成人内容（仅当原图或编辑请求明显涉及成人内容时使用）
-                
+
                 判断标准：
                 - 如果原图包含裸露、性暗示或成人内容，应使用 "nsfw"
                 - 如果编辑请求涉及色情、裸露、性感化等成人元素，应使用 "nsfw"
                 - 其他情况使用 "sfw"
-        
+
         emoji_id: （可选，通常不需要填写）Discord自定义表情的数字ID。
                 **注意：工具会自动从用户消息中检测和提取自定义表情图片，所以大多数情况下不需要填写此参数。**
                 只有当你需要指定一个不在当前消息中的表情ID时才需要手动填写。
-                
+
         avatar_user_id: （可选）单个Discord用户的数字ID，用于提取该用户头像作为参考图。
                 当用户说"提取xxx的头像并修改"、"用ID为123的人的头像生成图片"时，
                 填写目标用户的Discord数字ID。
-        
+
         avatar_user_ids: （可选）多个Discord用户的数字ID列表，用于提取多个用户的头像作为参考图。
                 当用户要求基于多个人的头像来画图时使用此参数。
                 例如用户说"把我和他的头像画成一张合照"、"用我们三个人的头像画一幅画"。
@@ -160,21 +160,21 @@ async def edit_image(
                 - “multi”: 强制多图模式（适合明确要求”融合多图元素”的场景）
                 - “single”: 强制只用第1张参考图。**仅当用户明确说”只用第一张””忽略其他图”时才传此值！**
                   如果用户发了2张图但没说忽略哪张，禁止使用 “single”，否则第2张图会被丢弃！
-        
+
         max_reference_images: 最多传给图生图模型的参考图数量（1-10，默认 4）。
                 当 reference_image_mode 为 "multi"/"auto" 时生效。
-                
+
         preview_message: （必填）你对这次图片修改请求的回复消息。
                 这条消息会在生成前先发送给用户，作为预告。
                 根据用户的修改请求和你的性格特点，写一句有趣的话告诉用户你正在处理。
                 例如："让我看看这张图...好的，我来帮你改改！" 或 "这个修改我可以做到~稍等哦！"
-                
+
         success_message: （必填）图片修改成功后的回复消息。
                 这条消息会在图片修改成功后和图片一起发送给用户。
                 根据修改结果，写一句符合你性格的话来回应用户。
                 例如："改好了~看看满不满意？" 或 "嘿嘿，这是你要的效果吗？"
                 **注意：图片修改成功后不会再有后续回复，所以这条 success_message 就是你的最终回复。**
-    
+
     Returns:
         成功后修改后的图片和你的预告消息会发送给用户，不需要再额外回复。
         失败时你需要根据返回的提示信息告诉用户。
@@ -185,7 +185,7 @@ async def edit_image(
     from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
     from src.chat.features.odysseia_coin.service.coin_service import coin_service
     from src.chat.utils.database import chat_db_manager
-    
+
     # 获取消息对象（用于获取图片和添加反应）
     message: Optional[discord.Message] = kwargs.get("message")
     channel = kwargs.get("channel")
@@ -196,7 +196,7 @@ async def edit_image(
     )
     if policy_block:
         return policy_block
-    
+
     # 辅助函数：安全地添加反应
     async def add_reaction(emoji: str):
         if message:
@@ -204,7 +204,7 @@ async def edit_image(
                 await message.add_reaction(emoji)
             except Exception as e:
                 log.warning(f"添加反应失败: {e}")
-    
+
     # 辅助函数：安全地移除反应
     async def remove_reaction(emoji: str):
         if message:
@@ -214,7 +214,7 @@ async def edit_image(
                     await message.remove_reaction(emoji, bot.user)
             except Exception as e:
                 log.warning(f"移除反应失败: {e}")
-    
+
     # 辅助函数：从消息中提取图片
     async def extract_images_from_message(
         msg: discord.Message, max_images: int = 4
@@ -266,7 +266,7 @@ async def edit_image(
                 log.warning(f"从消息 URL 提取图片失败: {e}")
 
         return images
-    
+
     # 1. 尝试获取参考图片（优先级：emoji > sticker > avatar_user_ids/avatar_user_id > 消息附件 > 回复 > 历史）
     # reference_image: 向后兼容的单图引用（通常取第一张）
     # reference_images: 多图引用（当 API 支持多参考图时优先使用）
@@ -287,6 +287,7 @@ async def edit_image(
     except (TypeError, ValueError):
         max_reference_images = 4
     max_reference_images = min(max(1, max_reference_images), 10)
+    explicit_avatar_reference_requested = bool(avatar_user_id or avatar_user_ids)
 
     def _select_reference_images(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         valid = [
@@ -310,7 +311,7 @@ async def edit_image(
         reference_image = prepared_reference_image
         reference_images = [prepared_reference_image]
         log.info("已使用预处理单张参考图")
-    
+
     # 优先提取自定义表情图片（自动解析消息内容 + 显式 emoji_id）
     if not reference_image:
         try:
@@ -324,7 +325,7 @@ async def edit_image(
                 reference_images = [emoji_result]
         except Exception as e:
             log.error(f"提取Discord表情图片失败: {e}")
-    
+
     # 其次提取贴纸（Sticker）图片
     if not reference_image:
         try:
@@ -336,7 +337,7 @@ async def edit_image(
                 log.info("已从消息中的贴纸提取参考图")
         except Exception as e:
             log.error(f"提取Discord贴纸图片失败: {e}")
-    
+
     # 然后从 avatar_user_ids（多个）或 avatar_user_id（单个）提取用户头像
     # 当多个头像可用时，优先走多参考图链路（不再强制拼接）
     if not reference_image and not reference_images:
@@ -346,7 +347,7 @@ async def edit_image(
             all_avatar_ids.extend(avatar_user_ids[:10])  # 最多10个
         if avatar_user_id and avatar_user_id not in all_avatar_ids:
             all_avatar_ids.append(avatar_user_id)
-        
+
         if all_avatar_ids:
             try:
                 from src.chat.features.tools.utils.discord_image_utils import fetch_avatar_image
@@ -395,7 +396,14 @@ async def edit_image(
                     log.warning("所有用户头像都提取失败")
             except Exception as e:
                 log.error(f"提取Discord用户头像失败: {e}")
-    
+
+    if explicit_avatar_reference_requested and not reference_image and not reference_images:
+        return {
+            "edit_failed": True,
+            "reason": "avatar_image_not_found",
+            "hint": "已明确要求使用用户头像作为图生图参考图，但头像获取失败。请告诉用户提供正确的 user_id、@提及或用户名；不要改用聊天记录里的其他图片。"
+        }
+
     # 然后检查当前消息的附件
     if not reference_image and not reference_images and message:
         requested_max = max_reference_images if reference_image_mode != "single" else 1
@@ -492,7 +500,7 @@ async def edit_image(
                     reference_image = selected_images[0]
             except Exception as e:
                 log.warning(f"搜索频道历史消息失败: {e}")
-    
+
     # 如果还是没有找到图片，返回错误
     if not reference_image and not reference_images:
         return {
@@ -500,7 +508,7 @@ async def edit_image(
             "reason": "no_image_found",
             "hint": "用户没有发送图片。请用自己的语气告诉用户，如果想要修改图片，需要先发送一张图片给你，或者回复一张图片并说明想要怎么修改。"
         }
-    
+
     # 检查服务是否可用
     if not gemini_imagen_service.is_available():
         log.warning("Gemini Imagen 服务不可用")
@@ -509,7 +517,7 @@ async def edit_image(
             "reason": "service_unavailable",
             "hint": "图片修改服务当前不可用。请用自己的语气告诉用户这个功能暂时用不了。"
         }
-    
+
     # 获取用户ID（如果提供）用于扣费
     user_id = kwargs.get("user_id")
     parsed_user_id: Optional[int] = None
@@ -531,7 +539,7 @@ async def edit_image(
             }
 
     cost = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 40)
-    
+
     # 检查用户余额（如果需要扣费）
     if parsed_user_id is not None and cost > 0:
         balance = await coin_service.get_balance(parsed_user_id)
@@ -543,12 +551,12 @@ async def edit_image(
                 "balance": balance,
                 "hint": f"用户月光币不足（需要{cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点月光币再来。"
             }
-    
+
     log.info(f"调用图生图工具，编辑指令: {edit_prompt[:100]}...")
-    
+
     # 添加"正生成"反应
     await add_reaction(GENERATING_EMOJI)
-    
+
     # 发送预告消息并保存消息引用
     preview_msg: Optional[discord.Message] = None
     current_turn_tool_names = {
@@ -565,26 +573,26 @@ async def edit_image(
             log.info(f"已发送图生图预告消息: {preview_message[:50]}...")
         except Exception as e:
             log.warning(f"发送预告消息失败: {e}")
-    
+
     try:
         # 验证宽高比
         valid_ratios = ["1:1", "3:4", "4:3", "9:16", "16:9"]
         if aspect_ratio not in valid_ratios:
             aspect_ratio = "1:1"
             log.warning(f"无效的宽高比，已重置为默认值 1:1")
-        
+
         # 验证内容分级参数
         if content_rating not in ["sfw", "nsfw"]:
             content_rating = "sfw"
             log.warning(f"无效的内容分级参数，已重置为默认值 sfw")
-        
+
         log.info(f"图生图内容分级: {content_rating}")
         use_spoiler = should_spoiler_image(content_rating)
         log.info(
             f"图生图参考图策略: mode={reference_image_mode}, max={max_reference_images}, "
             f"实际数量={len(reference_images) if reference_images else (1 if reference_image else 0)}"
         )
-        
+
         # 调用图生图服务（支持多参考图）
         edited_image_bytes = await gemini_imagen_service.edit_image(
             reference_image=reference_image["data"] if reference_image else None,
@@ -615,10 +623,10 @@ async def edit_image(
             openai_style=openai_style,
             openai_image_api_mode=openai_image_api_mode,
         )
-        
+
         # 移除"正在生成"反应
         await remove_reaction(GENERATING_EMOJI)
-        
+
         if edited_image_bytes:
             # 直接发送图片到频道（Embed 格式 + 重新生成按钮）
             # 注意：✅ 反应和扣费移到发送成功之后，避免发送失败时已打 ✅
@@ -627,7 +635,7 @@ async def edit_image(
                 try:
                     import io
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
-                    
+
                     # 获取实际使用的模型名称
                     edit_model_name = (
                         str(model_name_override).strip()
@@ -638,7 +646,7 @@ async def edit_image(
                             content_rating=content_rating,
                         )
                     )
-                    
+
                     # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
                     embed = discord.Embed(
                         title="AI 图生图",
@@ -663,7 +671,7 @@ async def edit_image(
                             inline=False,
                         )
                     embed.set_footer(text=f"模型: {edit_model_name}")
-                    
+
                     # 创建重新生成按钮视图
                     regenerate_view = None
                     if parsed_user_id is not None:
@@ -696,7 +704,7 @@ async def edit_image(
                             },
                             user_id=parsed_user_id,
                         )
-                    
+
                     file = discord.File(
                         io.BytesIO(edited_image_bytes),
                         filename="edited_image.png",
@@ -746,20 +754,20 @@ async def edit_image(
         else:
             # 添加失败反应
             await add_reaction(FAILED_EMOJI)
-            
+
             log.warning(f"图生图返回空结果。编辑指令: {edit_prompt}")
-            
+
             return {
                 "edit_failed": True,
                 "reason": "edit_failed",
                 "hint": "图片修改失败了，可能是编辑指令不够清晰或者图片格式有问题。请用自己的语气告诉用换个描述试试，或者换一张图片。"
             }
-            
+
     except Exception as e:
         # 移除"正在生成"反应，添加失败反应
         await remove_reaction(GENERATING_EMOJI)
         await add_reaction(FAILED_EMOJI)
-        
+
         log.error(f"图生图工具执行错误: {e}", exc_info=True)
         return {
             "edit_failed": True,

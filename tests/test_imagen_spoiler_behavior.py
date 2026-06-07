@@ -176,6 +176,49 @@ def test_edit_image_sfw_should_not_use_spoiler(monkeypatch):
     assert _extract_first_spoiler_flag(channel) is False
 
 
+def test_edit_image_does_not_fallback_to_message_image_when_avatar_missing(monkeypatch):
+    class _FakeAttachment:
+        content_type = "image/png"
+        filename = "unrelated.png"
+
+        async def read(self):
+            raise AssertionError("头像失败时不应读取无关消息图片")
+
+    fake_message = types.SimpleNamespace(
+        id=1,
+        guild=None,
+        content="",
+        stickers=[],
+        attachments=[_FakeAttachment()],
+        reference=None,
+    )
+
+    async def fake_fetch_avatar_image(*args, **kwargs):
+        return None
+
+    discord_image_utils_module = importlib.import_module(
+        "src.chat.features.tools.utils.discord_image_utils"
+    )
+    monkeypatch.setattr(
+        discord_image_utils_module,
+        "fetch_avatar_image",
+        fake_fetch_avatar_image,
+    )
+
+    result = asyncio.run(
+        edit_image_tool.edit_image(
+            edit_prompt="按指定用户头像改成特摄风格",
+            avatar_user_id="1172726720378446080",
+            preview_message=None,
+            success_message=None,
+            message=fake_message,
+        )
+    )
+
+    assert result["edit_failed"] is True
+    assert result["reason"] == "avatar_image_not_found"
+
+
 def test_generate_image_nsfw_should_keep_spoiler(monkeypatch):
     channel = DummyChannel()
 

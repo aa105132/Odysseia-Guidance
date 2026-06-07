@@ -184,6 +184,7 @@ def test_reset_last_tool_outputs_clears_previous_tool_state():
 
     assert service.last_called_tools == []
     assert service.last_tool_image_data is None
+    assert service.last_tool_images_data == []
     assert service.last_tool_source_links == []
 
 
@@ -275,6 +276,76 @@ def test_execute_openai_tool_call_autofills_self_avatar_for_edit_image():
 
     assert result == {"ok": True}
     assert captured_kwargs["avatar_user_id"] == "123456789"
+
+
+def test_execute_openai_tool_call_reuses_cached_avatar_for_edit_image_with_rounded_id():
+    service = GeminiService()
+    captured_kwargs = {}
+
+    async def _fake_edit_image(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"ok": True}
+
+    service.tool_map["edit_image"] = _fake_edit_image
+    service.last_tool_images_data = [
+        {
+            "data": b"avatar-ref",
+            "mime_type": "image/png",
+            "tool_name": "get_user_avatar",
+            "user_info": {"user_id": "1172726720378445956"},
+            "_cache_key": "user:1172726720378445956",
+        }
+    ]
+
+    result = asyncio.run(
+        service._execute_openai_tool_call(
+            tool_name="edit_image",
+            tool_args={
+                "edit_prompt": "按爱音不登龙的头像做特摄风格",
+                "avatar_user_id": 1172726720378446080,
+            },
+        )
+    )
+
+    assert result == {"ok": True}
+    assert captured_kwargs["_prepared_reference_images"][0]["data"] == b"avatar-ref"
+    assert captured_kwargs["_prepared_reference_images"][0]["source"] == "tool:get_user_avatar"
+
+
+def test_execute_openai_tool_call_reuses_cached_avatar_for_generate_video_with_rounded_id():
+    service = GeminiService()
+    captured_kwargs = {}
+
+    async def _fake_generate_video(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"ok": True}
+
+    service.tool_map["generate_video"] = _fake_generate_video
+    service.last_tool_images_data = [
+        {
+            "data": b"avatar-ref",
+            "mime_type": "image/png",
+            "tool_name": "get_user_avatar",
+            "user_info": {"user_id": "1172726720378445956"},
+            "_cache_key": "user:1172726720378445956",
+        }
+    ]
+
+    result = asyncio.run(
+        service._execute_openai_tool_call(
+            tool_name="generate_video",
+            tool_args={
+                "prompt": "基于用户头像生成 0-10 秒特摄变身视频",
+                "avatar_user_id": 1172726720378446080,
+                "use_reference_image": True,
+            },
+        )
+    )
+
+    assert result == {"ok": True}
+    assert captured_kwargs["use_reference_image"] is True
+    assert captured_kwargs["_prepared_reference_images"][0]["data"] == b"avatar-ref"
+    assert captured_kwargs["_prepared_reference_images"][0]["source"] == "tool:get_user_avatar"
 
 
 def test_execute_openai_tool_call_autofills_self_avatar_for_novelai(monkeypatch):

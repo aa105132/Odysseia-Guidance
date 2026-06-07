@@ -471,6 +471,13 @@ async def generate_video(
         use_reference_image = True
         log.info("检测到头像参考参数，已自动切换为图生视频模式")
 
+    explicit_avatar_reference_requested = bool(
+        avatar_user_id
+        or avatar_user_ids
+        or avatar_username
+        or avatar_usernames
+    )
+
     # 获取用户ID（如果提供）用于扣费
     user_id = kwargs.get("user_id")
 
@@ -650,6 +657,13 @@ async def generate_video(
                     "reason": "avatar_user_not_found",
                     "hint": "未能通过用户名定位到要用于图生视频的用户头像。请让用户提供更精确的用户名、@提及或 Discord 数字ID。"
                 }
+
+        if explicit_avatar_reference_requested and not reference_image and not reference_images:
+            return {
+                "generation_failed": True,
+                "reason": "avatar_image_not_found",
+                "hint": "已明确要求使用用户头像作为图生视频参考图，但头像获取失败。请告诉用户提供正确的 user_id、@提及或用户名；不要改用聊天记录里的其他图片。"
+            }
 
         # 然后从消息附件中提取
         if not reference_image and not reference_images and message:
