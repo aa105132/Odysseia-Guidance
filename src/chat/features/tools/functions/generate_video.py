@@ -146,7 +146,7 @@ async def generate_video(
                 任何解剖学名词、性行为动词、体液名词、生殖器官名词。
                 违反此规则会导致生成失败。
                 
-        duration: 视频时长（秒），默认6秒，支持 6-30 秒。
+        duration: 视频时长（秒），默认6秒，支持 5-30 秒。
                 根据用户需求选择合适的时长：
                 - 6秒：适合短动作、轻镜头运动
                 - 10-18秒：适合一般场景展示（推荐区间）
@@ -278,10 +278,11 @@ async def generate_video(
         }
 
     # 获取配置
+    min_duration = 5
     max_duration = min(
         app_config.VIDEO_GEN_MAX_SECONDS,
         max(
-            app_config.VIDEO_GEN_MIN_SECONDS,
+            min_duration,
             int(VIDEO_GEN_CONFIG.get("MAX_DURATION", app_config.VIDEO_GEN_MAX_SECONDS)),
         ),
     )
@@ -290,7 +291,7 @@ async def generate_video(
     max_concurrent_video_tasks = max(1, int(VIDEO_GEN_CONFIG.get("MAX_CONCURRENT_VIDEO_TASKS", 3)))
 
     # 限制时长
-    duration = min(max(app_config.VIDEO_GEN_MIN_SECONDS, duration), max_duration)
+    duration = min(max(min_duration, duration), max_duration)
     size = str(size or VIDEO_GEN_CONFIG.get("DEFAULT_SIZE", "1280x720")).strip()
     if size not in app_config.VIDEO_GEN_ALLOWED_SIZES:
         log.warning(f"视频工具收到不支持的尺寸 `{size}`，已回退默认值")

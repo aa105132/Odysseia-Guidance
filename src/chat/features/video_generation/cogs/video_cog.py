@@ -41,16 +41,14 @@ def _video_size_to_ratio_label(size: Optional[str]) -> str:
 
 
 def _normalize_duration(value: Optional[int]) -> int:
+    min_seconds = 5
     if value is None:
-        return app_config.VIDEO_GEN_MIN_SECONDS
+        return min_seconds
     try:
         parsed_value = int(value)
     except (TypeError, ValueError):
-        parsed_value = app_config.VIDEO_GEN_MIN_SECONDS
-    return min(
-        max(app_config.VIDEO_GEN_MIN_SECONDS, parsed_value),
-        app_config.VIDEO_GEN_MAX_SECONDS,
-    )
+        parsed_value = min_seconds
+    return min(max(min_seconds, parsed_value), app_config.VIDEO_GEN_MAX_SECONDS)
 
 
 class VideoPromptModal(discord.ui.Modal, title="设置视频描述"):
@@ -90,7 +88,7 @@ class VideoOptionsModal(discord.ui.Modal, title="设置主参数"):
             style=discord.TextStyle.short,
             required=True,
             default=str(self.parent_view.duration),
-            placeholder="6 ~ 30",
+            placeholder="5 ~ 30",
             max_length=3,
         )
         self.size_input = discord.ui.TextInput(
@@ -278,7 +276,7 @@ class VideoGenerationPanelView(discord.ui.View):
         embed.set_footer(
             text=(
                 f"每次生成预计消耗 {cost} 月光币 | 默认质量 high=720P | "
-                "上游已支持 6~30 秒服务端自动链式扩展"
+                "上游已支持 5~30 秒服务端自动链式扩展"
             )
         )
         return embed

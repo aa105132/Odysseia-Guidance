@@ -345,3 +345,42 @@ def test_extract_video_from_response_supports_video_tag_src_without_extension():
 
     assert result is not None
     assert result.url == "https://artifact.anycap.cloud/a/art_rRv4KNaqMqvdZyBi6LE8"
+
+
+
+def test_video_generate_endpoint_includes_image_aliases_for_i2v(monkeypatch):
+    recorder = {}
+    payload = {"id": "vid_i2v", "data": {"outputs": [{"url": "https://example.com/i2v"}]}}
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "API_KEY", "test-key")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "BASE_URL", "http://localhost:8000/v1/video/generate")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MODEL_NAME", "seedance-2-fast")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "I2V_MODEL_NAME", "seedance-2-fast-i2v")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "VIDEO_FORMAT", "url")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_SIZE", "1280x720")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_QUALITY", "high")
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_DURATION", 30)
+    monkeypatch.setattr(
+        video_service_module.aiohttp,
+        "ClientSession",
+        lambda: _FakeClientSession(recorder, payload),
+    )
+
+    service = VideoGenerationService()
+    service._client = {"api_key": "test-key", "base_url": "http://localhost:8000/v1/video/generate"}
+
+    result = asyncio.run(
+        service.generate_video(
+            prompt="让图里的猫跑起来",
+            duration=5,
+            image_data=b"fake-image",
+            image_mime_type="image/png",
+        )
+    )
+
+    assert result is not None
+    assert recorder["json"]["duration"] == 5
+    assert recorder["json"]["model"] == "seedance-2-fast-i2v"
+    assert recorder["json"]["image_reference"].startswith("data:image/png;base64,")
+    assert recorder["json"]["image"].startswith("data:image/png;base64,")

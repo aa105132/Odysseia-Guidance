@@ -352,6 +352,11 @@ class VideoGenerationService:
             }
             if image_reference is not None:
                 payload["image_reference"] = image_reference
+                if isinstance(image_reference, dict) and image_reference.get("image_url"):
+                    payload["image_url"] = image_reference["image_url"]
+                    payload["image"] = image_reference["image_url"]
+                elif isinstance(image_reference, str):
+                    payload["image"] = image_reference
         else:
             payload = {
                 "model": model_name,
