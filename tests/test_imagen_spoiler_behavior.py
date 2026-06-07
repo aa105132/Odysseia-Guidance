@@ -219,6 +219,85 @@ def test_edit_image_does_not_fallback_to_message_image_when_avatar_missing(monke
     assert result["reason"] == "avatar_image_not_found"
 
 
+def test_edit_image_keeps_base_image_before_prepared_avatar_references(monkeypatch):
+    """头像合成场景必须把待编辑底图放第 1 张，头像参考图放后面。"""
+    channel = DummyChannel()
+    captured = {}
+
+    class _FakeAttachment:
+        content_type = "image/png"
+        filename = "base.png"
+
+        async def read(self):
+            return b"base-image"
+
+    fake_message = types.SimpleNamespace(
+        id=1,
+        guild=None,
+        content="请在这张图基础上 P 上两个用户头像",
+        stickers=[],
+        attachments=[_FakeAttachment()],
+        embeds=[],
+        reference=None,
+    )
+
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "IMAGE_EDIT_COST", 0)
+    monkeypatch.setattr(
+        imagen_service_module.gemini_imagen_service,
+        "is_available",
+        lambda: True,
+    )
+
+    async def fake_edit_image(**kwargs):
+        captured.update(kwargs)
+        return b"edited-image"
+
+    monkeypatch.setattr(
+        imagen_service_module.gemini_imagen_service,
+        "edit_image",
+        fake_edit_image,
+    )
+    monkeypatch.setattr(
+        imagen_service_module.gemini_imagen_service,
+        "_get_model_for_resolution",
+        lambda **kwargs: "imagen-edit-avatar-test",
+    )
+
+    result = asyncio.run(
+        edit_image_tool.edit_image(
+            edit_prompt="把两个用户头像自然 P 到原图人物旁边，不要重画底图",
+            preview_message=None,
+            success_message=None,
+            channel=channel,
+            message=fake_message,
+            prepared_reference_images=[
+                {
+                    "data": b"avatar-1",
+                    "mime_type": "image/png",
+                    "filename": "avatar_111.png",
+                    "source": "avatar",
+                },
+                {
+                    "data": b"avatar-2",
+                    "mime_type": "image/png",
+                    "filename": "avatar_222.png",
+                    "source": "avatar",
+                },
+            ],
+        )
+    )
+
+    assert result["success"] is True
+    assert captured["reference_images"] == [
+        {"data": b"base-image", "mime_type": "image/png"},
+        {"data": b"avatar-1", "mime_type": "image/png"},
+        {"data": b"avatar-2", "mime_type": "image/png"},
+    ]
+    assert captured["reference_image"] == b"base-image"
+    assert "第1张参考图是必须保留构图" in captured["edit_prompt"]
+    assert "第2张到第3张是需要被P到原图中的用户头像参考图" in captured["edit_prompt"]
+
+
 def test_generate_image_nsfw_should_keep_spoiler(monkeypatch):
     channel = DummyChannel()
 

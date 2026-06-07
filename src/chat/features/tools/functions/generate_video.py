@@ -149,7 +149,7 @@ async def generate_video(
     avatar_username: Optional[str] = None,
     avatar_usernames: Optional[List[str]] = None,
     reference_image_mode: str = "auto",
-    max_reference_images: int = 10,
+    max_reference_images: int = 9,
     generate_audio: bool = True,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
@@ -305,12 +305,12 @@ async def generate_video(
                 当用户说"把小明的头像做成视频"，但没有给数字ID时使用。
 
         avatar_usernames: （可选）多个Discord用户名/昵称/@提及列表，用于提取多个用户头像作为多参考图。
-                当用户说"用小明和小红的头像做视频"时使用。最多支持 10 个。
+                当用户说"用小明和小红的头像做视频"时使用。最多支持 9 个。
 
         reference_image_mode: 参考图模式。默认 “auto”，会尽量保留多张参考图；只有用户明确说“只用第一张”
                 或“忽略其他图”时才传 “single”。“multi” 可用于明确融合多张参考图的场景。
 
-        max_reference_images: 最多传给图生视频模型的参考图数量（1-10，默认 10）。
+        max_reference_images: 最多传给图生视频模型的参考图数量（1-9，默认 9）。
 
         generate_audio: 是否生成视频声音，默认 True。文生视频和图生视频都默认带声音；
                 只有用户明确说“不要声音 / 静音 / 无声 / 不要音频”时才传 False。
@@ -367,7 +367,7 @@ async def generate_video(
             max_images = int(max_images)
         except (TypeError, ValueError):
             max_images = 1
-        max_images = min(max(1, max_images), 10)
+        max_images = min(max(1, max_images), 9)
 
         for attachment in getattr(msg, "attachments", []) or []:
             if len(images) >= max_images:
@@ -445,8 +445,8 @@ async def generate_video(
     try:
         max_reference_images = int(max_reference_images)
     except (TypeError, ValueError):
-        max_reference_images = 10
-    max_reference_images = min(max(1, max_reference_images), 10)
+        max_reference_images = 9
+    max_reference_images = min(max(1, max_reference_images), 9)
 
     def _select_reference_images(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         valid = [

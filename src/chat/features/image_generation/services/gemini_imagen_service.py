@@ -2252,12 +2252,11 @@ class GeminiImagenService:
         根据模型和配置决定走 OpenAI 兼容的 chat/completions 还是 /images/edits。
         多参考图（>1）时强制走 chat/completions，因为 /images/edits 只支持单张 image 字段。
         """
-        multi_image = len(reference_images) > 1
         resolved_mode = self._resolve_openai_image_api_mode(
             model_name=model_name,
             mode_override=openai_image_api_mode,
         )
-        if resolved_mode == "images_api" and not multi_image:
+        if resolved_mode == "images_api":
             edited_image = await self._edit_image_openai_images_api_format(
                 reference_images=reference_images,
                 edit_prompt=edit_prompt,
@@ -2282,11 +2281,6 @@ class GeminiImagenService:
                 return None
             log.warning(
                 "OpenAI 图生图 images_api auto 路由未拿到结果，回退到 chat/completions 再试一次。"
-            )
-
-        if multi_image and resolved_mode == "images_api":
-            log.info(
-                f"多参考图({len(reference_images)}张)跳过 /images/edits，直接走 chat/completions 路由。"
             )
 
         return await self._edit_image_openai_chat_completions_format(
@@ -2481,10 +2475,22 @@ class GeminiImagenService:
                 if openai_style:
                     form.add_field("style", str(openai_style).strip())
 
-                for index, image_info in enumerate(reference_images[-3:], start=1):
+                # 多参考图时第 1 张通常是“待编辑底图”，后续才是头像/风格参考。
+                # 上游最多支持 9 张参考图：保留原始顺序并取前 9 张有效图片，
+                # 不能取最后几张，否则多人头像场景会把底图挤掉，导致结果和原图无关。
+                valid_reference_images = [
+                    item
+                    for item in (reference_images or [])
+                    if isinstance(item, dict) and item.get("data")
+                ]
+                if len(valid_reference_images) > 9:
+                    log.warning(
+                        "OpenAI 图生图图片接口最多支持 9 张参考图，已按原始顺序截断: %s -> 9",
+                        len(valid_reference_images),
+                    )
+
+                for index, image_info in enumerate(valid_reference_images[:9], start=1):
                     image_bytes = image_info.get("data")
-                    if not image_bytes:
-                        continue
                     mime_type = str(image_info.get("mime_type") or "image/png").strip() or "image/png"
                     extension = mime_type.split("/")[-1] if "/" in mime_type else "png"
                     form.add_field(

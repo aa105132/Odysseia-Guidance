@@ -35,7 +35,7 @@ async def edit_image(
     avatar_user_id: Optional[str] = None,
     avatar_user_ids: Optional[List[str]] = None,
     reference_image_mode: str = "auto",
-    max_reference_images: int = 10,
+    max_reference_images: int = 9,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     model_name_override: Optional[str] = None,
@@ -151,7 +151,7 @@ async def edit_image(
                 当用户要求基于多个人的头像来画图时使用此参数。
                 例如用户说"把我和他的头像画成一张合照"、"用我们三个人的头像画一幅画"。
                 传入的多个头像会作为多参考图传给图生图接口（不再强制拼接）。
-                最多支持 10 个用户ID。
+                最多支持 9 个用户ID。
                 例如: ["123456789", "987654321"]
 
         reference_image_mode: 参考图模式。**绝大多数情况下请使用默认值 “auto”，不要手动指定！**
@@ -161,7 +161,7 @@ async def edit_image(
                 - “single”: 强制只用第1张参考图。**仅当用户明确说”只用第一张””忽略其他图”时才传此值！**
                   如果用户发了2张图但没说忽略哪张，禁止使用 “single”，否则第2张图会被丢弃！
 
-        max_reference_images: 最多传给图生图模型的参考图数量（1-10，默认 4）。
+        max_reference_images: 最多传给图生图模型的参考图数量（1-9，默认 9）。
                 当 reference_image_mode 为 "multi"/"auto" 时生效。
 
         preview_message: （必填）你对这次图片修改请求的回复消息。
@@ -228,7 +228,7 @@ async def edit_image(
             max_images = int(max_images)
         except (TypeError, ValueError):
             max_images = 1
-        max_images = min(max(1, max_images), 10)
+        max_images = min(max(1, max_images), 9)
 
         if msg.attachments:
             for attachment in msg.attachments:
@@ -272,6 +272,7 @@ async def edit_image(
     # reference_images: 多图引用（当 API 支持多参考图时优先使用）
     reference_image = None
     reference_images = []
+    avatar_reference_images: List[Dict[str, Any]] = []
     user_id = kwargs.get("user_id")  # 获取当前用户ID
     prepared_reference_images = kwargs.get("_prepared_reference_images") or kwargs.get("prepared_reference_images")
     prepared_reference_image = kwargs.get("_prepared_reference_image") or kwargs.get("prepared_reference_image")
@@ -285,8 +286,8 @@ async def edit_image(
     try:
         max_reference_images = int(max_reference_images)
     except (TypeError, ValueError):
-        max_reference_images = 4
-    max_reference_images = min(max(1, max_reference_images), 10)
+        max_reference_images = 9
+    max_reference_images = min(max(1, max_reference_images), 9)
     explicit_avatar_reference_requested = bool(avatar_user_id or avatar_user_ids)
 
     def _select_reference_images(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -302,14 +303,98 @@ async def edit_image(
         # auto / multi: 允许多图
         return valid[:max_reference_images]
 
+    def _is_avatar_reference(item: Dict[str, Any]) -> bool:
+        """判断参考图是否来自用户头像工具，避免头像抢占待编辑底图槽位。"""
+        source = str(item.get("source") or "").lower()
+        filename = str(item.get("filename") or "").lower()
+        return "avatar" in source or filename.startswith("avatar_") or "avatar" in filename
+
+    def _with_reference_role(
+        item: Dict[str, Any],
+        role: str,
+        description: str,
+    ) -> Dict[str, Any]:
+        copied = dict(item)
+        copied["reference_role"] = role
+        copied["reference_description"] = description
+        return copied
+
+    def _should_search_history_base_image() -> bool:
+        """只有用户明确指向“这张/上图/刚发的图”时，才用频道历史兜底找底图。"""
+        text = str(edit_prompt or "")
+        keywords = (
+            "这张图",
+            "这幅图",
+            "这张图片",
+            "原图",
+            "底图",
+            "上图",
+            "上一张",
+            "刚发",
+            "刚才那张",
+            "在这张",
+            "基于这张",
+            "基础上",
+        )
+        return any(keyword in text for keyword in keywords)
+
+    async def _find_base_images_for_avatar_edit() -> List[Dict[str, Any]]:
+        """为“在原图上 P 用户头像”场景寻找待编辑底图，最多返回 1 张。"""
+        if not message:
+            return []
+
+        # 当前消息带图时，当前图就是最可靠底图。
+        current_images = await extract_images_from_message(message, max_images=1)
+        if current_images:
+            return [_with_reference_role(current_images[0], "base", "待编辑底图")]
+
+        # 回复图片时，被回复图是底图。
+        if message.reference and message.reference.message_id:
+            try:
+                ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                if ref_msg:
+                    reply_images = await extract_images_from_message(ref_msg, max_images=1)
+                    if reply_images:
+                        return [_with_reference_role(reply_images[0], "base", "待编辑底图")]
+            except Exception as e:
+                log.warning(f"获取头像编辑底图的回复消息失败: {e}")
+
+        # 只有用户明确说“上图/刚发那张/这张图基础上”时，才从历史兜底；
+        # 否则容易把无关聊天图片当底图，造成结果跑偏。
+        if channel and _should_search_history_base_image():
+            try:
+                async for hist_msg in channel.history(limit=5):
+                    if message and getattr(hist_msg, "id", None) == getattr(message, "id", None):
+                        continue
+                    history_images = await extract_images_from_message(hist_msg, max_images=1)
+                    if history_images:
+                        log.info(
+                            f"为头像图生图请求从历史消息找到底图 "
+                            f"(消息 ID: {getattr(hist_msg, 'id', 'unknown')})"
+                        )
+                        return [_with_reference_role(history_images[0], "base", "待编辑底图")]
+            except Exception as e:
+                log.warning(f"为头像图生图请求搜索历史底图失败: {e}")
+
+        return []
+
     prepared_candidates = _select_reference_images(prepared_reference_images)
     if prepared_candidates:
         reference_images = prepared_candidates
         reference_image = prepared_candidates[0]
+        if all(_is_avatar_reference(item) for item in prepared_candidates):
+            avatar_reference_images = [
+                _with_reference_role(item, "avatar", "用户头像参考图")
+                for item in prepared_candidates
+            ]
         log.info(f"已使用预处理参考图 {len(prepared_candidates)} 张")
     elif isinstance(prepared_reference_image, dict) and prepared_reference_image.get("data"):
         reference_image = prepared_reference_image
         reference_images = [prepared_reference_image]
+        if _is_avatar_reference(prepared_reference_image):
+            avatar_reference_images = [
+                _with_reference_role(prepared_reference_image, "avatar", "用户头像参考图")
+            ]
         log.info("已使用预处理单张参考图")
 
     # 优先提取自定义表情图片（自动解析消息内容 + 显式 emoji_id）
@@ -340,7 +425,7 @@ async def edit_image(
 
     # 然后从 avatar_user_ids（多个）或 avatar_user_id（单个）提取用户头像
     # 当多个头像可用时，优先走多参考图链路（不再强制拼接）
-    if not reference_image and not reference_images:
+    if explicit_avatar_reference_requested and not avatar_reference_images:
         # 合并 avatar_user_ids 和 avatar_user_id 为统一列表
         all_avatar_ids = []
         if avatar_user_ids and isinstance(avatar_user_ids, list):
@@ -372,6 +457,9 @@ async def edit_image(
                                 "filename": result.get(
                                     "filename", f"avatar_{all_avatar_ids[idx]}.png"
                                 ),
+                                "source": "avatar_user_id",
+                                "reference_role": "avatar",
+                                "reference_description": f"用户头像参考图 {idx + 1}",
                             }
                         )
                     else:
@@ -381,9 +469,11 @@ async def edit_image(
                     selected_avatar_refs = _select_reference_images(
                         successful_avatar_refs
                     )
-                    reference_images = selected_avatar_refs
-                    # 向后兼容：单图链路使用第一张
-                    reference_image = selected_avatar_refs[0]
+                    avatar_reference_images = selected_avatar_refs
+                    if not reference_images:
+                        reference_images = selected_avatar_refs
+                        # 向后兼容：单图链路使用第一张
+                        reference_image = selected_avatar_refs[0]
                     if len(selected_avatar_refs) > 1:
                         log.info(
                             f"已提取 {len(selected_avatar_refs)} 个用户头像作为多参考图（mode={reference_image_mode}）"
@@ -403,6 +493,29 @@ async def edit_image(
             "reason": "avatar_image_not_found",
             "hint": "已明确要求使用用户头像作为图生图参考图，但头像获取失败。请告诉用户提供正确的 user_id、@提及或用户名；不要改用聊天记录里的其他图片。"
         }
+
+    # 头像编辑场景：固定“第 1 张底图，第 2 张起头像参考图”的顺序。
+    # 这样用户说“在这张图上 P 上 A/B 的头像”时，不会只把头像传给模型而丢失原图。
+    if avatar_reference_images:
+        base_images = await _find_base_images_for_avatar_edit()
+        if base_images:
+            remaining_slots = max(0, max_reference_images - len(base_images))
+            combined_references = base_images + avatar_reference_images[:remaining_slots]
+            reference_images = combined_references
+            reference_image = combined_references[0]
+            avatar_count = max(0, len(combined_references) - len(base_images))
+            edit_prompt = (
+                "【参考图顺序说明】第1张参考图是必须保留构图、背景、主体和画面风格的待编辑原图；"
+                f"第2张到第{avatar_count + 1}张是需要被P到原图中的用户头像参考图。"
+                "请只把这些头像/脸部特征按用户要求自然合成到第1张图里，"
+                "不要把整张图重画成头像图，不要丢失第1张图的场景、构图和主体。\n"
+                f"【编辑要求】{edit_prompt}"
+            )
+            log.info(
+                f"头像图生图已组合底图+头像参考图：底图 {len(base_images)} 张，头像 {avatar_count} 张"
+            )
+        elif explicit_avatar_reference_requested:
+            log.info("已获取头像参考图，但未找到明确底图，将按头像参考图直接图生图。")
 
     # 然后检查当前消息的附件
     if not reference_image and not reference_images and message:

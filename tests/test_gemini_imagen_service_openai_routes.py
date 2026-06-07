@@ -303,34 +303,36 @@ def test_edit_openai_format_keeps_grok_on_images_api(monkeypatch):
     assert result is None
 
 
-def test_edit_openai_format_multi_image_skips_images_api(monkeypatch):
-    """多参考图（>1）应跳过 /images/edits，直接走 chat/completions。"""
+def test_edit_openai_format_multi_image_uses_images_api(monkeypatch):
+    """多参考图也应走 /images/edits，避免兼容图片接口丢失参考图。"""
     monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
     service = GeminiImagenService()
 
-    async def _unexpected_images_api(**kwargs):
-        raise AssertionError("多参考图不应走 /images/edits")
-
     fake_image = b"fake-edited-image"
+    captured = {}
 
-    async def _fake_chat_completions(**kwargs):
+    async def _fake_images_api(**kwargs):
+        captured.update(kwargs)
         return fake_image
 
     monkeypatch.setattr(
-        service, "_edit_image_openai_images_api_format", _unexpected_images_api
+        service, "_edit_image_openai_images_api_format", _fake_images_api
     )
     monkeypatch.setattr(
         service,
         "_edit_image_openai_chat_completions_format",
-        _fake_chat_completions,
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("多参考图应优先走 /images/edits")
+        ),
     )
 
+    reference_images = [
+        {"data": b"img1", "mime_type": "image/png"},
+        {"data": b"img2", "mime_type": "image/png"},
+    ]
     result = asyncio.run(
         service._edit_image_openai_format(
-            reference_images=[
-                {"data": b"img1", "mime_type": "image/png"},
-                {"data": b"img2", "mime_type": "image/png"},
-            ],
+            reference_images=reference_images,
             edit_prompt="merge these two images",
             aspect_ratio="1:1",
             model_name="grok-imagine-1.0-edit",
@@ -338,6 +340,77 @@ def test_edit_openai_format_multi_image_skips_images_api(monkeypatch):
     )
 
     assert result == fake_image
+    assert captured["reference_images"] == reference_images
+
+
+def test_openai_images_edits_uploads_first_nine_references_in_order(monkeypatch):
+    """multipart /images/edits 应按原顺序上传前 9 张有效参考图，不能取最后几张。"""
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "STREAMING_ENABLED", False)
+    service = GeminiImagenService()
+    service._client = {
+        "api_key": "test-key",
+        "base_url": "http://localhost:8000/v1",
+    }
+
+    generated = b"edited-image"
+    encoded = base64.b64encode(generated).decode("ascii")
+    captured = {}
+
+    class _FakeResponse:
+        status = 200
+        headers = {"Content-Type": "application/json"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def text(self):
+            return '{"data":[{"b64_json":"' + encoded + '"}]}'
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, headers=None, data=None, timeout=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["form"] = data
+            captured["timeout"] = timeout
+            return _FakeResponse()
+
+    monkeypatch.setattr(
+        "src.chat.features.image_generation.services.gemini_imagen_service.aiohttp.ClientSession",
+        lambda: _FakeSession(),
+    )
+
+    reference_images = [
+        {"data": f"img-{index}".encode("ascii"), "mime_type": "image/png"}
+        for index in range(11)
+    ]
+
+    result = asyncio.run(
+        service._edit_image_openai_images_api_format(
+            reference_images=reference_images,
+            edit_prompt="把头像自然 P 到第 1 张底图里",
+            aspect_ratio="1:1",
+            model_name="grok-imagine-1.0-edit",
+        )
+    )
+
+    image_fields = [
+        value
+        for headers, _field_headers, value in captured["form"]._fields
+        if headers.get("name") == "image"
+    ]
+
+    assert result == generated
+    assert captured["url"] == "http://localhost:8000/v1/images/edits"
+    assert image_fields == [f"img-{index}".encode("ascii") for index in range(9)]
 
 
 def test_parse_sse_payload_text_extracts_data_items():
