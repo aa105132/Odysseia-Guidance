@@ -572,6 +572,48 @@ def test_generate_video_tool_resolves_avatar_usernames_as_multi_references(monke
     assert captured["reference_images"][1]["data"] == b"avatar-222"
 
 
+def test_generate_video_tool_infers_duration_from_prompt_timeline(monkeypatch):
+    captured = {}
+
+    class _FakeVideoService:
+        def is_available(self):
+            return True
+
+        async def generate_video(self, **kwargs):
+            captured.update(kwargs)
+            return VideoResult(url="https://example.com/generated.mp4")
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_NUMBER_OF_VIDEOS", 1)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_CONCURRENT_VIDEO_TASKS", 1)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_DURATION", 30)
+    monkeypatch.setattr(video_service_module, "video_service", _FakeVideoService())
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.odysseia_coin.service.coin_service",
+        SimpleNamespace(coin_service=SimpleNamespace()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.tools.ui.regenerate_view",
+        SimpleNamespace(RegenerateView=object),
+    )
+
+    result = asyncio.run(
+        generate_video_tool(
+            prompt=(
+                "基于首帧图像生成震撼动画视频：0-3秒，角色周身浮现光效；"
+                "3-7秒，角色完成进化并抬手；7-10秒，能量收束并稳定定格。"
+                "不要文字，不要水印。"
+            )
+        )
+    )
+
+    assert result["success"] is True
+    assert result["duration"] == 10
+    assert captured["duration"] == 10
+
+
 def test_video_generate_endpoint_downloads_reference_url_as_data_uri(monkeypatch):
     recorder = {}
     payload = {"id": "vid_i2v_url", "data": {"outputs": [{"url": "https://example.com/i2v-url"}]}}

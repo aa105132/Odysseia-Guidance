@@ -67,6 +67,45 @@ def _ensure_chinese_video_prompt(prompt: str, *, is_image_to_video: bool, durati
         "整体保持电影感、写实质感和连续运镜；不要文字，不要水印，不要闪烁，不要画面跳变。"
     )
 
+
+def _infer_duration_from_prompt_timeline(prompt: str) -> Optional[int]:
+    """从中文/英文分镜时间标记中推断提示词实际写到的最大秒数。"""
+    text = str(prompt or "")
+    if not text.strip():
+        return None
+
+    candidates: List[float] = []
+
+    # 兼容 “0-3秒 / 3–7 秒 / 7~10s / 8 到 10 秒” 等分镜写法。
+    range_pattern = re.compile(
+        r"(?<!\d)(\d+(?:\.\d+)?)\s*(?:-|–|—|~|～|到|至)\s*(\d+(?:\.\d+)?)\s*(?:秒|s|sec|second|seconds)",
+        re.IGNORECASE,
+    )
+    for match in range_pattern.finditer(text):
+        try:
+            candidates.append(float(match.group(2)))
+        except (TypeError, ValueError):
+            continue
+
+    # 兼容 “第10秒 / 10秒时 / 10s” 等单点时间写法。
+    point_pattern = re.compile(
+        r"(?<!\d)(\d+(?:\.\d+)?)\s*(?:秒|s|sec|second|seconds)",
+        re.IGNORECASE,
+    )
+    for match in point_pattern.finditer(text):
+        try:
+            candidates.append(float(match.group(1)))
+        except (TypeError, ValueError):
+            continue
+
+    if not candidates:
+        return None
+
+    inferred = max(candidates)
+    if inferred <= 0:
+        return None
+    return int(inferred) if inferred.is_integer() else int(inferred) + 1
+
 def _video_size_to_ratio_label(size: Optional[str]) -> str:
     """将内部尺寸值转换为用户可读的宽高比。"""
     ratio_map = {
@@ -707,6 +746,18 @@ async def generate_video(
         or reference_images
         or (isinstance(reference_image_url, str) and reference_image_url.strip())
     )
+    inferred_duration = _infer_duration_from_prompt_timeline(prompt)
+    if inferred_duration and inferred_duration > duration:
+        adjusted_duration = min(max_duration, max(min_duration, inferred_duration))
+        if adjusted_duration != duration:
+            log.info(
+                "视频提示词时间轴写到 %ss，已将 duration 从 %ss 自动修正为 %ss",
+                inferred_duration,
+                duration,
+                adjusted_duration,
+            )
+            duration = adjusted_duration
+
     prompt = _ensure_chinese_video_prompt(
         prompt,
         is_image_to_video=is_image_to_video,
