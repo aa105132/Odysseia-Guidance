@@ -298,6 +298,14 @@ class GeminiImagenService:
                         if isinstance(part, dict):
                             collected_parts.append(part)
 
+                # 部分 OpenAI 兼容图片模型会把生成结果放在 delta.images，
+                # 例如: {"delta": {"images": [{"type":"image_url", ...}]}}。
+                # 旧逻辑只读取 content/parts，会导致流式返回的图片识别不到。
+                if isinstance(delta.get("images"), list):
+                    for part in delta["images"]:
+                        if isinstance(part, dict):
+                            collected_parts.append(part)
+
                 if isinstance(delta.get("parts"), list):
                     for part in delta["parts"]:
                         if isinstance(part, dict):
@@ -1449,6 +1457,12 @@ class GeminiImagenService:
                                                         if isinstance(part, dict):
                                                             collected_parts.append(part)
                                             
+                                            # 部分 OpenAI 兼容图片模型会把图片放在 delta.images
+                                            if "images" in delta:
+                                                for part in delta["images"] or []:
+                                                    if isinstance(part, dict):
+                                                        collected_parts.append(part)
+
                                             # 某些实现可能在 delta 中直接包含 parts
                                             if "parts" in delta:
                                                 for part in delta["parts"]:
@@ -1483,6 +1497,10 @@ class GeminiImagenService:
                                                     for part in content:
                                                         if isinstance(part, dict):
                                                             collected_parts.append(part)
+                                            if "images" in delta:
+                                                for part in delta["images"] or []:
+                                                    if isinstance(part, dict):
+                                                        collected_parts.append(part)
                                 except json.JSONDecodeError:
                                     pass
                     
@@ -1794,6 +1812,35 @@ class GeminiImagenService:
                 # content 为纯字符串时，收集用于后续 URL / data URL 提取
                 elif isinstance(content, str) and content:
                     text_contents.append(content)
+
+                # 检查 images 字段（某些 OpenAI 兼容图片模型的格式）
+                message_images = message.get("images", [])
+                if isinstance(message_images, list):
+                    for part in message_images:
+                        if not isinstance(part, dict):
+                            continue
+                        url_data = part.get("image_url") or part.get("url")
+                        url = ""
+                        if isinstance(url_data, dict):
+                            url = str(url_data.get("url") or "").strip()
+                        elif isinstance(url_data, str):
+                            url = url_data.strip()
+                        image_b64 = part.get("b64_json") or part.get("base64")
+                        if image_b64 and accept_base64:
+                            try:
+                                normalized_b64 = re.sub(r"\s+", "", str(image_b64))
+                                images.append(base64.b64decode(normalized_b64))
+                            except Exception as e:
+                                log.warning(f"解码 message.images base64 失败: {e}")
+                        elif url.startswith("data:image") and accept_base64:
+                            try:
+                                b64_data = url.split(",", 1)[1]
+                                normalized_b64 = re.sub(r"\s+", "", b64_data)
+                                images.append(base64.b64decode(normalized_b64))
+                            except Exception as e:
+                                log.warning(f"解码 message.images data URL 失败: {e}")
+                        elif (url.startswith("http://") or url.startswith("https://")) and accept_url:
+                            url_images_pending.append(url)
 
                 # 检查 parts 字段（某些代理的格式）
                 parts = message.get("parts", [])

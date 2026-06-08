@@ -459,3 +459,55 @@ def test_extract_images_from_openai_response_supports_url(monkeypatch):
     )
 
     assert images == [expected_bytes]
+
+
+def test_parse_sse_payload_text_extracts_delta_images_data_url():
+    service = GeminiImagenService()
+    expected_bytes = b"stream-image-bytes"
+    encoded = base64.b64encode(expected_bytes).decode("ascii")
+    raw_text = (
+        ': ping\n\n'
+        'data: {"choices":[{"delta":{"role":"assistant","images":[{"index":0,"type":"image_url","image_url":{"url":"data:image/png;base64,' + encoded + '"}}]}}]}\n'
+        'data: [DONE]\n'
+    )
+
+    parsed = asyncio.run(service._parse_sse_payload_text(raw_text))
+    images = asyncio.run(
+        service._extract_images_from_openai_response(
+            parsed,
+            response_format_override="base64",
+        )
+    )
+
+    assert images == [expected_bytes]
+
+
+def test_extract_images_from_openai_response_supports_message_images_data_url():
+    service = GeminiImagenService()
+    expected_bytes = b"message-image-bytes"
+    encoded = base64.b64encode(expected_bytes).decode("ascii")
+
+    images = asyncio.run(
+        service._extract_images_from_openai_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "images": [
+                                {
+                                    "index": 0,
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/png;base64," + encoded,
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            response_format_override="base64",
+        )
+    )
+
+    assert images == [expected_bytes]
