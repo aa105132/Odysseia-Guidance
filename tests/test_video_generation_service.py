@@ -125,6 +125,8 @@ def test_generate_video_tool_exposes_new_video_params():
     assert "reference_image_mode" in signature.parameters
     assert "max_reference_images" in signature.parameters
     assert "generate_audio" in signature.parameters
+    assert "prepare_video_first_frame" in signature.parameters
+    assert "video_first_frame_prompt" in signature.parameters
     assert signature.parameters["quality"].default == "high"
     assert signature.parameters["generate_audio"].default is True
 
@@ -758,6 +760,7 @@ def test_generate_video_tool_prepares_first_frame_when_prompt_mentions_reference
             duration=6,
             use_reference_image=True,
             size="720x1280",
+            video_first_frame_prompt="首帧画面：银发狐耳少女坐在高铁车窗旁，半身近景，阳光从窗外照进来，窗外青山绿树高速后退。",
             message=_FakeMessage(),
         )
     )
@@ -765,7 +768,8 @@ def test_generate_video_tool_prepares_first_frame_when_prompt_mentions_reference
     assert result["success"] is True
     assert captured_edit["reference_images"][0]["data"] == b"original-reference"
     assert "适合后续图生视频的全新首帧图" in captured_edit["edit_prompt"]
-    assert "高铁车厢背景" in captured_edit["edit_prompt"]
+    assert "银发狐耳少女坐在高铁车窗旁" in captured_edit["edit_prompt"]
+    assert "高铁车厢背景" not in captured_edit["edit_prompt"]
     assert captured_video["image_data"] == b"prepared-first-frame"
     assert captured_video["reference_images"][0]["filename"] == "prepared_video_first_frame.png"
 
@@ -834,6 +838,7 @@ def test_generate_video_tool_direct_image_animation_keeps_original_reference(mon
             prompt="基于参考图生成视频：保持参考图构图，只让角色眨眼并轻轻挥手。不要文字，不要水印。",
             duration=6,
             use_reference_image=True,
+            prepare_video_first_frame=False,
             message=_FakeMessage(),
         )
     )

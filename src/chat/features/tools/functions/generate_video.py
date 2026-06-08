@@ -313,6 +313,8 @@ async def generate_video(
     reference_image_mode: str = "auto",
     max_reference_images: int = 9,
     generate_audio: bool = True,
+    prepare_video_first_frame: Optional[bool] = None,
+    video_first_frame_prompt: Optional[str] = None,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     **kwargs
@@ -476,6 +478,18 @@ async def generate_video(
 
         generate_audio: 是否生成视频声音，默认 True。文生视频和图生视频都默认带声音；
                 只有用户明确说“不要声音 / 静音 / 无声 / 不要音频”时才传 False。
+
+        prepare_video_first_frame: （图生视频可选）是否先把参考图重绘成新首帧再生成视频。
+                - True：当参考图只是人物/服装/风格参考，用户希望换场景、换镜头、做广告/Vlog/剧情时使用；
+                  必须同时尽量填写 video_first_frame_prompt。
+                - False：当用户明确要“把这张图动起来 / 保持原图构图 / 这张作为首帧”时使用。
+                - None：工具根据用户请求和 prompt 自动判断。
+
+        video_first_frame_prompt: （图生视频可选）当 use_reference_image=True 且需要先重绘视频首帧时，
+                这里填写“首帧图”的中文自然语言提示词。它必须根据用户需求描述视频开头那一帧的
+                具体画面：主体身份、服装、场景、构图、镜头距离、光影、表情、动作起势和画幅。
+                参考图只用于保留身份/服装/风格，不要写成“直接把参考图动起来”。
+                如果不填写，工具会根据视频分镜自动生成一个兜底首帧图提示词。
 
         preview_message: （必填）在视频生成前先发送给用户的预告消息。
                 告诉用户你正在生成视频，例如："视频正在渲染中，稍等一下哦~" 或 "这个场景做成视频一定很棒，等我一下~"
@@ -956,13 +970,29 @@ async def generate_video(
             allow_frame_terms=explicit_frame_control,
         )
         combined_reference_intent = f"{user_request_text} {prompt}"
-        prepare_video_first_frame = bool(kwargs.get("prepare_video_first_frame")) or (
+        if prepare_video_first_frame is None and "prepare_video_first_frame" in kwargs:
+            raw_prepare_video_first_frame = kwargs.get("prepare_video_first_frame")
+            if isinstance(raw_prepare_video_first_frame, str):
+                lowered_prepare_flag = raw_prepare_video_first_frame.strip().lower()
+                if lowered_prepare_flag in {"true", "1", "yes", "y", "on", "是", "开启"}:
+                    prepare_video_first_frame = True
+                elif lowered_prepare_flag in {"false", "0", "no", "n", "off", "否", "关闭"}:
+                    prepare_video_first_frame = False
+            elif raw_prepare_video_first_frame is not None:
+                prepare_video_first_frame = bool(raw_prepare_video_first_frame)
+
+        auto_prepare_video_first_frame = (
             _requests_reference_only_video(user_request_text)
             or (
                 _looks_like_reference_driven_video_prompt(combined_reference_intent)
                 and not _explicitly_requests_direct_image_animation(combined_reference_intent)
                 and not explicit_frame_control
             )
+        )
+        prepare_video_first_frame = (
+            auto_prepare_video_first_frame
+            if prepare_video_first_frame is None
+            else bool(prepare_video_first_frame)
         )
     else:
         prepare_video_first_frame = False
@@ -1014,10 +1044,17 @@ async def generate_video(
                 )
 
                 if gemini_imagen_service.is_available():
-                    first_frame_prompt = _build_video_first_frame_prompt(
-                        prompt,
-                        aspect_ratio=_video_size_to_ratio_label(size),
-                    )
+                    if isinstance(video_first_frame_prompt, str) and video_first_frame_prompt.strip():
+                        first_frame_prompt = _build_video_first_frame_prompt(
+                            video_first_frame_prompt.strip(),
+                            aspect_ratio=_video_size_to_ratio_label(size),
+                        )
+                        log.info("使用模型传入的视频首帧图提示词生成首帧。")
+                    else:
+                        first_frame_prompt = _build_video_first_frame_prompt(
+                            prompt,
+                            aspect_ratio=_video_size_to_ratio_label(size),
+                        )
                     generated_first_frame = await gemini_imagen_service.edit_image(
                         reference_images=normalized_reference_images,
                         reference_image=normalized_reference_images[0]["data"],
