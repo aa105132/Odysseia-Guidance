@@ -37,6 +37,64 @@ def _looks_like_english_video_prompt(prompt: str) -> bool:
     return english_chars >= 24 and len(cjk_chars) <= max(2, english_chars // 20)
 
 
+def _explicitly_requests_video_frame_control(text: str) -> bool:
+    """判断用户是否明确要求首帧/尾帧控制；否定句不算明确要求。"""
+    normalized = str(text or "")
+    if not normalized.strip():
+        return False
+
+    frame_keywords = ("首帧", "第一帧", "开头帧", "起始帧", "尾帧", "最后一帧", "结尾帧", "首尾帧")
+    positive_verbs = ("用", "作为", "当作", "设置", "指定", "固定", "锁定", "保持", "控制")
+    negative_markers = ("不要", "别", "不许", "不能", "禁止", "无需", "不用", "不要传", "不是")
+
+    for keyword in frame_keywords:
+        start = normalized.find(keyword)
+        while start != -1:
+            window_start = max(0, start - 8)
+            window_end = min(len(normalized), start + len(keyword) + 12)
+            window = normalized[window_start:window_end]
+            if not any(marker in window for marker in negative_markers) and any(verb in window for verb in positive_verbs):
+                return True
+            start = normalized.find(keyword, start + len(keyword))
+    return False
+
+
+def _normalize_reference_image_prompt_terms(prompt: str, *, allow_frame_terms: bool) -> str:
+    """默认把图生视频提示词中的首帧/尾帧措辞改为参考图语义。"""
+    normalized = str(prompt or "").strip()
+    if not normalized or allow_frame_terms:
+        return normalized
+
+    replacements = (
+        ("不要传首尾帧", "只把图片作为普通参考图"),
+        ("不传首尾帧", "只把图片作为普通参考图"),
+        ("不要使用首尾帧", "只使用普通参考图"),
+        ("不用首尾帧", "只使用普通参考图"),
+        ("不要传首帧", "只把图片作为普通参考图"),
+        ("不传首帧", "只把图片作为普通参考图"),
+        ("不要使用首帧", "只使用普通参考图"),
+        ("不用首帧", "只使用普通参考图"),
+        ("基于首帧图像生成", "基于参考图生成"),
+        ("基于首帧图片生成", "基于参考图生成"),
+        ("基于首帧生成", "基于参考图生成"),
+        ("首帧图像", "参考图"),
+        ("首帧图片", "参考图"),
+        ("首帧画面", "参考图画面"),
+        ("首帧构图", "参考图构图"),
+        ("主体与首帧锁定", "主体与参考图锁定"),
+        ("保持首帧", "保持参考图"),
+        ("从首帧稳定开始", "从参考图的构图和主体关系稳定展开"),
+        ("首帧稳定开始", "参考图构图稳定展开"),
+        ("作为首帧", "作为参考图"),
+        ("当作首帧", "当作参考图"),
+        ("首尾帧", "参考图"),
+        ("尾帧", "参考图"),
+    )
+    for old, new in replacements:
+        normalized = normalized.replace(old, new)
+    return normalized
+
+
 def _ensure_chinese_video_prompt(prompt: str, *, is_image_to_video: bool, duration: int) -> str:
     """把明显英文的视频提示词包进中文分镜约束，避免直接把英文堆词发给上游。"""
     original_prompt = str(prompt or "").strip()
@@ -50,9 +108,9 @@ def _ensure_chinese_video_prompt(prompt: str, *, is_image_to_video: bool, durati
 
     if is_image_to_video:
         return (
-            "基于首帧图像生成视频：保持参考图中角色外观、服装、背景、构图和画风一致。"
+            "基于参考图生成视频：保持参考图中角色外观、服装、背景、构图和画风一致。"
             f"{style_note}"
-            f"0-{midpoint}秒，画面从首帧稳定开始，主体身份保持一致，只有头发、衣物、光影和背景细节自然轻微运动；"
+            f"0-{midpoint}秒，画面从参考图的构图和主体关系稳定展开，主体身份保持一致，只有头发、衣物、光影和背景细节自然轻微运动；"
             f"{midpoint}-{ending_start}秒，镜头缓慢推进或轻微手持跟拍，主体按照原始意图做出自然动作，表情、视线和姿态平滑变化；"
             f"{ending_start}-{normalized_duration}秒，动作延续并稳定收束，画面保持连贯。"
             "不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
@@ -185,14 +243,14 @@ async def generate_video(
                 如果是图生视频模式，描述你期望图片中的元素如何运动。
 
                 **【视频提示词分镜技能 - 生成前必须套用】**
-                - 先判断模式：用户说“把这张图动起来/参考上图/做成动画/用这张图生成视频”时，必须设置 use_reference_image=True，并让提示词以“基于首帧图像生成……”开头。
+                - 先判断模式：用户说“把这张图动起来/参考上图/做成动画/用这张图生成视频”时，必须设置 use_reference_image=True，并让提示词以“基于参考图生成……”开头。除非用户明确要求“首帧/第一帧/尾帧/首尾帧控制”，否则禁止把参考图称为首帧或尾帧。
                 - 提示词要像导演分镜，不要只写一句氛围词；必须写清主体、场景、动作主线、二级动画、表情变化、镜头运动、时间节奏和画面约束。禁止输出“Cinematic / 3D realistic / vlog style”等英文堆词，类似含义要改写成“电影感、写实三维动画、手持跟拍记录感”等中文。
-                - 基础结构：①主体与首帧锁定，保持角色外观、服装、背景、构图和画风一致；②主动作，如转身、抬手、奔跑、回头、靠近、停顿；③二级动画，如发梢、衣摆、披风、尾巴、光影、雾气、尘埃、水面轻微运动；④表情与视线，如眨眼、眸光变化、微笑、惊讶、凝视镜头；⑤运镜与焦点，如缓慢推进、拉远、横移、弧形环绕、低角度仰拍、过肩跟拍、焦点从前景转到主体；⑥负面约束：不要文字、不要水印、不要闪烁、不要变脸、不要肢体畸变、不要背景乱变。
+                - 基础结构：①主体与参考图锁定，保持角色外观、服装、背景、构图和画风一致；②主动作，如转身、抬手、奔跑、回头、靠近、停顿；③二级动画，如发梢、衣摆、披风、尾巴、光影、雾气、尘埃、水面轻微运动；④表情与视线，如眨眼、眸光变化、微笑、惊讶、凝视镜头；⑤运镜与焦点，如缓慢推进、拉远、横移、弧形环绕、低角度仰拍、过肩跟拍、焦点从前景转到主体；⑥负面约束：不要文字、不要水印、不要闪烁、不要变脸、不要肢体畸变、不要背景乱变。
                 - 时长超过 6 秒或用户明确要 10 秒以上时，要拆成 2-4 个连续时间片，例如“0-2秒……，2-5秒……，5-8秒……，8-10秒……”，每段动作要顺接，不能跳镜、串镜或只写总描述。
-                - 图生视频尤其要强调“保持首帧构图和角色身份一致，只让指定元素自然动起来”；如用户给了多张参考图，要说明哪些主体保留、哪些元素参与运动。
+                - 图生视频尤其要强调“保持参考图构图和角色身份一致，只让指定元素自然动起来”；如用户给了多张参考图，要说明哪些主体保留、哪些元素参与运动。
                 - 如果需要台词/旁白，只让正在说话的角色出现嘴型和喉部细微动作，并标清对应时间段；不需要声音时不要主动要求台词。
                 - 可直接生成这种中文自然语言提示词：
-                  “基于首帧图像生成二次元动画视频：保持角色外观、服装、背景、构图和画风一致。0-2秒，角色背对镜头站定，发梢和披风被微风轻轻带动；2-4秒，镜头缓慢推进，角色肩膀微动并开始回头；4-6秒，角色看向镜头并眨眼，表情从平静变得灵动；6-8秒，镜头轻微弧形环绕，衣摆和发丝自然回弹；8-10秒，角色停在半侧身姿态，画面稳定收束。不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变。”
+                  “基于参考图生成二次元动画视频：保持角色外观、服装、背景、构图和画风一致。0-2秒，角色背对镜头站定，发梢和披风被微风轻轻带动；2-4秒，镜头缓慢推进，角色肩膀微动并开始回头；4-6秒，角色看向镜头并眨眼，表情从平静变得灵动；6-8秒，镜头轻微弧形环绕，衣摆和发丝自然回弹；8-10秒，角色停在半侧身姿态，画面稳定收束。不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变。”
 
                 例如用户说"生成一个海边日落的视频"，你应该生成：
                 "海边日落场景，金色阳光洒在平静的海面上，海浪轻轻拍打沙滩，天空渐变为橙红色，镜头缓慢推进，电影质感，4K画质"
@@ -778,6 +836,19 @@ async def generate_video(
         is_image_to_video=is_image_to_video,
         duration=duration,
     )
+    if is_image_to_video:
+        user_request_text = " ".join(
+            part
+            for part in (
+                getattr(message, "content", "") if message else "",
+                str(kwargs.get("user_message") or ""),
+            )
+            if part
+        )
+        prompt = _normalize_reference_image_prompt_terms(
+            prompt,
+            allow_frame_terms=_explicitly_requests_video_frame_control(user_request_text),
+        )
 
     mode_str = "图生视频" if is_image_to_video else "文生视频"
     video_count = max(1, default_video_count)

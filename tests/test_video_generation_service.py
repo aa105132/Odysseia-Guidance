@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.abspath("."))
 from src.chat.config import chat_config as app_config
 import src.chat.features.video_generation.services.video_service as video_service_module
 from src.chat.features.tools.functions.generate_video import (
+    _ensure_chinese_video_prompt,
+    _normalize_reference_image_prompt_terms,
     generate_video as generate_video_tool,
 )
 from src.chat.features.video_generation.services.video_service import (
@@ -83,6 +85,34 @@ class _FakeClientSessionWithGet(_FakeClientSession):
         self._recorder["get_timeout"] = timeout
         return _FakeGetResponse()
 
+
+
+
+def test_image_to_video_prompt_uses_reference_image_terms_by_default():
+    english_prompt = "Cinematic 3D realistic animation, vlog style, character smiles at camera"
+
+    prompt = _ensure_chinese_video_prompt(
+        english_prompt,
+        is_image_to_video=True,
+        duration=10,
+    )
+
+    assert prompt.startswith("基于参考图生成视频")
+    assert "首帧" not in prompt
+
+
+def test_image_to_video_prompt_rewrites_frame_terms_without_explicit_frame_request():
+    prompt = _normalize_reference_image_prompt_terms(
+        "基于首帧图像生成真人感Vlog视频：保持首帧构图和角色身份一致，不要传首尾帧。",
+        allow_frame_terms=False,
+    )
+
+    assert "基于参考图生成" in prompt
+    assert "保持参考图构图" in prompt
+    assert "只把图片作为普通参考图" in prompt
+    assert "不要传参考图" not in prompt
+    assert "首帧" not in prompt
+    assert "尾帧" not in prompt
 
 def test_generate_video_tool_exposes_new_video_params():
     signature = inspect.signature(generate_video_tool)
