@@ -381,7 +381,7 @@ def test_extract_video_from_response_supports_video_tag_src_without_extension():
 
 
 
-def test_video_generate_endpoint_includes_image_aliases_for_i2v(monkeypatch):
+def test_video_generate_endpoint_uses_images_without_first_frame_alias(monkeypatch):
     recorder = {}
     payload = {"id": "vid_i2v", "data": {"outputs": [{"url": "https://example.com/i2v"}]}}
 
@@ -418,7 +418,8 @@ def test_video_generate_endpoint_includes_image_aliases_for_i2v(monkeypatch):
     assert recorder["json"]["mode"] == "image-to-video"
     assert recorder["json"]["generate_audio"] is True
     assert "image_reference" not in recorder["json"]
-    assert recorder["json"]["first_frame_resource_path"].startswith("data:image/png;base64,")
+    assert "first_frame_resource_path" not in recorder["json"]
+    assert "first_frame_url" not in recorder["json"]
     assert recorder["json"]["images"][0].startswith("data:image/png;base64,")
 
 
@@ -459,7 +460,8 @@ def test_video_generate_endpoint_sends_multiple_reference_images(monkeypatch):
     assert recorder["json"]["mode"] == "image-to-video"
     assert recorder["json"]["generate_audio"] is True
     assert len(recorder["json"]["images"]) == 2
-    assert recorder["json"]["first_frame_resource_path"] == recorder["json"]["images"][0]
+    assert "first_frame_resource_path" not in recorder["json"]
+    assert "first_frame_url" not in recorder["json"]
     assert recorder["json"]["images"][0].startswith("data:image/png;base64,")
     assert recorder["json"]["images"][1].startswith("data:image/jpeg;base64,")
 
@@ -763,6 +765,7 @@ def test_video_generate_endpoint_downloads_reference_url_as_data_uri(monkeypatch
     assert recorder["get_url"] == "https://example.com/cat.jpg"
     assert recorder["json"]["mode"] == "image-to-video"
     assert recorder["json"]["generate_audio"] is True
-    assert recorder["json"]["first_frame_resource_path"].startswith("data:image/jpeg;base64,")
-    assert recorder["json"]["images"] == [recorder["json"]["first_frame_resource_path"]]
+    assert "first_frame_resource_path" not in recorder["json"]
     assert "first_frame_url" not in recorder["json"]
+    assert len(recorder["json"]["images"]) == 1
+    assert recorder["json"]["images"][0].startswith("data:image/jpeg;base64,")

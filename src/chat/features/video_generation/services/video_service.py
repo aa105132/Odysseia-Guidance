@@ -441,12 +441,9 @@ class VideoGenerationService:
                     elif isinstance(reference, str) and reference:
                         payload_images.append(reference)
 
-                first_reference = image_references[0]
-                if isinstance(first_reference, dict) and first_reference.get("image_url"):
-                    image_url = first_reference["image_url"]
-                    payload["first_frame_url"] = image_url
-                elif isinstance(first_reference, str):
-                    payload["first_frame_resource_path"] = first_reference
+                # AnyCap /v1/video/generate 的图生视频参考图语义由 images 数组承载。
+                # 不要默认把第 1 张参考图同时塞进 first_frame_*，否则上游/中转可能
+                # 把普通参考图误解成强首帧约束，导致多参考图融合效果丢失。
                 if payload_images:
                     payload["images"] = payload_images
         else:
