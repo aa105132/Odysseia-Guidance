@@ -185,17 +185,33 @@ def _explicitly_requests_direct_image_animation(text: str) -> bool:
     return any(marker in normalized for marker in direct_markers)
 
 
-def _build_video_first_frame_prompt(video_prompt: str, *, aspect_ratio: str) -> str:
-    """根据视频分镜提示词生成一张真正适合图生视频的首帧图。"""
-    return (
-        "请先把参考图重绘成一张适合后续图生视频的全新首帧图。"
+def _build_video_first_frame_prompt(
+    video_prompt: str,
+    *,
+    aspect_ratio: str,
+    explicit_first_frame_prompt: bool = False,
+) -> str:
+    """根据首帧图提示词或视频分镜，生成一张真正适合图生视频的首帧图。"""
+    prompt_text = str(video_prompt or "").strip()
+    common_constraints = (
         "参考图只用于保留人物/主体的身份特征、服装、饰品、材质、配色和整体风格，"
         "不要复刻参考图的三视图、设定图、排版、纯色背景或静态展示构图。"
         f"输出画幅为 {aspect_ratio}。"
-        "画面必须直接呈现视频开头的真实场景和镜头：根据下面的视频分镜，把主体放入目标环境，"
-        "形成可自然动起来的单一镜头首帧；构图完整，主体清晰，背景与光影已经是视频场景。"
-        "不要文字，不要水印，不要边框，不要多视角拼图，不要角色设定图，不要把同一角色画成正侧背三联图。\n"
-        f"【视频分镜】{str(video_prompt or '').strip()}"
+        "画面必须是可自然动起来的单一镜头首帧；构图完整，主体清晰，背景与光影已经是视频场景。"
+        "不要文字，不要水印，不要边框，不要多视角拼图，不要角色设定图，不要把同一角色画成正侧背三联图。"
+    )
+    if explicit_first_frame_prompt:
+        return (
+            f"【首帧图提示词】{prompt_text}\n"
+            "请根据上面的首帧图提示词，把参考图重绘成一张适合后续图生视频的全新首帧图。"
+            f"{common_constraints}"
+        )
+
+    return (
+        "请先把参考图重绘成一张适合后续图生视频的全新首帧图。"
+        f"{common_constraints}"
+        "请根据下面的视频分镜推导视频开头的真实场景和镜头，把主体放入目标环境。\n"
+        f"【视频分镜】{prompt_text}"
     )
 
 
@@ -481,15 +497,19 @@ async def generate_video(
 
         prepare_video_first_frame: （图生视频可选）是否先把参考图重绘成新首帧再生成视频。
                 - True：当参考图只是人物/服装/风格参考，用户希望换场景、换镜头、做广告/Vlog/剧情时使用；
-                  必须同时尽量填写 video_first_frame_prompt。
+                  必须同时填写 video_first_frame_prompt，除非用户只要求最简单的原图动效。
                 - False：当用户明确要“把这张图动起来 / 保持原图构图 / 这张作为首帧”时使用。
                 - None：工具根据用户请求和 prompt 自动判断。
 
-        video_first_frame_prompt: （图生视频可选）当 use_reference_image=True 且需要先重绘视频首帧时，
-                这里填写“首帧图”的中文自然语言提示词。它必须根据用户需求描述视频开头那一帧的
-                具体画面：主体身份、服装、场景、构图、镜头距离、光影、表情、动作起势和画幅。
+        video_first_frame_prompt: （图生视频强烈建议填写）当 prepare_video_first_frame=True 时，
+                必须优先填写这项，不要只依赖 prompt 让工具兜底推导。这里不是视频分镜，而是
+                “视频第 0 秒首帧图片”的中文自然语言生图提示词。必须根据用户需求具体描述：
+                主体身份、服装、场景、前景/背景、构图、镜头距离、光影、表情、动作起势、画幅和安全约束。
+                写法示例：“首帧画面：银发狐耳少女坐在高铁车窗旁，半身近景，阳光从右侧车窗照入，
+                窗外青山绿树形成轻微动感模糊，角色正准备微笑看向镜头，写实电影感光影，9:16构图，
+                不要文字，不要水印。”
                 参考图只用于保留身份/服装/风格，不要写成“直接把参考图动起来”。
-                如果不填写，工具会根据视频分镜自动生成一个兜底首帧图提示词。
+                如果不填写，工具才会根据视频分镜自动生成兜底首帧图提示词。
 
         preview_message: （必填）在视频生成前先发送给用户的预告消息。
                 告诉用户你正在生成视频，例如："视频正在渲染中，稍等一下哦~" 或 "这个场景做成视频一定很棒，等我一下~"
@@ -1048,6 +1068,7 @@ async def generate_video(
                         first_frame_prompt = _build_video_first_frame_prompt(
                             video_first_frame_prompt.strip(),
                             aspect_ratio=_video_size_to_ratio_label(size),
+                            explicit_first_frame_prompt=True,
                         )
                         log.info("使用模型传入的视频首帧图提示词生成首帧。")
                     else:
