@@ -690,6 +690,159 @@ def test_generate_video_tool_prepares_first_frame_for_reference_only_request(mon
         }
     ]
 
+
+def test_generate_video_tool_prepares_first_frame_when_prompt_mentions_reference_only(monkeypatch):
+    captured_video = {}
+    captured_edit = {}
+
+    class _FakeVideoService:
+        def is_available(self):
+            return True
+
+        async def generate_video(self, **kwargs):
+            captured_video.update(kwargs)
+            return VideoResult(url="https://example.com/generated.mp4")
+
+    class _FakeImagenService:
+        def is_available(self):
+            return True
+
+        async def edit_image(self, **kwargs):
+            captured_edit.update(kwargs)
+            return b"prepared-first-frame"
+
+    class _FakeAttachment:
+        content_type = "image/png"
+        filename = "reference.png"
+
+        async def read(self):
+            return b"original-reference"
+
+    class _FakeMessage:
+        id = 1
+        guild = None
+        reference = None
+        content = "@月月啊 重新生成视频"
+        attachments = [_FakeAttachment()]
+
+        async def add_reaction(self, emoji):
+            return None
+
+        async def remove_reaction(self, emoji, user):
+            return None
+
+    import src.chat.features.image_generation.services.gemini_imagen_service as imagen_service_module
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_NUMBER_OF_VIDEOS", 1)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_CONCURRENT_VIDEO_TASKS", 1)
+    monkeypatch.setattr(video_service_module, "video_service", _FakeVideoService())
+    monkeypatch.setattr(imagen_service_module, "gemini_imagen_service", _FakeImagenService())
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.odysseia_coin.service.coin_service",
+        SimpleNamespace(coin_service=SimpleNamespace()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.tools.ui.regenerate_view",
+        SimpleNamespace(RegenerateView=object),
+    )
+
+    result = asyncio.run(
+        generate_video_tool(
+            prompt=(
+                "基于参考图生成3D写实二次元风格视频：保持银发、狐狸兽耳和高铁车厢背景一致。"
+                "0-2秒角色眨眼微笑，2-4秒微微侧头，4-6秒凝视镜头。"
+            ),
+            duration=6,
+            use_reference_image=True,
+            size="720x1280",
+            message=_FakeMessage(),
+        )
+    )
+
+    assert result["success"] is True
+    assert captured_edit["reference_images"][0]["data"] == b"original-reference"
+    assert "适合后续图生视频的全新首帧图" in captured_edit["edit_prompt"]
+    assert "高铁车厢背景" in captured_edit["edit_prompt"]
+    assert captured_video["image_data"] == b"prepared-first-frame"
+    assert captured_video["reference_images"][0]["filename"] == "prepared_video_first_frame.png"
+
+
+def test_generate_video_tool_direct_image_animation_keeps_original_reference(monkeypatch):
+    captured_video = {}
+    edit_called = False
+
+    class _FakeVideoService:
+        def is_available(self):
+            return True
+
+        async def generate_video(self, **kwargs):
+            captured_video.update(kwargs)
+            return VideoResult(url="https://example.com/generated.mp4")
+
+    class _FakeImagenService:
+        def is_available(self):
+            return True
+
+        async def edit_image(self, **kwargs):
+            nonlocal edit_called
+            edit_called = True
+            return b"should-not-be-used"
+
+    class _FakeAttachment:
+        content_type = "image/png"
+        filename = "direct.png"
+
+        async def read(self):
+            return b"direct-reference"
+
+    class _FakeMessage:
+        id = 1
+        guild = None
+        reference = None
+        content = "把这张图动起来，保持原图构图"
+        attachments = [_FakeAttachment()]
+
+        async def add_reaction(self, emoji):
+            return None
+
+        async def remove_reaction(self, emoji, user):
+            return None
+
+    import src.chat.features.image_generation.services.gemini_imagen_service as imagen_service_module
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_NUMBER_OF_VIDEOS", 1)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_CONCURRENT_VIDEO_TASKS", 1)
+    monkeypatch.setattr(video_service_module, "video_service", _FakeVideoService())
+    monkeypatch.setattr(imagen_service_module, "gemini_imagen_service", _FakeImagenService())
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.odysseia_coin.service.coin_service",
+        SimpleNamespace(coin_service=SimpleNamespace()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.tools.ui.regenerate_view",
+        SimpleNamespace(RegenerateView=object),
+    )
+
+    result = asyncio.run(
+        generate_video_tool(
+            prompt="基于参考图生成视频：保持参考图构图，只让角色眨眼并轻轻挥手。不要文字，不要水印。",
+            duration=6,
+            use_reference_image=True,
+            message=_FakeMessage(),
+        )
+    )
+
+    assert result["success"] is True
+    assert edit_called is False
+    assert captured_video["image_data"] == b"direct-reference"
+    assert captured_video["reference_images"][0]["filename"] == "direct.png"
+
 def test_generate_video_tool_infers_duration_from_prompt_timeline(monkeypatch):
     captured = {}
 

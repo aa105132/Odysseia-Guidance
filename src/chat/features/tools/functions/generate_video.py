@@ -96,7 +96,7 @@ def _normalize_reference_image_prompt_terms(prompt: str, *, allow_frame_terms: b
 
 
 def _requests_reference_only_video(text: str) -> bool:
-    """判断是否需要先把参考图重绘成视频首帧，避免直接复刻参考图。"""
+    """判断用户是否明确要求参考图不要直接当首帧。"""
     normalized = str(text or "")
     if not normalized.strip():
         return False
@@ -122,6 +122,67 @@ def _requests_reference_only_video(text: str) -> bool:
     return any(marker in normalized for marker in reference_markers) and any(
         marker in normalized for marker in no_frame_markers
     )
+
+
+def _looks_like_reference_driven_video_prompt(text: str) -> bool:
+    """判断提示词是否只是把图片当身份/风格参考，而不是要求原图直接动。"""
+    normalized = str(text or "")
+    if not normalized.strip():
+        return False
+
+    reference_prompt_markers = (
+        "基于参考图生成",
+        "参考图生成",
+        "根据参考图生成",
+        "使用参考图生成",
+        "以参考图生成",
+        "保持参考图",
+        "参考图中",
+        "参考图里的",
+        "参考图内",
+        "使用参考图",
+        "作为参考",
+        "用于参考",
+        "按参考图",
+        "按照参考图",
+        "参考图只用于",
+        "普通参考图",
+        "人物参考",
+        "角色参考",
+    )
+    return any(marker in normalized for marker in reference_prompt_markers)
+
+
+def _explicitly_requests_direct_image_animation(text: str) -> bool:
+    """判断用户/提示词是否明确要让原图本身直接动起来。"""
+    normalized = str(text or "")
+    if not normalized.strip():
+        return False
+
+    direct_markers = (
+        "把这张图动起来",
+        "让这张图动起来",
+        "把这张图片动起来",
+        "让这张图片动起来",
+        "把图动起来",
+        "让图动起来",
+        "原图动起来",
+        "让原图动起来",
+        "保持当前画面",
+        "保持原图画面",
+        "保持原图构图",
+        "保持当前构图",
+        "用这张做首帧",
+        "用这张作为首帧",
+        "这张作为首帧",
+        "这张当首帧",
+        "参考图作为首帧",
+        "首帧必须一致",
+        "第一帧必须一致",
+        "首帧和原图一致",
+        "第一帧和原图一致",
+    )
+    return any(marker in normalized for marker in direct_markers)
 
 
 def _build_video_first_frame_prompt(video_prompt: str, *, aspect_ratio: str) -> str:
@@ -882,9 +943,6 @@ async def generate_video(
         )
         if part
     )
-    prepare_video_first_frame = bool(kwargs.get("prepare_video_first_frame")) or (
-        is_image_to_video and _requests_reference_only_video(user_request_text)
-    )
 
     prompt = _ensure_chinese_video_prompt(
         prompt,
@@ -892,13 +950,22 @@ async def generate_video(
         duration=duration,
     )
     if is_image_to_video:
+        explicit_frame_control = _explicitly_requests_video_frame_control(user_request_text)
         prompt = _normalize_reference_image_prompt_terms(
             prompt,
-            allow_frame_terms=(
-                _explicitly_requests_video_frame_control(user_request_text)
-                and not prepare_video_first_frame
-            ),
+            allow_frame_terms=explicit_frame_control,
         )
+        combined_reference_intent = f"{user_request_text} {prompt}"
+        prepare_video_first_frame = bool(kwargs.get("prepare_video_first_frame")) or (
+            _requests_reference_only_video(user_request_text)
+            or (
+                _looks_like_reference_driven_video_prompt(combined_reference_intent)
+                and not _explicitly_requests_direct_image_animation(combined_reference_intent)
+                and not explicit_frame_control
+            )
+        )
+    else:
+        prepare_video_first_frame = False
 
     mode_str = "图生视频" if is_image_to_video else "文生视频"
     video_count = max(1, default_video_count)
