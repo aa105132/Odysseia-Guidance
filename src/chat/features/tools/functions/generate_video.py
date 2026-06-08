@@ -95,6 +95,49 @@ def _normalize_reference_image_prompt_terms(prompt: str, *, allow_frame_terms: b
     return normalized
 
 
+def _requests_reference_only_video(text: str) -> bool:
+    """判断是否需要先把参考图重绘成视频首帧，避免直接复刻参考图。"""
+    normalized = str(text or "")
+    if not normalized.strip():
+        return False
+
+    reference_markers = ("参考图", "参考图片", "作为参考", "用于参考", "按这个形象", "参考这个形象")
+    no_frame_markers = (
+        "不要传首尾帧",
+        "不传首尾帧",
+        "不要首尾帧",
+        "不用首尾帧",
+        "不要传首帧",
+        "不传首帧",
+        "不要首帧",
+        "不用首帧",
+        "不要作为首帧",
+        "不要当首帧",
+        "不要用作首帧",
+        "不要开场就是参考图",
+        "不要复刻参考图",
+        "不要照搬参考图",
+        "不要直接用参考图",
+    )
+    return any(marker in normalized for marker in reference_markers) and any(
+        marker in normalized for marker in no_frame_markers
+    )
+
+
+def _build_video_first_frame_prompt(video_prompt: str, *, aspect_ratio: str) -> str:
+    """根据视频分镜提示词生成一张真正适合图生视频的首帧图。"""
+    return (
+        "请先把参考图重绘成一张适合后续图生视频的全新首帧图。"
+        "参考图只用于保留人物/主体的身份特征、服装、饰品、材质、配色和整体风格，"
+        "不要复刻参考图的三视图、设定图、排版、纯色背景或静态展示构图。"
+        f"输出画幅为 {aspect_ratio}。"
+        "画面必须直接呈现视频开头的真实场景和镜头：根据下面的视频分镜，把主体放入目标环境，"
+        "形成可自然动起来的单一镜头首帧；构图完整，主体清晰，背景与光影已经是视频场景。"
+        "不要文字，不要水印，不要边框，不要多视角拼图，不要角色设定图，不要把同一角色画成正侧背三联图。\n"
+        f"【视频分镜】{str(video_prompt or '').strip()}"
+    )
+
+
 def _ensure_chinese_video_prompt(prompt: str, *, is_image_to_video: bool, duration: int) -> str:
     """把明显英文的视频提示词包进中文分镜约束，避免直接把英文堆词发给上游。"""
     original_prompt = str(prompt or "").strip()
@@ -831,23 +874,30 @@ async def generate_video(
             )
             duration = adjusted_duration
 
+    user_request_text = " ".join(
+        part
+        for part in (
+            getattr(message, "content", "") if message else "",
+            str(kwargs.get("user_message") or ""),
+        )
+        if part
+    )
+    prepare_video_first_frame = bool(kwargs.get("prepare_video_first_frame")) or (
+        is_image_to_video and _requests_reference_only_video(user_request_text)
+    )
+
     prompt = _ensure_chinese_video_prompt(
         prompt,
         is_image_to_video=is_image_to_video,
         duration=duration,
     )
     if is_image_to_video:
-        user_request_text = " ".join(
-            part
-            for part in (
-                getattr(message, "content", "") if message else "",
-                str(kwargs.get("user_message") or ""),
-            )
-            if part
-        )
         prompt = _normalize_reference_image_prompt_terms(
             prompt,
-            allow_frame_terms=_explicitly_requests_video_frame_control(user_request_text),
+            allow_frame_terms=(
+                _explicitly_requests_video_frame_control(user_request_text)
+                and not prepare_video_first_frame
+            ),
         )
 
     mode_str = "图生视频" if is_image_to_video else "文生视频"
@@ -889,6 +939,45 @@ async def generate_video(
             if reference_images
             else None
         )
+
+        if prepare_video_first_frame and normalized_reference_images:
+            try:
+                from src.chat.features.image_generation.services.gemini_imagen_service import (
+                    gemini_imagen_service,
+                )
+
+                if gemini_imagen_service.is_available():
+                    first_frame_prompt = _build_video_first_frame_prompt(
+                        prompt,
+                        aspect_ratio=_video_size_to_ratio_label(size),
+                    )
+                    generated_first_frame = await gemini_imagen_service.edit_image(
+                        reference_images=normalized_reference_images,
+                        reference_image=normalized_reference_images[0]["data"],
+                        reference_mime_type=normalized_reference_images[0].get("mime_type", "image/png"),
+                        edit_prompt=first_frame_prompt,
+                        aspect_ratio=_video_size_to_ratio_label(size),
+                        resolution="default",
+                        content_rating="sfw",
+                    )
+                    if generated_first_frame:
+                        reference_image = {
+                            "data": generated_first_frame,
+                            "mime_type": "image/png",
+                            "filename": "prepared_video_first_frame.png",
+                        }
+                        reference_images = [reference_image]
+                        normalized_reference_images = [reference_image]
+                        reference_image_url = None
+                        log.info("已先根据参考图生成适合图生视频的新首帧图，后续视频将使用该首帧。")
+                    else:
+                        log.warning("参考图重绘视频首帧失败，将回退为直接图生视频。")
+                else:
+                    log.warning("图生图服务不可用，无法先重绘视频首帧，将回退为直接图生视频。")
+            except Exception as e:
+                log.warning(f"参考图重绘视频首帧异常，将回退为直接图生视频: {e}", exc_info=True)
+        elif prepare_video_first_frame and reference_image_url:
+            log.warning("当前仅有 reference_image_url，暂无法先重绘视频首帧，将回退为直接图生视频。")
 
         semaphore = asyncio.Semaphore(max_concurrent_video_tasks)
 
@@ -977,6 +1066,7 @@ async def generate_video(
                                     "original_success_message": success_message or "",
                                     "post_id": result.post_id,
                                     "video_model_name": video_model_name,
+                                    "prepare_video_first_frame": prepare_video_first_frame,
                                 }
                                 if reference_image_url:
                                     params_dict["reference_image_url"] = reference_image_url

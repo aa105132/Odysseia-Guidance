@@ -604,6 +604,92 @@ def test_generate_video_tool_resolves_avatar_usernames_as_multi_references(monke
     assert captured["reference_images"][1]["data"] == b"avatar-222"
 
 
+
+
+def test_generate_video_tool_prepares_first_frame_for_reference_only_request(monkeypatch):
+    captured_video = {}
+    captured_edit = {}
+
+    class _FakeVideoService:
+        def is_available(self):
+            return True
+
+        async def generate_video(self, **kwargs):
+            captured_video.update(kwargs)
+            return VideoResult(url="https://example.com/generated.mp4")
+
+    class _FakeImagenService:
+        def is_available(self):
+            return True
+
+        async def edit_image(self, **kwargs):
+            captured_edit.update(kwargs)
+            return b"prepared-first-frame"
+
+    class _FakeAttachment:
+        content_type = "image/png"
+        filename = "reference-sheet.png"
+
+        async def read(self):
+            return b"reference-sheet"
+
+    class _FakeMessage:
+        id = 1
+        guild = None
+        reference = None
+        content = "生成真人Vlog视频，使用参考图，不要传首尾帧"
+        attachments = [_FakeAttachment()]
+
+        async def add_reaction(self, emoji):
+            return None
+
+        async def remove_reaction(self, emoji, user):
+            return None
+
+    import src.chat.features.image_generation.services.gemini_imagen_service as imagen_service_module
+
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "ENABLED", True)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "DEFAULT_NUMBER_OF_VIDEOS", 1)
+    monkeypatch.setitem(app_config.VIDEO_GEN_CONFIG, "MAX_CONCURRENT_VIDEO_TASKS", 1)
+    monkeypatch.setattr(video_service_module, "video_service", _FakeVideoService())
+    monkeypatch.setattr(imagen_service_module, "gemini_imagen_service", _FakeImagenService())
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.odysseia_coin.service.coin_service",
+        SimpleNamespace(coin_service=SimpleNamespace()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "src.chat.features.tools.ui.regenerate_view",
+        SimpleNamespace(RegenerateView=object),
+    )
+
+    result = asyncio.run(
+        generate_video_tool(
+            prompt=(
+                "基于参考图生成真人Vlog视频：保持人物服装和饰品一致，"
+                "0-3秒在剧组后台微笑，3-10秒对镜头说话。"
+            ),
+            duration=10,
+            use_reference_image=True,
+            message=_FakeMessage(),
+        )
+    )
+
+    assert result["success"] is True
+    assert captured_edit["reference_images"][0]["data"] == b"reference-sheet"
+    assert "不要复刻参考图的三视图" in captured_edit["edit_prompt"]
+    assert "剧组后台" in captured_edit["edit_prompt"]
+    assert captured_video["image_data"] == b"prepared-first-frame"
+    assert captured_video["image_mime_type"] == "image/png"
+    assert captured_video["reference_images"] == [
+        {
+            "data": b"prepared-first-frame",
+            "mime_type": "image/png",
+            "filename": "prepared_video_first_frame.png",
+        }
+    ]
+
 def test_generate_video_tool_infers_duration_from_prompt_timeline(monkeypatch):
     captured = {}
 
