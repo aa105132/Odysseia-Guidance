@@ -332,12 +332,27 @@ class VideoGenerationService:
         self,
         response: aiohttp.ClientResponse,
         video_format: str,
+        *,
+        expect_stream: bool = False,
     ) -> Optional[dict]:
         """读取视频 API 响应，兼容普通 JSON 与 SSE/流式心跳。"""
         content_type = str(getattr(response, "headers", {}).get("content-type", "")).lower()
         is_stream_response = "text/event-stream" in content_type
 
-        if not is_stream_response:
+        # 有些中转会在请求 stream=True 时仍返回 application/json / text/plain，
+        # 但实际 body 是持续分块的 SSE/心跳流；此时不能先 response.json()，
+        # 否则会一直等完整 body，最终被 aiohttp 的读超时取消。
+        if not is_stream_response and not expect_stream:
+            try:
+                return await response.json()
+            except Exception:
+                raw_text = await response.text()
+                stream_candidates = self._extract_json_candidates_from_stream_text(raw_text)
+                if stream_candidates:
+                    return stream_candidates[-1]
+                return json.loads(raw_text)
+
+        if not hasattr(response, "content"):
             try:
                 return await response.json()
             except Exception:
@@ -348,16 +363,43 @@ class VideoGenerationService:
                 return json.loads(raw_text)
 
         last_payload: Optional[dict] = None
+        raw_parts: List[str] = []
+        line_buffer = ""
+
         async for raw_chunk in response.content:
             if not raw_chunk:
                 continue
             chunk_text = raw_chunk.decode("utf-8", errors="replace")
-            for payload in self._extract_json_candidates_from_stream_text(chunk_text):
+            raw_parts.append(chunk_text)
+            line_buffer += chunk_text
+
+            # 按行解析，保留最后一个未结束行，避免 JSON 被 chunk 切开。
+            if "\n" in line_buffer:
+                complete_text, line_buffer = line_buffer.rsplit("\n", 1)
+            else:
+                complete_text = ""
+
+            for payload in self._extract_json_candidates_from_stream_text(complete_text):
                 last_payload = payload
                 if self._extract_video_from_response(payload, video_format) is not None:
                     return payload
 
-        return last_payload
+        if line_buffer.strip():
+            for payload in self._extract_json_candidates_from_stream_text(line_buffer):
+                last_payload = payload
+                if self._extract_video_from_response(payload, video_format) is not None:
+                    return payload
+
+        if last_payload is not None:
+            return last_payload
+
+        raw_text = "".join(raw_parts).strip()
+        if not raw_text:
+            return None
+        stream_candidates = self._extract_json_candidates_from_stream_text(raw_text)
+        if stream_candidates:
+            return stream_candidates[-1]
+        return json.loads(raw_text)
 
     async def generate_video(
         self,
@@ -486,13 +528,18 @@ class VideoGenerationService:
                             endpoint,
                             headers=headers,
                             json=payload,
-                            timeout=aiohttp.ClientTimeout(total=300),
+                            timeout=aiohttp.ClientTimeout(
+                                total=None,
+                                connect=30,
+                                sock_connect=30,
+                                sock_read=180,
+                            ),
                         ) as response:
                             status_code = response.status
 
                             if status_code == 200:
                                 data = await self._read_video_response_payload(
-                                    response, video_format
+                                    response, video_format, expect_stream=bool(payload.get("stream"))
                                 )
                                 if not isinstance(data, dict):
                                     log.warning("视频生成 API 流式响应未返回有效 JSON payload")
