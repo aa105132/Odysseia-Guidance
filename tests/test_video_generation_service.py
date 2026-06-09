@@ -15,6 +15,7 @@ from src.chat.config import chat_config as app_config
 import src.chat.features.video_generation.services.video_service as video_service_module
 from src.chat.features.tools.functions.generate_video import (
     _coerce_optional_bool,
+    _concat_mp4_segments_with_ffmpeg,
     _ensure_chinese_video_prompt,
     _normalize_reference_image_prompt_terms,
     generate_video as generate_video_tool,
@@ -142,6 +143,34 @@ def test_generate_video_tool_coerces_string_boolean_flags():
     assert _coerce_optional_bool("1") is True
     assert _coerce_optional_bool(True) is True
     assert _coerce_optional_bool(False) is False
+
+
+def test_concat_mp4_segments_falls_back_to_imageio_ffmpeg(monkeypatch):
+    import shutil
+    import subprocess
+    import sys
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+
+    class _FakeImageioFfmpeg:
+        @staticmethod
+        def get_ffmpeg_exe():
+            return "/fake/ffmpeg"
+
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", _FakeImageioFfmpeg)
+
+    def fake_run(cmd, stdout=None, stderr=None, timeout=None, check=None):
+        assert cmd[0] == "/fake/ffmpeg"
+        output_path = cmd[-1]
+        with open(output_path, "wb") as f:
+            f.write(b"merged-video")
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    merged = _concat_mp4_segments_with_ffmpeg([b"segment-1", b"segment-2"])
+
+    assert merged == b"merged-video"
 
 
 def test_extract_video_from_response_supports_data_array():

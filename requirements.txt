@@ -22,6 +22,7 @@ alembic
 langchain-text-splitters
 numpy==1.26.4
 opencv-python-headless
+imageio-ffmpeg
 soundfile
 
 # Web UI 依赖

@@ -344,7 +344,7 @@ async def _download_video_bytes_for_tail(video_url: str) -> Optional[bytes]:
 
 
 def _concat_mp4_segments_with_ffmpeg(video_segments: List[bytes]) -> Optional[bytes]:
-    """使用 ffmpeg 将多个 mp4 片段拼成一个文件；缺少 ffmpeg 时返回 None。"""
+    """使用 ffmpeg 将多个 mp4 片段拼成一个文件；优先用系统 ffmpeg，缺失时用 imageio-ffmpeg 兜底。"""
     valid_segments = [segment for segment in video_segments if segment]
     if len(valid_segments) < 2:
         return None
@@ -357,8 +357,14 @@ def _concat_mp4_segments_with_ffmpeg(video_segments: List[bytes]) -> Optional[by
 
         ffmpeg_bin = shutil.which("ffmpeg")
         if not ffmpeg_bin:
-            log.warning("未找到 ffmpeg，长视频将只发送连续分段，不生成单个拼接文件。")
-            return None
+            try:
+                import imageio_ffmpeg
+
+                ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+                log.info("未找到系统 ffmpeg，已使用 imageio-ffmpeg 内置 ffmpeg 拼接长视频。")
+            except Exception as e:
+                log.warning("未找到 ffmpeg，且 imageio-ffmpeg 不可用，长视频将只发送连续分段: %s", e)
+                return None
 
         with tempfile.TemporaryDirectory(prefix="yueyue_video_concat_") as temp_dir:
             temp_path = Path(temp_dir)
@@ -1561,8 +1567,135 @@ async def generate_video(
                 from src.chat.config.chat_config import VIDEO_GEN_CONFIG
                 video_model_name = selected_model or VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
 
+                long_video_merge_attempted = False
+                entries_to_send = success_entries
+
                 async with aiohttp.ClientSession() as session:
-                    for idx, entry in enumerate(success_entries, 1):
+                    # 长视频默认对用户隐藏内部连续分段：先尝试拼成单个 MP4。
+                    # 只有拼接失败、下载缺段或超过 Discord 上传限制时，才降级发送分段。
+                    if normalized_segment_prompts and len(success_entries) >= 2:
+                        long_video_merge_attempted = True
+                        for entry in success_entries:
+                            if entry.get("video_data"):
+                                continue
+                            result = entry.get("result")
+                            if result and getattr(result, "url", None):
+                                try:
+                                    async with session.get(
+                                        result.url,
+                                        timeout=aiohttp.ClientTimeout(total=120),
+                                    ) as resp:
+                                        if resp.status == 200:
+                                            entry["video_data"] = await resp.read()
+                                except Exception as e:
+                                    log.warning("下载长视频分段用于拼接失败: %s", e)
+
+                        segment_video_bytes = [
+                            entry.get("video_data")
+                            for entry in success_entries
+                            if entry.get("video_data")
+                        ]
+                        if len(segment_video_bytes) == len(success_entries):
+                            merged_video_data = await asyncio.to_thread(
+                                _concat_mp4_segments_with_ffmpeg,
+                                segment_video_bytes,
+                            )
+                            if merged_video_data and len(merged_video_data) <= 25 * 1024 * 1024:
+                                merged_embed = discord.Embed(
+                                    title="AI 长视频生成完成",
+                                    color=0x2b2d31,
+                                )
+                                _set_embed_author(merged_embed, message, kwargs.get("request_user"))
+                                merged_embed.add_field(
+                                    name="视频提示词",
+                                    value=f"```\n{prompt[:1016]}\n```",
+                                    inline=False,
+                                )
+                                if success_message:
+                                    processed_success = replace_emojis(success_message)
+                                    merged_embed.add_field(
+                                        name="\u200b",
+                                        value=processed_success[:1024],
+                                        inline=False,
+                                    )
+                                total_duration = sum(
+                                    int(entry.get("duration") or 0)
+                                    for entry in success_entries
+                                )
+                                merged_footer_parts = [
+                                    f"模型: {video_model_name}",
+                                    f"时长: {total_duration}s",
+                                    f"宽高比: {_video_size_to_ratio_label(size)}",
+                                    f"质量: {quality}",
+                                    f"已合并: {len(success_entries)} 段",
+                                ]
+                                if charged_cost is not None:
+                                    merged_footer_parts.append(f"消耗: {charged_cost} {currency_name}")
+                                merged_embed.set_footer(text=" | ".join(merged_footer_parts))
+
+                                merged_view = None
+                                if user_id:
+                                    try:
+                                        user_id_int = int(user_id)
+                                        merged_params = {
+                                            "prompt": prompt,
+                                            "base_prompt": prompt,
+                                            "duration": int(success_entries[-1].get("duration") or duration),
+                                            "size": size,
+                                            "quality": quality,
+                                            "model": video_model_name,
+                                            "use_reference_image": bool(reference_image or reference_images),
+                                            "generate_audio": generate_audio,
+                                            "original_success_message": success_message or "",
+                                            "video_model_name": video_model_name,
+                                            "prepare_video_first_frame": prepare_video_first_frame,
+                                            "video_data": merged_video_data,
+                                            "video_mime_type": "video/mp4",
+                                        }
+                                        if reference_image_url:
+                                            merged_params["reference_image_url"] = reference_image_url
+                                        if reference_image:
+                                            merged_params["reference_image_data"] = reference_image["data"]
+                                            merged_params["reference_image_mime_type"] = reference_image["mime_type"]
+                                        if reference_images and len(reference_images) > 1:
+                                            merged_params["reference_images_data"] = [
+                                                ref["data"] for ref in reference_images if ref.get("data")
+                                            ]
+                                            merged_params["reference_images_mime_types"] = [
+                                                ref.get("mime_type", "image/png") for ref in reference_images if ref.get("data")
+                                            ]
+                                        merged_view = RegenerateView(
+                                            generation_type="video",
+                                            original_params=merged_params,
+                                            user_id=user_id_int,
+                                        )
+                                    except (ValueError, TypeError):
+                                        merged_view = None
+
+                                send_kwargs = {
+                                    "embed": merged_embed,
+                                    "file": discord.File(
+                                        io.BytesIO(merged_video_data),
+                                        filename="generated_long_video.mp4",
+                                        spoiler=True,
+                                    ),
+                                }
+                                if merged_view:
+                                    send_kwargs["view"] = merged_view
+                                await channel.send(**send_kwargs)
+                                entries_to_send = []
+                                log.info("长视频已成功拼接为单个文件并发送，不再发送内部连续分段。")
+                            elif merged_video_data:
+                                log.warning(
+                                    "长视频已拼接但超过 Discord 25MB 限制 (%s bytes)，降级发送连续分段。",
+                                    len(merged_video_data),
+                                )
+                            else:
+                                log.warning("长视频拼接失败，降级发送连续分段。")
+                        else:
+                            log.warning("部分长视频分段缺少本地 bytes，降级发送连续分段。")
+
+                    for idx, entry in enumerate(entries_to_send, 1):
                         result = entry["result"]
                         entry_prompt = entry.get("prompt") or prompt
                         entry_duration = int(entry.get("duration") or duration)
@@ -1717,7 +1850,7 @@ async def generate_video(
                                 send_kwargs["view"] = regenerate_view
                             await channel.send(**send_kwargs)
 
-                if normalized_segment_prompts and len(success_entries) >= 2:
+                if normalized_segment_prompts and len(success_entries) >= 2 and not long_video_merge_attempted:
                     segment_video_bytes = [
                         entry.get("video_data")
                         for entry in success_entries
