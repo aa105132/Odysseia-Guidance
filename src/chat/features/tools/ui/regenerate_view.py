@@ -106,9 +106,9 @@ class ExtendVideoModal(discord.ui.Modal):
         self.extend_callback = extend_callback
 
         self.idea_input = discord.ui.TextInput(
-            label="续写要求（可选）",
+            label="续写分镜要求（可选）",
             style=discord.TextStyle.paragraph,
-            placeholder="例如：继续向前推进镜头，角色转身挥手；留空则按原提示词自然延续",
+            placeholder="例如：承接尾帧，0-3秒继续推进，3-6秒角色转身，6-10秒挥手并让光影收束",
             max_length=1000,
             required=False,
         )

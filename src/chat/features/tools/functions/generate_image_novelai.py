@@ -471,21 +471,32 @@ def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
     base_prompt = (image_prompt or "").strip()
     idea = (user_idea or "").strip()
     common_requirements = (
-        "保持原图画风，保持主体与场景一致，画风一致，整体风格自然流畅，镜头具有电影感。"
+        "保持原图主体身份、服装、场景、构图和画风一致，只让画面中的自然元素动起来；"
+        "使用中文导演分镜描述动作、表情、二级动画和镜头运动。"
     )
 
     if idea:
         return (
-            "请基于这张图片生成一段短视频。"
-            f"通用要求：{common_requirements}"
+            "基于这张图片生成一段 6-10 秒图生视频。"
+            f"{common_requirements}"
+            "建议结构：0-2秒，先稳定原图构图并让主体轻微眨眼/呼吸；"
+            "2-5秒，按补充要求推进主动作，镜头缓慢推进或轻微横移；"
+            "5-8秒，加入发丝、衣摆、光影、背景细节等二级动画；"
+            "8-10秒，动作自然收束，画面保持稳定。"
             f"\n原图提示词：{base_prompt}"
-            f"\n补充要求：{idea}"
+            f"\n用户补充要求：{idea}"
+            "\n负面约束：不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
         )
 
     return (
-        "请基于这张图片生成一段短视频。"
-        f"通用要求：{common_requirements}"
+        "基于这张图片生成一段 6-10 秒图生视频。"
+        f"{common_requirements}"
+        "0-2秒，保持原图构图稳定，主体轻微眨眼或呼吸；"
+        "2-5秒，镜头缓慢推进，主体做一个自然的小动作；"
+        "5-8秒，发丝、衣摆、光影和背景细节自然运动；"
+        "8-10秒，动作平滑收束，画面停在适合继续延长的姿态。"
         f"\n原图提示词：{base_prompt}"
+        "\n负面约束：不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
     )
 
 
@@ -1758,9 +1769,9 @@ class GenerateVideoModal(discord.ui.Modal, title="生成视频"):
     """从当前生图结果生成视频的描述输入框。"""
 
     description_input = discord.ui.TextInput(
-        label="描述你的想法（可选）",
+        label="视频分镜想法（可选）",
         style=discord.TextStyle.paragraph,
-        placeholder="例如：镜头缓慢推进，角色转头微笑；留空则 AI 自由发挥",
+        placeholder="例如：0-2秒眨眼微笑，2-5秒镜头推进并转头，5-8秒发丝衣摆飘动，最后挥手收束",
         required=False,
         max_length=1000,
     )
