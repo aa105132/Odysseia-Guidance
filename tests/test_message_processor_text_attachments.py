@@ -250,3 +250,63 @@ def test_text_attachment_supports_json_suffix_mime_without_filename_extension():
     )
 
     assert processor._is_supported_text_attachment(attachment) is True
+
+
+def test_message_processor_extracts_mp4_attachment_with_missing_content_type():
+    class _FakeVideoAttachment:
+        filename = "demo.mp4"
+        content_type = None
+        size = 10
+        url = "https://cdn.discordapp.com/attachments/1/2/demo.mp4"
+
+        async def read(self):
+            return b"mp4-bytes"
+
+    processor = MessageProcessor()
+    result = asyncio.run(
+        processor._extract_images_from_attachments([_FakeVideoAttachment()])
+    )
+
+    assert result == [
+        {
+            "mime_type": "video/mp4",
+            "data": b"mp4-bytes",
+            "source": "attachment",
+            "filename": "demo.mp4",
+        }
+    ]
+
+
+def test_message_processor_downloads_video_attachment_when_read_empty(monkeypatch):
+    class _FakeVideoAttachment:
+        filename = "clip"
+        content_type = "application/octet-stream"
+        size = 10
+        url = "https://cdn.discordapp.com/attachments/1/2/clip.mp4"
+
+        async def read(self):
+            return b""
+
+    async def _fake_fetch_media(session, url, proxy=None):
+        assert url == "https://cdn.discordapp.com/attachments/1/2/clip.mp4"
+        return {
+            "data": b"downloaded-mp4",
+            "mime_type": "application/octet-stream",
+            "final_url": url,
+        }
+
+    processor = MessageProcessor()
+    monkeypatch.setattr(processor, "_fetch_image_aio", _fake_fetch_media)
+
+    result = asyncio.run(
+        processor._extract_images_from_attachments([_FakeVideoAttachment()])
+    )
+
+    assert result == [
+        {
+            "mime_type": "video/mp4",
+            "data": b"downloaded-mp4",
+            "source": "attachment",
+            "filename": "clip",
+        }
+    ]

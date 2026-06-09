@@ -999,11 +999,27 @@ class MessageProcessor:
                 .lower()
             )
             filename = getattr(attachment, "filename", "未命名附件")
-            guessed_video_mime = self._guess_video_mime_type_from_filename(filename)
-            is_image_attachment = bool(content_type and content_type.startswith("image/"))
+            attachment_url = (
+                getattr(attachment, "url", None)
+                or getattr(attachment, "proxy_url", None)
+                or ""
+            )
+            guessed_image_mime = (
+                self._guess_mime_type_from_url(filename)
+                or self._guess_mime_type_from_url(attachment_url)
+            )
+            guessed_video_mime = (
+                self._guess_video_mime_type_from_filename(filename)
+                or self._guess_video_mime_type_from_url(attachment_url)
+            )
+            is_image_attachment = bool(
+                (content_type and content_type.startswith("image/"))
+                or guessed_image_mime
+            )
             is_video_attachment = bool(
                 (content_type and content_type.startswith("video/"))
                 or guessed_video_mime
+                or (attachment_url and self._is_supported_video_url(attachment_url))
             )
 
             if is_image_attachment or is_video_attachment:
@@ -1015,38 +1031,78 @@ class MessageProcessor:
                         )
                         continue
 
+                media_bytes = b""
                 try:
                     media_bytes = await attachment.read()
-                    if media_bytes:
-                        if is_video_attachment and len(media_bytes) > max_video_bytes:
-                            log.info(
-                                f"视频附件读取后超过 {max_video_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {filename}"
-                            )
-                            continue
-
-                        if is_video_attachment:
-                            resolved_mime_type = (
-                                content_type
-                                if content_type.startswith("video/")
-                                else guessed_video_mime
-                                or "video/mp4"
-                            )
-                        else:
-                            resolved_mime_type = content_type or "image/png"
-                        image_data_list.append(
-                            {
-                                "mime_type": resolved_mime_type,
-                                "data": media_bytes,
-                                "source": "attachment",
-                                "filename": filename,
-                            }
-                        )
-                        media_kind = "视频" if is_video_attachment else "图片"
-                        log.debug(
-                            f"成功读取{media_kind}附件: {filename}, 大小: {len(media_bytes)} 字节"
-                        )
                 except Exception as e:
-                    log.error(f"读取媒体附件 {filename} 时出错: {e}")
+                    log.warning(f"直接读取媒体附件 {filename} 失败，尝试通过 URL 下载: {e}")
+
+                fetched_media: Optional[Dict[str, Any]] = None
+                if not media_bytes and attachment_url:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            fetched_media = await self._fetch_image_aio(
+                                session,
+                                attachment_url,
+                                proxy=config.PROXY_URL,
+                            )
+                        if fetched_media and fetched_media.get("data"):
+                            media_bytes = fetched_media["data"]
+                            content_type = (
+                                str(fetched_media.get("mime_type") or content_type or "")
+                                .split(";", 1)[0]
+                                .strip()
+                                .lower()
+                            )
+                            final_url = str(fetched_media.get("final_url") or attachment_url)
+                            guessed_image_mime = guessed_image_mime or self._guess_mime_type_from_url(final_url)
+                            guessed_video_mime = guessed_video_mime or self._guess_video_mime_type_from_url(final_url)
+                            is_video_attachment = bool(
+                                is_video_attachment
+                                or content_type.startswith("video/")
+                                or guessed_video_mime
+                                or self._is_supported_video_url(final_url)
+                            )
+                            log.info(f"已通过 URL 下载媒体附件: {filename}")
+                    except Exception as e:
+                        log.warning(f"通过 URL 下载媒体附件 {filename} 失败: {e}")
+
+                if not media_bytes:
+                    log.warning(f"媒体附件为空，已跳过: {filename}")
+                    continue
+
+                if is_video_attachment and len(media_bytes) > max_video_bytes:
+                    log.info(
+                        f"视频附件读取后超过 {max_video_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {filename}"
+                    )
+                    continue
+
+                if is_video_attachment:
+                    resolved_mime_type = (
+                        content_type
+                        if content_type.startswith("video/")
+                        else guessed_video_mime
+                        or "video/mp4"
+                    )
+                else:
+                    resolved_mime_type = (
+                        content_type
+                        if content_type.startswith("image/")
+                        else guessed_image_mime
+                        or "image/png"
+                    )
+                image_data_list.append(
+                    {
+                        "mime_type": resolved_mime_type,
+                        "data": media_bytes,
+                        "source": "attachment",
+                        "filename": filename,
+                    }
+                )
+                media_kind = "视频" if is_video_attachment else "图片"
+                log.info(
+                    f"成功读取{media_kind}附件: {filename}, MIME: {resolved_mime_type}, 大小: {len(media_bytes)} 字节"
+                )
         return image_data_list
 
     def _clean_message_content(
