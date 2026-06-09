@@ -98,6 +98,105 @@ class EditPromptModal(discord.ui.Modal):
                 pass
 
 
+class ExtendVideoModal(discord.ui.Modal):
+    """延长视频时补充续写要求。"""
+
+    def __init__(self, extend_callback: Callable[..., Awaitable]):
+        super().__init__(title="延长视频")
+        self.extend_callback = extend_callback
+
+        self.idea_input = discord.ui.TextInput(
+            label="续写要求（可选）",
+            style=discord.TextStyle.paragraph,
+            placeholder="例如：继续向前推进镜头，角色转身挥手；留空则按原提示词自然延续",
+            max_length=1000,
+            required=False,
+        )
+        self.add_item(self.idea_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            await self.extend_callback(
+                interaction=interaction,
+                user_idea=(self.idea_input.value or "").strip(),
+            )
+        except Exception as e:
+            log.error(f"延长视频失败: {e}", exc_info=True)
+            try:
+                await interaction.followup.send("延长视频失败了，请稍后再试...", ephemeral=True)
+            except Exception:
+                pass
+
+
+def _aspect_ratio_to_video_size(aspect_ratio: Optional[str], fallback_size: str = "1280x720") -> str:
+    """把 Imagen 宽高比转换成视频内部 size。"""
+    ratio = str(aspect_ratio or "").strip()
+    return {
+        "16:9": "1280x720",
+        "9:16": "720x1280",
+        "1:1": "1024x1024",
+        "4:3": "1280x720",
+        "3:4": "720x1280",
+    }.get(ratio, fallback_size)
+
+
+async def _download_video_bytes(video_url: str) -> Optional[bytes]:
+    """下载视频 URL，供提取尾帧。"""
+    normalized_url = str(video_url or "").strip()
+    if not normalized_url.startswith(("http://", "https://")):
+        return None
+    try:
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                normalized_url,
+                timeout=aiohttp.ClientTimeout(total=180),
+            ) as response:
+                if response.status != 200:
+                    log.warning("下载待延长视频失败，状态码: %s", response.status)
+                    return None
+                return await response.read()
+    except Exception as e:
+        log.warning("下载待延长视频异常: %s", e)
+        return None
+
+
+def _video_tail_frame_to_png(video_bytes: bytes, mime_type: str = "video/mp4") -> bytes:
+    """从视频 bytes 提取尾帧并转为 PNG bytes。"""
+    from src.chat.utils.image_utils import extract_video_tail_frame_for_ai
+
+    tail_frame, _ = extract_video_tail_frame_for_ai(
+        video_bytes=video_bytes,
+        mime_type=mime_type,
+    )
+    output = io.BytesIO()
+    tail_frame.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _build_extend_video_prompt(base_prompt: str, user_idea: str, duration: int) -> str:
+    """构建基于上一段尾帧继续延长的视频提示词。"""
+    normalized_base = str(base_prompt or "").strip()
+    normalized_idea = str(user_idea or "").strip()
+    safe_duration = max(5, int(duration or 6))
+    midpoint = max(2, min(safe_duration - 1, safe_duration // 2))
+
+    prompt = (
+        "基于上一段视频尾帧继续生成下一段视频：把尾帧作为新片段第 0 秒的连续起点，"
+        "保持主体身份、服装、场景、光影、构图方向和画风一致，不要突然换人、换场景或跳镜。"
+        f"0-{midpoint}秒，延续上一段结尾的动作惯性，镜头平滑推进或轻微跟随，发丝、衣摆、环境光影自然运动；"
+        f"{midpoint}-{safe_duration}秒，让动作进一步展开并自然收束，画面保持连续稳定。"
+    )
+    if normalized_base:
+        prompt += f"原视频分镜意图：{normalized_base}"
+    if normalized_idea:
+        prompt += f" 本次续写补充要求：{normalized_idea}"
+    prompt += " 不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
+    return prompt
+
+
 class RegenerateView(discord.ui.View):
     """
     重新生成交互视图（对话工具调用版本）
@@ -130,6 +229,25 @@ class RegenerateView(discord.ui.View):
             )
             novelai_button.callback = self._switch_to_novelai
             self.add_item(novelai_button)
+
+            generate_video_button = discord.ui.Button(
+                label="生成视频",
+                style=discord.ButtonStyle.secondary,
+                emoji="🎬",
+                row=0,
+            )
+            generate_video_button.callback = self._generate_video_from_image
+            self.add_item(generate_video_button)
+
+        if generation_type == "video":
+            extend_video_button = discord.ui.Button(
+                label="延长视频",
+                style=discord.ButtonStyle.secondary,
+                emoji="⏩",
+                row=0,
+            )
+            extend_video_button.callback = self._show_extend_video_modal
+            self.add_item(extend_video_button)
 
         # 为图片类型添加模型选择下拉菜单
         if generation_type in ("image", "edit_image"):
@@ -230,6 +348,112 @@ class RegenerateView(discord.ui.View):
                 await interaction.followup.send(f"切换到 NovelAI 失败: {str(e)[:200]}", ephemeral=True)
             except Exception:
                 pass
+
+    async def _generate_video_from_image(self, interaction: discord.Interaction):
+        """从当前 Imagen 图片结果生成视频。"""
+        try:
+            from src.chat.features.tools.functions.generate_image_novelai import (
+                GenerateVideoModal,
+            )
+
+            modal = GenerateVideoModal(
+                image_prompt=self.original_params.get("prompt", ""),
+            )
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            log.error(f"打开生成视频弹窗失败: {e}", exc_info=True)
+            try:
+                await interaction.response.send_message("打开生成视频面板失败，请稍后再试。", ephemeral=True)
+            except Exception:
+                pass
+
+    async def _show_extend_video_modal(self, interaction: discord.Interaction):
+        """弹出延长视频补充要求输入框。"""
+        modal = ExtendVideoModal(self._extend_video_from_tail_frame)
+        await interaction.response.send_modal(modal)
+
+    async def _extend_video_from_tail_frame(
+        self,
+        interaction: discord.Interaction,
+        user_idea: str = "",
+    ):
+        """提取当前视频尾帧，并基于尾帧续写下一段视频。"""
+        channel = interaction.channel
+        if not channel:
+            await interaction.followup.send("当前频道不可用，无法延长视频。", ephemeral=True)
+            return
+
+        video_bytes = self.original_params.get("video_data")
+        video_mime_type = self.original_params.get("video_mime_type", "video/mp4")
+        if not video_bytes:
+            video_url = self.original_params.get("video_url") or self.original_params.get("result_url")
+            video_bytes = await _download_video_bytes(str(video_url or ""))
+
+        if not video_bytes and isinstance(interaction.message, discord.Message):
+            for attachment in getattr(interaction.message, "attachments", []) or []:
+                content_type = str(getattr(attachment, "content_type", "") or "").lower()
+                filename = str(getattr(attachment, "filename", "") or "").lower()
+                if content_type.startswith("video/") or filename.endswith((".mp4", ".webm", ".mov")):
+                    try:
+                        video_bytes = await attachment.read()
+                        video_mime_type = content_type or "video/mp4"
+                        break
+                    except Exception as e:
+                        log.warning(f"读取消息视频附件失败: {e}")
+
+        if not video_bytes:
+            await interaction.followup.send("没有拿到原视频文件或链接，暂时不能提取尾帧延长。", ephemeral=True)
+            return
+
+        try:
+            tail_frame_png = _video_tail_frame_to_png(video_bytes, video_mime_type)
+        except Exception as e:
+            log.error(f"提取视频尾帧失败: {e}", exc_info=True)
+            await interaction.followup.send("提取视频尾帧失败，暂时不能延长这段视频。", ephemeral=True)
+            return
+
+        from src.chat.features.tools.functions.generate_video import generate_video
+
+        duration = int(self.original_params.get("duration", 6) or 6)
+        base_prompt = self.original_params.get("base_prompt") or self.original_params.get("prompt", "")
+        continuation_prompt = _build_extend_video_prompt(
+            base_prompt=base_prompt,
+            user_idea=user_idea,
+            duration=duration,
+        )
+
+        result = await generate_video(
+            prompt=continuation_prompt,
+            duration=duration,
+            use_reference_image=True,
+            size=self.original_params.get("size", "1280x720"),
+            quality=self.original_params.get("quality", "high"),
+            model=self.original_params.get("model") or self.original_params.get("video_model_name"),
+            generate_audio=self.original_params.get("generate_audio", True),
+            prepare_video_first_frame=False,
+            preview_message="正在提取上一段尾帧并继续延长视频...",
+            success_message="延长片段生成完成，可以继续点击“延长视频”接着往后接。",
+            channel=channel,
+            user_id=str(interaction.user.id),
+            bot=interaction.client if hasattr(interaction, "client") else None,
+            request_user=interaction.user,
+            user_message="用上一段视频尾帧作为续写起点延长视频",
+            _prepared_reference_image={
+                "data": tail_frame_png,
+                "mime_type": "image/png",
+                "filename": "video_tail_frame.png",
+            },
+        )
+
+        if isinstance(result, dict) and result.get("success"):
+            await interaction.followup.send("已基于尾帧继续生成下一段视频。", ephemeral=True)
+            return
+
+        hint = str((result or {}).get("hint") or "").strip() if isinstance(result, dict) else ""
+        await interaction.followup.send(
+            f"延长视频失败：{hint or '服务暂时不可用或本次请求未成功，请稍后重试。'}",
+            ephemeral=True,
+        )
 
     async def _do_regenerate(
         self,
@@ -588,6 +812,25 @@ class SlashCommandRegenerateView(discord.ui.View):
             novelai_button.callback = self._switch_to_novelai
             self.add_item(novelai_button)
 
+            generate_video_button = discord.ui.Button(
+                label="生成视频",
+                style=discord.ButtonStyle.secondary,
+                emoji="🎬",
+                row=0,
+            )
+            generate_video_button.callback = self._generate_video_from_image
+            self.add_item(generate_video_button)
+
+        if generation_type == "video":
+            extend_video_button = discord.ui.Button(
+                label="延长视频",
+                style=discord.ButtonStyle.secondary,
+                emoji="⏩",
+                row=0,
+            )
+            extend_video_button.callback = self._show_extend_video_modal
+            self.add_item(extend_video_button)
+
         # 为图片类型添加模型选择下拉菜单
         if generation_type in ("image", "image_edit"):
             current_resolution = original_params.get("resolution", "default")
@@ -680,6 +923,46 @@ class SlashCommandRegenerateView(discord.ui.View):
                 await interaction.followup.send(f"切换到 NovelAI 失败: {str(e)[:200]}", ephemeral=True)
             except Exception:
                 pass
+
+    async def _generate_video_from_image(self, interaction: discord.Interaction):
+        """从当前图片结果生成视频。"""
+        try:
+            from src.chat.features.tools.functions.generate_image_novelai import (
+                GenerateVideoModal,
+            )
+
+            modal = GenerateVideoModal(
+                image_prompt=self.original_params.get("prompt", ""),
+            )
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            log.error(f"打开生成视频弹窗失败: {e}", exc_info=True)
+            try:
+                await interaction.response.send_message("打开生成视频面板失败，请稍后再试。", ephemeral=True)
+            except Exception:
+                pass
+
+    async def _show_extend_video_modal(self, interaction: discord.Interaction):
+        """弹出延长视频补充要求输入框。"""
+        modal = ExtendVideoModal(self._extend_video_from_tail_frame)
+        await interaction.response.send_modal(modal)
+
+    async def _extend_video_from_tail_frame(
+        self,
+        interaction: discord.Interaction,
+        user_idea: str = "",
+    ):
+        """斜杠命令结果：基于当前视频尾帧续写下一段。"""
+        # 与对话工具视图共用同一套实现；临时借用 RegenerateView 方法避免两份逻辑漂移。
+        proxy = RegenerateView(
+            generation_type="video",
+            original_params=self.original_params,
+            user_id=self.user_id,
+        )
+        await proxy._extend_video_from_tail_frame(
+            interaction=interaction,
+            user_idea=user_idea,
+        )
 
     async def _do_slash_regenerate(
         self,

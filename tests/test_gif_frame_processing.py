@@ -224,7 +224,8 @@ def test_build_chat_prompt_auto_injects_video_storyboard_and_notice(monkeypatch)
 
     assert any("用户发送了一个视频" in text for text in text_parts)
     assert any("视频时间序列拼图" in text for text in text_parts)
-    assert len(image_parts) == 1
+    assert any("视频尾帧" in text for text in text_parts)
+    assert len(image_parts) == 2
 
 
 def test_message_processor_extracts_video_attachment():
@@ -383,4 +384,5 @@ def test_build_chat_prompt_auto_injects_embed_video_storyboard(monkeypatch):
 
     assert any("用户发送了一个视频" in text for text in text_parts)
     assert any("视频时间序列拼图" in text for text in text_parts)
-    assert len(image_parts) == 1
+    assert any("视频尾帧" in text for text in text_parts)
+    assert len(image_parts) == 2

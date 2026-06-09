@@ -284,6 +284,144 @@ def _infer_duration_from_prompt_timeline(prompt: str) -> Optional[int]:
         return None
     return int(inferred) if inferred.is_integer() else int(inferred) + 1
 
+
+def _safe_int(value: Any, default: int) -> int:
+    """安全解析整数。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+async def _download_video_bytes_for_tail(video_url: str) -> Optional[bytes]:
+    """下载生成结果视频，供提取尾帧续写长视频。"""
+    normalized_url = str(video_url or "").strip()
+    if not normalized_url.startswith(("http://", "https://")):
+        return None
+    try:
+        import aiohttp
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                normalized_url,
+                timeout=aiohttp.ClientTimeout(total=180),
+            ) as response:
+                if response.status != 200:
+                    log.warning("下载长视频分段失败，状态码: %s", response.status)
+                    return None
+                return await response.read()
+    except Exception as e:
+        log.warning("下载长视频分段异常: %s", e)
+        return None
+
+
+def _concat_mp4_segments_with_ffmpeg(video_segments: List[bytes]) -> Optional[bytes]:
+    """使用 ffmpeg 将多个 mp4 片段拼成一个文件；缺少 ffmpeg 时返回 None。"""
+    valid_segments = [segment for segment in video_segments if segment]
+    if len(valid_segments) < 2:
+        return None
+
+    try:
+        import shutil
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if not ffmpeg_bin:
+            log.warning("未找到 ffmpeg，长视频将只发送连续分段，不生成单个拼接文件。")
+            return None
+
+        with tempfile.TemporaryDirectory(prefix="yueyue_video_concat_") as temp_dir:
+            temp_path = Path(temp_dir)
+            concat_list = temp_path / "concat.txt"
+            output_path = temp_path / "merged.mp4"
+
+            list_lines = []
+            for idx, segment in enumerate(valid_segments, 1):
+                segment_path = temp_path / f"segment_{idx:03d}.mp4"
+                segment_path.write_bytes(segment)
+                escaped_path = str(segment_path).replace("'", "'\\''")
+                list_lines.append(f"file '{escaped_path}'")
+            concat_list.write_text("\n".join(list_lines), encoding="utf-8")
+
+            copy_cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c",
+                "copy",
+                str(output_path),
+            ]
+            copy_result = subprocess.run(
+                copy_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=240,
+                check=False,
+            )
+            if copy_result.returncode != 0:
+                log.warning(
+                    "ffmpeg 无损拼接失败，尝试转码拼接: %s",
+                    copy_result.stderr.decode("utf-8", errors="replace")[:500],
+                )
+                transcode_cmd = [
+                    ffmpeg_bin,
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(concat_list),
+                    "-c:v",
+                    "libx264",
+                    "-c:a",
+                    "aac",
+                    "-movflags",
+                    "+faststart",
+                    str(output_path),
+                ]
+                transcode_result = subprocess.run(
+                    transcode_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=360,
+                    check=False,
+                )
+                if transcode_result.returncode != 0:
+                    log.warning(
+                        "ffmpeg 转码拼接仍失败: %s",
+                        transcode_result.stderr.decode("utf-8", errors="replace")[:500],
+                    )
+                    return None
+
+            if not output_path.exists() or output_path.stat().st_size <= 0:
+                return None
+            return output_path.read_bytes()
+    except Exception as e:
+        log.warning("拼接长视频片段失败: %s", e)
+        return None
+
+
+def _extract_tail_frame_reference(video_bytes: bytes, mime_type: str = "video/mp4") -> Dict[str, Any]:
+    """从视频 bytes 提取尾帧并包装为图生视频参考图。"""
+    from src.chat.utils.image_utils import extract_video_tail_frame_for_ai
+
+    tail_frame, _ = extract_video_tail_frame_for_ai(video_bytes, mime_type=mime_type)
+    output = io.BytesIO()
+    tail_frame.save(output, format="PNG")
+    return {
+        "data": output.getvalue(),
+        "mime_type": "image/png",
+        "filename": "video_tail_frame.png",
+    }
+
 def _video_size_to_ratio_label(size: Optional[str]) -> str:
     """将内部尺寸值转换为用户可读的宽高比。"""
     ratio_map = {
@@ -331,6 +469,9 @@ async def generate_video(
     generate_audio: bool = True,
     prepare_video_first_frame: Optional[bool] = None,
     video_first_frame_prompt: Optional[str] = None,
+    target_total_duration: Optional[int] = None,
+    segment_prompts: Optional[List[str]] = None,
+    segment_durations: Optional[List[int]] = None,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     **kwargs
@@ -369,6 +510,9 @@ async def generate_video(
                 - 提示词要像导演分镜，不要只写一句氛围词；必须写清主体、场景、动作主线、二级动画、表情变化、镜头运动、时间节奏和画面约束。禁止输出“Cinematic / 3D realistic / vlog style”等英文堆词，类似含义要改写成“电影感、写实三维动画、手持跟拍记录感”等中文。
                 - 基础结构：①主体与参考图锁定，保持角色外观、服装、背景、构图和画风一致；②主动作，如转身、抬手、奔跑、回头、靠近、停顿；③二级动画，如发梢、衣摆、披风、尾巴、光影、雾气、尘埃、水面轻微运动；④表情与视线，如眨眼、眸光变化、微笑、惊讶、凝视镜头；⑤运镜与焦点，如缓慢推进、拉远、横移、弧形环绕、低角度仰拍、过肩跟拍、焦点从前景转到主体；⑥负面约束：不要文字、不要水印、不要闪烁、不要变脸、不要肢体畸变、不要背景乱变。
                 - 时长超过 6 秒或用户明确要 10 秒以上时，要拆成 2-4 个连续时间片，例如“0-2秒……，2-5秒……，5-8秒……，8-10秒……”，每段动作要顺接，不能跳镜、串镜或只写总描述。
+                - 用户要求超过 15 秒时，不要把 duration 直接写成 60，也不要用同一个 prompt 让工具重复生成；
+                  必须在 segment_prompts 里为每个 5-15 秒片段分别写完整中文分镜。第 2 段起要写“承接上一段尾帧……”，
+                  并描述新的动作推进、镜头变化和收束。
                 - 图生视频要先判断参考图是否适合直接图生视频：如果原图构图、场景、主体姿态已经适合作为视频起点，传 prepare_video_first_frame=False 直接图生视频；如果原图只是头像/设定图/表情/贴纸/纯背景素材，或用户要求换场景、换镜头、做广告/Vlog/剧情，传 prepare_video_first_frame=True 并填写 video_first_frame_prompt。
                 - 提示词要强调“保持参考图构图和角色身份一致，只让指定元素自然动起来”；如用户给了多张参考图，要说明哪些主体保留、哪些元素参与运动。
                 - 如果需要台词/旁白，只让正在说话的角色出现嘴型和喉部细微动作，并标清对应时间段；不需要声音时不要主动要求台词。
@@ -429,12 +573,14 @@ async def generate_video(
                 任何解剖学名词、性行为动词、体液名词、生殖器官名词。
                 违反此规则会导致生成失败。
 
-        duration: 视频时长（秒），默认6秒，支持 5-30 秒。
+        duration: 单段视频时长（秒），默认6秒，支持 5-15 秒。
                 根据用户需求选择合适的时长：
                 - 6秒：适合短动作、轻镜头运动
-                - 10-18秒：适合一般场景展示（推荐区间）
-                - 20-30秒：适合需要更完整节奏的复杂场景
+                - 10-15秒：适合一般场景展示（推荐区间）
+                - 超过15秒：必须拆成多个 segment_prompts 分段
                 如果用户没有特别要求时长，默认使用 6 秒。
+                单个视频片段最长 15 秒。如果用户要求“一分钟 / 60秒 / 更长视频”，不要只写一段提示词；
+                必须把每一段拆成独立中文分镜并填写 segment_prompts，工具会逐段生成并用上一段尾帧续写下一段。
 
         use_reference_image: 是否使用图片作为参考（图生视频模式）。
                 设置为 True 时，工具会自动按以下优先级获取图片：
@@ -515,6 +661,17 @@ async def generate_video(
                 不要文字，不要水印。”
                 参考图只用于保留身份/服装/风格，不要写成“直接把参考图动起来”。
                 如果不填写，工具才会根据视频分镜自动生成兜底首帧图提示词。
+
+        target_total_duration: （长视频可选）目标总时长（秒）。仅用于声明目标，不会让工具用同一段提示词重复生成。
+                目标超过 15 秒时，必须同时填写 segment_prompts。
+
+        segment_prompts: （长视频必填）分段视频提示词列表。用户要求超过 15 秒时，月月必须为每一段写
+                独立中文自然语言分镜；每段都要描述本段 0-N 秒的动作、镜头、表情、二级动画和收束。
+                工具会按顺序生成：第 1 段使用原参考图/文生视频；第 2 段起自动提取上一段尾帧作为图生视频参考图，
+                再使用对应的 segment_prompts[i] 续写。禁止用同一段提示词生成一堆视频。
+
+        segment_durations: （长视频可选）每段时长列表，每段会被限制在 5-15 秒。
+                未填写时每段默认使用 duration（也会被限制到 15 秒）。
 
         preview_message: （必填）在视频生成前先发送给用户的预告消息。
                 告诉用户你正在生成视频，例如："视频正在渲染中，稍等一下哦~" 或 "这个场景做成视频一定很棒，等我一下~"
@@ -616,6 +773,7 @@ async def generate_video(
     # 获取配置
     min_duration = 5
     max_duration = min(
+        15,
         app_config.VIDEO_GEN_MAX_SECONDS,
         max(
             min_duration,
@@ -628,7 +786,49 @@ async def generate_video(
     max_concurrent_video_tasks = max(1, int(VIDEO_GEN_CONFIG.get("MAX_CONCURRENT_VIDEO_TASKS", 3)))
 
     # 限制时长
-    duration = min(max(min_duration, duration), max_duration)
+    requested_duration = _safe_int(duration, min_duration)
+    inferred_duration_before_clamp = _infer_duration_from_prompt_timeline(prompt)
+    duration = min(max(min_duration, requested_duration), max_duration)
+    explicit_target_total_duration = (
+        target_total_duration
+        if target_total_duration is not None
+        else kwargs.get("total_duration")
+    )
+    parsed_target_total_duration = _safe_int(explicit_target_total_duration, 0)
+
+    normalized_segment_prompts: List[str] = []
+    raw_segment_prompts = segment_prompts or kwargs.get("segments") or []
+    if isinstance(raw_segment_prompts, list):
+        for item in raw_segment_prompts:
+            if isinstance(item, dict):
+                item_prompt = str(item.get("prompt") or item.get("video_prompt") or "").strip()
+            else:
+                item_prompt = str(item or "").strip()
+            if item_prompt:
+                normalized_segment_prompts.append(item_prompt)
+
+    long_video_total_duration: Optional[int] = None
+    long_video_segment_count = len(normalized_segment_prompts) or 1
+    if normalized_segment_prompts:
+        long_video_total_duration = 0
+    elif any(
+        candidate and candidate > max_duration
+        for candidate in (
+            requested_duration,
+            inferred_duration_before_clamp or 0,
+            parsed_target_total_duration,
+        )
+    ):
+        return {
+            "generation_failed": True,
+            "reason": "segment_prompts_required",
+            "hint": (
+                "单个视频最长 15 秒。用户要更长视频时，不能用同一段提示词重复生成；"
+                "请重新调用 generate_video，把每一段的中文分镜分别写进 segment_prompts，"
+                "并用 segment_durations 指定每段 5-15 秒。"
+            ),
+        }
+
     size = str(size or VIDEO_GEN_CONFIG.get("DEFAULT_SIZE", "1280x720")).strip()
     if size not in app_config.VIDEO_GEN_ALLOWED_SIZES:
         log.warning(f"视频工具收到不支持的尺寸 `{size}`，已回退默认值")
@@ -688,7 +888,12 @@ async def generate_video(
         try:
             user_id_int = int(user_id)
             balance = await coin_service.get_balance(user_id_int)
-            estimated_cost = cost * default_video_count
+            estimated_video_requests = (
+                long_video_segment_count
+                if normalized_segment_prompts
+                else default_video_count
+            )
+            estimated_cost = cost * estimated_video_requests
             if balance < estimated_cost:
                 return {
                     "generation_failed": True,
@@ -963,7 +1168,7 @@ async def generate_video(
         or (isinstance(reference_image_url, str) and reference_image_url.strip())
     )
     inferred_duration = _infer_duration_from_prompt_timeline(prompt)
-    if inferred_duration and inferred_duration > duration:
+    if inferred_duration and inferred_duration > duration and not normalized_segment_prompts:
         adjusted_duration = min(max_duration, max(min_duration, inferred_duration))
         if adjusted_duration != duration:
             log.info(
@@ -1023,12 +1228,32 @@ async def generate_video(
     else:
         prepare_video_first_frame = False
 
+    segment_duration_values: List[int] = []
+    if normalized_segment_prompts:
+        raw_segment_durations = segment_durations or kwargs.get("segment_seconds") or []
+        if isinstance(raw_segment_durations, list):
+            for raw_duration in raw_segment_durations:
+                segment_duration_values.append(
+                    min(max(min_duration, _safe_int(raw_duration, duration)), max_duration)
+                )
+        while len(segment_duration_values) < len(normalized_segment_prompts):
+            segment_duration_values.append(duration)
+        segment_duration_values = segment_duration_values[: len(normalized_segment_prompts)]
+        long_video_total_duration = sum(segment_duration_values)
+        long_video_segment_count = len(normalized_segment_prompts)
+
     mode_str = "图生视频" if is_image_to_video else "文生视频"
-    video_count = max(1, default_video_count)
+    video_count = 1 if normalized_segment_prompts else max(1, default_video_count)
     log.info(
         f"调用视频生成工具 ({mode_str})，提示词: {prompt[:100]}...，时长: {duration}s，"
         f"宽高比: {_video_size_to_ratio_label(size)}，质量: {quality}，模型: {selected_model or 'auto'}，默认并发生成数量: {video_count}"
     )
+    if normalized_segment_prompts:
+        log.info(
+            "检测到分段长视频计划，目标约 %ss，将按 %s 段生成并用上一段尾帧续写下一段。",
+            long_video_total_duration,
+            long_video_segment_count,
+        )
 
     # 添加"正在生成"反应
     await add_reaction(GENERATING_EMOJI)
@@ -1127,26 +1352,116 @@ async def generate_video(
                     generate_audio=generate_audio,
                 )
 
-        results = await asyncio.gather(
-            *[_generate_one_video() for _ in range(video_count)],
-            return_exceptions=True,
-        )
+        success_entries: List[Dict[str, Any]] = []
+        failed_count = 0
+
+        if normalized_segment_prompts:
+            current_reference_image = reference_image
+            current_reference_images = normalized_reference_images
+            current_reference_image_url = reference_image_url
+
+            for segment_idx, segment_prompt in enumerate(normalized_segment_prompts, 1):
+                segment_duration = segment_duration_values[segment_idx - 1]
+                segment_is_i2v = bool(
+                    current_reference_image
+                    or current_reference_images
+                    or (isinstance(current_reference_image_url, str) and current_reference_image_url.strip())
+                )
+                prepared_segment_prompt = _ensure_chinese_video_prompt(
+                    segment_prompt,
+                    is_image_to_video=segment_is_i2v,
+                    duration=segment_duration,
+                )
+                if segment_is_i2v:
+                    prepared_segment_prompt = _normalize_reference_image_prompt_terms(
+                        prepared_segment_prompt,
+                        allow_frame_terms=True,
+                    )
+
+                log.info(
+                    "开始生成长视频第 %s/%s 段，时长 %ss，提示词: %s...",
+                    segment_idx,
+                    len(normalized_segment_prompts),
+                    segment_duration,
+                    prepared_segment_prompt[:100],
+                )
+                segment_result = await video_service.generate_video(
+                    prompt=prepared_segment_prompt,
+                    duration=segment_duration,
+                    image_data=current_reference_image["data"] if current_reference_image else None,
+                    image_mime_type=current_reference_image["mime_type"] if current_reference_image else None,
+                    reference_images=current_reference_images,
+                    model_override=selected_model or None,
+                    size=size,
+                    quality=quality,
+                    reference_image_url=current_reference_image_url,
+                    generate_audio=generate_audio,
+                )
+                if segment_result is None:
+                    failed_count += 1
+                    log.warning("长视频第 %s/%s 段生成失败，停止后续分段。", segment_idx, len(normalized_segment_prompts))
+                    break
+
+                segment_video_bytes = None
+                if segment_result.url:
+                    segment_video_bytes = await _download_video_bytes_for_tail(segment_result.url)
+
+                success_entries.append(
+                    {
+                        "result": segment_result,
+                        "prompt": prepared_segment_prompt,
+                        "duration": segment_duration,
+                        "segment_index": segment_idx,
+                        "segment_total": len(normalized_segment_prompts),
+                        "video_data": segment_video_bytes,
+                    }
+                )
+
+                if segment_idx < len(normalized_segment_prompts):
+                    if not segment_result.url:
+                        failed_count += 1
+                        log.warning("长视频第 %s 段没有 URL，无法提取尾帧续写。", segment_idx)
+                        break
+                    if not segment_video_bytes:
+                        failed_count += 1
+                        log.warning("长视频第 %s 段下载失败，无法提取尾帧续写。", segment_idx)
+                        break
+                    try:
+                        tail_reference = _extract_tail_frame_reference(segment_video_bytes)
+                        current_reference_image = tail_reference
+                        current_reference_images = [tail_reference]
+                        current_reference_image_url = None
+                    except Exception as e:
+                        failed_count += 1
+                        log.warning("长视频第 %s 段尾帧提取失败，停止后续分段: %s", segment_idx, e)
+                        break
+        else:
+            results = await asyncio.gather(
+                *[_generate_one_video() for _ in range(video_count)],
+                return_exceptions=True,
+            )
+
+            for item in results:
+                if isinstance(item, Exception):
+                    failed_count += 1
+                    log.warning(f"视频生成请求异常: {item}")
+                elif item is None:
+                    failed_count += 1
+                else:
+                    success_entries.append(
+                        {
+                            "result": item,
+                            "prompt": prompt,
+                            "duration": duration,
+                            "segment_index": None,
+                            "segment_total": None,
+                        }
+                    )
 
         # 移除"正在生成"反应
         await remove_reaction(GENERATING_EMOJI)
 
-        success_results = []
-        failed_count = 0
-        for item in results:
-            if isinstance(item, Exception):
-                failed_count += 1
-                log.warning(f"视频生成请求异常: {item}")
-            elif item is None:
-                failed_count += 1
-            else:
-                success_results.append(item)
-
-        if not success_results:
+        if not success_entries:
             await add_reaction(FAILED_EMOJI)
             log.warning(f"视频生成全部失败。提示词: {prompt}")
             return {
@@ -1157,7 +1472,7 @@ async def generate_video(
 
         await add_reaction(SUCCESS_EMOJI)
 
-        actual_count = len(success_results)
+        actual_count = len(success_entries)
         actual_cost = cost * actual_count
         charged_cost: Optional[int] = None
 
@@ -1181,14 +1496,20 @@ async def generate_video(
                 video_model_name = selected_model or VIDEO_GEN_CONFIG.get("MODEL_NAME", "unknown")
 
                 async with aiohttp.ClientSession() as session:
-                    for idx, result in enumerate(success_results, 1):
+                    for idx, entry in enumerate(success_entries, 1):
+                        result = entry["result"]
+                        entry_prompt = entry.get("prompt") or prompt
+                        entry_duration = int(entry.get("duration") or duration)
+                        segment_index = entry.get("segment_index")
+                        segment_total = entry.get("segment_total")
                         regenerate_view = None
                         if user_id:
                             try:
                                 user_id_int = int(user_id)
                                 params_dict = {
-                                    "prompt": prompt,
-                                    "duration": duration,
+                                    "prompt": entry_prompt,
+                                    "base_prompt": prompt,
+                                    "duration": entry_duration,
                                     "size": size,
                                     "quality": quality,
                                     "model": video_model_name,
@@ -1220,14 +1541,19 @@ async def generate_video(
                             except (ValueError, TypeError):
                                 pass
 
+                        title = (
+                            f"AI 视频生成 第 {segment_index}/{segment_total} 段"
+                            if segment_index and segment_total
+                            else (f"AI 视频生成 {idx}/{actual_count}" if actual_count > 1 else "AI 视频生成")
+                        )
                         prompt_embed = discord.Embed(
-                            title=f"AI 视频生成 {idx}/{actual_count}" if actual_count > 1 else "AI 视频生成",
+                            title=title,
                             color=0x2b2d31,
                         )
                         _set_embed_author(prompt_embed, message, kwargs.get("request_user"))
                         prompt_embed.add_field(
                             name="视频提示词",
-                            value=f"```\n{prompt[:1016]}\n```",
+                            value=f"```\n{entry_prompt[:1016]}\n```",
                             inline=False,
                         )
                         if success_message:
@@ -1243,10 +1569,12 @@ async def generate_video(
                         )
                         footer_parts = [
                             f"模型: {video_model_name}",
-                            f"时长: {duration}s",
+                            f"时长: {entry_duration}s",
                             f"宽高比: {_video_size_to_ratio_label(size)}",
                             f"质量: {quality}({resolution_text})",
                         ]
+                        if segment_index and segment_total:
+                            footer_parts.append(f"分段: {segment_index}/{segment_total}")
                         if charged_cost is not None:
                             footer_parts.append(f"消耗: {charged_cost} {currency_name}")
                         prompt_embed.set_footer(
@@ -1256,32 +1584,42 @@ async def generate_video(
                         if result.url:
                             video_sent = False
                             try:
-                                async with session.get(
-                                    result.url,
-                                    timeout=aiohttp.ClientTimeout(total=120)
-                                ) as resp:
-                                    if resp.status == 200:
-                                        video_data = await resp.read()
-                                        if len(video_data) <= 25 * 1024 * 1024:
-                                            video_file = discord.File(
-                                                io.BytesIO(video_data),
-                                                filename=f"generated_video_{idx}.mp4",
-                                                spoiler=True
-                                            )
-                                            send_kwargs = {
-                                                "embed": prompt_embed,
-                                                "files": [video_file],
-                                            }
-                                            if regenerate_view:
-                                                send_kwargs["view"] = regenerate_view
-                                            await channel.send(**send_kwargs)
-                                            video_sent = True
-                                        else:
-                                            log.warning(f"视频文件过大: {len(video_data)} bytes")
+                                video_data = entry.get("video_data")
+                                if not video_data:
+                                    async with session.get(
+                                        result.url,
+                                        timeout=aiohttp.ClientTimeout(total=120)
+                                    ) as resp:
+                                        if resp.status == 200:
+                                            video_data = await resp.read()
+                                if video_data:
+                                    entry["video_data"] = video_data
+                                    if len(video_data) <= 25 * 1024 * 1024:
+                                        if regenerate_view:
+                                            regenerate_view.original_params["video_data"] = video_data
+                                            regenerate_view.original_params["video_mime_type"] = "video/mp4"
+                                            regenerate_view.original_params["video_url"] = result.url
+                                        video_file = discord.File(
+                                            io.BytesIO(video_data),
+                                            filename=f"generated_video_{idx}.mp4",
+                                            spoiler=True
+                                        )
+                                        send_kwargs = {
+                                            "embed": prompt_embed,
+                                            "files": [video_file],
+                                        }
+                                        if regenerate_view:
+                                            send_kwargs["view"] = regenerate_view
+                                        await channel.send(**send_kwargs)
+                                        video_sent = True
+                                    else:
+                                        log.warning(f"视频文件过大: {len(video_data)} bytes")
                             except Exception as e:
                                 log.warning(f"下载视频失败，将发送URL: {e}")
 
                             if not video_sent:
+                                if regenerate_view:
+                                    regenerate_view.original_params["video_url"] = result.url
                                 prompt_embed.add_field(
                                     name="视频链接",
                                     value=f"[点击观看]({result.url})",
@@ -1312,6 +1650,83 @@ async def generate_video(
                             if regenerate_view:
                                 send_kwargs["view"] = regenerate_view
                             await channel.send(**send_kwargs)
+
+                if normalized_segment_prompts and len(success_entries) >= 2:
+                    segment_video_bytes = [
+                        entry.get("video_data")
+                        for entry in success_entries
+                        if entry.get("video_data")
+                    ]
+                    if len(segment_video_bytes) == len(success_entries):
+                        merged_video_data = await asyncio.to_thread(
+                            _concat_mp4_segments_with_ffmpeg,
+                            segment_video_bytes,
+                        )
+                        if merged_video_data:
+                            merged_embed = discord.Embed(
+                                title="AI 长视频拼接完成",
+                                color=0x2b2d31,
+                            )
+                            _set_embed_author(merged_embed, message, kwargs.get("request_user"))
+                            merged_embed.add_field(
+                                name="分段数量",
+                                value=f"{len(success_entries)} 段，约 {sum(int(entry.get('duration') or 0) for entry in success_entries)}s",
+                                inline=False,
+                            )
+                            merged_footer_parts = [
+                                f"模型: {video_model_name}",
+                                f"宽高比: {_video_size_to_ratio_label(size)}",
+                                f"质量: {quality}",
+                            ]
+                            if charged_cost is not None:
+                                merged_footer_parts.append(f"消耗: {charged_cost} {currency_name}")
+                            merged_embed.set_footer(text=" | ".join(merged_footer_parts))
+
+                            merged_view = None
+                            if user_id:
+                                try:
+                                    user_id_int = int(user_id)
+                                    merged_view = RegenerateView(
+                                        generation_type="video",
+                                        original_params={
+                                            "prompt": success_entries[-1].get("prompt") or prompt,
+                                            "base_prompt": prompt,
+                                            "duration": int(success_entries[-1].get("duration") or duration),
+                                            "size": size,
+                                            "quality": quality,
+                                            "model": video_model_name,
+                                            "video_model_name": video_model_name,
+                                            "generate_audio": generate_audio,
+                                            "video_data": merged_video_data,
+                                            "video_mime_type": "video/mp4",
+                                            "original_success_message": success_message or "",
+                                        },
+                                        user_id=user_id_int,
+                                    )
+                                except (ValueError, TypeError):
+                                    merged_view = None
+
+                            if len(merged_video_data) <= 25 * 1024 * 1024:
+                                send_kwargs = {
+                                    "embed": merged_embed,
+                                    "file": discord.File(
+                                        io.BytesIO(merged_video_data),
+                                        filename="generated_long_video.mp4",
+                                        spoiler=True,
+                                    ),
+                                }
+                                if merged_view:
+                                    send_kwargs["view"] = merged_view
+                                await channel.send(**send_kwargs)
+                            else:
+                                merged_embed.add_field(
+                                    name="拼接提示",
+                                    value="已成功拼接成长视频，但文件超过 Discord 25MB 限制，已保留上面的连续分段。",
+                                    inline=False,
+                                )
+                                await channel.send(embed=merged_embed)
+                    else:
+                        log.warning("部分长视频分段缺少本地 bytes，跳过单文件拼接。")
 
                 if failed_count > 0:
                     log.warning(f"视频并发生成共 {video_count} 个请求，失败 {failed_count} 个")

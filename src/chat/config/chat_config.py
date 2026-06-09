@@ -562,7 +562,7 @@ def _get_video_config():
         # 灵石成本
         "VIDEO_GENERATION_COST": _parse_int_env("VIDEO_GEN_COST", 10),
         # 视频时长限制（秒）
-        "MAX_DURATION": _parse_int_env("VIDEO_GEN_MAX_DURATION", 30),
+        "MAX_DURATION": _parse_int_env("VIDEO_GEN_MAX_DURATION", 15),
         "DEFAULT_SIZE": os.getenv("VIDEO_GEN_DEFAULT_SIZE", "1280x720"),
         "DEFAULT_QUALITY": os.getenv("VIDEO_GEN_DEFAULT_QUALITY", "high"),
         "DEFAULT_NUMBER_OF_VIDEOS": _parse_int_env("VIDEO_GEN_DEFAULT_VIDEOS", 1),  # 对话工具默认并发生成视频数量
@@ -582,7 +582,7 @@ def reload_video_config():
 
 
 VIDEO_GEN_MIN_SECONDS = 6
-VIDEO_GEN_MAX_SECONDS = 30
+VIDEO_GEN_MAX_SECONDS = 15
 VIDEO_GEN_ALLOWED_SIZES = (
     "1280x720",
     "720x1280",

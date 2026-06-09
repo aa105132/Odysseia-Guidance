@@ -1530,7 +1530,8 @@ class GeminiService:
                     parts.append(
                         types.Part(
                             text=(
-                                f"参考媒体{idx}为视频{duration_text}，已抽取关键帧 {sampled_frames}/{total_frames} 参与分析。"
+                                f"参考媒体{idx}为视频{duration_text}，已抽取关键帧 {sampled_frames}/{total_frames} 参与分析；"
+                                "关键帧按时间顺序排列，最后一张就是视频尾帧，可用于续写/延长视频。"
                             )
                         )
                     )

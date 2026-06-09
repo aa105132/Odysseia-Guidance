@@ -126,6 +126,7 @@ class VideoGenerationService:
             )
         )
         effective_max = min(
+            15,
             app_config.VIDEO_GEN_MAX_SECONDS,
             max(effective_min, config_max),
         )

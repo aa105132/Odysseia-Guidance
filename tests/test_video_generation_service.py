@@ -197,7 +197,7 @@ def test_generate_video_uses_v1_videos_payload(monkeypatch):
     assert recorder["json"]["model"] == "grok-imagine-1.0-video"
     assert recorder["json"]["prompt"] == "霓虹雨夜街头，慢镜头追拍"
     assert recorder["json"]["size"] == "1792x1024"
-    assert recorder["json"]["seconds"] == 18
+    assert recorder["json"]["seconds"] == 15
     assert recorder["json"]["quality"] == "standard"
     assert recorder["json"]["generate_audio"] is True
     assert recorder["json"]["stream"] is True

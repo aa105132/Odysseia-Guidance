@@ -828,13 +828,17 @@ class PromptService:
                         current_user_parts.append(
                             "[上图为视频时间序列拼图，F1→Fn代表时间从头到尾，请基于该单张拼图分析动作、镜头和画面变化]"
                         )
+                        current_user_parts.append(frames[-1])
+                        current_user_parts.append(
+                            "[上图为该视频尾帧/最后一帧，可用于判断视频结尾画面，或作为继续延长视频的起点参考]"
+                        )
                     except Exception as storyboard_error:
                         log.warning(
                             f"视频时间序列拼图生成失败，将仅使用关键帧: {storyboard_error}"
                         )
-                        current_user_parts.append(frames[0])
+                        current_user_parts.append(frames[-1])
                         current_user_parts.append(
-                            "[视频拼图失败，已回退为首帧参考图]"
+                            "[视频拼图失败，已回退为视频尾帧参考图]"
                         )
                     continue
 
@@ -1129,12 +1133,14 @@ class PromptService:
                 try:
                     parts.append(self._build_gif_storyboard_image(frames))
                     parts.append("上图为视频时间序列拼图（F1→Fn），请直接基于该单张拼图分析。")
+                    parts.append(frames[-1])
+                    parts.append("上图为该视频尾帧/最后一帧，可作为续写或延长视频的起点参考。")
                 except Exception as storyboard_error:
                     log.warning(
                         f"工具视频上下文的拼图生成失败，将仅使用关键帧: {storyboard_error}"
                     )
-                    parts.append(frames[0])
-                    parts.append("视频拼图失败，已回退为首帧参考图。")
+                    parts.append(frames[-1])
+                    parts.append("视频拼图失败，已回退为视频尾帧参考图。")
             elif frame_meta.get("is_animated"):
                 parts.append(
                     f"检测到GIF动图输入，系统已自动拆帧 {frame_meta.get('sampled_frames', len(frames))}/{frame_meta.get('total_frames', len(frames))}。"

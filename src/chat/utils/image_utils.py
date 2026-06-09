@@ -202,6 +202,33 @@ def extract_video_frames_for_ai(
                 pass
 
 
+def extract_video_tail_frame_for_ai(
+    video_bytes: bytes,
+    mime_type: str = "video/mp4",
+) -> Tuple[Image.Image, Dict[str, Any]]:
+    """
+    提取视频尾帧，供“续写/延长视频”作为下一段图生视频的起点。
+
+    复用视频抽帧逻辑并只采样首尾两帧，避免额外引入 ffmpeg 依赖；
+    返回的 PIL Image 已转换为 RGB，调用方可按需保存为 PNG/JPEG bytes。
+    """
+    frames, frame_meta = extract_video_frames_for_ai(
+        video_bytes=video_bytes,
+        mime_type=mime_type,
+        max_video_frames=2,
+    )
+    if not frames:
+        raise ValueError("未能从视频中提取尾帧。")
+    tail_frame = frames[-1].convert("RGB")
+    frame_meta = dict(frame_meta)
+    frame_meta["tail_frame_index"] = (
+        frame_meta.get("frame_indices", [None])[-1]
+        if frame_meta.get("frame_indices")
+        else None
+    )
+    return tail_frame, frame_meta
+
+
 def sanitize_image(image_bytes: bytes) -> Tuple[bytes, str]:
     """
     对输入的图片字节数据进行智能预处理和压缩。

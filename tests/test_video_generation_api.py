@@ -97,7 +97,7 @@ def test_video_service_posts_to_v1_videos_with_expected_payload(monkeypatch):
     assert captured["kwargs"]["json"]["model"] == "grok-imagine-1.0-video"
     assert captured["kwargs"]["json"]["prompt"] == "霓虹雨夜街头，慢镜头追拍"
     assert captured["kwargs"]["json"]["size"] == "1792x1024"
-    assert captured["kwargs"]["json"]["seconds"] == 18
+    assert captured["kwargs"]["json"]["seconds"] == 15
     assert captured["kwargs"]["json"]["quality"] == "high"
     assert captured["kwargs"]["json"]["generate_audio"] is True
     assert captured["kwargs"]["json"]["stream"] is True
