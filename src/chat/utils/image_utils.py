@@ -209,24 +209,152 @@ def extract_video_tail_frame_for_ai(
     """
     提取视频尾帧，供“续写/延长视频”作为下一段图生视频的起点。
 
-    复用视频抽帧逻辑并只采样首尾两帧，避免额外引入 ffmpeg 依赖；
+    优先复用 OpenCV 视频抽帧逻辑并只采样首尾两帧；
+    如果部署环境缺少 opencv-python-headless，则自动回退到 ffmpeg 抽取尾帧。
     返回的 PIL Image 已转换为 RGB，调用方可按需保存为 PNG/JPEG bytes。
     """
-    frames, frame_meta = extract_video_frames_for_ai(
-        video_bytes=video_bytes,
-        mime_type=mime_type,
-        max_video_frames=2,
-    )
-    if not frames:
-        raise ValueError("未能从视频中提取尾帧。")
-    tail_frame = frames[-1].convert("RGB")
-    frame_meta = dict(frame_meta)
-    frame_meta["tail_frame_index"] = (
-        frame_meta.get("frame_indices", [None])[-1]
-        if frame_meta.get("frame_indices")
-        else None
-    )
-    return tail_frame, frame_meta
+    try:
+        frames, frame_meta = extract_video_frames_for_ai(
+            video_bytes=video_bytes,
+            mime_type=mime_type,
+            max_video_frames=2,
+        )
+        if not frames:
+            raise ValueError("未能从视频中提取尾帧。")
+        tail_frame = frames[-1].convert("RGB")
+        frame_meta = dict(frame_meta)
+        frame_meta["tail_frame_index"] = (
+            frame_meta.get("frame_indices", [None])[-1]
+            if frame_meta.get("frame_indices")
+            else None
+        )
+        frame_meta["tail_frame_extractor"] = "opencv"
+        return tail_frame, frame_meta
+    except Exception as opencv_error:
+        log.warning(
+            "OpenCV 提取视频尾帧失败，准备尝试 ffmpeg 兜底: %s",
+            opencv_error,
+        )
+        return _extract_video_tail_frame_with_ffmpeg(
+            video_bytes=video_bytes,
+            mime_type=mime_type,
+            previous_error=opencv_error,
+        )
+
+
+def _extract_video_tail_frame_with_ffmpeg(
+    video_bytes: bytes,
+    mime_type: str = "video/mp4",
+    previous_error: Exception | None = None,
+) -> Tuple[Image.Image, Dict[str, Any]]:
+    """使用 ffmpeg 从视频末尾附近抽取一帧，作为 OpenCV 缺失时的兜底。"""
+    if not video_bytes:
+        raise ValueError("输入视频为空，无法提取尾帧。")
+
+    import shutil
+    import subprocess
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        if previous_error is not None:
+            raise RuntimeError(
+                "缺少 opencv-python-headless，且未找到 ffmpeg，无法抽取视频尾帧。"
+            ) from previous_error
+        raise RuntimeError("未找到 ffmpeg，无法抽取视频尾帧。")
+
+    suffix = _video_suffix_from_mime_type(mime_type)
+    temp_video_path = ""
+    temp_frame_path = ""
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_video:
+            temp_video.write(video_bytes)
+            temp_video_path = temp_video.name
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_frame:
+            temp_frame_path = temp_frame.name
+
+        commands = [
+            [
+                ffmpeg_bin,
+                "-y",
+                "-sseof",
+                "-0.1",
+                "-i",
+                temp_video_path,
+                "-frames:v",
+                "1",
+                temp_frame_path,
+            ],
+            [
+                ffmpeg_bin,
+                "-y",
+                "-sseof",
+                "-1",
+                "-i",
+                temp_video_path,
+                "-frames:v",
+                "1",
+                temp_frame_path,
+            ],
+            [
+                ffmpeg_bin,
+                "-y",
+                "-i",
+                temp_video_path,
+                "-vf",
+                "reverse",
+                "-frames:v",
+                "1",
+                temp_frame_path,
+            ],
+        ]
+
+        last_stderr = ""
+        for command in commands:
+            result = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=120,
+                check=False,
+            )
+            last_stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+            if (
+                result.returncode == 0
+                and temp_frame_path
+                and os.path.exists(temp_frame_path)
+                and os.path.getsize(temp_frame_path) > 0
+            ):
+                with Image.open(temp_frame_path) as frame:
+                    tail_frame = frame.convert("RGB").copy()
+                return tail_frame, {
+                    "is_video": True,
+                    "is_animated": True,
+                    "total_frames": None,
+                    "sampled_frames": 1,
+                    "frame_indices": [],
+                    "fps": None,
+                    "duration_seconds": None,
+                    "source_format": (mime_type or "video/mp4"),
+                    "tail_frame_index": None,
+                    "tail_frame_extractor": "ffmpeg",
+                }
+
+        raise RuntimeError(f"ffmpeg 抽取视频尾帧失败: {last_stderr}")
+    except Exception as ffmpeg_error:
+        if previous_error is not None:
+            raise RuntimeError(
+                f"OpenCV 与 ffmpeg 均无法抽取视频尾帧: {ffmpeg_error}"
+            ) from previous_error
+        raise
+    finally:
+        for path in (temp_video_path, temp_frame_path):
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
 
 def sanitize_image(image_bytes: bytes) -> Tuple[bytes, str]:

@@ -11,7 +11,11 @@ sys.path.insert(0, os.path.abspath("."))
 
 from src.chat.services.prompt_service import PromptService
 from src.chat.services.message_processor import MessageProcessor
-from src.chat.utils.image_utils import extract_image_frames_for_ai, extract_video_frames_for_ai
+from src.chat.utils.image_utils import (
+    extract_image_frames_for_ai,
+    extract_video_frames_for_ai,
+    extract_video_tail_frame_for_ai,
+)
 
 
 def _install_fake_cv2(monkeypatch, frame_count: int = 8, fps: float = 4.0):
@@ -133,6 +137,38 @@ def test_extract_video_frames_for_ai_samples_video(monkeypatch):
     assert len(frames) == 4
     assert meta["frame_indices"][0] == 0
     assert meta["frame_indices"][-1] == 7
+
+
+def test_extract_video_tail_frame_falls_back_to_ffmpeg(monkeypatch):
+    from src.chat.utils import image_utils
+
+    def _raise_opencv_missing(*_args, **_kwargs):
+        raise RuntimeError("缺少 opencv-python-headless，无法抽取视频帧。")
+
+    def _fake_run(command, stdout=None, stderr=None, timeout=None, check=False):
+        output_path = command[-1]
+        frame = Image.new("RGB", (32, 32), (10, 20, 30))
+        frame.save(output_path, format="PNG")
+
+        class _Result:
+            returncode = 0
+            stderr = b""
+
+        return _Result()
+
+    monkeypatch.setattr(image_utils, "extract_video_frames_for_ai", _raise_opencv_missing)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    frame, meta = extract_video_tail_frame_for_ai(
+        video_bytes=b"fake-video",
+        mime_type="video/mp4",
+    )
+
+    assert frame.size == (32, 32)
+    assert frame.mode == "RGB"
+    assert meta["tail_frame_extractor"] == "ffmpeg"
+    assert meta["sampled_frames"] == 1
 
 
 def test_create_image_context_turn_contains_gif_frames():
