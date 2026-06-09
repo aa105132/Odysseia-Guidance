@@ -209,10 +209,21 @@ def extract_video_tail_frame_for_ai(
     """
     提取视频尾帧，供“续写/延长视频”作为下一段图生视频的起点。
 
-    优先复用 OpenCV 视频抽帧逻辑并只采样首尾两帧；
-    如果部署环境缺少 opencv-python-headless，则自动回退到 ffmpeg 抽取尾帧。
+    优先使用 ffmpeg 抽取尾帧，避免在长视频续写路径中导入 cv2/numpy
+    触发二进制扩展重复加载问题；找不到 ffmpeg 时再回退 OpenCV。
     返回的 PIL Image 已转换为 RGB，调用方可按需保存为 PNG/JPEG bytes。
     """
+    try:
+        return _extract_video_tail_frame_with_ffmpeg(
+            video_bytes=video_bytes,
+            mime_type=mime_type,
+        )
+    except Exception as ffmpeg_error:
+        log.warning(
+            "ffmpeg 提取视频尾帧失败，准备尝试 OpenCV 兜底: %s",
+            ffmpeg_error,
+        )
+
     try:
         frames, frame_meta = extract_video_frames_for_ai(
             video_bytes=video_bytes,
@@ -231,15 +242,9 @@ def extract_video_tail_frame_for_ai(
         frame_meta["tail_frame_extractor"] = "opencv"
         return tail_frame, frame_meta
     except Exception as opencv_error:
-        log.warning(
-            "OpenCV 提取视频尾帧失败，准备尝试 ffmpeg 兜底: %s",
-            opencv_error,
-        )
-        return _extract_video_tail_frame_with_ffmpeg(
-            video_bytes=video_bytes,
-            mime_type=mime_type,
-            previous_error=opencv_error,
-        )
+        raise RuntimeError(
+            f"ffmpeg 与 OpenCV 均无法抽取视频尾帧: {opencv_error}"
+        ) from ffmpeg_error
 
 
 def _extract_video_tail_frame_with_ffmpeg(

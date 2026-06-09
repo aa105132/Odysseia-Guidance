@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.abspath("."))
 from src.chat.config import chat_config as app_config
 import src.chat.features.video_generation.services.video_service as video_service_module
 from src.chat.features.tools.functions.generate_video import (
+    _coerce_optional_bool,
     _ensure_chinese_video_prompt,
     _normalize_reference_image_prompt_terms,
     generate_video as generate_video_tool,
@@ -129,6 +130,18 @@ def test_generate_video_tool_exposes_new_video_params():
     assert "video_first_frame_prompt" in signature.parameters
     assert signature.parameters["quality"].default == "high"
     assert signature.parameters["generate_audio"].default is True
+
+
+def test_generate_video_tool_coerces_string_boolean_flags():
+    assert _coerce_optional_bool("False") is False
+    assert _coerce_optional_bool("false") is False
+    assert _coerce_optional_bool("0") is False
+    assert _coerce_optional_bool("否") is False
+    assert _coerce_optional_bool("关闭") is False
+    assert _coerce_optional_bool("True") is True
+    assert _coerce_optional_bool("1") is True
+    assert _coerce_optional_bool(True) is True
+    assert _coerce_optional_bool(False) is False
 
 
 def test_extract_video_from_response_supports_data_array():

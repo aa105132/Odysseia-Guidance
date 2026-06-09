@@ -172,6 +172,15 @@ def _explicitly_requests_direct_image_animation(text: str) -> bool:
         "保持原图画面",
         "保持原图构图",
         "保持当前构图",
+        "拿这个当首帧",
+        "拿这个当首帧图",
+        "拿这个作为首帧",
+        "拿这个作为首帧图",
+        "拿这张当首帧",
+        "拿这张当首帧图",
+        "拿这张图当首帧",
+        "拿这张图作为首帧",
+        "拿这张图作为首帧图",
         "用这张做首帧",
         "用这张作为首帧",
         "这张作为首帧",
@@ -291,6 +300,25 @@ def _safe_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_optional_bool(value: Any) -> Optional[bool]:
+    """把工具参数里的布尔值/字符串布尔值规范成 Optional[bool]。"""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on", "是", "开启"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off", "否", "关闭"}:
+            return False
+        if not normalized:
+            return None
+    return bool(value)
 
 
 async def _download_video_bytes_for_tail(video_url: str) -> Optional[bytes]:
@@ -738,6 +766,7 @@ async def generate_video(
     # 获取消息对象（用于添加反应和提取图片）
     message: Optional[discord.Message] = kwargs.get("message")
     channel = kwargs.get("channel")
+    prepare_video_first_frame = _coerce_optional_bool(prepare_video_first_frame)
 
     # 辅助函数：安全地添加反应
     async def add_reaction(emoji: str):
@@ -1244,15 +1273,9 @@ async def generate_video(
         )
         combined_reference_intent = f"{user_request_text} {prompt}"
         if prepare_video_first_frame is None and "prepare_video_first_frame" in kwargs:
-            raw_prepare_video_first_frame = kwargs.get("prepare_video_first_frame")
-            if isinstance(raw_prepare_video_first_frame, str):
-                lowered_prepare_flag = raw_prepare_video_first_frame.strip().lower()
-                if lowered_prepare_flag in {"true", "1", "yes", "y", "on", "是", "开启"}:
-                    prepare_video_first_frame = True
-                elif lowered_prepare_flag in {"false", "0", "no", "n", "off", "否", "关闭"}:
-                    prepare_video_first_frame = False
-            elif raw_prepare_video_first_frame is not None:
-                prepare_video_first_frame = bool(raw_prepare_video_first_frame)
+            prepare_video_first_frame = _coerce_optional_bool(
+                kwargs.get("prepare_video_first_frame")
+            )
 
         auto_prepare_video_first_frame = (
             _requests_reference_only_video(user_request_text)
@@ -1266,7 +1289,7 @@ async def generate_video(
         prepare_video_first_frame = (
             auto_prepare_video_first_frame
             if prepare_video_first_frame is None
-            else bool(prepare_video_first_frame)
+            else prepare_video_first_frame
         )
     else:
         prepare_video_first_frame = False
