@@ -1,5 +1,7 @@
 import io
 import logging
+import json
+import math
 import os
 import tempfile
 from PIL import Image
@@ -112,6 +114,140 @@ def _video_suffix_from_mime_type(mime_type: str) -> str:
     }.get(normalized, ".mp4")
 
 
+def _extract_video_frames_with_ffmpeg(
+    video_bytes: bytes,
+    mime_type: str = "video/mp4",
+    max_video_frames: int = 4,
+) -> Tuple[List[Image.Image], Dict[str, Any]]:
+    """使用 ffmpeg/ffprobe 按时间均匀抽取视频帧。"""
+    if not video_bytes:
+        raise ValueError("输入视频为空，无法提取帧。")
+
+    import shutil
+    import subprocess
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    ffprobe_bin = shutil.which("ffprobe")
+    if not ffmpeg_bin or not ffprobe_bin:
+        raise RuntimeError("缺少 ffmpeg 或 ffprobe，无法使用 ffmpeg 抽取视频帧。")
+
+    safe_max_frames = max(1, int(max_video_frames or 1))
+    suffix = _video_suffix_from_mime_type(mime_type)
+    temp_video_path = ""
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_video:
+            temp_video.write(video_bytes)
+            temp_video_path = temp_video.name
+
+        probe_result = subprocess.run(
+            [
+                ffprobe_bin,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                temp_video_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            check=False,
+        )
+        if probe_result.returncode != 0:
+            raise RuntimeError(
+                "ffprobe 获取视频时长失败: "
+                + probe_result.stderr.decode("utf-8", errors="replace")[:300]
+            )
+
+        probe_payload = json.loads(probe_result.stdout.decode("utf-8", errors="replace") or "{}")
+        duration_seconds = float((probe_payload.get("format") or {}).get("duration") or 0)
+        if not math.isfinite(duration_seconds) or duration_seconds <= 0:
+            raise RuntimeError(f"ffprobe 返回无效视频时长: {duration_seconds}")
+
+        if safe_max_frames == 1:
+            timestamps = [max(0.0, duration_seconds - 0.1)]
+        else:
+            timestamps = [
+                min(
+                    max(0.0, duration_seconds - 0.1),
+                    duration_seconds * idx / (safe_max_frames - 1),
+                )
+                for idx in range(safe_max_frames)
+            ]
+
+        frames: List[Image.Image] = []
+        sampled_timestamps: List[float] = []
+
+        for idx, timestamp in enumerate(timestamps):
+            temp_frame_path = ""
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_frame:
+                    temp_frame_path = temp_frame.name
+
+                result = subprocess.run(
+                    [
+                        ffmpeg_bin,
+                        "-y",
+                        "-ss",
+                        f"{timestamp:.3f}",
+                        "-i",
+                        temp_video_path,
+                        "-frames:v",
+                        "1",
+                        temp_frame_path,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=90,
+                    check=False,
+                )
+                if (
+                    result.returncode != 0
+                    or not os.path.exists(temp_frame_path)
+                    or os.path.getsize(temp_frame_path) <= 0
+                ):
+                    log.debug(
+                        "ffmpeg 提取视频 %.3fs 帧失败: %s",
+                        timestamp,
+                        result.stderr.decode("utf-8", errors="replace")[:300],
+                    )
+                    continue
+
+                with Image.open(temp_frame_path) as frame:
+                    frames.append(frame.convert("RGB").copy())
+                sampled_timestamps.append(round(timestamp, 3))
+            finally:
+                if temp_frame_path:
+                    try:
+                        os.unlink(temp_frame_path)
+                    except OSError:
+                        pass
+
+        if not frames:
+            raise RuntimeError("ffmpeg 未能从视频中提取任何可用帧。")
+
+        return frames, {
+            "is_video": True,
+            "is_animated": True,
+            "total_frames": len(frames),
+            "sampled_frames": len(frames),
+            "frame_indices": sampled_timestamps,
+            "fps": None,
+            "duration_seconds": round(duration_seconds, 3),
+            "source_format": (mime_type or "video/mp4"),
+            "frame_extractor": "ffmpeg",
+        }
+    finally:
+        if temp_video_path:
+            try:
+                os.unlink(temp_video_path)
+            except OSError:
+                pass
+
+
 def extract_video_frames_for_ai(
     video_bytes: bytes,
     mime_type: str = "video/mp4",
@@ -120,11 +256,20 @@ def extract_video_frames_for_ai(
     """
     将视频抽取为适合模型识别的关键帧列表。
 
-    视频文件先写入临时文件，再通过 OpenCV 均匀抽样关键帧；
+    优先使用 ffmpeg 按时间均匀抽样关键帧，失败后回退 OpenCV；
     输出为 PIL Image 列表，供上层拼接成“类似 GIF 的时间序列拼图”。
     """
     if not video_bytes:
         raise ValueError("输入视频为空，无法提取帧。")
+
+    try:
+        return _extract_video_frames_with_ffmpeg(
+            video_bytes=video_bytes,
+            mime_type=mime_type,
+            max_video_frames=max_video_frames,
+        )
+    except Exception as ffmpeg_error:
+        log.debug("ffmpeg 视频抽帧不可用或失败，回退 OpenCV: %s", ffmpeg_error)
 
     safe_max_frames = max(1, int(max_video_frames or 1))
     temp_path = ""
@@ -142,8 +287,10 @@ def extract_video_frames_for_ai(
         if not cap or not cap.isOpened():
             raise ValueError("OpenCV 无法打开视频文件。")
 
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        raw_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        total_frames = raw_total_frames if 0 < raw_total_frames < 1_000_000_000 else 0
+        raw_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        fps = raw_fps if math.isfinite(raw_fps) and raw_fps > 0 else 0.0
         frame_indices = (
             _calculate_sample_indices(total_frames, safe_max_frames)
             if total_frames > 0
@@ -158,7 +305,11 @@ def extract_video_frames_for_ai(
                 cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ok, frame_bgr = cap.read()
             if not ok or frame_bgr is None:
-                log.warning(f"提取视频第 {idx} 帧失败。")
+                if total_frames > 0:
+                    log.warning(f"提取视频第 {idx} 帧失败。")
+                else:
+                    log.debug(f"视频未提供有效总帧数，顺序读取到第 {idx} 帧时结束。")
+                    break
                 continue
 
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
@@ -180,12 +331,13 @@ def extract_video_frames_for_ai(
         return extracted_frames, {
             "is_video": True,
             "is_animated": True,
-            "total_frames": total_frames or len(extracted_frames),
+            "total_frames": total_frames if total_frames > 0 else len(extracted_frames),
             "sampled_frames": len(extracted_frames),
             "frame_indices": successful_indices,
             "fps": fps,
             "duration_seconds": duration_seconds,
             "source_format": (mime_type or "video/mp4"),
+            "frame_extractor": "opencv",
         }
     except ImportError as exc:
         raise RuntimeError("缺少 opencv-python-headless，无法抽取视频帧。") from exc
