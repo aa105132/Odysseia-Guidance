@@ -659,7 +659,7 @@ class PromptService:
             else {}
         )
         attachment_images = (
-            [img for img in images if img.get("source") in ("attachment", "replied_attachment", "sticker")]
+            [img for img in images if img.get("source") in ("attachment", "replied_attachment", "sticker", "embed")]
             if images
             else []
         )

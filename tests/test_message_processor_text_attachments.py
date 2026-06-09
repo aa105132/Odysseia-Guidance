@@ -137,3 +137,116 @@ def test_process_message_reads_replied_text_attachment_full_content(monkeypatch)
     assert "## 角色外貌" in result["replied_content"]
     assert "黑发红瞳，披风。" in result["replied_content"]
     assert "[附件全文结束]" in result["replied_content"]
+
+
+def test_extract_text_link_supports_artifact_video_url(monkeypatch):
+    processor = MessageProcessor()
+
+    async def _fake_fetch_media(session, url, proxy=None):
+        assert url == "https://artifact.anycap.cloud/a/art_video123"
+        return {
+            "data": b"fake-video-bytes",
+            "mime_type": "application/octet-stream",
+            "final_url": url,
+        }
+
+    monkeypatch.setattr(processor, "_fetch_image_aio", _fake_fetch_media)
+
+    result = asyncio.run(
+        processor._extract_images_from_text_links(
+            "月月看看这个视频 https://artifact.anycap.cloud/a/art_video123",
+            source="attachment",
+        )
+    )
+
+    assert result == [
+        {
+            "mime_type": "video/mp4",
+            "data": b"fake-video-bytes",
+            "source": "attachment",
+            "filename": "art_video123",
+        }
+    ]
+
+
+def test_extract_embed_field_video_link(monkeypatch):
+    processor = MessageProcessor()
+
+    async def _fake_fetch_media(session, url, proxy=None):
+        assert url == "https://artifact.anycap.cloud/a/art_from_embed"
+        return {
+            "data": b"embed-video-bytes",
+            "mime_type": "video/mp4",
+            "final_url": url,
+        }
+
+    monkeypatch.setattr(processor, "_fetch_image_aio", _fake_fetch_media)
+
+    embed = SimpleNamespace(
+        image=None,
+        thumbnail=None,
+        video=None,
+        title="AI 视频生成",
+        description="",
+        url=None,
+        fields=[
+            SimpleNamespace(
+                name="视频链接",
+                value="[点击观看](https://artifact.anycap.cloud/a/art_from_embed)",
+            )
+        ],
+    )
+
+    result = asyncio.run(processor._extract_images_from_embeds([embed]))
+
+    assert result == [
+        {
+            "mime_type": "video/mp4",
+            "data": b"embed-video-bytes",
+            "source": "embed",
+            "filename": "art_from_embed",
+        }
+    ]
+
+
+def test_process_message_reads_current_json_attachment_full_content(monkeypatch):
+    monkeypatch.setattr(
+        message_processor_module.chat_db_manager,
+        "is_channel_muted",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(message_processor_module.discord, "Thread", _FakeThread)
+
+    processor = MessageProcessor()
+    attachment = _FakeAttachment(
+        filename="config.json",
+        content_type="application/json",
+        data='{"角色":"月月","能力":["看图","看视频"]}'.encode("utf-8"),
+    )
+    message = SimpleNamespace(
+        channel=_FakeChannel(),
+        guild=_FakeGuild(),
+        attachments=[attachment],
+        content="读一下这个 JSON",
+        embeds=[],
+        reference=None,
+        mentions=[],
+    )
+
+    result = asyncio.run(processor.process_message(message, bot=SimpleNamespace()))
+
+    assert "读一下这个 JSON" in result["user_content"]
+    assert "[用户上传的文本附件: config.json]" in result["user_content"]
+    assert '"角色":"月月"' in result["user_content"]
+    assert '"看视频"' in result["user_content"]
+
+
+def test_text_attachment_supports_json_suffix_mime_without_filename_extension():
+    processor = MessageProcessor()
+    attachment = _FakeAttachment(
+        filename="payload",
+        content_type="application/problem+json; charset=utf-8",
+        data=b'{"error":"bad_request"}',
+    )
+
+    assert processor._is_supported_text_attachment(attachment) is True

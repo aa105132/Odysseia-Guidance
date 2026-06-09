@@ -348,3 +348,39 @@ def test_fetch_lottie_sticker_tries_static_preview(monkeypatch):
     assert result["mime_type"] == "image/png"
     assert result["data"] == b"static-preview"
     assert requested_urls[0].endswith("/654321.png?size=512")
+
+
+def test_build_chat_prompt_auto_injects_embed_video_storyboard(monkeypatch):
+    _install_fake_cv2(monkeypatch, frame_count=6, fps=3.0)
+    prompt_service = PromptService()
+
+    conversation = prompt_service.build_chat_prompt(
+        user_name="测试用户",
+        message="看看这个生成视频",
+        replied_message=None,
+        images=[
+            {
+                "data": b"fake-embed-video",
+                "mime_type": "video/mp4",
+                "source": "embed",
+            }
+        ],
+        channel_context=[],
+        world_book_entries=[],
+        affection_status=None,
+        guild_name="测试服务器",
+        location_name="测试频道",
+        user_id=123456,
+    )
+
+    user_parts = []
+    for turn in conversation:
+        if turn.get("role") == "user":
+            user_parts.extend(turn.get("parts", []))
+
+    text_parts = [part for part in user_parts if isinstance(part, str)]
+    image_parts = [part for part in user_parts if isinstance(part, Image.Image)]
+
+    assert any("用户发送了一个视频" in text for text in text_parts)
+    assert any("视频时间序列拼图" in text for text in text_parts)
+    assert len(image_parts) == 1
