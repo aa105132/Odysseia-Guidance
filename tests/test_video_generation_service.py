@@ -1220,3 +1220,36 @@ def test_plan_video_prompt_with_yueyue_requires_images(monkeypatch):
 
     assert planned is None
     assert called is False
+
+
+def test_plan_video_prompt_with_yueyue_retries_incomplete_output(monkeypatch):
+    import types
+
+    from src.chat.features.tools.utils.video_prompt_planner import plan_video_prompt_with_yueyue
+
+    calls = []
+
+    async def fake_generate_simple_response(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return "在0-4秒，镜头以极具张力的动态跟拍视角，与主体保持相对静止。"
+        return "在0-4秒，镜头以极具张力的动态跟拍视角推进，主体的表情和动作自然延续；4-8秒，镜头逐渐拉近，环境光影和背景细节随运动变化，最后停在稳定构图。不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
+
+    fake_module = types.ModuleType("src.chat.services.gemini_service")
+    fake_module.gemini_service = SimpleNamespace(
+        generate_simple_response=fake_generate_simple_response,
+    )
+    monkeypatch.setitem(sys.modules, "src.chat.services.gemini_service", fake_module)
+
+    planned = asyncio.run(plan_video_prompt_with_yueyue(
+        image_prompt="原始分镜",
+        user_idea="",
+        images=[{"data": b"fake-png", "mime_type": "image/png"}],
+        mode="image_to_video",
+        duration=8,
+    ))
+
+    assert len(calls) == 2
+    assert "上一轮输出疑似被截断或不完整" in calls[1]["prompt"]
+    assert "4-8秒" in planned
+    assert planned.endswith("不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。")

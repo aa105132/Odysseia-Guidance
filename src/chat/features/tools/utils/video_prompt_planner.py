@@ -52,6 +52,43 @@ def _guess_image_mime_type(filename: str) -> str:
     return "image/png"
 
 
+def _looks_complete_video_prompt(prompt: str, duration: int) -> bool:
+    """粗略判断视频分镜是否完整，避免半截提示词直接送去生成。"""
+    text = str(prompt or "").strip()
+    if len(text) < 120:
+        return False
+
+    required_markers = (
+        "不要文字",
+        "不要水印",
+        "不要闪烁",
+    )
+    if not all(marker in text for marker in required_markers):
+        return False
+
+    safe_duration = max(5, min(15, int(duration or 8)))
+    has_start_timeline = "0-" in text or "0到" in text or "0 至" in text
+    has_end_timeline = str(safe_duration) in text and "秒" in text
+    has_terminal_punctuation = text[-1] in "。！？.!?"
+    return has_start_timeline and has_end_timeline and has_terminal_punctuation
+
+
+def _normalize_planned_video_prompt(prompt: str) -> str:
+    """清理模型输出，并在缺少安全结尾时补齐硬性负面约束。"""
+    text = str(prompt or "").strip().strip('"').strip("'")
+    if not text:
+        return ""
+    if len(text) > 3200:
+        text = text[:3200].rstrip("，,；;：:")
+    if not text.endswith(("。", "！", "？", ".", "!", "?")):
+        text += "。"
+
+    negative_tail = "不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
+    if "不要文字" not in text or "不要水印" not in text or "不要闪烁" not in text:
+        text += negative_tail
+    return text
+
+
 async def plan_video_prompt_with_yueyue(
     *,
     image_prompt: str = "",
@@ -109,18 +146,38 @@ async def plan_video_prompt_with_yueyue(
     else:
         prompt_parts.append("用户没有补充想法，请你根据画面内容自己设计最合适、最好看的自然运动。")
 
+    request_prompt = "\n".join(prompt_parts)
     planned = await gemini_service.generate_simple_response(
-        prompt="\n".join(prompt_parts),
+        prompt=request_prompt,
         generation_config={
-            "temperature": 0.75,
-            "max_output_tokens": 1800,
+            "temperature": 0.7,
+            "max_output_tokens": 4096,
         },
         images=normalized_images,
         return_error_text=False,
     )
-    planned = str(planned or "").strip().strip('"').strip("'")
+    planned = _normalize_planned_video_prompt(str(planned or ""))
+
+    if not _looks_complete_video_prompt(planned, safe_duration):
+        log.warning("月月生成的视频分镜疑似不完整，准备提高约束重试一次: %s", planned[:120])
+        retry_prompt = (
+            f"{request_prompt}\n\n"
+            "上一轮输出疑似被截断或不完整。请重新输出一段完整的视频提示词，"
+            "必须写完整时间轴，必须以“不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。”结尾。"
+        )
+        retry_planned = await gemini_service.generate_simple_response(
+            prompt=retry_prompt,
+            generation_config={
+                "temperature": 0.55,
+                "max_output_tokens": 4096,
+            },
+            images=normalized_images,
+            return_error_text=False,
+        )
+        retry_planned = _normalize_planned_video_prompt(str(retry_planned or ""))
+        if retry_planned:
+            planned = retry_planned
+
     if not planned:
         return None
-    if len(planned) > 2000:
-        planned = planned[:2000]
     return planned
