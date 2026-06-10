@@ -413,14 +413,25 @@ class RegenerateView(discord.ui.View):
             return
 
         from src.chat.features.tools.functions.generate_video import generate_video
+        from src.chat.features.tools.utils.video_prompt_planner import plan_video_prompt_with_yueyue
 
         duration = int(self.original_params.get("duration", 6) or 6)
         base_prompt = self.original_params.get("base_prompt") or self.original_params.get("prompt", "")
-        continuation_prompt = _build_extend_video_prompt(
-            base_prompt=base_prompt,
+        tail_frame_reference = {
+            "data": tail_frame_png,
+            "mime_type": "image/png",
+            "filename": "video_tail_frame.png",
+        }
+        continuation_prompt = await plan_video_prompt_with_yueyue(
+            image_prompt=base_prompt,
             user_idea=user_idea,
+            images=[tail_frame_reference],
+            mode="extend",
             duration=duration,
         )
+        if not continuation_prompt:
+            await interaction.followup.send("月月这次没能根据尾帧写出续写分镜，请稍后再试。", ephemeral=True)
+            return
 
         result = await generate_video(
             prompt=continuation_prompt,
@@ -431,18 +442,14 @@ class RegenerateView(discord.ui.View):
             model=self.original_params.get("model") or self.original_params.get("video_model_name"),
             generate_audio=self.original_params.get("generate_audio", True),
             prepare_video_first_frame=False,
-            preview_message="正在提取上一段尾帧并继续延长视频...",
-            success_message="延长片段生成完成，可以继续点击“延长视频”接着往后接。",
+            preview_message="月月正在看尾帧构思续写分镜并延长视频...",
+            success_message="延长片段已根据尾帧和新分镜生成，可以继续点击“延长视频”接着往后接。",
             channel=channel,
             user_id=str(interaction.user.id),
             bot=interaction.client if hasattr(interaction, "client") else None,
             request_user=interaction.user,
-            user_message="用上一段视频尾帧作为续写起点延长视频",
-            _prepared_reference_image={
-                "data": tail_frame_png,
-                "mime_type": "image/png",
-                "filename": "video_tail_frame.png",
-            },
+            user_message=f"点击延长视频按钮：{user_idea or '请月月根据尾帧自行设计续写分镜'}",
+            _prepared_reference_image=tail_frame_reference,
         )
 
         if isinstance(result, dict) and result.get("success"):

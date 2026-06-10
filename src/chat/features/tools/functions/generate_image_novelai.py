@@ -505,28 +505,49 @@ async def _generate_video_from_image_interaction(
     image_prompt: str,
     user_idea: str,
 ) -> None:
-    """根据当前图片消息生成视频并反馈执行结果。"""
+    """根据当前图片消息生成视频：先让月月看图规划分镜，再调用视频工具。"""
     if interaction.channel is None:
         await interaction.followup.send("当前频道不可用，无法生成视频。", ephemeral=True)
         return
 
     from src.chat.features.tools.functions.generate_video import generate_video
+    from src.chat.features.tools.utils.video_prompt_planner import (
+        extract_image_payloads_from_message,
+        plan_video_prompt_with_yueyue,
+    )
 
-    video_prompt = _build_video_prompt_from_image(
+    reference_images = await extract_image_payloads_from_message(
+        interaction.message if isinstance(interaction.message, discord.Message) else None,
+        max_images=3,
+    )
+    if not reference_images:
+        await interaction.followup.send("没有从这条结果消息里拿到图片，暂时不能让月月看图规划视频。", ephemeral=True)
+        return
+
+    video_prompt = await plan_video_prompt_with_yueyue(
         image_prompt=image_prompt,
         user_idea=user_idea,
+        images=reference_images,
+        mode="image_to_video",
+        duration=8,
     )
+    if not video_prompt:
+        await interaction.followup.send("月月这次没能根据图片写出视频分镜，请稍后再试。", ephemeral=True)
+        return
+
     result = await generate_video(
         prompt=video_prompt,
-        duration=5,
+        duration=8,
         use_reference_image=True,
-        preview_message="正在根据这张图片生成视频，请稍候...",
-        success_message="视频已生成并发送到频道。",
+        preview_message="月月正在看图构思分镜并生成视频，请稍候...",
+        success_message="视频已根据图片和新分镜生成并发送到频道。",
         message=interaction.message if isinstance(interaction.message, discord.Message) else None,
         channel=interaction.channel,
         user_id=str(interaction.user.id),
         bot=interaction.client,
         request_user=interaction.user,
+        user_message=f"点击生成视频按钮：{user_idea or '请月月根据图片自行设计视频分镜'}",
+        _prepared_reference_images=reference_images,
     )
 
     if isinstance(result, dict) and result.get("success"):

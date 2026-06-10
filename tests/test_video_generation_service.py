@@ -1160,3 +1160,63 @@ def test_video_generate_endpoint_downloads_reference_url_as_data_uri(monkeypatch
     assert "first_frame_url" not in recorder["json"]
     assert len(recorder["json"]["images"]) == 1
     assert recorder["json"]["images"][0].startswith("data:image/jpeg;base64,")
+
+def test_plan_video_prompt_with_yueyue_uses_reference_images(monkeypatch):
+    import types
+
+    from src.chat.features.tools.utils.video_prompt_planner import plan_video_prompt_with_yueyue
+
+    captured = {}
+
+    async def fake_generate_simple_response(**kwargs):
+        captured.update(kwargs)
+        return "基于尾帧继续生成视频：0-3秒，角色顺着上一段动作缓慢转身；3-8秒，镜头平滑推进，光影自然变化。不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
+
+    fake_module = types.ModuleType("src.chat.services.gemini_service")
+    fake_module.gemini_service = SimpleNamespace(
+        generate_simple_response=fake_generate_simple_response,
+    )
+    monkeypatch.setitem(sys.modules, "src.chat.services.gemini_service", fake_module)
+
+    planned = asyncio.run(plan_video_prompt_with_yueyue(
+        image_prompt="原始分镜",
+        user_idea="继续向右走",
+        images=[{"data": b"fake-png", "mime_type": "image/png"}],
+        mode="extend",
+        duration=8,
+    ))
+
+    assert planned.startswith("基于尾帧继续生成视频")
+    assert captured["images"] == [{"data": b"fake-png", "mime_type": "image/png"}]
+    assert "用户这次点击按钮时补充的想法：继续向右走" in captured["prompt"]
+    assert captured["return_error_text"] is False
+
+
+def test_plan_video_prompt_with_yueyue_requires_images(monkeypatch):
+    import types
+
+    from src.chat.features.tools.utils.video_prompt_planner import plan_video_prompt_with_yueyue
+
+    called = False
+
+    async def fake_generate_simple_response(**kwargs):
+        nonlocal called
+        called = True
+        return "不应该调用"
+
+    fake_module = types.ModuleType("src.chat.services.gemini_service")
+    fake_module.gemini_service = SimpleNamespace(
+        generate_simple_response=fake_generate_simple_response,
+    )
+    monkeypatch.setitem(sys.modules, "src.chat.services.gemini_service", fake_module)
+
+    planned = asyncio.run(plan_video_prompt_with_yueyue(
+        image_prompt="",
+        user_idea="",
+        images=[],
+        mode="image_to_video",
+        duration=8,
+    ))
+
+    assert planned is None
+    assert called is False
