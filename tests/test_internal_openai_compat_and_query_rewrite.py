@@ -152,11 +152,11 @@ def build_gemini_service_stubs() -> tuple[dict[str, types.ModuleType], types.Mod
     chat_config_module.API_RETRY_CONFIG = {"MAX_ATTEMPTS_PER_KEY": 1}
     chat_config_module.GEMINI_TEXT_GEN_CONFIG = {
         "temperature": 0.0,
-        "max_output_tokens": 256,
+        "max_output_tokens": 16800,
     }
     chat_config_module.GEMINI_VISION_GEN_CONFIG = {
         "temperature": 0.0,
-        "max_output_tokens": 256,
+        "max_output_tokens": 16800,
     }
     chat_config_module.IMAGE_PROCESSING_CONFIG = {
         "MAX_IMAGES_PER_MESSAGE": 9,
@@ -164,7 +164,7 @@ def build_gemini_service_stubs() -> tuple[dict[str, types.ModuleType], types.Mod
     }
     chat_config_module.CUSTOM_GEMINI_ENDPOINTS = {}
     chat_config_module.MODEL_GENERATION_CONFIG = {
-        "default": {"temperature": 1.0, "max_output_tokens": 1024}
+        "default": {"temperature": 1.0, "max_output_tokens": 16800}
     }
     chat_config_module._db_api_format = None
     chat_config_module._db_api_url = ""
@@ -236,6 +236,9 @@ def build_gemini_service_stubs() -> tuple[dict[str, types.ModuleType], types.Mod
     image_utils_module.sanitize_image = lambda *args, **kwargs: None
     image_utils_module.extract_image_frames_for_ai = (
         lambda *args, **kwargs: ([], {"is_animated": False, "sampled_frames": 0, "total_frames": 0})
+    )
+    image_utils_module.extract_video_frames_for_ai = (
+        lambda *args, **kwargs: ([], {"is_video": True, "sampled_frames": 0, "total_frames": 0})
     )
 
     token_usage_service_module = types.ModuleType("src.database.services.token_usage_service")
@@ -493,7 +496,7 @@ def test_generate_confession_response_uses_openai_compatible_route_when_configur
         app_config._db_api_format = "openai"
         app_config._db_api_url = "https://bufan.live/v1"
         app_config._db_api_key = "test-key"
-        app_config.GEMINI_CONFESSION_GEN_CONFIG = {"temperature": 0.2, "max_output_tokens": 128}
+        app_config.GEMINI_CONFESSION_GEN_CONFIG = {"temperature": 0.2, "max_output_tokens": 16800}
         service.generate_simple_response = AsyncMock(return_value="忏悔回应")
 
         result = asyncio.run(service.generate_confession_response("忏悔内容"))
@@ -501,7 +504,7 @@ def test_generate_confession_response_uses_openai_compatible_route_when_configur
         assert result == "忏悔回应"
         service.generate_simple_response.assert_awaited_once_with(
             prompt="忏悔内容",
-            generation_config={"temperature": 0.2, "max_output_tokens": 128},
+            generation_config={"temperature": 0.2, "max_output_tokens": 16800},
             model_name=service.default_model_name,
             return_error_text=False,
         )

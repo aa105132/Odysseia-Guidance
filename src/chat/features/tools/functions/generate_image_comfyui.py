@@ -304,7 +304,7 @@ class ComfyResultView(discord.ui.View):
             prompt=' ',
             generation_config={
                 'temperature': 0.45,
-                'max_output_tokens': 1800,
+                'max_output_tokens': 16800,
             },
             messages=[
                 {

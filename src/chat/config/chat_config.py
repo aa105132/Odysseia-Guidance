@@ -405,7 +405,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-custom")
 PROMPT_CONFIG = {
     "model": GEMINI_MODEL,
     "temperature": _parse_float_env("GEMINI_TEMPERATURE", 1.0),
-    "max_output_tokens": _parse_int_env("GEMINI_MAX_TOKENS", 8192),
+    "max_output_tokens": _parse_int_env("GEMINI_MAX_TOKENS", 16800),
 }
 
 # 用于个人记忆摘要的模型（从环境变量读取）
@@ -892,7 +892,7 @@ MODEL_GENERATION_CONFIG = {
         "temperature": 1.1,
         "top_p": 0.95,
         "top_k": 40,
-        "max_output_tokens": 6000,
+        "max_output_tokens": 16800,
         "thinking_config": {
             "include_thoughts": True,
             "thinking_budget": -1,  # 默认使用动态思考预算
@@ -903,7 +903,7 @@ MODEL_GENERATION_CONFIG = {
         "temperature": 1,
         "top_p": 0.95,
         "top_k": 40,
-        "max_output_tokens": 6000,
+        "max_output_tokens": 16800,
         "thinking_config": {
             "include_thoughts": True,
             "thinking_level": "Medium",  # 使用新的思考等级设置
@@ -938,18 +938,18 @@ MESSAGE_SETTINGS = {
 
 GEMINI_TEXT_GEN_CONFIG = {
     "temperature": 0.1,
-    "max_output_tokens": 200,
+    "max_output_tokens": 16800,
 }
 
 GEMINI_VISION_GEN_CONFIG = {
     "temperature": 1.1,
-    "max_output_tokens": 3000,
+    "max_output_tokens": 16800,
 }
 
 # 用于生成礼物感谢语的配置
 GEMINI_GIFT_GEN_CONFIG = {
     "temperature": 1.1,
-    "max_output_tokens": 3000,
+    "max_output_tokens": 16800,
 }
 
 # 用于生成帖子夸奖的配置
@@ -957,26 +957,26 @@ GEMINI_THREAD_PRAISE_CONFIG = {
     "temperature": 1.21,
     "top_p": 0.97,
     "top_k": 40,
-    "max_output_tokens": 8192,
+    "max_output_tokens": 16800,
     "thinking_budget": 2000,  # 为暖贴功能设置独立的思考预算
 }
 
 # 用于生成个人记忆摘要的配置
 GEMINI_SUMMARY_GEN_CONFIG = {
     "temperature": 0.3,  # 降低温度，使输出更确定性
-    "max_output_tokens": 4000,  # 提高token限制，给模型更多空间处理
+    "max_output_tokens": 16800,  # 提高token限制，给模型更多空间处理
 }
 
 # 用于自动生成用户初始名片的配置
 GEMINI_PROFILE_GEN_CONFIG = {
     "temperature": 0.7,
-    "max_output_tokens": 1000,
+    "max_output_tokens": 16800,
 }
 
 # 用于生成忏悔回应的配置
 GEMINI_CONFESSION_GEN_CONFIG = {
     "temperature": 1.1,
-    "max_output_tokens": 3000,
+    "max_output_tokens": 16800,
 }
 
 COOLDOWN_RATES = {

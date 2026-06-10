@@ -32,7 +32,7 @@ from src.chat.utils.database import chat_db_manager
 
 log = logging.getLogger(__name__)
 
-NOVELAI_PROMPT_MAX_OUTPUT_TOKENS = 4096
+NOVELAI_PROMPT_MAX_OUTPUT_TOKENS = 16800
 
 
 def _detect_novelai_prompt_api_format(prompt_api_url: Optional[str]) -> Optional[str]:
@@ -109,7 +109,7 @@ async def _convert_tag_prompt_to_imagen_prompt(prompt: str, force_rewrite: bool 
             prompt="",
             generation_config={
                 "temperature": 0.5,
-                "max_output_tokens": 1200,
+                "max_output_tokens": 16800,
             },
             messages=conversion_messages,
             model_name=llm_overrides["model_name"],

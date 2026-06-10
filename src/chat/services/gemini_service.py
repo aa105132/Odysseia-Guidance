@@ -3643,7 +3643,7 @@ class GeminiService:
             model_key, app_config.MODEL_GENERATION_CONFIG.get("default", {})
         )
         temperature = gen_config.get("temperature", 1.0)
-        max_tokens = gen_config.get("max_output_tokens", 8192)
+        max_tokens = gen_config.get("max_output_tokens", 16800)
         
         # 转换工具定义
         visible_tool_declarations = self.available_tools
@@ -4828,7 +4828,7 @@ class GeminiService:
         用于摘要、查询重写等简单任务。支持多轮预填充对话。
         """
         temperature = generation_config.get("temperature", 0.5)
-        max_tokens = generation_config.get("max_output_tokens", 2000)
+        max_tokens = generation_config.get("max_output_tokens", 16800)
         
         # 构建消息格式：优先使用 messages（多轮预填充），否则回退到单个 prompt
         if messages:

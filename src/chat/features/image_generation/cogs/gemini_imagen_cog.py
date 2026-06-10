@@ -161,7 +161,7 @@ class GeminiImagenCog(commands.Cog):
 只回复角色台词，不要解释。""",
                             generation_config={
                                 "temperature": 1.0,
-                                "max_output_tokens": 100,
+                                "max_output_tokens": 16800,
                             }
                         )
                         return response.strip() if response else None
@@ -489,7 +489,7 @@ class GeminiImagenCog(commands.Cog):
 只回复角色台词，不要解释。""",
                             generation_config={
                                 "temperature": 1.0,
-                                "max_output_tokens": 100,
+                                "max_output_tokens": 16800,
                             }
                         )
                         return response.strip() if response else None

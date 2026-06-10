@@ -102,7 +102,7 @@ async def _rewrite_imagen_text_to_chinese(
             prompt="",
             generation_config={
                 "temperature": 0.2,
-                "max_output_tokens": 800,
+                "max_output_tokens": 16800,
             },
             messages=[{"role": "user", "content": instruction}],
             return_error_text=False,

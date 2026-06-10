@@ -151,7 +151,7 @@ async def plan_video_prompt_with_yueyue(
         prompt=request_prompt,
         generation_config={
             "temperature": 0.7,
-            "max_output_tokens": 4096,
+            "max_output_tokens": 16800,
         },
         images=normalized_images,
         return_error_text=False,
@@ -169,7 +169,7 @@ async def plan_video_prompt_with_yueyue(
             prompt=retry_prompt,
             generation_config={
                 "temperature": 0.55,
-                "max_output_tokens": 4096,
+                "max_output_tokens": 16800,
             },
             images=normalized_images,
             return_error_text=False,

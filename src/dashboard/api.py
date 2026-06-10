@@ -854,7 +854,7 @@ async def get_all_config(token: str = Depends(verify_token)):
         "ai": {
             "model": chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL,
             "temperature": chat_config.PROMPT_CONFIG.get("temperature", 1.0),
-            "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192),
+            "max_tokens": chat_config.PROMPT_CONFIG.get("max_output_tokens", 16800),
             "summary_model": chat_config.SUMMARY_MODEL,
             "query_model": chat_config.QUERY_REWRITING_MODEL,
             "persona_name": "月月",
@@ -1120,7 +1120,7 @@ async def get_ai_config(token: str = Depends(verify_token)):
     # 优先使用数据库值，否则回退到环境变量/内存配置
     model = db_model or chat_config.PROMPT_CONFIG.get("model") or chat_config.GEMINI_MODEL
     temperature = float(db_temperature) if db_temperature else chat_config.PROMPT_CONFIG.get("temperature", 1.0)
-    max_tokens = int(db_max_tokens) if db_max_tokens else chat_config.PROMPT_CONFIG.get("max_output_tokens", 8192)
+    max_tokens = int(db_max_tokens) if db_max_tokens else chat_config.PROMPT_CONFIG.get("max_output_tokens", 16800)
     summary_model = db_summary_model or chat_config.SUMMARY_MODEL
     query_model = db_query_model or getattr(chat_config, 'QUERY_REWRITING_MODEL', 'gemini-2.5-flash-lite')
     
