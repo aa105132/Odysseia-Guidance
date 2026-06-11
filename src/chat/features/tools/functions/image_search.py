@@ -149,6 +149,99 @@ def _dedupe_results(results: List[Dict[str, Any]], limit: int) -> List[Dict[str,
     return deduped
 
 
+_QUERY_SEGMENT_STOPWORDS = {
+    "图片", "图", "搜图", "找图", "参考图", "壁纸", "高清", "超清",
+    "动漫", "动画", "漫画", "小说", "游戏", "角色", "人物", "同人",
+    "凡人修仙传", "凡人", "修仙传", "官方", "设定", "剧照",
+}
+
+
+def _extract_query_focus_terms(query: str) -> List[str]:
+    """提取当前查询的核心词，优先用于剔除 API 返回中混入的上一轮结果。"""
+    text = str(query or "").strip()
+    if not text:
+        return []
+
+    raw_terms: List[str] = []
+    raw_terms.extend(part.strip() for part in re.split(r"[\s,，;；|/]+", text) if part.strip())
+    raw_terms.extend(re.findall(r"[\u4e00-\u9fff]{2,}", text))
+
+    terms: List[str] = []
+    for term in raw_terms:
+        normalized = term.strip("《》「」『』【】()（）[]：:,.，。!！?？")
+        if len(normalized) < 2 or normalized in _QUERY_SEGMENT_STOPWORDS:
+            continue
+        if normalized not in terms:
+            terms.append(normalized)
+
+    # 长词优先，如“南宫婉”优先于更泛的片段。
+    return sorted(terms, key=len, reverse=True)
+
+
+def _segment_has_image(text: str) -> bool:
+    return bool(_IMAGE_URL_RE.search(text) or "<img" in text.lower() or "![" in text)
+
+
+def _last_image_batch_segment(text: str) -> str:
+    """从疑似混入多轮结果的文本中取最后一批图片段。"""
+    raw_text = str(text or "")
+    if not raw_text:
+        return raw_text
+
+    markers = []
+    markers.extend(match.start() for match in re.finditer(r"HTML\s*代码\s*\d*", raw_text, re.IGNORECASE))
+    markers.extend(match.start() for match in re.finditer(r"(?=<img\b)", raw_text, re.IGNORECASE))
+    markers.extend(match.start() for match in re.finditer(r"(?=!\[[^\]]*\]\(https?://)", raw_text, re.IGNORECASE))
+    if not markers:
+        return raw_text
+
+    # 从后往前找一个仍包含图片的段落。
+    for pos in sorted(set(markers), reverse=True):
+        segment = raw_text[pos:]
+        if _segment_has_image(segment):
+            return segment
+    return raw_text
+
+
+def _prefer_current_query_segment(text: str, query: str) -> str:
+    """
+    部分图片搜索兼容端口会把上一轮结果拼在当前结果前面，甚至把多批图片一起返回。
+    解析时优先保留当前查询附近 / 最后一批图片段，避免拿到滞后一轮图片。
+    """
+    raw_text = str(text or "")
+    terms = _extract_query_focus_terms(query)
+    if not raw_text:
+        return raw_text
+
+    candidates: List[tuple[int, str, str]] = []
+
+    # 1) 当前查询核心词最后一次出现之后的内容。
+    best_pos = -1
+    best_term = ""
+    for term in terms:
+        pos = raw_text.rfind(term)
+        if pos > best_pos:
+            best_pos = pos
+            best_term = term
+    if best_pos > 0:
+        segment = raw_text[best_pos:]
+        if _segment_has_image(segment):
+            candidates.append((best_pos, f"当前关键词 {best_term}", segment))
+
+    # 2) 最后一批图片段。该 API 经常把上一轮图片排在前面，最后一批更接近当前请求。
+    last_batch = _last_image_batch_segment(raw_text)
+    if last_batch != raw_text and _segment_has_image(last_batch):
+        candidates.append((raw_text.rfind(last_batch), "最后图片批次", last_batch))
+
+    if not candidates:
+        return raw_text
+
+    # 选起点最靠后的候选，尽量避开前面混入的历史结果。
+    _, reason, chosen = max(candidates, key=lambda item: item[0])
+    log.info("图片搜索结果疑似包含历史内容，已按 %s 截取当前结果段。", reason)
+    return chosen
+
+
 def _extract_text_from_openai_message(message: Dict[str, Any]) -> str:
     content = message.get("content", "") if isinstance(message, dict) else ""
     if isinstance(content, str):
@@ -196,9 +289,15 @@ def _extract_inline_image_from_message(message: Dict[str, Any]) -> Optional[Dict
     return None
 
 
-def _parse_image_search_results(raw_text: str, *, base_url: str = "", max_results: int = 6) -> List[Dict[str, Any]]:
+def _parse_image_search_results(
+    raw_text: str,
+    *,
+    base_url: str = "",
+    max_results: int = 6,
+    query: str = "",
+) -> List[Dict[str, Any]]:
     """从 HTML / Markdown / JSON / 纯文本中解析图片 URL。"""
-    text = str(raw_text or "")
+    text = _prefer_current_query_segment(str(raw_text or ""), query)
     if not text.strip():
         return []
 
@@ -292,10 +391,14 @@ async def _post_openai_image_search(query: str, *, max_results: int) -> Dict[str
 
     endpoint = f"{api_url}/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    request_marker = f"IMAGE_SEARCH_CURRENT_QUERY::{query}"
     prompt = (
         "请搜索与下面关键词最相关的图片。"
+        "这是一次全新的独立请求，禁止复用、拼接或延续任何上一轮搜索结果。"
+        "必须只返回当前关键词相关图片。"
         "必须返回 HTML 格式，优先包含 <img src=\"...\" alt=\"...\">。"
         f"最多返回 {max_results} 张图片，并保留图片原始 URL。\n\n"
+        f"请求标记：{request_marker}\n"
         f"关键词：{query}"
     )
     payload = {
@@ -421,7 +524,7 @@ async def image_search(
 
     raw_html = str(upstream_result.get("html") or "")
     api_url = str(await _get_image_search_setting("API_URL") or "").strip()
-    results = _parse_image_search_results(raw_html, base_url=api_url, max_results=max_results)
+    results = _parse_image_search_results(raw_html, base_url=api_url, max_results=max_results, query=query)
 
     image_data_list: List[Dict[str, Any]] = []
     inline_image = upstream_result.get("inline_image")
