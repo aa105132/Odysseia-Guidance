@@ -40,6 +40,7 @@ class ToolService:
         self.bot = bot
         self.tool_map = tool_map
         self.tool_declarations = tool_declarations
+        self.cached_search_reference_images: List[Dict[str, Any]] = []
         log.info(
             f"ToolService 已使用 {len(tool_map)} 个工具进行初始化: {list(tool_map.keys())}"
         )
@@ -288,29 +289,91 @@ class ToolService:
                     )
                 tool_args["user_id"] = user_id_str
 
+            # 搜索图只在模型显式选择编号时才作为图生图/图生视频参考图；
+            # 不能由代码层自动硬塞搜索结果。
+            if (
+                tool_name in {"edit_image", "generate_video"}
+                and self.cached_search_reference_images
+                and not tool_args.get("_prepared_reference_images")
+                and not tool_args.get("_prepared_reference_image")
+            ):
+                raw_indexes = tool_args.get("image_search_reference_indexes")
+                if raw_indexes in (None, ""):
+                    raw_indexes = tool_args.get("image_search_reference_index")
+
+                requested_indexes: List[int] = []
+                raw_values = raw_indexes if isinstance(raw_indexes, list) else [raw_indexes]
+                for raw_value in raw_values:
+                    if raw_value in (None, ""):
+                        continue
+                    for part in str(raw_value).replace("，", ",").split(","):
+                        try:
+                            index = int(part.strip())
+                        except (TypeError, ValueError):
+                            continue
+                        if index > 0 and index not in requested_indexes:
+                            requested_indexes.append(index)
+
+                if requested_indexes:
+                    selected_refs = []
+                    for index in requested_indexes:
+                        if 1 <= index <= len(self.cached_search_reference_images):
+                            selected_refs.append(self.cached_search_reference_images[index - 1])
+                    if selected_refs:
+                        tool_args["_prepared_reference_images"] = selected_refs[:8]
+                        if tool_name == "generate_video":
+                            tool_args["use_reference_image"] = True
+                        prompt_key = "edit_prompt" if tool_name == "edit_image" else "prompt"
+                        prompt_text = str(tool_args.get(prompt_key) or "").strip()
+                        watermark_constraint = (
+                            "参考图仅用于理解角色/主体外观、服装、发型、配色、构图与画风；"
+                            "不要复制参考图里的水印、署名、平台文字、截图 UI、边框或无关文字，输出中不要出现任何水印。"
+                        )
+                        if watermark_constraint not in prompt_text:
+                            tool_args[prompt_key] = f"{prompt_text}\n{watermark_constraint}" if prompt_text else watermark_constraint
+
             # 步骤 5: 执行工具函数
             result = await tool_function(**tool_args)
             if log_detailed:
                 log.info(f"工具 '{tool_name}' 执行完毕。")
 
             # 步骤 5: 根据工具返回的结果，构造相应的 Part
-            if isinstance(result, dict) and "image_data" in result and isinstance(result["image_data"], dict):
-                # 多模态结果：同时返回图片 Part 和文本 function_response Part
-                # 这样 AI 既能"看到"图片，又能读取 user_info 等结构化数据
-                image_info = result["image_data"]
-                if log_detailed:
-                    log.info(
-                        f"检测到图片结果，MIME 类型: {image_info.get('mime_type')}"
+            image_infos: List[Dict[str, Any]] = []
+            if isinstance(result, dict):
+                raw_image_list = result.get("image_data_list")
+                if isinstance(raw_image_list, list):
+                    image_infos.extend(
+                        item for item in raw_image_list
+                        if isinstance(item, dict) and item.get("data")
                     )
-                image_part = types.Part(
-                    inline_data=types.Blob(
-                        mime_type=image_info.get("mime_type", "image/png"),
-                        data=image_info.get("data", b""),
+                elif isinstance(result.get("image_data"), dict):
+                    image_infos.append(result["image_data"])
+
+            if image_infos:
+                # 多模态结果：返回多张图片 Part + 文本 function_response Part。
+                image_parts = [
+                    types.Part(
+                        inline_data=types.Blob(
+                            mime_type=image_info.get("mime_type", "image/png"),
+                            data=image_info.get("data", b""),
+                        )
                     )
-                )
+                    for image_info in image_infos
+                ]
+
+                def _strip_binary(value: Any) -> Any:
+                    if isinstance(value, (bytes, bytearray, memoryview)):
+                        return "<binary-image-data>"
+                    if isinstance(value, dict):
+                        return {k: _strip_binary(v) for k, v in value.items()}
+                    if isinstance(value, list):
+                        return [_strip_binary(item) for item in value]
+                    return value
+
                 text_metadata = {
-                    k: v for k, v in result.items()
-                    if k != "image_data" and not isinstance(v, (bytes, bytearray))
+                    k: _strip_binary(v) for k, v in result.items()
+                    if k not in {"image_data", "image_data_list"}
+                    and not isinstance(v, (bytes, bytearray, memoryview))
                 }
                 if text_metadata:
                     text_part = types.Part.from_function_response(
@@ -318,11 +381,11 @@ class ToolService:
                         response={"result": text_metadata},
                     )
                     if log_detailed:
-                        log.info(f"已为 '{tool_name}' 构造图片+元数据双 Part。")
-                    return [image_part, text_part]
+                        log.info(f"已为 '{tool_name}' 构造 {len(image_parts)} 张图片+元数据 Part。")
+                    return [*image_parts, text_part]
                 if log_detailed:
-                    log.info(f"已为 '{tool_name}' 构造包含图片的 Part。")
-                return image_part
+                    log.info(f"已为 '{tool_name}' 构造 {len(image_parts)} 张图片 Part。")
+                return image_parts
             else:
                 # 这是一个标准的文本/JSON结果（包括错误信息）
                 part = types.Part.from_function_response(

@@ -147,6 +147,10 @@ class PromptService:
             f"- ComfyUI 写实默认底模：{comfyui_realistic_model}",
             f"- ComfyUI 动漫默认底模：{comfyui_anime_model}",
             "- 用户指定模型名时（如'用gpt画'），通过 model_name_override 参数传入对应模型名。",
+            '- 频道用户/群友/Discord 成员优先级最高：用户要画 @某人、用户名、昵称、“我”或频道里的某个成员时，不要用 image_search 联网搜图；先用 get_user_avatar / get_user_profile，头像/名片才是参考源。',
+            '- 只有非频道用户的外部人物/同人角色/IP角色（现实人物、动漫/小说/游戏角色、明星、角色名等）才用 image_search 找多张图片参考；后续必须由你分析并显式决定用哪张或哪几张图作参考，再调用 edit_image / generate_video。',
+            '- 用户明确说“搜/找/给我看图片/参考图”时，若对象不是频道成员，image_search 需设置 send_to_channel=true，把参考图发到频道；仅要求生成时则内部参考不发。',
+            '- 使用搜索图生成时，必须由你选择参考图；只参考主体外观/服装/发型/配色/画风，禁止复制水印、署名、平台文字、截图 UI、边框。',
             '- 若你不确定归属、是否可用或是否还有别的候选，先调用 get_tool_usage_guide(topic="image") 再决定。',
         ]
 
@@ -176,6 +180,12 @@ class PromptService:
             "2) 只要你不确定当前有哪些工具、该选哪个工具、或某个工具的实时参数/预设/音色/底模/LoRA，就先调用 get_tool_usage_guide。",
             "3) 对图片、视频、语音这类参数较多的工具，默认先查一次 get_tool_usage_guide 再决定最终参数。",
             f"4) 当前默认画新图工具：{default_new_image_tool}（默认引擎：{default_image_engine}）；明确改原图/图生图时才调用 edit_image。",
+            "   ↳ 频道用户/群友/Discord 成员优先级最高：用户要画 @某人、用户名、昵称、‘我’或频道里的某个成员时，"
+            "不要调用 image_search 联网搜图；必须先调用 get_user_avatar / get_user_profile，头像/名片才是参考源。"
+            "只有确认对象不是频道成员、而是外部人物/同人角色/IP角色（现实人物、动漫/小说/游戏角色、明星、角色名等）时，"
+            "才调用 image_search 获取多张图片参考，再调用 edit_image 图生图。若用户只是要生成，send_to_channel=false；"
+            "若用户明确说‘搜/找/给我看图片/参考图’且对象不是频道成员，send_to_channel=true，把参考图发到频道。"
+            "搜索参考图只用于外观/服装/发型/配色/画风，生成时不要复制水印、署名、平台文字、截图 UI 或边框。",
             "   ↳ 画面涉及人名/昵称时禁止臆造外观！必须先调用 get_user_avatar(username=该名字) 查找频道用户/bot；"
             "     若 get_user_avatar 查到了用户，就用返回的头像作为参考画图（也可再调 get_user_profile 查名片，有名片外貌则优先名片）；"
             "     只有 get_user_avatar 完全查不到该名字时才视为虚构角色。",

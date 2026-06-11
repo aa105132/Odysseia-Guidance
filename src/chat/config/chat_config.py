@@ -360,6 +360,17 @@ WEB_SEARCH_CONFIG = {
     "tavily_api_key": os.getenv("TAVILY_API_KEY", ""),
 }
 
+# --- 图片搜索配置 ---
+# OpenAI 兼容 chat/completions 端口。该端口应返回 HTML/Markdown/JSON 中的图片 URL。
+IMAGE_SEARCH_CONFIG = {
+    "API_URL": os.getenv("IMAGE_SEARCH_API_URL", ""),
+    "API_KEY": os.getenv("IMAGE_SEARCH_API_KEY", ""),
+    "MODEL": os.getenv("IMAGE_SEARCH_MODEL", ""),
+    "MAX_RESULTS": _parse_int_env("IMAGE_SEARCH_MAX_RESULTS", 10),
+    "TIMEOUT_SECONDS": _parse_int_env("IMAGE_SEARCH_TIMEOUT_SECONDS", 60),
+    "EXTRA_BODY": _parse_json_object_env("IMAGE_SEARCH_EXTRA_BODY", {}),
+}
+
 # --- 历史消息搜索配置 ---
 # 回退扫描条数（当 Discord /messages/search API 返回 403 时）
 # - >0: 固定扫描条数

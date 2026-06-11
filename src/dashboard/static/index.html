@@ -3045,6 +3045,96 @@
                     </div>
                 </div>
 
+                <!-- 图片搜索 API 配置 -->
+                <div class="panel-card p-6 max-w-2xl mb-6">
+                    <h3 class="section-title mb-4">
+                        <i data-lucide="image-search" class="w-5 h-5 text-pink-400"></i>
+                        图片搜索 API 配置
+                        <span class="text-xs text-slate-500 font-normal">（OpenAI 兼容）</span>
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">
+                        用于月月搜索外部人物 / 同人角色 / IP 角色参考图。用户要求“给我看参考图”时会把解析出的图片发到频道；仅要求生成时只作内部参考。
+                    </p>
+                    <div class="mb-4 flex items-center gap-2 text-sm" :class="imageSearchConfig.configured ? 'text-green-400' : 'text-slate-500'">
+                        <i data-lucide="image" class="w-4 h-4"></i>
+                        <span x-text="imageSearchConfig.configured ? '图片搜索已配置' : '图片搜索未配置'"></span>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">API URL</label>
+                            <input type="url" x-model="imageSearchForm.api_url"
+                                   placeholder="http://20.193.157.62:8010/v1"
+                                   class="form-control">
+                            <p class="text-xs text-slate-500 mt-1">OpenAI 兼容端点，将请求 /chat/completions</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">
+                                API Key
+                                <span x-show="imageSearchConfig.has_api_key" class="text-green-400 text-xs ml-2">
+                                    <i data-lucide="check-circle" class="w-3 h-3 inline"></i> 已配置
+                                </span>
+                            </label>
+                            <div class="relative">
+                                <input :type="showImageSearchKey ? 'text' : 'password'" x-model="imageSearchForm.api_key"
+                                       placeholder="留空保持不变"
+                                       class="form-control pr-10">
+                                <button @click="showImageSearchKey = !showImageSearchKey" type="button"
+                                        class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                                    <i :data-lucide="showImageSearchKey ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">图片搜索模型</label>
+                            <input type="text" x-model="imageSearchForm.model"
+                                   placeholder="image-search-model"
+                                   class="form-control">
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">最大结果数</label>
+                                <input type="number" min="1" max="50" step="1"
+                                       x-model.number="imageSearchForm.max_results"
+                                       class="form-control">
+                                <p class="text-xs text-slate-500 mt-1">默认 10；工具单次还会按调用参数截断</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">超时时间（秒）</label>
+                                <input type="number" min="10" max="300" step="1"
+                                       x-model.number="imageSearchForm.timeout_seconds"
+                                       class="form-control">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">额外请求体（JSON，可选）</label>
+                            <textarea x-model="imageSearchForm.extra_body_text"
+                                      rows="4"
+                                      placeholder='例如：{"temperature": 0}'
+                                      class="form-control font-mono text-xs"></textarea>
+                            <p class="text-xs text-slate-500 mt-1">会合并到 chat/completions 请求体。</p>
+                        </div>
+
+                        <div class="flex gap-3">
+                            <button @click="saveImageSearchConfig()"
+                                    :disabled="saving"
+                                    class="btn-secondary disabled:opacity-50 font-semibold py-2 px-4 rounded-xl transition-all flex items-center justify-center gap-2">
+                                <i data-lucide="save" class="w-4 h-4"></i>
+                                <span x-text="saving ? '保存中...' : '保存图片搜索'"></span>
+                            </button>
+                            <button @click="testImageSearchConfig()"
+                                    :disabled="testing"
+                                    class="btn-secondary disabled:opacity-50 font-semibold py-2 px-4 rounded-xl transition-all flex items-center justify-center gap-2">
+                                <i data-lucide="wifi" class="w-4 h-4"></i>
+                                <span x-text="testing ? '测试中...' : '测试图片搜索'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 操作按钮 -->
                 <div class="max-w-2xl flex gap-4">
                     <button @click="saveWebSearchConfig()"
@@ -5129,8 +5219,18 @@
                     show_sources: true,
                 },
                 webSearchConfig: { grok_configured: false, tavily_configured: false, has_grok_key: false, has_tavily_key: false },
+                imageSearchForm: {
+                    api_url: '',
+                    api_key: '',
+                    model: '',
+                    max_results: 10,
+                    timeout_seconds: 60,
+                    extra_body_text: '{}',
+                },
+                imageSearchConfig: { configured: false, has_api_key: false },
                 showWebSearchGrokKey: false,
                 showWebSearchTavilyKey: false,
+                showImageSearchKey: false,
                 loadingDashboardStats: false,
                 loadingDashboardStatus: false,
                 dashboardStatsError: '',
@@ -5675,6 +5775,8 @@
                     this.loadVoiceConfig();
                     // 加载网络搜索配置
                     this.loadWebSearchConfig();
+                    // 加载图片搜索配置
+                    this.loadImageSearchConfig();
                     // 加载自动暖贴配置
                     this.loadThreadAutoSpeakerConfig();
                     // 加载每日换装配置
@@ -8223,6 +8325,90 @@
                         console.warn('加载网络搜索配置失败:', e);
                     }
                 },
+
+                async loadImageSearchConfig() {
+                    try {
+                        const response = await fetch('/api/config/image-search', {
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.imageSearchConfig = {
+                                configured: data.configured || false,
+                                has_api_key: data.has_api_key || false,
+                            };
+                            this.imageSearchForm.api_url = data.api_url || '';
+                            this.imageSearchForm.model = data.model || '';
+                            this.imageSearchForm.max_results = Number.isInteger(data.max_results) ? data.max_results : 10;
+                            this.imageSearchForm.timeout_seconds = Number.isInteger(data.timeout_seconds) ? data.timeout_seconds : 60;
+                            this.imageSearchForm.extra_body_text = JSON.stringify(data.extra_body || {}, null, 2);
+                            this.imageSearchForm.api_key = '';
+                            this.$nextTick(() => lucide.createIcons());
+                        }
+                    } catch (e) {
+                        console.warn('加载图片搜索配置失败:', e);
+                    }
+                },
+
+                async saveImageSearchConfig() {
+                    this.saving = true;
+                    try {
+                        const payload = {};
+                        payload.api_url = (this.imageSearchForm.api_url || '').trim();
+                        if (this.imageSearchForm.api_key) payload.api_key = this.imageSearchForm.api_key;
+                        payload.model = (this.imageSearchForm.model || '').trim();
+                        payload.max_results = Math.floor(Number(this.imageSearchForm.max_results) || 10);
+                        payload.timeout_seconds = Math.floor(Number(this.imageSearchForm.timeout_seconds) || 60);
+                        try {
+                            payload.extra_body = JSON.parse(this.imageSearchForm.extra_body_text || '{}');
+                        } catch (jsonError) {
+                            this.showToast('额外请求体不是合法 JSON', 'error');
+                            this.saving = false;
+                            return;
+                        }
+
+                        const response = await fetch('/api/config/image-search', {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.secretKey}`
+                            },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            this.showToast('图片搜索设置已保存', 'success');
+                            await this.loadImageSearchConfig();
+                            lucide.createIcons();
+                        } else {
+                            const data = await response.json();
+                            this.showToast(data.detail || '保存失败', 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('保存失败', 'error');
+                    }
+                    this.saving = false;
+                },
+
+                async testImageSearchConfig() {
+                    this.testing = true;
+                    try {
+                        const response = await fetch('/api/config/test-image-search', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${this.secretKey}` }
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                            this.showToast('图片搜索: ' + (data.status || '连接成功'), 'success');
+                        } else {
+                            this.showToast('图片搜索: ' + (data.status || data.message || '测试失败'), 'error');
+                        }
+                    } catch (e) {
+                        this.showToast('图片搜索测试连接失败', 'error');
+                    }
+                    this.testing = false;
+                },
+
 
                 async saveWebSearchConfig() {
                     this.saving = true;

@@ -498,6 +498,8 @@ async def generate_video(
     avatar_user_ids: Optional[List[str]] = None,
     avatar_username: Optional[str] = None,
     avatar_usernames: Optional[List[str]] = None,
+    image_search_reference_index: Optional[int] = None,
+    image_search_reference_indexes: Optional[List[int]] = None,
     reference_image_mode: str = "auto",
     max_reference_images: int = 9,
     generate_audio: bool = True,
@@ -681,6 +683,10 @@ async def generate_video(
 
         reference_image_url: （可选）参考图 URL 或 Data URI。
                 如果已经通过附件、回复图、表情、贴纸、头像拿到了参考图，通常不需要再填写。
+
+        image_search_reference_index / image_search_reference_indexes: （可选）刚调用 image_search 后，
+                由你根据图片分析结果显式选择第几张搜索参考图用于图生视频。
+                代码不会自动替你选择搜索图；不传则不会硬塞搜索图。
 
         emoji_id: （可选，通常不需要填写）Discord自定义表情的数字ID。
                 **注意：工具会自动从用户消息中检测和提取自定义表情图片，所以大多数情况下不需要填写此参数。**

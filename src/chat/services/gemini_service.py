@@ -795,36 +795,55 @@ class GeminiService:
     def _extract_tool_image_payload(
         tool_result: Any, tool_name: str
     ) -> Optional[Dict[str, Any]]:
-        """从工具结果中提取原始图片字节，供后续链路复用。"""
+        """从工具结果中提取第一张原始图片字节，供后续链路复用。"""
+        payloads = GeminiService._extract_tool_image_payloads(tool_result, tool_name)
+        return payloads[0] if payloads else None
+
+    @staticmethod
+    def _extract_tool_image_payloads(
+        tool_result: Any, tool_name: str
+    ) -> List[Dict[str, Any]]:
+        """从工具结果中提取多张原始图片字节。"""
         if not isinstance(tool_result, dict):
-            return None
+            return []
 
-        image_info = tool_result.get("image_data")
-        if not isinstance(image_info, dict):
-            return None
+        raw_images = tool_result.get("image_data_list")
+        if isinstance(raw_images, list):
+            image_infos = [item for item in raw_images if isinstance(item, dict)]
+        else:
+            image_info = tool_result.get("image_data")
+            image_infos = [image_info] if isinstance(image_info, dict) else []
 
-        raw_image_bytes = image_info.get("data")
-        if isinstance(raw_image_bytes, memoryview):
-            raw_image_bytes = raw_image_bytes.tobytes()
-        elif isinstance(raw_image_bytes, bytearray):
-            raw_image_bytes = bytes(raw_image_bytes)
+        payloads: List[Dict[str, Any]] = []
+        for index, image_info in enumerate(image_infos, 1):
+            raw_image_bytes = image_info.get("data")
+            if isinstance(raw_image_bytes, memoryview):
+                raw_image_bytes = raw_image_bytes.tobytes()
+            elif isinstance(raw_image_bytes, bytearray):
+                raw_image_bytes = bytes(raw_image_bytes)
 
-        if not isinstance(raw_image_bytes, bytes) or not raw_image_bytes:
-            return None
+            if not isinstance(raw_image_bytes, bytes) or not raw_image_bytes:
+                continue
 
-        payload = {
-            "mime_type": image_info.get("mime_type", "image/png"),
-            "data": raw_image_bytes,
-            "tool_name": tool_name,
-        }
-        user_info = tool_result.get("user_info")
-        if isinstance(user_info, dict):
-            payload["user_info"] = {
-                key: value
-                for key, value in user_info.items()
-                if not isinstance(value, (bytes, bytearray, memoryview))
+            payload = {
+                "mime_type": image_info.get("mime_type", "image/png"),
+                "data": raw_image_bytes,
+                "tool_name": tool_name,
+                "filename": image_info.get("filename") or f"{tool_name}_image_{index}.png",
             }
-        return payload
+            if image_info.get("source_url"):
+                payload["source_url"] = image_info.get("source_url")
+
+            user_info = tool_result.get("user_info")
+            if isinstance(user_info, dict):
+                payload["user_info"] = {
+                    key: value
+                    for key, value in user_info.items()
+                    if not isinstance(value, (bytes, bytearray, memoryview))
+                }
+            payloads.append(payload)
+
+        return payloads
 
     def _remember_tool_image_payload(self, image_payload: Dict[str, Any]) -> None:
         """缓存本轮已获取的工具图片，供后续生成工具按 ID 复用。"""
@@ -832,11 +851,17 @@ class GeminiService:
             return
 
         user_info = image_payload.get("user_info")
+        tool_name = str(image_payload.get("tool_name") or "").strip()
         cache_key = None
         if isinstance(user_info, dict) and user_info.get("user_id"):
             cache_key = f"user:{user_info.get('user_id')}"
+        elif tool_name == "image_search":
+            # 搜图结果需要保留多张候选，不能只按字节长度去重。
+            source_url = str(image_payload.get("source_url") or "").strip()
+            filename = str(image_payload.get("filename") or "").strip()
+            cache_key = f"image_search:{source_url or filename or len(image_payload.get('data', b''))}"
         else:
-            cache_key = f"{image_payload.get('tool_name')}:{len(image_payload.get('data', b''))}"
+            cache_key = f"{tool_name}:{len(image_payload.get('data', b''))}"
 
         deduped = [
             item
@@ -881,6 +906,77 @@ class GeminiService:
             and actual_int > 2**53
             and abs(expected_int - actual_int) <= 4096
         )
+
+    @staticmethod
+    def _parse_reference_indexes_from_tool_args(tool_args: Dict[str, Any]) -> List[int]:
+        """解析模型显式选择的 image_search 参考图编号。"""
+        raw_indexes = tool_args.get("image_search_reference_indexes")
+        if raw_indexes in (None, ""):
+            raw_indexes = tool_args.get("image_search_reference_index")
+
+        raw_values = raw_indexes if isinstance(raw_indexes, list) else [raw_indexes]
+        indexes: List[int] = []
+        for raw_value in raw_values:
+            if raw_value in (None, ""):
+                continue
+            for part in str(raw_value).replace("，", ",").split(","):
+                try:
+                    index = int(part.strip())
+                except (TypeError, ValueError):
+                    continue
+                if index > 0 and index not in indexes:
+                    indexes.append(index)
+        return indexes
+
+    def _select_explicit_image_search_references_for_tool_args(
+        self, tool_args: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """只按模型显式传入的编号选择 image_search 参考图；不做自动兜底。"""
+        requested_indexes = self._parse_reference_indexes_from_tool_args(tool_args)
+        if not requested_indexes:
+            return []
+
+        cached_images = [
+            item
+            for item in self.last_tool_images_data
+            if item.get("tool_name") == "image_search" and item.get("data")
+        ]
+        if not cached_images:
+            return []
+
+        normalized_refs: List[Dict[str, Any]] = []
+        seen_keys = set()
+        for index in requested_indexes:
+            if not (1 <= index <= len(cached_images)):
+                continue
+            item = cached_images[index - 1]
+            cache_key = item.get("_cache_key") or id(item)
+            if cache_key in seen_keys:
+                continue
+            seen_keys.add(cache_key)
+            normalized_refs.append(
+                {
+                    "data": item["data"],
+                    "mime_type": str(item.get("mime_type") or "image/png").strip() or "image/png",
+                    "source": "tool:image_search",
+                    "filename": item.get("filename") or f"image_search_reference_{index}.png",
+                }
+            )
+        return normalized_refs
+
+    @staticmethod
+    def _append_no_watermark_constraint(tool_name: str, tool_args: Dict[str, Any]) -> None:
+        """使用搜索图作参考时，强制生成结果去水印/去截图文字。"""
+        if tool_name not in {"edit_image", "generate_video"}:
+            return
+        prompt_key = "edit_prompt" if tool_name == "edit_image" else "prompt"
+        prompt_text = str(tool_args.get(prompt_key) or "").strip()
+        constraint = (
+            "参考图仅用于理解角色/主体外观、服装、发型、配色、构图与画风；"
+            "不要复制参考图里的水印、署名、平台文字、截图 UI、边框或无关文字，输出中不要出现任何水印。"
+        )
+        if constraint not in prompt_text:
+            tool_args[prompt_key] = f"{prompt_text}\n{constraint}" if prompt_text else constraint
 
     def _select_cached_avatar_references_for_tool_args(
         self, tool_args: Dict[str, Any]
@@ -988,39 +1084,50 @@ class GeminiService:
     def _build_openai_tool_image_followup_message(
         cls,
         tool_name: str,
-        image_payload: Optional[Dict[str, Any]],
+        image_payload: Optional[Any],
         user_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """为 OpenAI 兼容链路构造包含工具参考图的后续用户消息。"""
         normalized_tool_name = str(tool_name or "").strip()
-        if normalized_tool_name != "get_user_avatar" or not image_payload:
+        if normalized_tool_name not in {"get_user_avatar", "image_search"} or not image_payload:
             return None
 
-        image_parts = cls._build_openai_image_content_parts([image_payload])
+        image_payloads = image_payload if isinstance(image_payload, list) else [image_payload]
+        image_payloads = [item for item in image_payloads if isinstance(item, dict) and item.get("data")]
+        image_parts = cls._build_openai_image_content_parts(image_payloads)
         if not image_parts:
             return None
 
-        identity_hint = ""
-        if user_info and isinstance(user_info, dict):
-            uid = user_info.get("user_id", "")
-            dname = user_info.get("display_name", "")
-            if uid:
-                identity_hint = f"（用户: {dname}<{uid}>）"
+        if normalized_tool_name == "image_search":
+            text_hint = (
+                "已获取图片搜索结果中的多张参考图。"
+                "搜索结果只供内部参考，禁止原样贴 HTML 或图片链接给用户。"
+                "如果用户要求分析图片，请综合多张图的共同特征并用自己的话回复。"
+                "如果用户要求生成图片或图生视频，请先判断哪张或哪几张参考图最适合，"
+                "再基于你选定的参考图提炼外观特征与生成提示；不要假设代码会自动选择或自动传图。"
+                "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
+                "不要重复调用 image_search，除非用户明确要求换关键词或换结果。"
+            )
+        else:
+            identity_hint = ""
+            if user_info and isinstance(user_info, dict):
+                uid = user_info.get("user_id", "")
+                dname = user_info.get("display_name", "")
+                if uid:
+                    identity_hint = f"（用户: {dname}<{uid}>）"
+            text_hint = (
+                f"已获取用户头像参考图{identity_hint}。"
+                "如果还需要获取其他人的头像，继续调用 get_user_avatar；"
+                "全部头像获取完毕后立即开始画图或生成视频，不要再做多余的查询。"
+                "传 Discord user_id 时必须用字符串，禁止裸数字。"
+                "做图生视频时调用 generate_video(use_reference_image=True, avatar_user_id=\"...\")；"
+                "多人头像视频把所有 user_id 字符串放到 avatar_user_ids。"
+            )
 
         return {
             "role": "user",
             "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"已获取用户头像参考图{identity_hint}。"
-                        "如果还需要获取其他人的头像，继续调用 get_user_avatar；"
-                        "全部头像获取完毕后立即开始画图或生成视频，不要再做多余的查询。"
-                        "传 Discord user_id 时必须用字符串，禁止裸数字。"
-                        "做图生视频时调用 generate_video(use_reference_image=True, avatar_user_id=\"...\")；"
-                        "多人头像视频把所有 user_id 字符串放到 avatar_user_ids。"
-                    ),
-                },
+                {"type": "text", "text": text_hint},
                 *image_parts,
             ],
         }
@@ -3171,9 +3278,48 @@ class GeminiService:
                     )
                 # 处理多 Part 返回（图片+元数据）
                 elif isinstance(result, list):
+                    image_part_count = 0
+                    image_search_payloads: List[Dict[str, Any]] = []
                     for sub_part in result:
                         if isinstance(sub_part, types.Part):
                             tool_result_parts.append(sub_part)
+                            inline_data = getattr(sub_part, "inline_data", None)
+                            if actual_tool_name == "image_search" and inline_data:
+                                image_part_count += 1
+                                payload = {
+                                    "mime_type": inline_data.mime_type or "image/png",
+                                    "data": inline_data.data,
+                                    "tool_name": actual_tool_name,
+                                    "filename": f"image_search_reference_{image_part_count}.png",
+                                }
+                                self.last_tool_image_data = payload
+                                self._remember_tool_image_payload(payload)
+                                image_search_payloads.append(
+                                    {
+                                        "data": payload["data"],
+                                        "mime_type": payload["mime_type"],
+                                        "source": "tool:image_search",
+                                        "filename": payload["filename"],
+                                    }
+                                )
+                    if actual_tool_name == "image_search" and image_search_payloads:
+                        self.tool_service.cached_search_reference_images = image_search_payloads[-8:]
+                    if actual_tool_name == "image_search" and image_part_count:
+                        tool_result_parts.append(
+                            types.Part.from_function_response(
+                                name=actual_tool_name,
+                                response={
+                                    "result": (
+                                        f"已获取 {image_part_count} 张图片搜索参考图。"
+                                        "搜索结果仅供内部分析，禁止原样贴 HTML 或图片链接给用户。"
+                                        "请先分析多张图的共同视觉特征。"
+                                        "如果用户要继续生成，必须由你判断选哪几张图最合适；"
+                                        "不要假设代码会自动传参考图。"
+                                        "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
+                                    )
+                                },
+                            )
+                        )
                     log.info(f"工具 '{actual_tool_name}' 返回了 {len(result)} 个 Part（多模态+元数据）。")
                 # 处理图片类型的 Part（inline_data）
                 elif (
@@ -3199,6 +3345,23 @@ class GeminiService:
                             "传 Discord user_id 时必须用字符串，禁止裸数字。"
                             "做图生视频时调用 generate_video(use_reference_image=True, avatar_user_id=\"...\")；"
                             "多人头像视频把所有 user_id 字符串放到 avatar_user_ids。"
+                        )
+                    elif actual_tool_name == "image_search":
+                        inline_data = getattr(result, "inline_data", None)
+                        if inline_data:
+                            self.last_tool_image_data = {
+                                "mime_type": inline_data.mime_type or "image/png",
+                                "data": inline_data.data,
+                                "tool_name": actual_tool_name,
+                                "filename": "image_search_reference.png",
+                            }
+                            self._remember_tool_image_payload(self.last_tool_image_data)
+                        response_hint = (
+                            "已获取图片搜索参考图。搜索结果仅供内部参考，禁止原样贴 HTML 或图片链接给用户。"
+                            "如果用户要分析，请基于图片自己分析。"
+                            "如果用户要继续生成，必须由你判断选哪张或哪几张图最适合作参考；"
+                            "不要假设代码会自动把搜索图传给图生图或图生视频。"
+                            "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
                         )
                     elif actual_tool_name == "render_newspaper_brief":
                         response_hint = (
@@ -3918,12 +4081,14 @@ class GeminiService:
                                     web_search_source_links.append((title, url))
 
                         # 将工具结果添加到对话历史
-                        extracted_tool_image = self._extract_tool_image_payload(
+                        extracted_tool_images = self._extract_tool_image_payloads(
                             tool_result, tool_name
                         )
-                        if extracted_tool_image:
-                            self.last_tool_image_data = extracted_tool_image
-                            self._remember_tool_image_payload(extracted_tool_image)
+                        extracted_tool_image = extracted_tool_images[0] if extracted_tool_images else None
+                        if extracted_tool_images:
+                            for image_payload in extracted_tool_images:
+                                self.last_tool_image_data = image_payload
+                                self._remember_tool_image_payload(image_payload)
 
                         tool_result_for_history = self._sanitize_tool_result_for_history(
                             tool_result
@@ -3948,7 +4113,8 @@ class GeminiService:
                         )
                         followup_image_message = (
                             self._build_openai_tool_image_followup_message(
-                                tool_name, extracted_tool_image,
+                                tool_name,
+                                extracted_tool_images if tool_name == "image_search" else extracted_tool_image,
                                 user_info=followup_user_info,
                             )
                         )
@@ -4154,6 +4320,23 @@ class GeminiService:
                 cached_image_bytes = cached_image_bytes.tobytes()
             elif isinstance(cached_image_bytes, bytearray):
                 cached_image_bytes = bytes(cached_image_bytes)
+
+            if (
+                normalized_tool_name in ("edit_image", "generate_video")
+                and not tool_args.get("_prepared_reference_images")
+                and not tool_args.get("_prepared_reference_image")
+            ):
+                selected_search_refs = self._select_explicit_image_search_references_for_tool_args(tool_args)
+                if selected_search_refs:
+                    tool_args["_prepared_reference_images"] = selected_search_refs
+                    if normalized_tool_name == "generate_video":
+                        tool_args["use_reference_image"] = True
+                    self._append_no_watermark_constraint(normalized_tool_name, tool_args)
+                    log.info(
+                        "已按模型显式选择为 %s 注入 %s 张 image_search 参考图。",
+                        normalized_tool_name,
+                        len(selected_search_refs),
+                    )
 
             if (
                 normalized_tool_name in ("edit_image", "generate_video")

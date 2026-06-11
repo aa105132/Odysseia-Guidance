@@ -1036,6 +1036,11 @@ async def get_all_config(token: str = Depends(verify_token)):
             "tavily_configured": bool(chat_config.WEB_SEARCH_CONFIG.get("tavily_api_key")),
             "grok_model": chat_config.WEB_SEARCH_CONFIG.get("grok_model", "grok-3-mini"),
         },
+        "image_search": {
+            "configured": bool(chat_config.IMAGE_SEARCH_CONFIG.get("API_URL") and chat_config.IMAGE_SEARCH_CONFIG.get("API_KEY") and chat_config.IMAGE_SEARCH_CONFIG.get("MODEL")),
+            "model": chat_config.IMAGE_SEARCH_CONFIG.get("MODEL", ""),
+            "max_results": chat_config.IMAGE_SEARCH_CONFIG.get("MAX_RESULTS", 10),
+        },
         "thread_auto_speaker": {
             "enabled": chat_config.THREAD_COMMENTOR_CONFIG.get(
                 "AUTO_CHAT_ENABLED", False
@@ -5154,6 +5159,16 @@ class WebSearchConfigUpdate(BaseModel):
     show_sources: Optional[bool] = None
 
 
+class ImageSearchConfigUpdate(BaseModel):
+    """图片搜索配置更新"""
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    max_results: Optional[int] = None
+    timeout_seconds: Optional[int] = None
+    extra_body: Optional[Dict[str, Any]] = None
+
+
 @app.get("/api/config/web-search")
 async def get_web_search_config(token: str = Depends(verify_token)):
     """获取网络搜索配置 - 优先从数据库读取持久化设置"""
@@ -5370,6 +5385,135 @@ async def test_web_search_connection(token: str = Depends(verify_token)):
 
     overall_success = results["grok"].get("status", "").startswith("连接成功")
     return {"success": overall_success, "results": results}
+
+
+@app.get("/api/config/image-search")
+async def get_image_search_config(token: str = Depends(verify_token)):
+    """获取图片搜索配置 - 优先从数据库读取持久化设置"""
+    from src.chat.utils.database import chat_db_manager
+
+    db_api_url = await chat_db_manager.get_global_setting("image_search_api_url")
+    db_api_key = await chat_db_manager.get_global_setting("image_search_api_key")
+    db_model = await chat_db_manager.get_global_setting("image_search_model")
+    db_max_results = await chat_db_manager.get_global_setting("image_search_max_results")
+    db_timeout_seconds = await chat_db_manager.get_global_setting("image_search_timeout_seconds")
+    db_extra_body = await chat_db_manager.get_global_setting("image_search_extra_body")
+
+    api_url = db_api_url or os.getenv("IMAGE_SEARCH_API_URL", "")
+    api_key = db_api_key or os.getenv("IMAGE_SEARCH_API_KEY", "")
+    model = db_model or os.getenv("IMAGE_SEARCH_MODEL", "")
+    max_results = _safe_int(db_max_results, chat_config.IMAGE_SEARCH_CONFIG.get("MAX_RESULTS", 10))
+    timeout_seconds = _safe_int(db_timeout_seconds, chat_config.IMAGE_SEARCH_CONFIG.get("TIMEOUT_SECONDS", 60))
+    extra_body = _parse_json_object_setting(db_extra_body) if db_extra_body is not None else chat_config.IMAGE_SEARCH_CONFIG.get("EXTRA_BODY", {})
+    key_masked = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else ("***" if api_key else "")
+
+    return {
+        "api_url": api_url,
+        "api_key_masked": key_masked,
+        "has_api_key": bool(api_key),
+        "model": model,
+        "max_results": max_results,
+        "timeout_seconds": timeout_seconds,
+        "extra_body": extra_body if isinstance(extra_body, dict) else {},
+        "configured": bool(api_url and api_key and model),
+    }
+
+
+@app.put("/api/config/image-search")
+async def update_image_search_config(config: ImageSearchConfigUpdate, token: str = Depends(verify_token)):
+    """更新图片搜索配置 - 写入数据库持久化 + 同步运行时配置"""
+    from src.chat.utils.database import chat_db_manager
+
+    updated = {}
+
+    if config.api_url is not None:
+        api_url = str(config.api_url).strip()
+        await chat_db_manager.set_global_setting("image_search_api_url", api_url)
+        chat_config.IMAGE_SEARCH_CONFIG["API_URL"] = api_url
+        updated["api_url"] = api_url[:30] + "..." if len(api_url) > 30 else api_url
+
+    if config.api_key is not None:
+        api_key = str(config.api_key).strip()
+        await chat_db_manager.set_global_setting("image_search_api_key", api_key)
+        chat_config.IMAGE_SEARCH_CONFIG["API_KEY"] = api_key
+        updated["api_key"] = "已更新"
+
+    if config.model is not None:
+        model = str(config.model).strip()
+        await chat_db_manager.set_global_setting("image_search_model", model)
+        chat_config.IMAGE_SEARCH_CONFIG["MODEL"] = model
+        updated["model"] = model
+
+    if config.max_results is not None:
+        if config.max_results < 1 or config.max_results > 50:
+            raise HTTPException(400, "最大搜索结果数必须在 1 到 50 之间")
+        await chat_db_manager.set_global_setting("image_search_max_results", str(config.max_results))
+        chat_config.IMAGE_SEARCH_CONFIG["MAX_RESULTS"] = config.max_results
+        updated["max_results"] = config.max_results
+
+    if config.timeout_seconds is not None:
+        if config.timeout_seconds < 10 or config.timeout_seconds > 300:
+            raise HTTPException(400, "超时时间必须在 10 到 300 秒之间")
+        await chat_db_manager.set_global_setting("image_search_timeout_seconds", str(config.timeout_seconds))
+        chat_config.IMAGE_SEARCH_CONFIG["TIMEOUT_SECONDS"] = config.timeout_seconds
+        updated["timeout_seconds"] = config.timeout_seconds
+
+    if config.extra_body is not None:
+        extra_body = _normalize_json_object(config.extra_body)
+        await chat_db_manager.set_global_setting(
+            "image_search_extra_body",
+            json.dumps(extra_body, ensure_ascii=False),
+        )
+        chat_config.IMAGE_SEARCH_CONFIG["EXTRA_BODY"] = extra_body
+        updated["extra_body"] = extra_body
+
+    if not updated:
+        return {"success": True, "message": "没有需要更新的配置"}
+
+    log.info(f"✅ 图片搜索配置已更新: {updated}")
+    return {"success": True, "updated": updated, "message": f"已更新 {len(updated)} 项图片搜索配置"}
+
+
+@app.post("/api/config/test-image-search")
+async def test_image_search_connection(token: str = Depends(verify_token)):
+    """测试图片搜索 OpenAI 兼容接口"""
+    from src.chat.utils.database import chat_db_manager
+
+    api_url = await chat_db_manager.get_global_setting("image_search_api_url") or os.getenv("IMAGE_SEARCH_API_URL", "")
+    api_key = await chat_db_manager.get_global_setting("image_search_api_key") or os.getenv("IMAGE_SEARCH_API_KEY", "")
+    model = await chat_db_manager.get_global_setting("image_search_model") or os.getenv("IMAGE_SEARCH_MODEL", "")
+    timeout_seconds = _safe_int(
+        await chat_db_manager.get_global_setting("image_search_timeout_seconds"),
+        chat_config.IMAGE_SEARCH_CONFIG.get("TIMEOUT_SECONDS", 60),
+    )
+
+    if not api_url or not api_key or not model:
+        return {"success": False, "status": "未配置", "message": "请先填写 API URL、API Key 和模型"}
+
+    try:
+        endpoint = f"{api_url.rstrip('/')}/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are an image search tool. Return image results as HTML."},
+                {"role": "user", "content": "搜索一张猫的图片，返回 HTML img 标签。"},
+            ],
+            "stream": False,
+        }
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=max(10, timeout_seconds))) as session:
+            async with session.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+            ) as response:
+                body_text = await response.text()
+                if response.status == 200:
+                    return {"success": True, "status": "连接成功", "body_preview": body_text[:300]}
+                if response.status == 401:
+                    return {"success": False, "status": "连接失败 (API Key 无效)"}
+                return {"success": False, "status": f"连接失败 (HTTP {response.status})", "body_preview": body_text[:300]}
+    except Exception as e:
+        return {"success": False, "status": f"连接错误: {str(e)}"}
 
 
 @app.get("/api/config/thread-auto-speaker")

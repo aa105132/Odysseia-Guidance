@@ -34,6 +34,8 @@ async def edit_image(
     emoji_id: Optional[str] = None,
     avatar_user_id: Optional[str] = None,
     avatar_user_ids: Optional[List[str]] = None,
+    image_search_reference_index: Optional[int] = None,
+    image_search_reference_indexes: Optional[List[int]] = None,
     reference_image_mode: str = "auto",
     max_reference_images: int = 9,
     preview_message: Optional[str] = None,
@@ -65,6 +67,7 @@ async def edit_image(
     - 当前用户头像：传 `avatar_user_id`
     - 多个用户头像：传 `avatar_user_ids`
     - 发送了附件图 / 回复了图片：工具会自动把它们作为参考图
+    - 刚调用 image_search 后：由你先分析搜索结果，再显式传 image_search_reference_index 或 image_search_reference_indexes 选择参考图；代码不会自动替你选择
     - 但如果用户要画的是”某个人 / 某个昵称 / 某个成员 / @某人 / 指定用户本人设定”：
       先从上下文 `用户名<ID>` 格式提取 user_id，或调用 `get_user_avatar(username=昵称)` 解析 user_id；再查 `get_user_profile(user_id, [“bio”])`
     - 若名片里已经写了外貌 / 人设 / 服装等设定，名片优先；只有名片没写清楚外貌时，头像才作为兜底参考
