@@ -164,7 +164,7 @@ async def get_tool_usage_guide(topic: str = "all", **kwargs) -> Dict[str, Any]:
                 "画新图默认优先当前默认引擎对应的新图工具。",
                 "明确修改原图、基于参考图编辑时使用 edit_image。",
                 "【优先级最高】如果用户要生成频道里的成员/群友/Discord 用户（@某人、用户名、昵称、‘我’、‘这个人’等），不要调用 image_search 联网搜图；先用 get_user_avatar / get_user_profile 获取头像和名片，频道用户只用头像/名片作参考。",
-                "只有生成非频道用户的外部人物/同人角色/IP角色（现实人物、动漫/小说/游戏角色、明星、角色名等）或你确认不是本频道成员时，才调用 image_search 获取多张图片参考；之后必须由你分析并显式决定用哪张或哪几张图作参考，再调用 edit_image / generate_video。",
+                "只有生成非频道用户的外部人物/同人角色/IP角色（现实人物、动漫/小说/游戏角色、明星、角色名等）或你确认不是本频道成员时，才调用 image_search 获取多张图片参考；之后必须由你分析并显式决定用哪张或哪几张图作参考。生成图片下一步必须调用 edit_image(image_search_reference_index=... 或 image_search_reference_indexes=[...])，禁止退回 generate_image 纯文生图；图生视频调用 generate_video(use_reference_image=true, image_search_reference_index=...)。",
                 "如果用户说‘搜/找/给我看某人图片/参考图’，且对象不是频道成员/群友，调用 image_search 且 send_to_channel=true，把参考图发到频道；如果只是要生成，则 send_to_channel=false，仅内部参考。",
                 "image_search 返回的图常带水印/平台文字；后续生成必须由你选择参考图并只参考主体外观与画风，不要复制水印、署名、平台 UI、边框或文字。",
                 "如果是画某个成员 / @某人，先调用 get_user_profile 查询 display_name + bio。",

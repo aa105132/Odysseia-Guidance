@@ -1102,9 +1102,13 @@ class GeminiService:
             text_hint = (
                 "已获取图片搜索结果中的多张参考图。"
                 "搜索结果只供内部参考，禁止原样贴 HTML 或图片链接给用户。"
-                "如果用户要求分析图片，请综合多张图的共同特征并用自己的话回复。"
-                "如果用户要求生成图片或图生视频，请先判断哪张或哪几张参考图最适合，"
-                "再基于你选定的参考图提炼外观特征与生成提示；不要假设代码会自动选择或自动传图。"
+                "如果用户只是要求分析图片，请综合多张图的共同特征并用自己的话回复。"
+                "如果原始任务是生成图片：下一步必须调用 edit_image，并显式传 "
+                "image_search_reference_index 或 image_search_reference_indexes 选择你认为最合适的参考图；"
+                "禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。"
+                "如果原始任务是图生视频：下一步必须调用 generate_video(use_reference_image=true)，并显式传 "
+                "image_search_reference_index 或 image_search_reference_indexes。"
+                "不要只把参考图总结成文字提示词，也不要假设代码会自动选择或自动传图。"
                 "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
                 "不要重复调用 image_search，除非用户明确要求换关键词或换结果。"
             )
@@ -3313,7 +3317,11 @@ class GeminiService:
                                         f"已获取 {image_part_count} 张图片搜索参考图。"
                                         "搜索结果仅供内部分析，禁止原样贴 HTML 或图片链接给用户。"
                                         "请先分析多张图的共同视觉特征。"
-                                        "如果用户要继续生成，必须由你判断选哪几张图最合适；"
+                                        "如果原始任务是生成图片：下一步必须调用 edit_image，并显式传 "
+                                        "image_search_reference_index 或 image_search_reference_indexes；"
+                                        "禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。"
+                                        "如果原始任务是图生视频：下一步必须调用 generate_video(use_reference_image=true)，并显式传 "
+                                        "image_search_reference_index 或 image_search_reference_indexes。"
                                         "不要假设代码会自动传参考图。"
                                         "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
                                     )
@@ -3359,7 +3367,11 @@ class GeminiService:
                         response_hint = (
                             "已获取图片搜索参考图。搜索结果仅供内部参考，禁止原样贴 HTML 或图片链接给用户。"
                             "如果用户要分析，请基于图片自己分析。"
-                            "如果用户要继续生成，必须由你判断选哪张或哪几张图最适合作参考；"
+                            "如果原始任务是生成图片：下一步必须调用 edit_image，并显式传 "
+                            "image_search_reference_index 或 image_search_reference_indexes；"
+                            "禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。"
+                            "如果原始任务是图生视频：下一步必须调用 generate_video(use_reference_image=true)，并显式传 "
+                            "image_search_reference_index 或 image_search_reference_indexes。"
                             "不要假设代码会自动把搜索图传给图生图或图生视频。"
                             "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
                         )

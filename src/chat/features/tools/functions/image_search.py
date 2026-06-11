@@ -527,7 +527,10 @@ async def image_search(
             "图片搜索结果已按用户要求作为图片发到频道；仍需由月月先分析参考图，不要原样复述 HTML。"
             if sent_message_ids else
             "图片搜索结果仅供月月内部参考，不能原样贴给用户。"
-            "请先消化 HTML/图片内容；如果用户要生成图片或视频，必须由月月判断选哪张或哪几张图作参考，"
+            "请先消化 HTML/图片内容；如果原始任务是生成图片，下一步必须调用 edit_image，"
+            "并显式传 image_search_reference_index 或 image_search_reference_indexes 选择参考图；"
+            "禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。"
+            "如果原始任务是图生视频，下一步必须调用 generate_video(use_reference_image=true)，并显式传搜索图编号。"
             "不要假设代码会自动传图。生成时必须去除参考图中的水印、署名、平台文字和截图 UI。"
         ),
     }
@@ -542,8 +545,9 @@ async def image_search(
         output["reference_image_count"] = len(image_data_list)
         output["image_reference_hint"] = (
             f"已下载 {len(image_data_list)} 张搜索图片作为内部参考图。"
-            "月月需要先分析这些图的共同视觉特征；后续图生图/图生视频必须由月月显式决定用哪张或哪几张参考图。"
-            "不要让代码层自动硬传搜索图。生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
+            "月月需要先分析这些图的共同视觉特征；后续生成图片必须调用 edit_image 并显式传 "
+            "image_search_reference_index 或 image_search_reference_indexes，图生视频必须调用 generate_video 并显式传搜索图编号。"
+            "不要让代码层自动硬传搜索图，也不要退回纯文生图。生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
         )
 
     return output
