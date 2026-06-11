@@ -3867,9 +3867,14 @@ class GeminiService:
         
         # 工具调用循环
         max_tool_calls = 20
-        max_completion_rounds = max_tool_calls + 1
+        empty_text_max_retries = max(
+            1,
+            int(app_config.API_RETRY_CONFIG.get("EMPTY_RESPONSE_MAX_ATTEMPTS", 2)),
+        )
+        max_completion_rounds = max_tool_calls + 1 + empty_text_max_retries
         max_web_search_calls = 1
         web_search_call_count = 0
+        empty_text_retry_count = 0
         executed_tool_signatures: set[str] = set()
         called_tool_names = []
         web_search_source_links: List[tuple] = []
@@ -4191,15 +4196,46 @@ class GeminiService:
                         log.warning(
                             "OpenAI 兼容 API 返回空文本且没有工具调用；"
                             f"finish_reason={finish_reason}, {usage_summary}。"
-                            "将禁用工具补发一次纯文本请求。"
+                            "将禁用工具补发纯文本请求。"
                         )
                         force_text_response_without_tools = True
-                        continue
+                        empty_text_retry_count += 1
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "上一轮返回了空文本。请不要调用工具，直接输出一段可以发送给用户的最终回复；"
+                                    "不要留空，不要只输出空白。"
+                                ),
+                            }
+                        )
+                        if empty_text_retry_count <= empty_text_max_retries:
+                            continue
+                    else:
+                        empty_text_retry_count += 1
+                        log.warning(
+                            "OpenAI 兼容 API 无工具请求仍返回空文本；"
+                            f"finish_reason={finish_reason}, {usage_summary}，"
+                            f"将重试 {empty_text_retry_count}/{empty_text_max_retries}。"
+                        )
+                        if empty_text_retry_count <= empty_text_max_retries:
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "你刚才返回了空文本。请基于当前上下文直接给出最终回复。"
+                                        "必须输出可发送的自然语言文本，不能留空，也不要调用工具。"
+                                    ),
+                                }
+                            )
+                            force_text_response_without_tools = True
+                            continue
+
                     log.warning(
-                        "OpenAI 兼容 API 无工具请求仍返回空文本；"
+                        "OpenAI 兼容 API 多次重试后仍返回空文本；"
                         f"finish_reason={finish_reason}, {usage_summary}。"
                     )
-                    return "呜…上游这次返回了空内容，没有吐出能发送的回复；再问一次试试？"
+                    return "上游连续返回空内容，我这边自动重试后还是没有拿到可发送文本。你可以换个说法再试一次。"
 
                 # 记录调用的工具
                 if called_tool_names:
