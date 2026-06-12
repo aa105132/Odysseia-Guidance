@@ -518,6 +518,14 @@ async def image_search(
             }
             for idx, item in enumerate(results, 1)
         ],
+        "image_reference_metadata": [
+            {
+                "index": item.get("index", idx),
+                "source_url": item.get("source_url", ""),
+                "filename": item.get("filename", f"image_search_result_{idx}.png"),
+            }
+            for idx, item in enumerate(image_data_list, 1)
+        ],
         "result_count": len(results),
         "internal_only": not bool(sent_message_ids),
         "sent_to_channel": bool(sent_message_ids),
@@ -546,8 +554,9 @@ async def image_search(
         output["reference_image_count"] = len(image_data_list)
         output["image_reference_hint"] = (
             f"已下载 {len(image_data_list)} 张搜索图片作为内部参考图。"
-            "月月需要先分析这些图的共同视觉特征；后续生成图片必须调用 edit_image 并显式传 "
-            "image_search_reference_index 或 image_search_reference_indexes。edit_prompt 只写保持参考图主体不变并修改动作/场景/构图，"
+            "月月需要先分析这些图的共同视觉特征；多人物/多角色时可继续为其他外部角色调用 image_search，"
+            "所有搜索会在本轮累计成全局参考图编号；后续生成图片必须调用 edit_image 并显式传 "
+            "image_search_reference_index 或 image_search_reference_indexes 一次性选择所有需要的参考图。edit_prompt 只写保持参考图主体不变并修改动作/场景/构图，"
             "不要复述外观、服饰、发色、作品名或画风。图生视频必须调用 generate_video 并显式传搜索图编号。"
             "不要让代码层自动硬传搜索图，也不要退回纯文生图。生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
         )

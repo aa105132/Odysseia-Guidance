@@ -316,9 +316,28 @@ class ToolService:
 
                 if requested_indexes:
                     selected_refs = []
+                    seen_keys = set()
+                    by_global_index: Dict[int, Dict[str, Any]] = {}
+                    for cached_ref in self.cached_search_reference_images:
+                        try:
+                            global_index = int(cached_ref.get("image_search_reference_index") or 0)
+                        except (TypeError, ValueError):
+                            global_index = 0
+                        if global_index > 0:
+                            by_global_index[global_index] = cached_ref
+
                     for index in requested_indexes:
-                        if 1 <= index <= len(self.cached_search_reference_images):
-                            selected_refs.append(self.cached_search_reference_images[index - 1])
+                        ref = by_global_index.get(index)
+                        if ref is None and 1 <= index <= len(self.cached_search_reference_images):
+                            # 兼容旧缓存：没有全局编号时仍允许按列表顺序选择。
+                            ref = self.cached_search_reference_images[index - 1]
+                        if not ref:
+                            continue
+                        ref_key = ref.get("_cache_key") or ref.get("image_search_reference_index") or id(ref)
+                        if ref_key in seen_keys:
+                            continue
+                        seen_keys.add(ref_key)
+                        selected_refs.append(ref)
                     if selected_refs:
                         tool_args["_prepared_reference_images"] = selected_refs[:8]
                         if tool_name == "generate_video":

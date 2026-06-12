@@ -365,6 +365,7 @@ class GeminiService:
         self.last_tool_image_data: Optional[Dict[str, Any]] = None
         self.last_tool_images_data: List[Dict[str, Any]] = []
         self.last_tool_source_links: List[tuple] = []
+        self.image_search_reference_next_index: int = 1
 
         log.info("--- 工具加载完成 (模块化) ---")
         log.info(
@@ -382,6 +383,9 @@ class GeminiService:
         self.last_tool_image_data = None
         self.last_tool_images_data = []
         self.last_tool_source_links = []
+        self.image_search_reference_next_index = 1
+        if hasattr(self, "tool_service") and self.tool_service:
+            self.tool_service.cached_search_reference_images = []
         log.info("Discord Bot 实例已成功注入 ToolService。")
 
     @staticmethod
@@ -833,6 +837,10 @@ class GeminiService:
             }
             if image_info.get("source_url"):
                 payload["source_url"] = image_info.get("source_url")
+            if image_info.get("index") is not None:
+                payload["result_index"] = image_info.get("index")
+            if tool_result.get("query"):
+                payload["query"] = tool_result.get("query")
 
             user_info = tool_result.get("user_info")
             if isinstance(user_info, dict):
@@ -845,6 +853,32 @@ class GeminiService:
 
         return payloads
 
+    def _sync_tool_service_search_reference_cache(self) -> None:
+        """把本轮 image_search 全局编号缓存同步给 ToolService，供 Gemini 原生工具链选择。"""
+        if not hasattr(self, "tool_service") or not self.tool_service:
+            return
+
+        search_refs: List[Dict[str, Any]] = []
+        for item in self.last_tool_images_data:
+            if item.get("tool_name") != "image_search" or not item.get("data"):
+                continue
+            index = item.get("image_search_reference_index")
+            search_refs.append(
+                {
+                    "data": item["data"],
+                    "mime_type": str(item.get("mime_type") or "image/png").strip() or "image/png",
+                    "source": "tool:image_search",
+                    "filename": item.get("filename") or f"image_search_reference_{index or len(search_refs) + 1}.png",
+                    "image_search_reference_index": index,
+                    "reference_label": item.get("reference_label"),
+                    "query": item.get("query"),
+                    "source_url": item.get("source_url"),
+                    "_cache_key": item.get("_cache_key"),
+                }
+            )
+
+        self.tool_service.cached_search_reference_images = search_refs[-30:]
+
     def _remember_tool_image_payload(self, image_payload: Dict[str, Any]) -> None:
         """缓存本轮已获取的工具图片，供后续生成工具按 ID 复用。"""
         if not isinstance(image_payload, dict) or not image_payload.get("data"):
@@ -856,12 +890,37 @@ class GeminiService:
         if isinstance(user_info, dict) and user_info.get("user_id"):
             cache_key = f"user:{user_info.get('user_id')}"
         elif tool_name == "image_search":
-            # 搜图结果需要保留多张候选，不能只按字节长度去重。
+            # 搜图结果需要跨多次搜索累计候选；同名文件不能互相覆盖。
             source_url = str(image_payload.get("source_url") or "").strip()
             filename = str(image_payload.get("filename") or "").strip()
-            cache_key = f"image_search:{source_url or filename or len(image_payload.get('data', b''))}"
+            query = str(image_payload.get("query") or "").strip()
+            result_index = str(image_payload.get("result_index") or image_payload.get("index") or "").strip()
+            cache_key = "image_search:%s:%s:%s:%s" % (
+                query,
+                source_url,
+                result_index or filename,
+                len(image_payload.get("data", b"")),
+            )
         else:
             cache_key = f"{tool_name}:{len(image_payload.get('data', b''))}"
+
+        existing_item = next(
+            (item for item in self.last_tool_images_data if item.get("_cache_key") == cache_key),
+            None,
+        )
+        if tool_name == "image_search":
+            existing_index = existing_item.get("image_search_reference_index") if existing_item else None
+            try:
+                reference_index = int(existing_index) if existing_index else int(image_payload.get("image_search_reference_index") or 0)
+            except (TypeError, ValueError):
+                reference_index = 0
+            if reference_index <= 0:
+                reference_index = self.image_search_reference_next_index
+                self.image_search_reference_next_index += 1
+            else:
+                self.image_search_reference_next_index = max(self.image_search_reference_next_index, reference_index + 1)
+            image_payload["image_search_reference_index"] = reference_index
+            image_payload["reference_label"] = image_payload.get("reference_label") or f"搜索参考图 {reference_index}"
 
         deduped = [
             item
@@ -871,7 +930,10 @@ class GeminiService:
         cached_item = dict(image_payload)
         cached_item["_cache_key"] = cache_key
         deduped.append(cached_item)
-        self.last_tool_images_data = deduped[-10:]
+        # 一轮多人物搜索时可能连续返回多批图片，保留足够候选供模型显式选择。
+        self.last_tool_images_data = deduped[-30:]
+        if tool_name == "image_search":
+            self._sync_tool_service_search_reference_cache()
 
     @staticmethod
     def _normalize_discord_id_text(value: Any) -> str:
@@ -946,11 +1008,23 @@ class GeminiService:
 
         normalized_refs: List[Dict[str, Any]] = []
         seen_keys = set()
+        by_global_index: Dict[int, Dict[str, Any]] = {}
+        for item in cached_images:
+            try:
+                global_index = int(item.get("image_search_reference_index") or 0)
+            except (TypeError, ValueError):
+                global_index = 0
+            if global_index > 0:
+                by_global_index[global_index] = item
+
         for index in requested_indexes:
-            if not (1 <= index <= len(cached_images)):
+            item = by_global_index.get(index)
+            if item is None and 1 <= index <= len(cached_images):
+                # 兼容旧缓存：没有全局编号时仍允许按列表顺序选择。
+                item = cached_images[index - 1]
+            if item is None:
                 continue
-            item = cached_images[index - 1]
-            cache_key = item.get("_cache_key") or id(item)
+            cache_key = item.get("_cache_key") or item.get("image_search_reference_index") or id(item)
             if cache_key in seen_keys:
                 continue
             seen_keys.add(cache_key)
@@ -960,6 +1034,10 @@ class GeminiService:
                     "mime_type": str(item.get("mime_type") or "image/png").strip() or "image/png",
                     "source": "tool:image_search",
                     "filename": item.get("filename") or f"image_search_reference_{index}.png",
+                    "image_search_reference_index": item.get("image_search_reference_index") or index,
+                    "reference_label": item.get("reference_label"),
+                    "query": item.get("query"),
+                    "source_url": item.get("source_url"),
                 }
             )
         return normalized_refs
@@ -1080,9 +1158,39 @@ class GeminiService:
 
         return str(value)
 
-    @classmethod
+    def _format_image_search_reference_summary(self) -> str:
+        """生成本轮搜索参考图全局编号提示，帮助模型跨多次搜索选择。"""
+        refs = [
+            item
+            for item in self.last_tool_images_data
+            if item.get("tool_name") == "image_search"
+            and item.get("data")
+            and item.get("image_search_reference_index")
+        ]
+        if not refs:
+            return ""
+
+        summary_lines = ["本轮可选搜索参考图全局编号如下；多次 image_search 会累计编号，不会覆盖上一批："]
+        for item in refs[-30:]:
+            index = item.get("image_search_reference_index")
+            query = str(item.get("query") or "").strip()
+            result_index = item.get("result_index") or item.get("index")
+            detail_parts = []
+            if query:
+                detail_parts.append(f"搜索词：{query}")
+            if result_index:
+                detail_parts.append(f"原结果序号：{result_index}")
+            detail = "，".join(detail_parts)
+            summary_lines.append(f"- {index}: {detail or '图片搜索参考图'}")
+        summary_lines.append(
+            "多人物/多角色生成时，可以继续分别搜索其他外部角色；全部搜索完后，"
+            "从每个人物结果中各选 1-2 张，调用 edit_image(image_search_reference_indexes=[...]) "
+            "或 generate_video(..., image_search_reference_indexes=[...]) 一次性传入所有参考图。"
+        )
+        return "\n".join(summary_lines)
+
     def _build_openai_tool_image_followup_message(
-        cls,
+        self,
         tool_name: str,
         image_payload: Optional[Any],
         user_info: Optional[Dict[str, Any]] = None,
@@ -1094,11 +1202,12 @@ class GeminiService:
 
         image_payloads = image_payload if isinstance(image_payload, list) else [image_payload]
         image_payloads = [item for item in image_payloads if isinstance(item, dict) and item.get("data")]
-        image_parts = cls._build_openai_image_content_parts(image_payloads)
+        image_parts = self._build_openai_image_content_parts(image_payloads)
         if not image_parts:
             return None
 
         if normalized_tool_name == "image_search":
+            reference_summary = self._format_image_search_reference_summary()
             text_hint = (
                 "已获取图片搜索结果中的多张参考图。"
                 "搜索结果只供内部参考，禁止原样贴 HTML 或图片链接给用户。"
@@ -1112,7 +1221,9 @@ class GeminiService:
                 "image_search_reference_index 或 image_search_reference_indexes。"
                 "不要只把参考图总结成文字提示词，也不要假设代码会自动选择或自动传图。"
                 "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
-                "不要重复调用 image_search，除非用户明确要求换关键词或换结果。"
+                "单人物生成不要重复调用 image_search，除非用户明确要求换关键词或换结果；"
+                "多人物/多角色生成则允许为每个外部角色分别调用 image_search。"
+                + ("\n" + reference_summary if reference_summary else "")
             )
         else:
             identity_hint = ""
@@ -1166,6 +1277,9 @@ class GeminiService:
         self.last_tool_image_data = None
         self.last_tool_images_data = []
         self.last_tool_source_links = []
+        self.image_search_reference_next_index = 1
+        if hasattr(self, "tool_service") and self.tool_service:
+            self.tool_service.cached_search_reference_images = []
 
     @staticmethod
     def _is_summary_or_search_tool(tool_name: str) -> bool:
@@ -3286,17 +3400,38 @@ class GeminiService:
                 elif isinstance(result, list):
                     image_part_count = 0
                     image_search_payloads: List[Dict[str, Any]] = []
+                    image_search_metadata: Dict[str, Any] = {}
+                    if actual_tool_name == "image_search":
+                        for meta_part in result:
+                            function_response = getattr(meta_part, "function_response", None)
+                            response_data = getattr(function_response, "response", None) if function_response else None
+                            if isinstance(response_data, dict):
+                                result_data = response_data.get("result")
+                                if isinstance(result_data, dict):
+                                    image_search_metadata = result_data
+                    image_reference_metadata = image_search_metadata.get("image_reference_metadata")
+                    if not isinstance(image_reference_metadata, list):
+                        image_reference_metadata = []
                     for sub_part in result:
                         if isinstance(sub_part, types.Part):
                             tool_result_parts.append(sub_part)
                             inline_data = getattr(sub_part, "inline_data", None)
                             if actual_tool_name == "image_search" and inline_data:
                                 image_part_count += 1
+                                result_meta = (
+                                    image_reference_metadata[image_part_count - 1]
+                                    if image_part_count - 1 < len(image_reference_metadata)
+                                    and isinstance(image_reference_metadata[image_part_count - 1], dict)
+                                    else {}
+                                )
                                 payload = {
                                     "mime_type": inline_data.mime_type or "image/png",
                                     "data": inline_data.data,
                                     "tool_name": actual_tool_name,
-                                    "filename": f"image_search_reference_{image_part_count}.png",
+                                    "filename": result_meta.get("filename") or f"image_search_reference_{image_part_count}.png",
+                                    "query": image_search_metadata.get("query"),
+                                    "source_url": result_meta.get("source_url"),
+                                    "result_index": result_meta.get("index") or image_part_count,
                                 }
                                 self.last_tool_image_data = payload
                                 self._remember_tool_image_payload(payload)
@@ -3306,18 +3441,27 @@ class GeminiService:
                                         "mime_type": payload["mime_type"],
                                         "source": "tool:image_search",
                                         "filename": payload["filename"],
+                                        "image_search_reference_index": payload.get("image_search_reference_index"),
+                                        "reference_label": payload.get("reference_label"),
+                                        "query": payload.get("query"),
+                                        "source_url": payload.get("source_url"),
                                     }
                                 )
-                    if actual_tool_name == "image_search" and image_search_payloads:
-                        self.tool_service.cached_search_reference_images = image_search_payloads[-8:]
                     if actual_tool_name == "image_search" and image_part_count:
+                        new_reference_indexes = [
+                            str(item.get("image_search_reference_index"))
+                            for item in image_search_payloads
+                            if item.get("image_search_reference_index")
+                        ]
+                        reference_summary = self._format_image_search_reference_summary()
                         tool_result_parts.append(
                             types.Part.from_function_response(
                                 name=actual_tool_name,
                                 response={
                                     "result": (
                                         f"已获取 {image_part_count} 张图片搜索参考图。"
-                                        "搜索结果仅供内部分析，禁止原样贴 HTML 或图片链接给用户。"
+                                        + (f"本次新增全局编号：{', '.join(new_reference_indexes)}。" if new_reference_indexes else "")
+                                        + "搜索结果仅供内部分析，禁止原样贴 HTML 或图片链接给用户。"
                                         "请先分析多张图的共同视觉特征。"
                                         "如果原始任务是生成图片：下一步必须调用 edit_image，并显式传 "
                                         "image_search_reference_index 或 image_search_reference_indexes；"
@@ -3328,6 +3472,9 @@ class GeminiService:
                                         "image_search_reference_index 或 image_search_reference_indexes。"
                                         "不要假设代码会自动传参考图。"
                                         "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
+                                        "单人物生成不要重复调用 image_search；多人物/多角色生成允许为每个外部角色分别搜索，"
+                                        "最后用 image_search_reference_indexes 一次性选择所有人物参考图。"
+                                        + ("\n" + reference_summary if reference_summary else "")
                                     )
                                 },
                             )
@@ -3368,6 +3515,7 @@ class GeminiService:
                                 "filename": "image_search_reference.png",
                             }
                             self._remember_tool_image_payload(self.last_tool_image_data)
+                        reference_summary = self._format_image_search_reference_summary()
                         response_hint = (
                             "已获取图片搜索参考图。搜索结果仅供内部参考，禁止原样贴 HTML 或图片链接给用户。"
                             "如果用户要分析，请基于图片自己分析。"
@@ -3380,6 +3528,8 @@ class GeminiService:
                             "image_search_reference_index 或 image_search_reference_indexes。"
                             "不要假设代码会自动把搜索图传给图生图或图生视频。"
                             "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
+                            "多人物/多角色生成允许为每个外部角色分别搜索，最后用 image_search_reference_indexes 一次性选择所有人物参考图。"
+                            + ("\n" + reference_summary if reference_summary else "")
                         )
                     elif actual_tool_name == "render_newspaper_brief":
                         response_hint = (
