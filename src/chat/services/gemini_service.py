@@ -1183,8 +1183,9 @@ class GeminiService:
             detail = "，".join(detail_parts)
             summary_lines.append(f"- {index}: {detail or '图片搜索参考图'}")
         summary_lines.append(
-            "多人物/多角色生成时，可以继续分别搜索其他外部角色；全部搜索完后，"
-            "从每个人物结果中各选 1-2 张，调用 edit_image(image_search_reference_indexes=[...]) "
+            "多人物/多角色生成时，必须继续分别搜索其他外部角色；每次 image_search 只搜一个人物，"
+            "并记清每批编号对应哪个人物。全部搜索完后，从每个人物结果中各选 1-2 张，"
+            "调用 edit_image(image_search_reference_indexes=[...]) "
             "或 generate_video(..., image_search_reference_indexes=[...]) 一次性传入所有参考图。"
         )
         return "\n".join(summary_lines)
@@ -1222,7 +1223,8 @@ class GeminiService:
                 "不要只把参考图总结成文字提示词，也不要假设代码会自动选择或自动传图。"
                 "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
                 "单人物生成不要重复调用 image_search，除非用户明确要求换关键词或换结果；"
-                "多人物/多角色生成则允许为每个外部角色分别调用 image_search。"
+                "多人物/多角色生成必须为每个外部角色分别调用 image_search。"
+                "每次 image_search 只能搜一个人物/角色/主体，禁止 [BATCH]、换行、|| 或多名字混搜。"
                 + ("\n" + reference_summary if reference_summary else "")
             )
         else:
@@ -3472,7 +3474,8 @@ class GeminiService:
                                         "image_search_reference_index 或 image_search_reference_indexes。"
                                         "不要假设代码会自动传参考图。"
                                         "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
-                                        "单人物生成不要重复调用 image_search；多人物/多角色生成允许为每个外部角色分别搜索，"
+                                        "单人物生成不要重复调用 image_search；多人物/多角色生成必须为每个外部角色分别搜索，"
+                                        "每次 image_search 只能搜一个人物/角色/主体，禁止 [BATCH]、换行、|| 或多名字混搜；"
                                         "最后用 image_search_reference_indexes 一次性选择所有人物参考图。"
                                         + ("\n" + reference_summary if reference_summary else "")
                                     )
@@ -3528,7 +3531,7 @@ class GeminiService:
                             "image_search_reference_index 或 image_search_reference_indexes。"
                             "不要假设代码会自动把搜索图传给图生图或图生视频。"
                             "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
-                            "多人物/多角色生成允许为每个外部角色分别搜索，最后用 image_search_reference_indexes 一次性选择所有人物参考图。"
+                            "多人物/多角色生成必须为每个外部角色分别搜索；每次 image_search 只能搜一个人物/角色/主体，禁止 [BATCH]、换行、|| 或多名字混搜；最后用 image_search_reference_indexes 一次性选择所有人物参考图。"
                             + ("\n" + reference_summary if reference_summary else "")
                         )
                     elif actual_tool_name == "render_newspaper_brief":
