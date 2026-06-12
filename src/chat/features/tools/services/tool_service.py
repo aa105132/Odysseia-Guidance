@@ -339,7 +339,13 @@ class ToolService:
                         seen_keys.add(ref_key)
                         selected_refs.append(ref)
                     if selected_refs:
-                        tool_args["_prepared_reference_images"] = selected_refs[:8]
+                        tool_args["_prepared_reference_images"] = selected_refs
+                        log.info(
+                            "已按模型显式编号为 %s 准备 %s 张 image_search 参考图，编号=%s",
+                            tool_name,
+                            len(selected_refs),
+                            [ref.get("image_search_reference_index") for ref in selected_refs],
+                        )
                         if tool_name == "generate_video":
                             tool_args["use_reference_image"] = True
                         prompt_key = "edit_prompt" if tool_name == "edit_image" else "prompt"

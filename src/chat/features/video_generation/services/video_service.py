@@ -489,6 +489,7 @@ class VideoGenerationService:
                 # 把普通参考图误解成强首帧约束，导致多参考图融合效果丢失。
                 if payload_images:
                     payload["images"] = payload_images
+                    log.info("视频生成 /v1/video/generate 将发送 %s 张参考图", len(payload_images))
         else:
             payload = {
                 "model": model_name,

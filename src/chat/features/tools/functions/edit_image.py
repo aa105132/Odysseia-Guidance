@@ -37,7 +37,7 @@ async def edit_image(
     image_search_reference_index: Optional[int] = None,
     image_search_reference_indexes: Optional[List[int]] = None,
     reference_image_mode: str = "auto",
-    max_reference_images: int = 9,
+    max_reference_images: int = 30,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
     model_name_override: Optional[str] = None,
@@ -158,7 +158,7 @@ async def edit_image(
                 当用户要求基于多个人的头像来画图时使用此参数。
                 例如用户说"把我和他的头像画成一张合照"、"用我们三个人的头像画一幅画"。
                 传入的多个头像会作为多参考图传给图生图接口（不再强制拼接）。
-                最多支持 9 个用户ID。
+                最多支持 30 个用户ID。
                 例如: ["123456789", "987654321"]
 
         reference_image_mode: 参考图模式。**绝大多数情况下请使用默认值 “auto”，不要手动指定！**
@@ -168,7 +168,7 @@ async def edit_image(
                 - “single”: 强制只用第1张参考图。**仅当用户明确说”只用第一张””忽略其他图”时才传此值！**
                   如果用户发了2张图但没说忽略哪张，禁止使用 “single”，否则第2张图会被丢弃！
 
-        max_reference_images: 最多传给图生图模型的参考图数量（1-9，默认 9）。
+        max_reference_images: 最多传给图生图模型的参考图数量（1-30，默认 30）。
                 当 reference_image_mode 为 "multi"/"auto" 时生效。
 
         preview_message: （必填）你对这次图片修改请求的回复消息。
@@ -293,8 +293,8 @@ async def edit_image(
     try:
         max_reference_images = int(max_reference_images)
     except (TypeError, ValueError):
-        max_reference_images = 9
-    max_reference_images = min(max(1, max_reference_images), 9)
+        max_reference_images = 30
+    max_reference_images = min(max(1, max_reference_images), 30)
     explicit_avatar_reference_requested = bool(avatar_user_id or avatar_user_ids)
 
     def _select_reference_images(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -725,6 +725,10 @@ async def edit_image(
                     {
                         "data": ref["data"],
                         "mime_type": ref.get("mime_type", "image/png"),
+                        "filename": ref.get("filename"),
+                        "image_search_reference_index": ref.get("image_search_reference_index"),
+                        "reference_label": ref.get("reference_label"),
+                        "source": ref.get("source"),
                     }
                     for ref in reference_images
                     if ref and ref.get("data")

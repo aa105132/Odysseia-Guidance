@@ -501,7 +501,7 @@ async def generate_video(
     image_search_reference_index: Optional[int] = None,
     image_search_reference_indexes: Optional[List[int]] = None,
     reference_image_mode: str = "auto",
-    max_reference_images: int = 9,
+    max_reference_images: int = 30,
     generate_audio: bool = True,
     prepare_video_first_frame: Optional[bool] = None,
     video_first_frame_prompt: Optional[str] = None,
@@ -707,12 +707,12 @@ async def generate_video(
                 当用户说"把小明的头像做成视频"，但没有给数字ID时使用。
 
         avatar_usernames: （可选）多个Discord用户名/昵称/@提及列表，用于提取多个用户头像作为多参考图。
-                当用户说"用小明和小红的头像做视频"时使用。最多支持 9 个。
+                当用户说"用小明和小红的头像做视频"时使用。最多支持 30 个。
 
         reference_image_mode: 参考图模式。默认 “auto”，会尽量保留多张参考图；只有用户明确说“只用第一张”
                 或“忽略其他图”时才传 “single”。“multi” 可用于明确融合多张参考图的场景。
 
-        max_reference_images: 最多传给图生视频模型的参考图数量（1-9，默认 9）。
+        max_reference_images: 最多传给图生视频模型的参考图数量（1-30，默认 30）。
 
         generate_audio: 是否生成视频声音，默认 True。文生视频和图生视频都默认带声音；
                 只有用户明确说“不要声音 / 静音 / 无声 / 不要音频”时才传 False。
@@ -930,8 +930,8 @@ async def generate_video(
     try:
         max_reference_images = int(max_reference_images)
     except (TypeError, ValueError):
-        max_reference_images = 9
-    max_reference_images = min(max(1, max_reference_images), 9)
+        max_reference_images = 30
+    max_reference_images = min(max(1, max_reference_images), 30)
 
     def _select_reference_images(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         valid = [
@@ -1006,6 +1006,9 @@ async def generate_video(
                             "data": img["data"],
                             "mime_type": img.get("mime_type", "image/png"),
                             "filename": img.get("filename", "prepared_reference.png"),
+                            "image_search_reference_index": img.get("image_search_reference_index"),
+                            "reference_label": img.get("reference_label"),
+                            "source": img.get("source"),
                         }
                     )
             if normalized_prepared:
@@ -1358,6 +1361,9 @@ async def generate_video(
                     "data": ref["data"],
                     "mime_type": ref.get("mime_type", "image/png"),
                     "filename": ref.get("filename", "reference.png"),
+                    "image_search_reference_index": ref.get("image_search_reference_index"),
+                    "reference_label": ref.get("reference_label"),
+                    "source": ref.get("source"),
                 }
                 for ref in reference_images
                 if ref and ref.get("data")
@@ -1365,6 +1371,18 @@ async def generate_video(
             if reference_images
             else None
         )
+
+        if normalized_reference_images:
+            video_reference_indexes = [
+                ref.get("image_search_reference_index")
+                for ref in normalized_reference_images
+                if isinstance(ref, dict) and ref.get("image_search_reference_index")
+            ]
+            log.info(
+                "图生视频最终参考图数量: %s%s",
+                len(normalized_reference_images),
+                f"，搜索参考图编号={video_reference_indexes}" if video_reference_indexes else "",
+            )
 
         if prepare_video_first_frame and normalized_reference_images:
             try:

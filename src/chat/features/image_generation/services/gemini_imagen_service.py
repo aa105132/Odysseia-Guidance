@@ -2119,7 +2119,16 @@ class GeminiImagenService:
             log.error("图生图需要至少一张参考图")
             return None
         
-        log.info(f"图生图参考图数量: {len(images_list)}")
+        reference_indexes = [
+            item.get("image_search_reference_index")
+            for item in images_list
+            if isinstance(item, dict) and item.get("image_search_reference_index")
+        ]
+        log.info(
+            "图生图参考图数量: %s%s",
+            len(images_list),
+            f"，搜索参考图编号={reference_indexes}" if reference_indexes else "",
+        )
         
         # 根据分辨率和内容分级选择编辑模型
         model_name = (
@@ -2359,7 +2368,18 @@ class GeminiImagenService:
         if aspect_ratio != "1:1":
             full_prompt += f"\n输出图片的宽高比应为：{aspect_ratio}"
         
-        log.info(f"[OpenAI格式 图生图] 正在使用 {model_name} 编辑图像 ({img_count}张参考图), 指令: {edit_prompt[:100]}...")
+        chat_reference_indexes = [
+            item.get("image_search_reference_index")
+            for item in reference_images
+            if isinstance(item, dict) and item.get("image_search_reference_index")
+        ]
+        log.info(
+            "[OpenAI格式 图生图] 正在使用 %s 编辑图像 (%s张参考图%s), 指令: %s...",
+            model_name,
+            img_count,
+            f"，搜索参考图编号={chat_reference_indexes}" if chat_reference_indexes else "",
+            edit_prompt[:100],
+        )
         
         # 构建请求
         headers = {
@@ -2523,20 +2543,40 @@ class GeminiImagenService:
                     form.add_field("style", str(openai_style).strip())
 
                 # 多参考图时第 1 张通常是“待编辑底图”，后续才是头像/风格参考。
-                # 上游最多支持 9 张参考图：保留原始顺序并取前 9 张有效图片，
-                # 不能取最后几张，否则多人头像场景会把底图挤掉，导致结果和原图无关。
+                # 旧逻辑固定截断到 9 张，会导致多人物搜索参考图被静默丢弃；
+                # 现在默认最多透传 30 张，并允许通过 OPENAI_IMAGE_EDIT_MAX_REFERENCE_IMAGES 配置覆盖。
                 valid_reference_images = [
                     item
                     for item in (reference_images or [])
                     if isinstance(item, dict) and item.get("data")
                 ]
-                if len(valid_reference_images) > 9:
+                try:
+                    max_edit_reference_images = int(
+                        config.get("OPENAI_IMAGE_EDIT_MAX_REFERENCE_IMAGES", 30)
+                    )
+                except (TypeError, ValueError):
+                    max_edit_reference_images = 30
+                max_edit_reference_images = min(max(1, max_edit_reference_images), 30)
+                if len(valid_reference_images) > max_edit_reference_images:
                     log.warning(
-                        "OpenAI 图生图图片接口最多支持 9 张参考图，已按原始顺序截断: %s -> 9",
+                        "OpenAI 图生图图片接口参考图超过配置上限，已按原始顺序截断: %s -> %s",
                         len(valid_reference_images),
+                        max_edit_reference_images,
                     )
 
-                for index, image_info in enumerate(valid_reference_images[:9], start=1):
+                sent_reference_images = valid_reference_images[:max_edit_reference_images]
+                sent_reference_indexes = [
+                    item.get("image_search_reference_index")
+                    for item in sent_reference_images
+                    if isinstance(item, dict) and item.get("image_search_reference_index")
+                ]
+                log.info(
+                    "OpenAI /images/edits 将发送 %s 张参考图%s",
+                    len(sent_reference_images),
+                    f"，搜索参考图编号={sent_reference_indexes}" if sent_reference_indexes else "",
+                )
+
+                for index, image_info in enumerate(sent_reference_images, start=1):
                     image_bytes = image_info.get("data")
                     mime_type = str(image_info.get("mime_type") or "image/png").strip() or "image/png"
                     extension = mime_type.split("/")[-1] if "/" in mime_type else "png"
