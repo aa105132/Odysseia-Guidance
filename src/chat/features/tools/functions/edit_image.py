@@ -274,7 +274,8 @@ async def edit_image(
 
         return images
 
-    # 1. 尝试获取参考图片（优先级：emoji > sticker > avatar_user_ids/avatar_user_id > 消息附件 > 回复 > 历史）
+    # 1. 尝试获取参考图片（优先级：预准备参考图 > emoji > sticker > avatar_user_ids/avatar_user_id > 当前消息附件 > 明确回复）
+    # 注意：不要从频道历史消息兜底找图，避免普通画图被无关聊天图片污染。
     # reference_image: 向后兼容的单图引用（通常取第一张）
     # reference_images: 多图引用（当 API 支持多参考图时优先使用）
     reference_image = None
@@ -326,25 +327,6 @@ async def edit_image(
         copied["reference_description"] = description
         return copied
 
-    def _should_search_history_base_image() -> bool:
-        """只有用户明确指向“这张/上图/刚发的图”时，才用频道历史兜底找底图。"""
-        text = str(edit_prompt or "")
-        keywords = (
-            "这张图",
-            "这幅图",
-            "这张图片",
-            "原图",
-            "底图",
-            "上图",
-            "上一张",
-            "刚发",
-            "刚才那张",
-            "在这张",
-            "基于这张",
-            "基础上",
-        )
-        return any(keyword in text for keyword in keywords)
-
     async def _find_base_images_for_avatar_edit() -> List[Dict[str, Any]]:
         """为“在原图上 P 用户头像”场景寻找待编辑底图，最多返回 1 张。"""
         if not message:
@@ -366,22 +348,9 @@ async def edit_image(
             except Exception as e:
                 log.warning(f"获取头像编辑底图的回复消息失败: {e}")
 
-        # 只有用户明确说“上图/刚发那张/这张图基础上”时，才从历史兜底；
-        # 否则容易把无关聊天图片当底图，造成结果跑偏。
-        if channel and _should_search_history_base_image():
-            try:
-                async for hist_msg in channel.history(limit=5):
-                    if message and getattr(hist_msg, "id", None) == getattr(message, "id", None):
-                        continue
-                    history_images = await extract_images_from_message(hist_msg, max_images=1)
-                    if history_images:
-                        log.info(
-                            f"为头像图生图请求从历史消息找到底图 "
-                            f"(消息 ID: {getattr(hist_msg, 'id', 'unknown')})"
-                        )
-                        return [_with_reference_role(history_images[0], "base", "待编辑底图")]
-            except Exception as e:
-                log.warning(f"为头像图生图请求搜索历史底图失败: {e}")
+        # 不再从频道历史消息兜底找底图。
+        # 如果用户想基于上一张图编辑，必须明确回复那张图或在当前消息重新附图，
+        # 否则容易把无关聊天图片当底图，造成普通画图被历史图污染。
 
         return []
 
@@ -588,38 +557,8 @@ async def edit_image(
             except Exception as e:
                 log.warning(f"获取回复消息失败: {e}")
 
-        # 如果还是没有找到图片，检查频道的最近消息（用户可能先发图片再请求修改）
-        if not reference_image and channel:
-            try:
-                log.info("未在当前消息或回复中找到图片，正在搜索频道最近消息...")
-                history_candidates: List[Dict[str, Any]] = []
-                # 获取最近的 5 条消息（包含所有用户，让AI自行判断上下文）
-                async for hist_msg in channel.history(limit=5):
-                    # 跳过当前消息
-                    if hist_msg.id == message.id:
-                        continue
-
-                    remaining = requested_max - len(history_candidates)
-                    if remaining <= 0:
-                        break
-
-                    found_images = await extract_images_from_message(
-                        hist_msg, max_images=remaining
-                    )
-                    if found_images:
-                        log.info(
-                            f"在最近消息中找到 {len(found_images)} 张图片 (消息 ID: {hist_msg.id}, 发送者: {hist_msg.author})"
-                        )
-                        history_candidates.extend(found_images)
-                        if reference_image_mode == "single":
-                            break
-
-                selected_images = _select_reference_images(history_candidates)
-                if selected_images:
-                    reference_images = selected_images
-                    reference_image = selected_images[0]
-            except Exception as e:
-                log.warning(f"搜索频道历史消息失败: {e}")
+        # 不再从频道最近消息自动找图。
+        # 只有当前消息附件、明确回复图片、显式头像/搜索图/预准备参考图才会作为参考图。
 
     # 如果还是没有找到图片，返回错误
     if not reference_image and not reference_images:

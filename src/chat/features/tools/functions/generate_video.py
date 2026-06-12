@@ -661,7 +661,7 @@ async def generate_video(
                 4. avatar_user_ids / avatar_user_id / avatar_usernames / avatar_username 参数指定的用户头像（支持多张参考图）
                 5. 用户消息中的图片附件
                 6. 回复消息中的图片
-                7. 频道最近消息中的图片
+                注意：工具不会从频道最近聊天记录里自动找图；如果要用上一张图，必须明确回复那张图。
 
                 - 用户发送了图片并要求生成视频 → True
                 - 用户回复了一张图片说"做成视频" → True
@@ -989,7 +989,8 @@ async def generate_video(
         except (ValueError, TypeError):
             log.warning(f"无法解析用户ID: {user_id}")
 
-    # 图生视频模式：提取参考图片（优先级：预准备多图/单图 > emoji_id > avatar_user_ids/avatar_user_id > 消息附件 > 回复 > 历史）
+    # 图生视频模式：提取参考图片（优先级：预准备多图/单图 > emoji_id > avatar_user_ids/avatar_user_id > 当前消息附件 > 明确回复）
+    # 注意：不要从频道历史消息兜底找图，避免普通视频生成被无关聊天图片污染。
     reference_image = None  # 向后兼容
     reference_images = []   # 多图优先链路
     if use_reference_image:
@@ -1217,25 +1218,8 @@ async def generate_video(
             except Exception as e:
                 log.warning(f"获取回复消息失败: {e}")
 
-        # 如果还是没有找到图片，检查频道的最近消息
-        if not reference_image and not reference_images and channel:
-            try:
-                log.info("未在当前消息或回复中找到图片，正在搜索频道最近消息...")
-                async for hist_msg in channel.history(limit=5):
-                    if hist_msg.id == message.id:
-                        continue
-                    history_candidates = await extract_images_from_message(
-                        hist_msg,
-                        max_images=max_reference_images,
-                    )
-                    selected_images = _select_reference_images(history_candidates)
-                    if selected_images:
-                        log.info(f"在最近消息中找到图片 (消息 ID: {hist_msg.id}, 发送者: {hist_msg.author})")
-                        reference_images = selected_images
-                        reference_image = selected_images[0]
-                        break
-            except Exception as e:
-                log.warning(f"搜索频道历史消息失败: {e}")
+        # 不再从频道最近消息自动找图。
+        # 只有当前消息附件、明确回复图片、显式头像/搜索图/预准备参考图才会作为参考图。
 
         # 如果 use_reference_image=True 但没找到图片，提示用户
         if (
