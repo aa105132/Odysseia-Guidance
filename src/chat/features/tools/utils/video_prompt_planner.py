@@ -58,12 +58,8 @@ def _looks_complete_video_prompt(prompt: str, duration: int) -> bool:
     if len(text) < 120:
         return False
 
-    required_markers = (
-        "不要文字",
-        "不要水印",
-        "不要闪烁",
-    )
-    if not all(marker in text for marker in required_markers):
+    stability_markers = ("变脸", "肢体畸变", "背景乱变", "画面跳变")
+    if not any(marker in text for marker in stability_markers):
         return False
 
     safe_duration = max(5, min(15, int(duration or 8)))
@@ -83,9 +79,9 @@ def _normalize_planned_video_prompt(prompt: str) -> str:
     if not text.endswith(("。", "！", "？", ".", "!", "?")):
         text += "。"
 
-    negative_tail = "不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
-    if "不要文字" not in text or "不要水印" not in text or "不要闪烁" not in text:
-        text += negative_tail
+    stability_tail = "保持角色身份稳定，避免变脸、肢体畸变、背景乱变和画面跳变。"
+    if not any(marker in text for marker in ("变脸", "肢体畸变", "背景乱变", "画面跳变")):
+        text += stability_tail
     return text
 
 
@@ -137,7 +133,7 @@ async def plan_video_prompt_with_yueyue(
         f"3) 按 {safe_duration} 秒视频设计明确分镜，至少包含 0-{midpoint} 秒、{midpoint}-{safe_duration} 秒两个时间段；需要时可拆得更细。",
         "4) 描述主体动作、表情、镜头运动、环境运动、光影变化和收束画面。",
         f"5) {continuity_rule}",
-        "6) 结尾加入安全负面约束：不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。",
+        "6) 结尾加入稳定性约束：保持角色身份稳定，避免变脸、肢体畸变、背景乱变和画面跳变。",
     ]
     if normalized_image_prompt:
         prompt_parts.append(f"原图/原视频提示词线索：{normalized_image_prompt}")
@@ -163,7 +159,7 @@ async def plan_video_prompt_with_yueyue(
         retry_prompt = (
             f"{request_prompt}\n\n"
             "上一轮输出疑似被截断或不完整。请重新输出一段完整的视频提示词，"
-            "必须写完整时间轴，必须以“不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。”结尾。"
+            "必须写完整时间轴，结尾必须包含稳定性约束：保持角色身份稳定，避免变脸、肢体畸变、背景乱变和画面跳变。"
         )
         retry_planned = await gemini_service.generate_simple_response(
             prompt=retry_prompt,

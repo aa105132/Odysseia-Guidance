@@ -193,7 +193,7 @@ def _build_extend_video_prompt(base_prompt: str, user_idea: str, duration: int) 
         prompt += f"原视频分镜意图：{normalized_base}"
     if normalized_idea:
         prompt += f" 本次续写补充要求：{normalized_idea}"
-    prompt += " 不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
+    prompt += " 保持角色身份稳定，避免变脸、肢体畸变、背景乱变和画面跳变。"
     return prompt
 
 

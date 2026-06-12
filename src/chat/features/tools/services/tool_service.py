@@ -351,8 +351,7 @@ class ToolService:
                         prompt_key = "edit_prompt" if tool_name == "edit_image" else "prompt"
                         prompt_text = str(tool_args.get(prompt_key) or "").strip()
                         watermark_constraint = (
-                            "参考图仅用于理解角色/主体外观、服装、发型、配色、构图与画风；"
-                            "不要复制参考图里的水印、署名、平台文字、截图 UI、边框或无关文字，输出中不要出现任何水印。"
+                            "参考图仅用于理解角色/主体外观、服装、发型、配色、构图与画风。"
                         )
                         if watermark_constraint not in prompt_text:
                             tool_args[prompt_key] = f"{prompt_text}\n{watermark_constraint}" if prompt_text else watermark_constraint

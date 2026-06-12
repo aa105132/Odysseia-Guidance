@@ -1044,14 +1044,13 @@ class GeminiService:
 
     @staticmethod
     def _append_no_watermark_constraint(tool_name: str, tool_args: Dict[str, Any]) -> None:
-        """使用搜索图作参考时，强制生成结果去水印/去截图文字。"""
+        """使用搜索图作参考时，补充参考图用途说明。"""
         if tool_name not in {"edit_image", "generate_video"}:
             return
         prompt_key = "edit_prompt" if tool_name == "edit_image" else "prompt"
         prompt_text = str(tool_args.get(prompt_key) or "").strip()
         constraint = (
-            "参考图仅用于理解角色/主体外观、服装、发型、配色、构图与画风；"
-            "不要复制参考图里的水印、署名、平台文字、截图 UI、边框或无关文字，输出中不要出现任何水印。"
+            "参考图仅用于理解角色/主体外观、服装、发型、配色、构图与画风。"
         )
         if constraint not in prompt_text:
             tool_args[prompt_key] = f"{prompt_text}\n{constraint}" if prompt_text else constraint
@@ -1221,7 +1220,7 @@ class GeminiService:
                 "如果原始任务是图生视频：下一步必须调用 generate_video(use_reference_image=true)，并显式传 "
                 "image_search_reference_index 或 image_search_reference_indexes。"
                 "不要只把参考图总结成文字提示词，也不要假设代码会自动选择或自动传图。"
-                "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
+                ""
                 "单人物生成不要重复调用 image_search，除非用户明确要求换关键词或换结果；"
                 "多人物/多角色生成必须为每个外部角色分别调用 image_search。"
                 "每次 image_search 只能搜一个人物/角色/主体，禁止 [BATCH]、换行、|| 或多名字混搜。"
@@ -3473,7 +3472,7 @@ class GeminiService:
                                         "如果原始任务是图生视频：下一步必须调用 generate_video(use_reference_image=true)，并显式传 "
                                         "image_search_reference_index 或 image_search_reference_indexes。"
                                         "不要假设代码会自动传参考图。"
-                                        "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
+                                        ""
                                         "单人物生成不要重复调用 image_search；多人物/多角色生成必须为每个外部角色分别搜索，"
                                         "每次 image_search 只能搜一个人物/角色/主体，禁止 [BATCH]、换行、|| 或多名字混搜；"
                                         "最后用 image_search_reference_indexes 一次性选择所有人物参考图。"
@@ -3530,7 +3529,7 @@ class GeminiService:
                             "如果原始任务是图生视频：下一步必须调用 generate_video(use_reference_image=true)，并显式传 "
                             "image_search_reference_index 或 image_search_reference_indexes。"
                             "不要假设代码会自动把搜索图传给图生图或图生视频。"
-                            "生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
+                            ""
                             "多人物/多角色生成必须为每个外部角色分别搜索；每次 image_search 只能搜一个人物/角色/主体，禁止 [BATCH]、换行、|| 或多名字混搜；最后用 image_search_reference_indexes 一次性选择所有人物参考图。"
                             + ("\n" + reference_summary if reference_summary else "")
                         )

@@ -486,7 +486,7 @@ async def image_search(
                     source_url = str(item.get("source_url") or "").strip()
                     if source_url:
                         embed.url = source_url
-                    embed.set_footer(text="图片搜索参考图 · 仅作视觉参考，生成时不要复制水印或平台文字")
+                    embed.set_footer(text="图片搜索参考图 · 仅作视觉参考")
                     embeds.append(embed)
 
                 for batch_start in range(0, len(embeds), 10):
@@ -495,7 +495,7 @@ async def image_search(
                         continue
                     content = (
                         f"找到这些“{query}”的参考图，月月会先看图分析；"
-                        "如果继续生成，会自动避开水印和平台文字。"
+                        "如果继续生成，参考图仅用于理解主体外观。"
                         if batch_start == 0 else None
                     )
                     if message is not None and batch_start == 0:
@@ -543,7 +543,7 @@ async def image_search(
             "edit_prompt 必须很短，只写保持参考图主体不变并修改动作/场景/构图，不要复述外观、服饰、发色、作品名或画风。"
             "禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。"
             "如果原始任务是图生视频，下一步必须调用 generate_video(use_reference_image=true)，并显式传搜索图编号。"
-            "不要假设代码会自动传图。生成时必须去除参考图中的水印、署名、平台文字和截图 UI。"
+            "不要假设代码会自动传图。"
         ),
     }
 
@@ -561,7 +561,7 @@ async def image_search(
             "所有搜索会在本轮累计成全局参考图编号；后续生成图片必须调用 edit_image 并显式传 "
             "image_search_reference_index 或 image_search_reference_indexes 一次性选择所有需要的参考图。edit_prompt 只写保持参考图主体不变并修改动作/场景/构图，"
             "不要复述外观、服饰、发色、作品名或画风。图生视频必须调用 generate_video 并显式传搜索图编号。"
-            "不要让代码层自动硬传搜索图，也不要退回纯文生图。生成结果不要包含参考图中的水印、署名、平台文字、截图 UI 或边框。"
+            "不要让代码层自动硬传搜索图，也不要退回纯文生图。"
         )
 
     return output

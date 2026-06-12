@@ -485,7 +485,7 @@ def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
             "8-10秒，动作自然收束，画面保持稳定。"
             f"\n原图提示词：{base_prompt}"
             f"\n用户补充要求：{idea}"
-            "\n负面约束：不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
+            "\n负面约束：保持角色身份稳定，避免变脸、肢体畸变和背景乱变。"
         )
 
     return (
@@ -496,7 +496,7 @@ def _build_video_prompt_from_image(image_prompt: str, user_idea: str) -> str:
         "5-8秒，发丝、衣摆、光影和背景细节自然运动；"
         "8-10秒，动作平滑收束，画面停在适合继续延长的姿态。"
         f"\n原图提示词：{base_prompt}"
-        "\n负面约束：不要文字，不要水印，不要闪烁，不要变脸，不要肢体畸变，不要背景乱变。"
+        "\n负面约束：保持角色身份稳定，避免变脸、肢体畸变和背景乱变。"
     )
 
 

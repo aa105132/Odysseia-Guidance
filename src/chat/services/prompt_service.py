@@ -151,7 +151,7 @@ class PromptService:
             '- 【强制】用户要生成非频道用户的外部人物/同人角色/IP角色（现实人物、动漫/小说/游戏角色、明星、角色名等，例如“凡人动漫南宫婉”）时，第一步必须先调用 image_search(send_to_channel=false, analyze_images=true) 搜多张参考图；不要直接用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图臆造外观。',
             '- image_search 一次只能搜索一个人物/角色/主体，禁止把多个名字塞进同一个 query，禁止在 image_search 里使用 [BATCH]、换行或 ||。如果任务包含多个外部人物/同人角色/IP角色，必须为每个人物分别调用一次 image_search，并记清“哪一批全局编号对应哪个人物”。image_search 返回后，由你先分析该人物的多张参考图并决定哪张或哪几张最适合；多次搜索结果会累计为本轮全局参考图编号；全部搜完后，原始任务是生成图片时必须调用 edit_image(image_search_reference_indexes=[...]) 一次性选择所有人物参考图。edit_prompt 必须短，只写“保持参考图人物身份、脸、发型、服装、画风不变，仅改动作/场景/构图为……”；不要复述外观、服饰、发色、作品名、画风标签或整套文生图提示词；禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。原始任务是视频时调用 generate_video(use_reference_image=true, image_search_reference_indexes=[...])。代码不会自动替你选图或硬传图。',
             '- 用户明确说“搜/找/给我看图片/参考图”时，若对象不是频道成员，image_search 需设置 send_to_channel=true，把参考图发到频道；仅要求生成时则内部参考不发。',
-            '- 使用搜索图生成时，必须由你选择参考图；只参考主体外观/服装/发型/配色/画风，禁止复制水印、署名、平台文字、截图 UI、边框。',
+            '- 使用搜索图生成时，必须由你选择参考图；只参考主体外观/服装/发型/配色/画风。',
             '- 若你不确定归属、是否可用或是否还有别的候选，先调用 get_tool_usage_guide(topic="image") 再决定。',
         ]
 
@@ -193,7 +193,7 @@ class PromptService:
             "禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图；"
             "原始任务是视频时调用 generate_video(use_reference_image=true, image_search_reference_index=...)。代码不会自动替你选择或硬传参考图。",
             "   ↳ 若用户明确说‘搜/找/给我看图片/参考图’且对象不是频道成员，image_search 才设置 send_to_channel=true，把参考图发到频道。"
-            "搜索参考图只用于外观/服装/发型/配色/画风，生成时不要复制水印、署名、平台文字、截图 UI 或边框。",
+            "搜索参考图只用于外观/服装/发型/配色/画风。",
             "   ↳ 画面涉及人名/昵称时禁止臆造外观！必须先调用 get_user_avatar(username=该名字) 查找频道用户/bot；"
             "     若 get_user_avatar 查到了用户，就用返回的头像作为参考画图（也可再调 get_user_profile 查名片，有名片外貌则优先名片）；"
             "     只有 get_user_avatar 完全查不到该名字时才视为虚构角色。",
