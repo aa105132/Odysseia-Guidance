@@ -326,18 +326,24 @@ class ToolService:
                         if global_index > 0:
                             by_global_index[global_index] = cached_ref
 
+                    missing_indexes: List[int] = []
                     for index in requested_indexes:
                         ref = by_global_index.get(index)
-                        if ref is None and 1 <= index <= len(self.cached_search_reference_images):
-                            # 兼容旧缓存：没有全局编号时仍允许按列表顺序选择。
-                            ref = self.cached_search_reference_images[index - 1]
                         if not ref:
+                            missing_indexes.append(index)
                             continue
                         ref_key = ref.get("_cache_key") or ref.get("image_search_reference_index") or id(ref)
                         if ref_key in seen_keys:
                             continue
                         seen_keys.add(ref_key)
                         selected_refs.append(ref)
+                    if missing_indexes:
+                        log.warning(
+                            "模型选择了不存在的 image_search 全局编号，已忽略: requested=%s, missing=%s, available=%s",
+                            requested_indexes,
+                            missing_indexes,
+                            sorted(by_global_index.keys()),
+                        )
                     if selected_refs:
                         tool_args["_prepared_reference_images"] = selected_refs
                         log.info(

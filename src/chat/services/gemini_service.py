@@ -1017,12 +1017,11 @@ class GeminiService:
             if global_index > 0:
                 by_global_index[global_index] = item
 
+        missing_indexes: List[int] = []
         for index in requested_indexes:
             item = by_global_index.get(index)
-            if item is None and 1 <= index <= len(cached_images):
-                # 兼容旧缓存：没有全局编号时仍允许按列表顺序选择。
-                item = cached_images[index - 1]
             if item is None:
+                missing_indexes.append(index)
                 continue
             cache_key = item.get("_cache_key") or item.get("image_search_reference_index") or id(item)
             if cache_key in seen_keys:
@@ -1039,6 +1038,13 @@ class GeminiService:
                     "query": item.get("query"),
                     "source_url": item.get("source_url"),
                 }
+            )
+        if missing_indexes:
+            log.warning(
+                "模型选择了不存在的 image_search 全局编号，已忽略: requested=%s, missing=%s, available=%s",
+                requested_indexes,
+                missing_indexes,
+                sorted(by_global_index.keys()),
             )
         return normalized_refs
 
@@ -1169,22 +1175,34 @@ class GeminiService:
         if not refs:
             return ""
 
-        summary_lines = ["本轮可选搜索参考图全局编号如下；多次 image_search 会累计编号，不会覆盖上一批："]
+        summary_lines = ["本轮可选搜索参考图按搜索批次/人物分组如下；多次 image_search 会累计编号，不会覆盖上一批："]
+        grouped_refs: List[tuple[str, List[Dict[str, Any]]]] = []
         for item in refs[-30:]:
-            index = item.get("image_search_reference_index")
-            query = str(item.get("query") or "").strip()
-            result_index = item.get("result_index") or item.get("index")
-            detail_parts = []
-            if query:
-                detail_parts.append(f"搜索词：{query}")
-            if result_index:
-                detail_parts.append(f"原结果序号：{result_index}")
-            detail = "，".join(detail_parts)
-            summary_lines.append(f"- {index}: {detail or '图片搜索参考图'}")
+            query = str(item.get("query") or "未记录搜索词").strip() or "未记录搜索词"
+            for existing_query, grouped_items in grouped_refs:
+                if existing_query == query:
+                    grouped_items.append(item)
+                    break
+            else:
+                grouped_refs.append((query, [item]))
+
+        for group_no, (query, grouped_items) in enumerate(grouped_refs, 1):
+            indexes = [
+                str(item.get("image_search_reference_index"))
+                for item in grouped_items
+                if item.get("image_search_reference_index")
+            ]
+            summary_lines.append(f"第{group_no}批 / 人物搜索词：{query}；可选全局编号：{', '.join(indexes)}")
+            for item in grouped_items:
+                index = item.get("image_search_reference_index")
+                result_index = item.get("result_index") or item.get("index")
+                detail = f"原结果序号：{result_index}" if result_index else "图片搜索参考图"
+                summary_lines.append(f"  - {index}: {detail}")
         summary_lines.append(
-            "多人物/多角色生成时，必须继续分别搜索其他外部角色；每次 image_search 只搜一个人物，"
-            "并记清每批编号对应哪个人物。全部搜索完后，从每个人物结果中各选 1-2 张，"
-            "调用 edit_image(image_search_reference_indexes=[...]) "
+            "多人物/多角色生成时，必须先分别搜索每个外部角色；全部搜索完后，"
+            "必须从每一批/每个人物的编号里各选至少 1 张，禁止只从同一批里选多张来冒充不同人物。"
+            "例如两个人物时应选择 [第一批的编号, 第二批的编号]，而不是 [第一批编号1, 第一批编号2]。"
+            "然后调用 edit_image(image_search_reference_indexes=[...]) "
             "或 generate_video(..., image_search_reference_indexes=[...]) 一次性传入所有参考图。"
         )
         return "\n".join(summary_lines)

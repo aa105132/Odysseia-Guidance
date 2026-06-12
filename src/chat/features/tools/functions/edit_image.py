@@ -68,7 +68,7 @@ async def edit_image(
     - 多个用户头像：传 `avatar_user_ids`
     - 发送了附件图 / 回复了图片：工具会自动把它们作为参考图
     - 刚调用 image_search 后：由你先分析搜索结果，再显式传 image_search_reference_index 或 image_search_reference_indexes 选择参考图；代码不会自动替你选择。
-      多人物/多角色可以先分别多次调用 image_search，等所有人物都搜完后用 image_search_reference_indexes=[...] 一次性传入所有选中的全局编号。
+      多人物/多角色可以先分别多次调用 image_search，等所有人物都搜完后用 image_search_reference_indexes=[...] 一次性传入所有选中的全局编号；多人物时必须从每个人物对应批次里各选至少 1 张，禁止只选同一人物的多张图。
       这时 edit_prompt 必须短：只写“保持参考图人物身份、脸、发型、服装、画风不变，仅改动作/场景/构图为……”。
       不要在 edit_prompt 里复述角色外观、服饰、发色、作品名、画风标签或整套文生图提示词，否则会削弱参考图相似度。
     - 但如果用户要画的是”某个人 / 某个昵称 / 某个成员 / @某人 / 指定用户本人设定”：

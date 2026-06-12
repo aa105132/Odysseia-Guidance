@@ -164,7 +164,7 @@ async def get_tool_usage_guide(topic: str = "all", **kwargs) -> Dict[str, Any]:
                 "画新图默认优先当前默认引擎对应的新图工具。",
                 "明确修改原图、基于参考图编辑时使用 edit_image。",
                 "【优先级最高】如果用户要生成频道里的成员/群友/Discord 用户（@某人、用户名、昵称、‘我’、‘这个人’等），不要调用 image_search 联网搜图；先用 get_user_avatar / get_user_profile 获取头像和名片，频道用户只用头像/名片作参考。",
-                "只有生成非频道用户的外部人物/同人角色/IP角色（现实人物、动漫/小说/游戏角色、明星、角色名等）或你确认不是本频道成员时，才调用 image_search 获取多张图片参考；image_search 一次只能搜一个人物/角色/主体，禁止 [BATCH]、换行、|| 或多名字混搜；多人物/多角色任务必须为每个人物分别调用 image_search，并记清每批全局编号对应哪个人物，多次搜索结果会累计为本轮全局编号。之后必须由你分析并显式决定用哪张或哪几张图作参考。生成图片下一步必须调用 edit_image(image_search_reference_indexes=[...]) 一次性选择所有人物参考图，edit_prompt 只写保持参考图主体不变并修改动作/场景/构图，不要复述外观、服饰、发色、作品名或画风；禁止退回 generate_image 纯文生图。图生视频调用 generate_video(use_reference_image=true, image_search_reference_indexes=[...])。",
+                "只有生成非频道用户的外部人物/同人角色/IP角色（现实人物、动漫/小说/游戏角色、明星、角色名等）或你确认不是本频道成员时，才调用 image_search 获取多张图片参考；image_search 一次只能搜一个人物/角色/主体，禁止 [BATCH]、换行、|| 或多名字混搜；多人物/多角色任务必须为每个人物分别调用 image_search，并记清每批全局编号对应哪个人物；最后选择参考图时必须从每个人物对应批次里各选至少 1 张，禁止只从同一人物/同一批里选多张来冒充不同人物。多次搜索结果会累计为本轮全局编号。之后必须由你分析并显式决定用哪张或哪几张图作参考。生成图片下一步必须调用 edit_image(image_search_reference_indexes=[...]) 一次性选择所有人物参考图，edit_prompt 只写保持参考图主体不变并修改动作/场景/构图，不要复述外观、服饰、发色、作品名或画风；禁止退回 generate_image 纯文生图。图生视频调用 generate_video(use_reference_image=true, image_search_reference_indexes=[...])。",
                 "如果用户说‘搜/找/给我看某人图片/参考图’，且对象不是频道成员/群友，调用 image_search 且 send_to_channel=true，把参考图发到频道；如果只是要生成，则 send_to_channel=false，仅内部参考。",
                 "image_search 返回后，后续生成必须由你选择参考图，并用短 edit_prompt 保持参考图人物相似度。",
                 "如果是画某个成员 / @某人，先调用 get_user_profile 查询 display_name + bio。",
