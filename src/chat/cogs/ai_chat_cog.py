@@ -3,7 +3,7 @@
 import discord
 from discord.ext import commands
 import logging
-from typing import Dict, Optional, List
+from typing import Any, Awaitable, Callable, Dict, Optional, List
 import re
 import io
 from datetime import datetime
@@ -310,6 +310,10 @@ class AIChatCog(commands.Cog):
             {"summarize_channel", "render_newspaper_brief"} & normalized_tools
         )
 
+    def _should_send_newspaper_brief(self, last_tools: List[str]) -> bool:
+        """兼容旧命名：转发到总结图片判断逻辑。"""
+        return self._should_send_summary_image(last_tools)
+
     def _should_send_long_reply_via_dm(self, text: str) -> bool:
         if not bool(MESSAGE_SETTINGS.get("LONG_REPLY_IN_DM_ENABLED", False)):
             return False
@@ -362,6 +366,26 @@ class AIChatCog(commands.Cog):
             message, final_source_text, mention_author=False
         )
         await self._suppress_link_previews(sent_messages)
+
+    async def _run_with_typing_status(
+        self,
+        channel: discord.abc.GuildChannel,
+        operation: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        """尽量在耗时操作期间维持频道的“正在输入”状态。"""
+        typing_context = channel.typing()
+        try:
+            await typing_context.__aenter__()
+        except discord.HTTPException:
+            return await operation()
+
+        try:
+            return await operation()
+        finally:
+            try:
+                await typing_context.__aexit__(None, None, None)
+            except Exception:
+                pass
 
     async def _should_show_sources(self) -> bool:
         """Dashboard可配置的消息源展示开关，默认开启"""
@@ -546,6 +570,39 @@ class AIChatCog(commands.Cog):
             await self._suppress_link_previews(sent_messages)
         return True
 
+    async def _send_newspaper_brief_with_full_text(
+        self,
+        message: discord.Message,
+        response_text: str,
+        source_text: str,
+        source_links: List[tuple],
+        *,
+        used_web_search: bool,
+        provided_image_data: Optional[dict] = None,
+        title: str = "月月简报",
+        section_name: str = "搜索 / 总结",
+    ) -> bool:
+        """兼容旧命名：发送报纸简报图，并在下方补发完整文字。"""
+        sent = await self._send_newspaper_brief_reply(
+            message=message,
+            body_text=response_text,
+            source_text=source_text,
+            source_links=source_links,
+            provided_image_data=provided_image_data,
+            title=title,
+            section_name=section_name,
+            send_sources=False,
+        )
+        if not sent:
+            return False
+
+        sent_messages = await self._reply_text_safely(
+            message, response_text, mention_author=False
+        )
+        if used_web_search:
+            await self._suppress_link_previews(sent_messages)
+        return True
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """
@@ -638,15 +695,22 @@ class AIChatCog(commands.Cog):
                 if should_send_summary:
                     # 若 Imagen 开启可用，忽略 render_newspaper_brief 工具产出，优先生成 AI 配图
                     log.info("调用了总结工具, 尝试优先生成 AI 配图。")
-                    sent = await self._send_summary_with_full_text(
-                        message=message,
-                        response_text=response_text,
-                        source_text=source_text,
-                        source_links=source_links,
-                        used_web_search=used_web_search,
-                        provided_image_data=tool_image_data,
-                        title="月月频道简报",
-                        section_name="频道总结",
+
+                    async def _send_summary_reply() -> bool:
+                        return await self._send_summary_with_full_text(
+                            message=message,
+                            response_text=response_text,
+                            source_text=source_text,
+                            source_links=source_links,
+                            used_web_search=used_web_search,
+                            provided_image_data=tool_image_data,
+                            title="月月频道简报",
+                            section_name="频道总结",
+                        )
+
+                    sent = await self._run_with_typing_status(
+                        message.channel,
+                        _send_summary_reply,
                     )
                     if sent:
                         await self._record_bot_reply_usage_if_needed(message)
@@ -658,43 +722,7 @@ class AIChatCog(commands.Cog):
                     or isinstance(message.channel, discord.Thread)
                 )
                 if is_unrestricted:
-                    sent_messages = await self._reply_text_safely(
-                        message, body_text or response_text, mention_author=True
-                    )
-                    if used_web_search:
-                        await self._suppress_link_previews(sent_messages)
-                    await self._reply_sources_below_image(message, source_text, source_links)
-                    await self._record_bot_reply_usage_if_needed(message)
-                    return
-
-                if self._should_send_long_reply_via_dm(body_text or response_text):
-                    try:
-                        channel_mention = (
-                            message.channel.mention
-                            if isinstance(
-                                message.channel, (discord.TextChannel, discord.Thread)
-                            )
-                            else "你们的私信"
-                        )
-
-                        if len(body_text or response_text) > 1800:
-                            await self._send_dm_text_safely(
-                                message.author, 'Long reply split in DM:', body_text or response_text
-                            )
-                            await self._record_bot_reply_usage_if_needed(message)
-                            return
-                        await message.author.send(
-                            f"刚刚在 {channel_mention} 频道里，你想听我说的话有点多，在这里悄悄告诉你哦：\n\n{body_text or response_text}"
-                        )
-                        await self._record_dashboard_delivery_stats(dm_messages=1)
-                        await self._record_bot_reply_usage_if_needed(message)
-                        log.info(
-                            f"回复因过长已通过私信发送给 {message.author.display_name}"
-                        )
-                    except discord.Forbidden:
-                        log.warning(
-                            f"无法通过私信发送给 {message.author.display_name}，将在原频道回复提示信息。"
-                        )
+                    async def _send_unrestricted_reply() -> None:
                         sent_messages = await self._reply_text_safely(
                             message, body_text or response_text, mention_author=True
                         )
@@ -702,16 +730,69 @@ class AIChatCog(commands.Cog):
                             await self._suppress_link_previews(sent_messages)
                         await self._reply_sources_below_image(message, source_text, source_links)
                         await self._record_bot_reply_usage_if_needed(message)
-                        return
+
+                    await self._run_with_typing_status(
+                        message.channel,
+                        _send_unrestricted_reply,
+                    )
                     return
 
-                sent_messages = await self._reply_text_safely(
-                    message, body_text or response_text, mention_author=True
+                if self._should_send_long_reply_via_dm(body_text or response_text):
+                    async def _send_long_reply() -> None:
+                        try:
+                            channel_mention = (
+                                message.channel.mention
+                                if isinstance(
+                                    message.channel, (discord.TextChannel, discord.Thread)
+                                )
+                                else "你们的私信"
+                            )
+
+                            if len(body_text or response_text) > 1800:
+                                await self._send_dm_text_safely(
+                                    message.author, 'Long reply split in DM:', body_text or response_text
+                                )
+                                await self._record_bot_reply_usage_if_needed(message)
+                                return
+                            await message.author.send(
+                                f"刚刚在 {channel_mention} 频道里，你想听我说的话有点多，在这里悄悄告诉你哦：\n\n{body_text or response_text}"
+                            )
+                            await self._record_dashboard_delivery_stats(dm_messages=1)
+                            await self._record_bot_reply_usage_if_needed(message)
+                            log.info(
+                                f"回复因过长已通过私信发送给 {message.author.display_name}"
+                            )
+                        except discord.Forbidden:
+                            log.warning(
+                                f"无法通过私信发送给 {message.author.display_name}，将在原频道回复提示信息。"
+                            )
+                            sent_messages = await self._reply_text_safely(
+                                message, body_text or response_text, mention_author=True
+                            )
+                            if used_web_search:
+                                await self._suppress_link_previews(sent_messages)
+                            await self._reply_sources_below_image(message, source_text, source_links)
+                            await self._record_bot_reply_usage_if_needed(message)
+
+                    await self._run_with_typing_status(
+                        message.channel,
+                        _send_long_reply,
+                    )
+                    return
+
+                async def _send_plain_reply() -> None:
+                    sent_messages = await self._reply_text_safely(
+                        message, body_text or response_text, mention_author=True
+                    )
+                    if used_web_search:
+                        await self._suppress_link_previews(sent_messages)
+                    await self._reply_sources_below_image(message, source_text, source_links)
+                    await self._record_bot_reply_usage_if_needed(message)
+
+                await self._run_with_typing_status(
+                    message.channel,
+                    _send_plain_reply,
                 )
-                if used_web_search:
-                    await self._suppress_link_previews(sent_messages)
-                await self._reply_sources_below_image(message, source_text, source_links)
-                await self._record_bot_reply_usage_if_needed(message)
 
             except discord.errors.HTTPException as e:
                 final_body_text = str(body_text or response_text or "")

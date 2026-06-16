@@ -46,10 +46,16 @@ class _DummyCog:
 
 
 class _DummyTypingContext:
+    def __init__(self):
+        self.entered = 0
+        self.exited = 0
+
     async def __aenter__(self):
+        self.entered += 1
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
+        self.exited += 1
         return False
 
 
@@ -105,6 +111,13 @@ _ensure_module(
 _ensure_module(
     "src.chat.features.tools.functions.summarize_channel",
     text_to_newspaper_brief_image=MagicMock(),
+)
+_ensure_module(
+    "src.chat.features.image_generation.services.gemini_imagen_service",
+    gemini_imagen_service=MagicMock(
+        is_available=MagicMock(return_value=False),
+        generate_single_image=AsyncMock(return_value=None),
+    ),
 )
 _ensure_module(
     "src.chat.utils.database",
@@ -460,7 +473,7 @@ def test_on_message_records_bot_usage_after_channel_summary_brief():
     bot, message = _build_message(author_bot=True)
     cog = AIChatCog(bot=bot)
     cog.handle_chat_message = AsyncMock(return_value="频道总结内容")
-    cog._send_newspaper_brief_with_full_text = AsyncMock(return_value=True)
+    cog._send_summary_with_full_text = AsyncMock(return_value=True)
     cog._record_bot_reply_usage_if_needed = AsyncMock()
 
     ai_chat_cog_module.gemini_service.last_called_tools = ["summarize_channel"]
@@ -480,12 +493,47 @@ def test_on_message_records_bot_usage_after_channel_summary_brief():
 
     asyncio.run(cog.on_message(message))
 
-    cog._send_newspaper_brief_with_full_text.assert_awaited_once()
+    cog._send_summary_with_full_text.assert_awaited_once()
     cog._record_bot_reply_usage_if_needed.assert_awaited_once_with(message)
+
+
+def test_on_message_keeps_typing_during_channel_summary_send():
+    bot, message = _build_message(author_bot=True)
+    typing_context = _DummyTypingContext()
+    message.channel.typing = lambda: typing_context
+
+    cog = AIChatCog(bot=bot)
+    cog.handle_chat_message = AsyncMock(return_value="频道总结内容")
+    cog._send_summary_with_full_text = AsyncMock(return_value=True)
+    cog._record_bot_reply_usage_if_needed = AsyncMock()
+
+    ai_chat_cog_module.gemini_service.last_called_tools = ["summarize_channel"]
+    ai_chat_cog_module.gemini_service.last_tool_image_data = None
+    ai_chat_cog_module.gemini_service.last_tool_source_links = []
+    ai_chat_cog_module.message_processor.process_message = AsyncMock(
+        return_value={"user_content": "hi", "replied_content": "", "image_data_list": []}
+    )
+    ai_chat_cog_module.chat_service.should_process_message = AsyncMock(return_value=True)
+    ai_chat_cog_module.chat_db_manager.is_user_globally_blacklisted = AsyncMock(
+        return_value=False
+    )
+    ai_chat_cog_module.chat_db_manager.is_bot_reply_paused = AsyncMock(return_value=False)
+    ai_chat_cog_module.chat_db_manager.get_bot_reply_daily_count = AsyncMock(
+        return_value=0
+    )
+
+    asyncio.run(cog.on_message(message))
+
+    assert typing_context.entered == 2
+    assert typing_context.exited == 2
+    cog._send_summary_with_full_text.assert_awaited_once()
 
 
 def test_on_message_records_bot_usage_after_direct_dm_send():
     bot, message = _build_message(author_bot=True)
+    typing_context = _DummyTypingContext()
+    message.channel.typing = lambda: typing_context
+
     cog = AIChatCog(bot=bot)
     cog.handle_chat_message = AsyncMock(return_value="这是一段会走私信分支的回复")
     cog._record_dashboard_delivery_stats = AsyncMock()
@@ -513,3 +561,5 @@ def test_on_message_records_bot_usage_after_direct_dm_send():
     message.author.send.assert_awaited_once()
     cog._record_dashboard_delivery_stats.assert_awaited_once_with(dm_messages=1)
     cog._record_bot_reply_usage_if_needed.assert_awaited_once_with(message)
+    assert typing_context.entered == 2
+    assert typing_context.exited == 2
