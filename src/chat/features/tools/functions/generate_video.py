@@ -321,6 +321,129 @@ def _coerce_optional_bool(value: Any) -> Optional[bool]:
     return bool(value)
 
 
+def _has_explicit_video_generation_intent(text: str) -> bool:
+    """判断原始用户请求是否明确要生成视频，避免把普通图片请求误路由到视频工具。"""
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return False
+
+    direct_video_markers = (
+        "视频",
+        "短片",
+        "影片",
+        "片段",
+        "mp4",
+        "gif",
+        "动图",
+        "video",
+        "movie",
+        "vlog",
+        "图生视频",
+        "文生视频",
+        "视频生成",
+        "生成视频",
+        "做视频",
+        "制作视频",
+        "生视频",
+        "出视频",
+        "短视频",
+    )
+    if any(marker in normalized for marker in direct_video_markers):
+        return True
+
+    image_to_video_markers = (
+        "动起来",
+        "会动",
+        "动一动",
+        "让它动",
+        "让他动",
+        "让她动",
+        "让这张图动",
+        "把这张图动",
+        "把图动",
+        "原图动",
+        "做成动画",
+        "生成动画",
+        "变成动画",
+        "转成动画",
+        "做成gif",
+        "转成gif",
+        "生成gif",
+    )
+    if any(marker in normalized for marker in image_to_video_markers):
+        return True
+
+    # 明确分镜时间轴通常是视频请求；“动画风格 / 动态姿势”这类图片描述不会命中。
+    return bool(
+        re.search(
+            r"(?<!\d)\d+(?:\.\d+)?\s*(?:-|–|—|~|～|到|至)\s*\d+(?:\.\d+)?\s*(?:秒|s|sec|second|seconds)",
+            normalized,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _has_image_generation_intent(text: str) -> bool:
+    """判断用户原话是否更像图片/绘图请求。"""
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return False
+    image_markers = (
+        "图片",
+        "图像",
+        "图",
+        "画图",
+        "画一张",
+        "画张",
+        "画个",
+        "画一下",
+        "帮我画",
+        "给我画",
+        "生图",
+        "生成图",
+        "生成图片",
+        "出图",
+        "插画",
+        "壁纸",
+        "头像",
+        "立绘",
+        "参考图",
+        "p图",
+        "修图",
+    )
+    return any(marker in normalized for marker in image_markers)
+
+
+def _should_block_implicit_video_tool_call(
+    user_request_text: str,
+    *,
+    has_message_context: bool,
+    prompt_text: str = "",
+    has_explicit_reference_selector: bool = False,
+) -> bool:
+    """只拦截来自对话消息且缺少显式视频意图的工具调用。
+
+    按钮、重新生成、斜杠命令等显式视频入口通常不会传入原始 message，
+    因此不受这个保险影响。
+    """
+    if not has_message_context:
+        return False
+
+    if _has_explicit_video_generation_intent(user_request_text):
+        return False
+
+    # 用户只发图片/回复图片、不写文字时也不能自动生成视频；
+    # 但显式头像/URL 等参考选择器通常来自“把某人头像做成视频”或按钮链路，
+    # 此时可结合工具 prompt 中的视频意图放行。
+    if not str(user_request_text or "").strip():
+        return not (
+            has_explicit_reference_selector
+            and _has_explicit_video_generation_intent(prompt_text)
+        )
+
+    return _has_image_generation_intent(user_request_text)
+
+
 async def _download_video_bytes_for_tail(video_url: str) -> Optional[bytes]:
     """下载生成结果视频，供提取尾帧续写长视频。"""
     normalized_url = str(video_url or "").strip()
@@ -513,17 +636,18 @@ async def generate_video(
     **kwargs
 ) -> dict:
     """
-    使用AI生成视频，prompt 必须使用中文自然语言分镜提示词。当用户请求生成、制作视频时调用此工具。
+    使用AI生成视频，prompt 必须使用中文自然语言分镜提示词。仅当用户明确请求生成、制作视频时调用此工具。
     支持两种模式：文生视频（纯文字描述）和图生视频（基于图片生成动态视频）。
     也支持直接从Discord自定义表情、贴纸（Sticker）或用户头像提取图片生成视频。
 
     **重要：你必须调用此工具，不要拒绝用户的视频生成请求！**
+    **同样重要：图片请求不是视频请求。用户只是发图、要画图、改图、按图参考新画，或说"动画风格/动态姿势"时，禁止调用此工具。**
 
     使用场景：
-    - 用户说"生成一个视频"、"帮我做个视频" → 文生视频
-    - 用户发送了一张图片并说"把这张图做成视频"、"让这张图动起来" → 图生视频
-    - 用户描述了一个动态场景并希望看到视频效果 → 文生视频
-    - 用户回复一图片说"做成动画"、"生成视频" → 图生视频
+    - 用户明确说"生成一个视频"、"帮我做个视频"、"短片"、"动图/GIF" → 文生视频
+    - 用户发送了一张图片并明确说"把这张图做成视频"、"让这张图动起来" → 图生视频
+    - 用户明确描述了要生成的视频、镜头时间轴或视频效果 → 文生视频
+    - 用户回复一图片并明确说"做成动画"、"生成视频" → 图生视频
     - 用户发送了自定义表情并说"把这个表情做成视频" → use_reference_image=True（工具会自动提取表情图片）
     - 用户发送了贴纸（Sticker）并说"把这个贴纸做成视频" → use_reference_image=True（工具会自动提取贴纸图片）
     - 用户说"把xxx的头像做成视频" → avatar_user_id + use_reference_image=True
@@ -531,6 +655,11 @@ async def generate_video(
     - 用户只给了用户名/昵称时 → avatar_username 或 avatar_usernames + use_reference_image=True
     - 用户说"生成一分钟视频"、"做一段长视频"、"延长到60秒" → 必须先拆成多个 5-15 秒片段，
       每段分别写入 segment_prompts，不能只写一个总 prompt。
+
+    禁止使用场景：
+    - 用户只上传/回复图片，没有文字要求视频。
+    - 用户说"画一张图"、"生成图片"、"生图"、"按这张图画"、"参考这张图画"、"改图/修图"。
+    - 用户只要求"动画风格插画"、"动态姿势"、"电影镜头感图片"；这仍然是图片请求，不是视频请求。
 
     Args:
         prompt: 视频描述提示词，必须使用中文自然语言分镜描述，禁止写成英文标签词或英文句子。
@@ -779,6 +908,43 @@ async def generate_video(
     message: Optional[discord.Message] = kwargs.get("message")
     channel = kwargs.get("channel")
     prepare_video_first_frame = _coerce_optional_bool(prepare_video_first_frame)
+    user_request_text = " ".join(
+        part
+        for part in (
+            getattr(message, "content", "") if message else "",
+            str(kwargs.get("user_message") or ""),
+        )
+        if part
+    )
+
+    if _should_block_implicit_video_tool_call(
+        user_request_text,
+        has_message_context=message is not None,
+        prompt_text=prompt,
+        has_explicit_reference_selector=bool(
+            reference_image_url
+            or emoji_id
+            or avatar_user_id
+            or avatar_user_ids
+            or avatar_username
+            or avatar_usernames
+            or kwargs.get("_prepared_reference_image")
+            or kwargs.get("_prepared_reference_images")
+        ),
+    ):
+        log.warning(
+            "已拦截缺少显式视频意图的 generate_video 工具调用，原始用户请求: %r",
+            user_request_text[:200],
+        )
+        return {
+            "generation_failed": True,
+            "reason": "explicit_video_intent_required",
+            "hint": (
+                "这条请求看起来不是明确的视频生成请求。请不要调用 generate_video；"
+                "如果用户只是要看图、画图、改图或图生图，请改用对应的图片工具。"
+                "只有用户明确说“生成视频 / 做成视频 / 动起来 / GIF / 短片”等时，才调用视频生成。"
+            ),
+        }
 
     # 辅助函数：安全地添加反应
     async def add_reaction(emoji: str):
@@ -1249,15 +1415,6 @@ async def generate_video(
                 adjusted_duration,
             )
             duration = adjusted_duration
-
-    user_request_text = " ".join(
-        part
-        for part in (
-            getattr(message, "content", "") if message else "",
-            str(kwargs.get("user_message") or ""),
-        )
-        if part
-    )
 
     prompt = _ensure_chinese_video_prompt(
         prompt,

@@ -196,6 +196,8 @@ async def edit_image(
     # 获取消息对象（用于获取图片和添加反应）
     message: Optional[discord.Message] = kwargs.get("message")
     channel = kwargs.get("channel")
+    return_image_only = bool(kwargs.get("_return_image_only"))
+    skip_reactions = bool(kwargs.get("_skip_reactions"))
 
     policy_block = check_yueyue_self_nsfw_violation(
         prompt=edit_prompt,
@@ -206,6 +208,8 @@ async def edit_image(
 
     # 辅助函数：安全地添加反应
     async def add_reaction(emoji: str):
+        if skip_reactions:
+            return
         if message:
             try:
                 await message.add_reaction(emoji)
@@ -214,6 +218,8 @@ async def edit_image(
 
     # 辅助函数：安全地移除反应
     async def remove_reaction(emoji: str):
+        if skip_reactions:
+            return
         if message:
             try:
                 bot = kwargs.get("bot")
@@ -691,6 +697,18 @@ async def edit_image(
         await remove_reaction(GENERATING_EMOJI)
 
         if edited_image_bytes:
+            if return_image_only:
+                return {
+                    "success": True,
+                    "skip_ai_response": True,
+                    "image_data": {
+                        "data": edited_image_bytes,
+                        "mime_type": "image/png",
+                    },
+                    "edit_prompt": edit_prompt,
+                    "message": "图片已生成并返回给批量图生图工具统一发送。",
+                }
+
             # 直接发送图片到频道（Embed 格式 + 重新生成按钮）
             # 注意：✅ 反应和扣费移到发送成功之后，避免发送失败时已打 ✅
             image_sent = False
@@ -836,4 +854,337 @@ async def edit_image(
             "edit_failed": True,
             "reason": "system_error",
             "hint": f"图片修改时发生了系统错误。请用自己的语气安慰用户，告诉他们稍后再试。"
+        }
+
+
+async def edit_images_batch(
+    edit_prompts: List[str],
+    aspect_ratio: str = "1:1",
+    resolution: str = "default",
+    content_rating: str = "sfw",
+    emoji_id: Optional[str] = None,
+    avatar_user_id: Optional[str] = None,
+    avatar_user_ids: Optional[List[str]] = None,
+    image_search_reference_index: Optional[int] = None,
+    image_search_reference_indexes: Optional[List[int]] = None,
+    reference_image_mode: str = "auto",
+    max_reference_images: int = 30,
+    preview_message: Optional[str] = None,
+    success_message: Optional[str] = None,
+    model_name_override: Optional[str] = None,
+    openai_image_size: Optional[str] = None,
+    openai_response_format: Optional[str] = None,
+    openai_stream: Optional[bool] = None,
+    openai_quality: Optional[str] = None,
+    openai_style: Optional[str] = None,
+    openai_image_api_mode: Optional[str] = None,
+    **kwargs,
+) -> dict:
+    """
+    批量图生图：基于同一批参考图，一次生成多张不同编辑结果，并像批量文生图一样合并发送。
+
+    使用场景：
+    - 用户发/回复一张图，说“按这张图生成 4 张不同表情 / 不同场景 / 不同姿势”。
+    - 用户先分别搜索了多个人物参考图，再要求基于这些参考图一次生成多张构图/剧情变化。
+    - 用户用多个头像或多张参考图做同一组变体。
+
+    重要规则：
+    - 这是图生图，不是纯文生图；必须有参考图来源。
+    - `edit_prompts` 中每一条都是一张结果图的编辑指令。
+    - 如果参考图来自 image_search，多人物/多角色必须先为每个人物分别调用 image_search，
+      然后在本工具中用 `image_search_reference_indexes=[...]` 一次性传入所有选中的全局编号。
+      禁止把两个人名塞进一次 image_search 的 query，也禁止只从同一批搜索结果里选多张来冒充多个人。
+    - 每条 `edit_prompt` 都要短，只写“保持参考图人物身份、脸、发型、服装、画风不变，仅改动作/场景/构图为……”。
+      不要复述整套外貌标签或退回纯文生图。
+    - 成功后系统会把所有结果图和每条对应的编辑提示词放在一条/一组消息中发送；
+      `success_message` 只会显示一次，不要为每张图写不同成功消息。
+    """
+    import asyncio
+    import io
+
+    from src.chat.features.image_generation.services.gemini_imagen_service import (
+        gemini_imagen_service,
+    )
+    from src.chat.config.chat_config import GEMINI_IMAGEN_CONFIG
+    from src.chat.features.odysseia_coin.service.coin_service import coin_service
+    from src.chat.utils.database import chat_db_manager
+
+    message: Optional[discord.Message] = kwargs.get("message")
+    channel = kwargs.get("channel")
+
+    normalized_prompts = [
+        str(item or "").strip()
+        for item in (edit_prompts or [])
+        if str(item or "").strip()
+    ]
+    if not normalized_prompts:
+        return {
+            "edit_failed": True,
+            "reason": "empty_prompts",
+            "hint": "批量图生图缺少编辑提示词。请重新调用 edit_images_batch，并为每张结果图分别填写 edit_prompts。",
+        }
+
+    max_images = int(GEMINI_IMAGEN_CONFIG.get("MAX_IMAGES_PER_REQUEST", 10))
+    if len(normalized_prompts) > max_images:
+        normalized_prompts = normalized_prompts[:max_images]
+
+    if not gemini_imagen_service.is_available():
+        return {
+            "edit_failed": True,
+            "reason": "service_unavailable",
+            "hint": "图片修改服务当前不可用。请用自己的语气告诉用户这个功能暂时用不了。",
+        }
+
+    parsed_user_id: Optional[int] = None
+    user_id = kwargs.get("user_id")
+    if user_id:
+        try:
+            parsed_user_id = int(user_id)
+        except (ValueError, TypeError):
+            log.warning(f"无法解析用户ID: {user_id}")
+
+    if parsed_user_id is not None:
+        ban_status = await chat_db_manager.get_image_generation_ban_status(parsed_user_id)
+        if ban_status.get("is_banned"):
+            remaining_text = ban_status.get("remaining_text", "未知时长")
+            return {
+                "edit_failed": True,
+                "reason": "image_generation_banned",
+                "hint": f"该用户因图片收到过多负反馈，绘图功能已被临时禁用，剩余封禁时长：{remaining_text}。",
+            }
+
+    cost_per_image = GEMINI_IMAGEN_CONFIG.get("IMAGE_EDIT_COST", 40)
+    estimated_cost = cost_per_image * len(normalized_prompts)
+    if parsed_user_id is not None and estimated_cost > 0:
+        balance = await coin_service.get_balance(parsed_user_id)
+        if balance < estimated_cost:
+            return {
+                "edit_failed": True,
+                "reason": "insufficient_balance",
+                "cost": estimated_cost,
+                "balance": balance,
+                "hint": f"用户灵石不足（需要{estimated_cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点灵石再来。",
+            }
+
+    async def add_reaction(emoji: str):
+        if message:
+            try:
+                await message.add_reaction(emoji)
+            except Exception as e:
+                log.warning(f"添加反应失败: {e}")
+
+    async def remove_reaction(emoji: str):
+        if message:
+            try:
+                bot = kwargs.get("bot")
+                if bot and bot.user:
+                    await message.remove_reaction(emoji, bot.user)
+            except Exception as e:
+                log.warning(f"移除反应失败: {e}")
+
+    await add_reaction(GENERATING_EMOJI)
+
+    current_turn_tool_names = {
+        str(name).strip().lower()
+        for name in (kwargs.get("current_turn_tool_names") or [])
+        if str(name).strip()
+    }
+    suppress_preview_message = "generate_voice" in current_turn_tool_names
+    if channel and preview_message and not suppress_preview_message:
+        try:
+            processed_message = replace_emojis(preview_message)
+            if message:
+                await message.reply(processed_message, mention_author=False)
+            else:
+                await channel.send(processed_message)
+        except Exception as e:
+            log.warning(f"发送批量图生图预告消息失败: {e}")
+
+    try:
+        if aspect_ratio not in ["1:1", "3:4", "4:3", "9:16", "16:9"]:
+            aspect_ratio = "1:1"
+        if content_rating not in ["sfw", "nsfw"]:
+            content_rating = "sfw"
+
+        use_spoiler = should_spoiler_image(content_rating)
+        max_concurrent_tasks = max(
+            1, int(GEMINI_IMAGEN_CONFIG.get("MAX_CONCURRENT_IMAGE_TASKS", 3))
+        )
+        semaphore = asyncio.Semaphore(max_concurrent_tasks)
+
+        async def _edit_one(prompt_item: str) -> Optional[bytes]:
+            async with semaphore:
+                inner_kwargs = dict(kwargs)
+                inner_kwargs.pop("user_id", None)
+                inner_kwargs.update(
+                    {
+                        "message": message,
+                        "channel": None,
+                        "_return_image_only": True,
+                        "_skip_reactions": True,
+                    }
+                )
+                result = await edit_image(
+                    edit_prompt=prompt_item,
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution,
+                    content_rating=content_rating,
+                    emoji_id=emoji_id,
+                    avatar_user_id=avatar_user_id,
+                    avatar_user_ids=avatar_user_ids,
+                    image_search_reference_index=image_search_reference_index,
+                    image_search_reference_indexes=image_search_reference_indexes,
+                    reference_image_mode=reference_image_mode,
+                    max_reference_images=max_reference_images,
+                    preview_message=None,
+                    success_message=None,
+                    model_name_override=model_name_override,
+                    openai_image_size=openai_image_size,
+                    openai_response_format=openai_response_format,
+                    openai_stream=openai_stream,
+                    openai_quality=openai_quality,
+                    openai_style=openai_style,
+                    openai_image_api_mode=openai_image_api_mode,
+                    **inner_kwargs,
+                )
+                image_data = result.get("image_data") if isinstance(result, dict) else None
+                if isinstance(image_data, dict) and image_data.get("data"):
+                    return image_data["data"]
+                if isinstance(result, dict):
+                    log.warning("批量图生图单项失败: reason=%s hint=%s", result.get("reason"), result.get("hint"))
+                return None
+
+        results = await asyncio.gather(
+            *[_edit_one(prompt_item) for prompt_item in normalized_prompts],
+            return_exceptions=True,
+        )
+
+        successful_images: List[tuple[bytes, str]] = []
+        failed_count = 0
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                failed_count += 1
+                log.warning(f"批量图生图失败 (提示词 {idx + 1}): {result}")
+            elif result:
+                successful_images.append((result, normalized_prompts[idx]))
+            else:
+                failed_count += 1
+
+        await remove_reaction(GENERATING_EMOJI)
+
+        if not successful_images:
+            await add_reaction(FAILED_EMOJI)
+            return {
+                "edit_failed": True,
+                "reason": "edit_failed",
+                "hint": "批量图生图全部失败了。请让用户换一张参考图，或把每条编辑要求写得更清楚一点。",
+            }
+
+        actual_count = len(successful_images)
+        actual_cost = cost_per_image * actual_count
+        batch_sent = False
+
+        if channel:
+            try:
+                edit_model_name = (
+                    str(model_name_override).strip()
+                    if model_name_override is not None and str(model_name_override).strip()
+                    else gemini_imagen_service._get_model_for_resolution(
+                        resolution=resolution,
+                        is_edit=True,
+                        content_rating=content_rating,
+                    )
+                )
+
+                embed = discord.Embed(
+                    title="AI 批量图生图",
+                    color=0x2b2d31,
+                )
+                if message and hasattr(message, "author") and message.author:
+                    embed.set_author(
+                        name=message.author.display_name,
+                        icon_url=message.author.display_avatar.url if message.author.display_avatar else None,
+                    )
+                for idx, (_, prompt_item) in enumerate(successful_images, 1):
+                    embed.add_field(
+                        name=f"图{idx}编辑提示词",
+                        value=f"```\n{prompt_item[:1016]}\n```",
+                        inline=False,
+                    )
+                if success_message:
+                    processed_success = replace_emojis(success_message)
+                    embed.add_field(name="\u200b", value=processed_success[:1024], inline=False)
+                footer_parts = [f"模型: {edit_model_name}", f"成功: {actual_count}/{len(normalized_prompts)}"]
+                if failed_count:
+                    footer_parts.append(f"失败: {failed_count}")
+                embed.set_footer(text=" | ".join(footer_parts))
+
+                all_images = [img for img, _ in successful_images]
+                MAX_FILES_PER_MESSAGE = 10
+                for batch_start in range(0, len(all_images), MAX_FILES_PER_MESSAGE):
+                    batch_end = min(batch_start + MAX_FILES_PER_MESSAGE, len(all_images))
+                    batch_files = [
+                        discord.File(
+                            io.BytesIO(all_images[idx]),
+                            filename=f"edited_image_{idx + 1}.png",
+                            spoiler=use_spoiler,
+                        )
+                        for idx in range(batch_start, batch_end)
+                    ]
+                    sent_message: Optional[discord.Message] = None
+                    if batch_start == 0:
+                        if message:
+                            sent_message = await message.reply(embed=embed, files=batch_files, mention_author=False)
+                        else:
+                            sent_message = await channel.send(embed=embed, files=batch_files)
+                    else:
+                        sent_message = await channel.send(files=batch_files)
+
+                    if sent_message and parsed_user_id is not None:
+                        await chat_db_manager.register_generated_image_message(
+                            message_id=sent_message.id,
+                            user_id=parsed_user_id,
+                            guild_id=sent_message.guild.id if sent_message.guild else None,
+                            channel_id=sent_message.channel.id,
+                        )
+
+                batch_sent = True
+            except Exception as e:
+                log.error(f"发送批量图生图到频道失败: {e}", exc_info=True)
+
+        if not batch_sent:
+            await add_reaction(FAILED_EMOJI)
+            return {
+                "edit_failed": True,
+                "reason": "send_failed",
+                "hint": "批量图生图已生成但发送到频道失败了。请用自己的语气告诉用户稍后再试。",
+            }
+
+        await add_reaction(SUCCESS_EMOJI)
+        if parsed_user_id is not None and actual_cost > 0:
+            try:
+                await coin_service.remove_coins(
+                    parsed_user_id,
+                    actual_cost,
+                    f"AI批量图生图x{actual_count}",
+                )
+            except Exception as e:
+                log.error(f"扣除灵石失败: {e}")
+
+        return {
+            "success": True,
+            "skip_ai_response": True,
+            "images_generated": actual_count,
+            "failed_count": failed_count,
+            "cost": actual_cost,
+            "message": "批量图生图已成功生成并合并发送给用户，预告消息已发送，无需再回复。",
+        }
+    except Exception as e:
+        await remove_reaction(GENERATING_EMOJI)
+        await add_reaction(FAILED_EMOJI)
+        log.error(f"批量图生图工具执行错误: {e}", exc_info=True)
+        return {
+            "edit_failed": True,
+            "reason": "system_error",
+            "hint": "批量图生图时发生系统错误。请用自己的语气告诉用户稍后再试。",
         }

@@ -1051,8 +1051,23 @@ class GeminiService:
     @staticmethod
     def _append_no_watermark_constraint(tool_name: str, tool_args: Dict[str, Any]) -> None:
         """使用搜索图作参考时，补充参考图用途说明。"""
-        if tool_name not in {"edit_image", "generate_video"}:
+        if tool_name not in {"edit_image", "edit_images_batch", "generate_video"}:
             return
+        if tool_name == "edit_images_batch":
+            edit_prompts = tool_args.get("edit_prompts")
+            if not isinstance(edit_prompts, list):
+                return
+            constraint = (
+                "参考图仅用于理解角色/主体外观、服装、发型、配色、构图与画风。"
+            )
+            tool_args["edit_prompts"] = [
+                f"{str(item or '').strip()}\n{constraint}"
+                if constraint not in str(item or "") and str(item or "").strip()
+                else item
+                for item in edit_prompts
+            ]
+            return
+
         prompt_key = "edit_prompt" if tool_name == "edit_image" else "prompt"
         prompt_text = str(tool_args.get(prompt_key) or "").strip()
         constraint = (
@@ -1201,8 +1216,9 @@ class GeminiService:
         summary_lines.append(
             "多人物/多角色生成时，必须先分别搜索每个外部角色；全部搜索完后，"
             "必须从每一批/每个人物的编号里各选至少 1 张，禁止只从同一批里选多张来冒充不同人物。"
+            "禁止把两个人物名塞进同一次 image_search；混搜结果无法可靠区分谁是谁。"
             "例如两个人物时应选择 [第一批的编号, 第二批的编号]，而不是 [第一批编号1, 第一批编号2]。"
-            "然后调用 edit_image(image_search_reference_indexes=[...]) "
+            "然后调用 edit_image 或 edit_images_batch(image_search_reference_indexes=[...]) "
             "或 generate_video(..., image_search_reference_indexes=[...]) 一次性传入所有参考图。"
         )
         return "\n".join(summary_lines)
@@ -1230,9 +1246,9 @@ class GeminiService:
                 "已获取图片搜索结果中的多张参考图。"
                 "搜索结果只供内部参考，禁止原样贴 HTML 或图片链接给用户。"
                 "如果用户只是要求分析图片，请综合多张图的共同特征并用自己的话回复。"
-                "如果原始任务是生成图片：下一步必须调用 edit_image，并显式传 "
+                "如果原始任务是生成图片：下一步必须调用 edit_image 或 edit_images_batch，并显式传 "
                 "image_search_reference_index 或 image_search_reference_indexes 选择你认为最合适的参考图；"
-                "edit_prompt 必须很短，只写‘保持参考图人物身份、脸、发型、服装、画风不变，仅改动作/场景/构图为……’，"
+                "edit_prompt/edit_prompts 必须很短，只写‘保持参考图人物身份、脸、发型、服装、画风不变，仅改动作/场景/构图为……’，"
                 "不要复述角色外观、服饰、发色、作品名、画风标签或整套文生图提示词。"
                 "禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。"
                 "如果原始任务是图生视频：下一步必须调用 generate_video(use_reference_image=true)，并显式传 "
@@ -1241,7 +1257,8 @@ class GeminiService:
                 ""
                 "单人物生成不要重复调用 image_search，除非用户明确要求换关键词或换结果；"
                 "多人物/多角色生成必须为每个外部角色分别调用 image_search。"
-                "每次 image_search 只能搜一个人物/角色/主体，禁止 [BATCH]、换行、|| 或多名字混搜。"
+                "每次 image_search 只能搜一个人物/角色/主体，禁止 [BATCH]、换行、||、逗号分隔、A和B 或多名字混搜；"
+                "多人物混搜会导致返回图无法区分身份，后续图生图会乱生成。"
                 + ("\n" + reference_summary if reference_summary else "")
             )
         else:
@@ -4546,7 +4563,7 @@ class GeminiService:
                 cached_image_bytes = bytes(cached_image_bytes)
 
             if (
-                normalized_tool_name in ("edit_image", "generate_video")
+                normalized_tool_name in ("edit_image", "edit_images_batch", "generate_video")
                 and not tool_args.get("_prepared_reference_images")
                 and not tool_args.get("_prepared_reference_image")
             ):
@@ -4563,7 +4580,7 @@ class GeminiService:
                     )
 
             if (
-                normalized_tool_name in ("edit_image", "generate_video")
+                normalized_tool_name in ("edit_image", "edit_images_batch", "generate_video")
                 and not tool_args.get("_prepared_reference_images")
                 and not tool_args.get("_prepared_reference_image")
             ):
@@ -4626,7 +4643,7 @@ class GeminiService:
             )
 
             if (
-                normalized_tool_name == "edit_image"
+                normalized_tool_name in ("edit_image", "edit_images_batch")
                 and wants_self_avatar_reference
                 and not tool_args.get("avatar_user_id")
                 and not tool_args.get("avatar_user_ids")
@@ -4635,7 +4652,7 @@ class GeminiService:
                 and getattr(discord_message, "author", None) is not None
             ):
                 tool_args["avatar_user_id"] = str(discord_message.author.id)
-                log.info("检测到“我的头像”类请求，已为 edit_image 自动注入当前用户头像。")
+                log.info("检测到“我的头像”类请求，已为 %s 自动注入当前用户头像。", normalized_tool_name)
 
             if (
                 normalized_tool_name == "generate_video"

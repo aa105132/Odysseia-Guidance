@@ -75,3 +75,12 @@ def test_image_search_defaults_not_send_to_channel_param_exists():
     sig = inspect.signature(image_search_tool.image_search)
     assert sig.parameters["send_to_channel"].default is False
     assert sig.parameters["max_send_images"].default == 6
+
+
+def test_image_search_prompt_warns_against_multi_person_mixed_query():
+    import inspect
+
+    doc = inspect.getdoc(image_search_tool.image_search) or ""
+    assert "一次 image_search 只能搜索一个人物/角色/主体" in doc
+    assert "A和B" in doc
+    assert "多人物混搜返回的图片无法可靠区分谁是谁" in doc

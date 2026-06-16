@@ -17,7 +17,9 @@ from src.chat.features.tools.functions.generate_video import (
     _coerce_optional_bool,
     _concat_mp4_segments_with_ffmpeg,
     _ensure_chinese_video_prompt,
+    _has_explicit_video_generation_intent,
     _normalize_reference_image_prompt_terms,
+    _should_block_implicit_video_tool_call,
     generate_video as generate_video_tool,
 )
 from src.chat.features.video_generation.services.video_service import (
@@ -143,6 +145,35 @@ def test_generate_video_tool_coerces_string_boolean_flags():
     assert _coerce_optional_bool("1") is True
     assert _coerce_optional_bool(True) is True
     assert _coerce_optional_bool(False) is False
+
+
+def test_video_tool_requires_explicit_video_intent_for_message_context():
+    assert _has_explicit_video_generation_intent("把这张图动起来")
+    assert _has_explicit_video_generation_intent("生成一个 0-3秒 镜头推进的视频")
+    assert not _has_explicit_video_generation_intent("画一张动画风格插画，角色是动态姿势")
+
+    assert _should_block_implicit_video_tool_call(
+        "画一张动画风格插画，角色是动态姿势",
+        has_message_context=True,
+    )
+    assert _should_block_implicit_video_tool_call(
+        "",
+        has_message_context=True,
+    )
+    assert not _should_block_implicit_video_tool_call(
+        "",
+        has_message_context=True,
+        prompt_text="基于用户头像生成 0-6 秒视频",
+        has_explicit_reference_selector=True,
+    )
+    assert not _should_block_implicit_video_tool_call(
+        "把这张图动起来",
+        has_message_context=True,
+    )
+    assert not _should_block_implicit_video_tool_call(
+        "画一张动画风格插画",
+        has_message_context=False,
+    )
 
 
 def test_concat_mp4_segments_falls_back_to_imageio_ffmpeg(monkeypatch):

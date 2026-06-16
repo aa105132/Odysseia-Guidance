@@ -381,10 +381,11 @@ async def image_search(
     - 用户要求生成不熟悉的外部人物/角色/物品（例如“凡人动漫南宫婉”）时，
       可先调用本工具获取视觉参考，再调用 edit_image 或 generate_video。
     - **一次 image_search 只能搜索一个人物/角色/主体。** 多人物/多角色生成时，必须分别多次调用本工具，
-      每次 query 只写一个人物名和必要作品名；禁止使用 [BATCH]、换行、|| 或把多个名字塞进同一个 query。
+      每次 query 只写一个人物名和必要作品名；禁止使用 [BATCH]、换行、||、逗号分隔、"A B"、"A和B" 或把多个名字塞进同一个 query。
+      多人物混搜返回的图片无法可靠区分谁是谁，后续拿去图生图会乱生成。
 
     Args:
-        query: 图片搜索关键词。一次只能包含一个人物/角色/主体；多人物任务必须多次调用 image_search。禁止 [BATCH]、多行批量查询和 || 分隔。
+        query: 图片搜索关键词。一次只能包含一个人物/角色/主体；多人物任务必须多次调用 image_search。禁止 [BATCH]、多行批量查询、||、逗号分隔和 A/B 多名字混搜。
         max_results: 最多解析/返回图片 URL 数量，建议 4-10，默认 8。
         analyze_images: 是否下载多张可访问图片作为多模态参考图，默认 true。
         max_reference_images: 最多下载并传给月月看的参考图数量，建议 1-6，默认 6。
@@ -538,7 +539,8 @@ async def image_search(
             if sent_message_ids else
             "图片搜索结果仅供月月内部参考，不能原样贴给用户。"
             "本次搜索结果只对应当前这一个 query 里的单个人物/主体；多人物时继续逐个调用 image_search，并记清每批编号对应的人物。"
-            "请先消化 HTML/图片内容；如果原始任务是生成图片，下一步必须调用 edit_image，"
+            "禁止把两个人物名塞进同一次 image_search；混搜结果无法区分谁是谁。"
+            "请先消化 HTML/图片内容；如果原始任务是生成图片，下一步必须调用 edit_image 或 edit_images_batch，"
             "并显式传 image_search_reference_index 或 image_search_reference_indexes 选择参考图；"
             "edit_prompt 必须很短，只写保持参考图主体不变并修改动作/场景/构图，不要复述外观、服饰、发色、作品名或画风。"
             "禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。"
@@ -558,8 +560,9 @@ async def image_search(
         output["image_reference_hint"] = (
             f"已下载 {len(image_data_list)} 张搜索图片作为内部参考图。"
             "月月需要先分析这些图的共同视觉特征，并记住这批参考图对应当前 query 的这个人物/主体；多人物/多角色时必须继续为其他外部角色逐个调用 image_search，"
+            "禁止把两个人物放在同一个 query 里混搜，因为返回图无法可靠区分身份；"
             "所有搜索会在本轮累计成全局参考图编号；后续生成图片必须调用 edit_image 并显式传 "
-            "image_search_reference_index 或 image_search_reference_indexes 一次性选择所有需要的参考图。edit_prompt 只写保持参考图主体不变并修改动作/场景/构图，"
+            "image_search_reference_index 或 image_search_reference_indexes 一次性选择所有需要的参考图；批量图生图则调用 edit_images_batch。edit_prompt/edit_prompts 只写保持参考图主体不变并修改动作/场景/构图，"
             "不要复述外观、服饰、发色、作品名或画风。图生视频必须调用 generate_video 并显式传搜索图编号。"
             "不要让代码层自动硬传搜索图，也不要退回纯文生图。"
         )

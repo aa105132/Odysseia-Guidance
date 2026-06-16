@@ -59,6 +59,7 @@ sys.modules.setdefault(
 
 from src.chat.services.gemini_service import GeminiService
 from src.chat.features.tools.functions.generate_video import generate_video as generate_video_tool
+from src.chat.features.tools.functions.edit_image import edit_images_batch as edit_images_batch_tool
 
 
 def test_generate_video_openai_schema_exposes_avatar_arrays():
@@ -75,6 +76,20 @@ def test_generate_video_openai_schema_exposes_avatar_arrays():
     assert params["avatar_user_id"]["type"] == "string"
     assert params["avatar_username"]["type"] == "string"
     assert params["generate_audio"]["type"] == "boolean"
+
+
+def test_edit_images_batch_openai_schema_exposes_prompt_array_and_search_indexes():
+    service = object.__new__(GeminiService)
+
+    tools = GeminiService._convert_tools_to_openai_format(
+        service,
+        [edit_images_batch_tool],
+    )
+
+    params = tools[0]["function"]["parameters"]["properties"]
+    assert params["edit_prompts"]["type"] == "array"
+    assert params["image_search_reference_indexes"]["type"] == "array"
+    assert params["avatar_user_ids"]["type"] == "array"
 
 
 

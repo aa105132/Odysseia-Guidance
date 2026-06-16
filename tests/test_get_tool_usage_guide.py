@@ -75,3 +75,5 @@ def test_get_tool_usage_guide_returns_topic_specific_runtime_rules():
     assert any("先调用 get_user_profile" in rule for rule in routing_rules)
     assert any("名片里的外貌" in rule for rule in routing_rules)
     assert any("头像兜底" in rule for rule in routing_rules)
+    assert any("edit_images_batch" in rule for rule in routing_rules)
+    assert any("多名字混搜" in rule for rule in routing_rules)
