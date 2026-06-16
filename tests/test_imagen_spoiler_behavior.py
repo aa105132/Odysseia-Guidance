@@ -288,14 +288,104 @@ def test_edit_image_keeps_base_image_before_prepared_avatar_references(monkeypat
     )
 
     assert result["success"] is True
-    assert captured["reference_images"] == [
-        {"data": b"base-image", "mime_type": "image/png"},
-        {"data": b"avatar-1", "mime_type": "image/png"},
-        {"data": b"avatar-2", "mime_type": "image/png"},
+    assert [item["data"] for item in captured["reference_images"]] == [
+        b"base-image",
+        b"avatar-1",
+        b"avatar-2",
+    ]
+    assert [item["mime_type"] for item in captured["reference_images"]] == [
+        "image/png",
+        "image/png",
+        "image/png",
     ]
     assert captured["reference_image"] == b"base-image"
     assert "第1张参考图是必须保留构图" in captured["edit_prompt"]
     assert "第2张到第3张是需要被P到原图中的用户头像参考图" in captured["edit_prompt"]
+
+
+def test_edit_image_combines_user_base_image_before_image_search_references(monkeypatch):
+    """用户底图 + image_search 参考图时，必须把用户底图放第 1 张传入。"""
+    channel = DummyChannel()
+    captured = {}
+
+    class _FakeAttachment:
+        content_type = "image/png"
+        filename = "user-base.png"
+
+        async def read(self):
+            return b"user-base-image"
+
+    fake_message = types.SimpleNamespace(
+        id=1,
+        guild=None,
+        content="用这张图当底图，再参考搜索到的角色外貌改一下",
+        stickers=[],
+        attachments=[_FakeAttachment()],
+        embeds=[],
+        reference=None,
+    )
+
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "IMAGE_EDIT_COST", 0)
+    monkeypatch.setattr(
+        imagen_service_module.gemini_imagen_service,
+        "is_available",
+        lambda: True,
+    )
+
+    async def fake_edit_image(**kwargs):
+        captured.update(kwargs)
+        return b"edited-image"
+
+    monkeypatch.setattr(
+        imagen_service_module.gemini_imagen_service,
+        "edit_image",
+        fake_edit_image,
+    )
+    monkeypatch.setattr(
+        imagen_service_module.gemini_imagen_service,
+        "_get_model_for_resolution",
+        lambda **kwargs: "imagen-edit-search-ref-test",
+    )
+
+    result = asyncio.run(
+        edit_image_tool.edit_image(
+            edit_prompt="保持搜索参考图人物身份不变，把她自然合成到用户底图里",
+            preview_message=None,
+            success_message=None,
+            channel=channel,
+            message=fake_message,
+            prepared_reference_images=[
+                {
+                    "data": b"search-ref-1",
+                    "mime_type": "image/jpeg",
+                    "filename": "image_search_reference_1.jpg",
+                    "source": "tool:image_search",
+                    "image_search_reference_index": 1,
+                    "reference_label": "搜索参考图 1",
+                },
+                {
+                    "data": b"search-ref-2",
+                    "mime_type": "image/png",
+                    "filename": "image_search_reference_2.png",
+                    "source": "tool:image_search",
+                    "image_search_reference_index": 2,
+                    "reference_label": "搜索参考图 2",
+                },
+            ],
+        )
+    )
+
+    assert result["success"] is True
+    assert [item["data"] for item in captured["reference_images"]] == [
+        b"user-base-image",
+        b"search-ref-1",
+        b"search-ref-2",
+    ]
+    assert captured["reference_image"] == b"user-base-image"
+    assert captured["reference_images"][1]["source"] == "tool:image_search"
+    assert captured["reference_images"][1]["image_search_reference_index"] == 1
+    assert "第1张参考图是用户当前发送或回复的底图" in captured["edit_prompt"]
+    assert "第2张到第3张是 image_search 搜到的人物/角色/风格参考图" in captured["edit_prompt"]
 
 
 def test_generate_image_nsfw_should_keep_spoiler(monkeypatch):

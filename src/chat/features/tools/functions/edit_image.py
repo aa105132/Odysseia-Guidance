@@ -323,6 +323,11 @@ async def edit_image(
         filename = str(item.get("filename") or "").lower()
         return "avatar" in source or filename.startswith("avatar_") or "avatar" in filename
 
+    def _is_image_search_reference(item: Dict[str, Any]) -> bool:
+        """判断参考图是否来自 image_search。"""
+        source = str(item.get("source") or "").lower()
+        return source == "tool:image_search" or bool(item.get("image_search_reference_index"))
+
     def _with_reference_role(
         item: Dict[str, Any],
         role: str,
@@ -369,6 +374,31 @@ async def edit_image(
                 _with_reference_role(item, "avatar", "用户头像参考图")
                 for item in prepared_candidates
             ]
+        elif any(_is_image_search_reference(item) for item in prepared_candidates):
+            # 支持“用户上传/回复底图 + image_search 搜索参考图”的组合：
+            # 用户图必须作为第 1 张底图，搜索图从第 2 张开始作为人物/风格参考。
+            base_images = await _find_base_images_for_avatar_edit()
+            if base_images:
+                remaining_slots = max(0, max_reference_images - len(base_images))
+                search_references = [
+                    _with_reference_role(item, "search_reference", "图片搜索参考图")
+                    for item in prepared_candidates[:remaining_slots]
+                ]
+                combined_references = base_images + search_references
+                reference_images = combined_references
+                reference_image = combined_references[0]
+                edit_prompt = (
+                    "【参考图顺序说明】第1张参考图是用户当前发送或回复的底图，必须保留其构图、主体、背景和基础画面；"
+                    f"第2张到第{len(combined_references)}张是 image_search 搜到的人物/角色/风格参考图。"
+                    "请在第1张底图基础上，按搜索参考图保持对应人物身份、脸、发型、服装、配色和画风；"
+                    "不要把第1张底图丢掉，也不要把搜索参考图当作唯一底图。\n"
+                    f"【编辑要求】{edit_prompt}"
+                )
+                log.info(
+                    "已组合用户底图 + image_search 参考图：底图 %s 张，搜索参考图 %s 张",
+                    len(base_images),
+                    len(search_references),
+                )
         log.info(f"已使用预处理参考图 {len(prepared_candidates)} 张")
     elif isinstance(prepared_reference_image, dict) and prepared_reference_image.get("data"):
         reference_image = prepared_reference_image
@@ -894,6 +924,8 @@ async def edit_images_batch(
     - 如果参考图来自 image_search，多人物/多角色必须先为每个人物分别调用 image_search，
       然后在本工具中用 `image_search_reference_indexes=[...]` 一次性传入所有选中的全局编号。
       禁止把两个人名塞进一次 image_search 的 query，也禁止只从同一批搜索结果里选多张来冒充多个人。
+    - 如果用户当前消息/回复里还有一张图片，且同时传入 image_search 参考图，工具会把用户图作为第1张底图，
+      image_search 结果作为后续人物/角色/风格参考图一起传入。
     - 每条 `edit_prompt` 都要短，只写“保持参考图人物身份、脸、发型、服装、画风不变，仅改动作/场景/构图为……”。
       不要复述整套外貌标签或退回纯文生图。
     - 成功后系统会把所有结果图和每条对应的编辑提示词放在一条/一组消息中发送；

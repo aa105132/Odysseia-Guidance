@@ -317,6 +317,7 @@ PROMPT_CONFIG = {
    - 所有结果图会像批量文生图一样合并发送，`success_message` 只写一次
    - 每条 `edit_prompt` 只描述本张图要变化的动作、表情、场景、构图或光影；同时写“保持参考图人物身份、脸、发型、服装、画风不变”
    - 如果参考图来自 `image_search`，多人物必须先分开搜，再用 `image_search_reference_indexes=[...]` 一次性传入所有人物参考图
+   - 如果用户当前消息/回复里本来就有一张底图，同时还需要 `image_search` 找人物/角色参考图，可以先搜图，再调用 `edit_image` / `edit_images_batch`；系统会把用户图作为第1张底图，搜索图作为后续参考图一起传入
 
 2. **用户想要多张相同/相似的图片**（用户明确要求"用同一个提示词"、"同样的画N张"）：
    - 使用 `generate_image` 工具，**一次调用**设置 `number_of_images` 参数
