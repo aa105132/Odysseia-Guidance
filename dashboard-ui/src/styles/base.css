@@ -1,0 +1,130 @@
+/* base.css — 重置 + 基础排版 + 无障碍 + 字体声明
+ * 反 AI slop：禁 backdrop-filter/blur，禁紫辉光，单一琥珀强调。 */
+
+/* ===== Reset ===== */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* ===== @font-face 思源宋体/黑体自托管 =====
+ * TODO: 阶段0暂无 woff2 文件。后续将字体放入 /public/fonts/ 启用自托管 + preload。
+ * 当前依赖下方 font-family 栈回退（Noto Serif/Songti/system-ui），
+ * @font-face 声明先行就位，文件到位后无需改动即生效。 */
+@font-face {
+  font-family: 'Source Han Serif SC';
+  src: url('/fonts/SourceHanSerifSC-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Han Serif SC';
+  src: url('/fonts/SourceHanSerifSC-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Han Sans SC';
+  src: url('/fonts/SourceHanSansSC-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Han Sans SC';
+  src: url('/fonts/SourceHanSansSC-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ===== Body ===== */
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+/* ===== 标题：展示宋体 ===== */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  color: var(--text-primary);
+}
+
+/* ===== 链接 ===== */
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* ===== 焦点态：琥珀环 ===== */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ===== 选区 ===== */
+::selection {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}
+
+/* ===== 滚动条（暖中性） ===== */
+/* Firefox */
+* {
+  scrollbar-color: var(--bg-surface-2) var(--bg-inset);
+  scrollbar-width: thin;
+}
+/* WebKit */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-inset);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-surface-2);
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--bg-inset);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+/* ===== 无障碍：降低动效 ===== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}

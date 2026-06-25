@@ -1,0 +1,5 @@
+/* tailwind.css — Tailwind 入口
+ * tokens.css 与 base.css 需在此前引入（由 main.ts 顺序保证）。 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

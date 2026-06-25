@@ -56,12 +56,19 @@ Odysseia 是一个为 Discord 社区“类脑”量身打造的、功能丰富�
     2. 打开 `.env` 文件，至少填入你的 Discord 机器人令牌 `DISCORD_TOKEN`。
 - **启动**: 在项目根目录下运行 `docker-compose up --build -d`。
 
+> **Dashboard 前端构建（重要）**：docker-compose 用 `volumes: .:/app` 整目录挂载，前端产物需在宿主机构建后挂载进容器。首次部署或前端更新后，先在宿主机执行：
+> ```
+> cd dashboard-ui && npm install && npm run build
+> ```
+> 构建产物落到 `src/dashboard/static/`（已 `.gitignore` 忽略，不入库）。容器启动后访问 `http://<host>:8080/` 即 Dashboard。Dockerfile 不含 Node 构建阶段（产物由宿主挂载提供）。
+
 ### 2. 手动部署 (备选)
-1.  **环境准备**: Python 3.10+
+1.  **环境准备**: Python 3.10+、Node 18+（构建 Dashboard 前端）
 2.  **克隆项目**: `git clone [仓库URL]`
 3.  **安装依赖**: `pip install -r requirements.txt`
-4.  **配置**: 参考 Docker 部署部分，创建并配置 `.env` 文件。
-5.  **运行**: `python -m src.main`
+4.  **构建前端**: `cd dashboard-ui && npm install && npm run build`（产物落入 `src/dashboard/static/`）
+5.  **配置**: 参考 Docker 部署部分，创建并配置 `.env` 文件。
+6.  **运行**: `python -m src.main`
 
 ---
 

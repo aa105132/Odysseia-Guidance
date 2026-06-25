@@ -15,6 +15,12 @@ import aiohttp
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import threading
+import time
+from collections import deque
+
+import psutil
+import docker
 
 from fastapi import FastAPI, HTTPException, Depends, status, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -4453,6 +4459,15 @@ async def get_coin_config(token: str = Depends(verify_token)):
     db_loan_thumbnail_url = await chat_db_manager.get_global_setting(
         "coin_loan_thumbnail_url"
     )
+    db_summary_imagen_enabled = await chat_db_manager.get_global_setting(
+        "summary_imagen_enabled"
+    )
+    db_summary_imagen_resolution = await chat_db_manager.get_global_setting(
+        "summary_imagen_resolution"
+    )
+    db_summary_imagen_model = await chat_db_manager.get_global_setting(
+        "summary_imagen_model"
+    )
     ghost_card_image_urls = get_ghost_card_image_urls()
     resolved_ghost_card_image_urls: Dict[str, str] = {}
     for setting_key, current_value in ghost_card_image_urls.items():
@@ -4479,6 +4494,16 @@ async def get_coin_config(token: str = Depends(verify_token)):
             db_summary_imagen_enabled == "true"
             if db_summary_imagen_enabled is not None
             else chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_ENABLED", False)
+        ),
+        "summary_imagen_resolution": (
+            db_summary_imagen_resolution
+            if db_summary_imagen_resolution is not None
+            else chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_RESOLUTION", "default")
+        ),
+        "summary_imagen_model": (
+            db_summary_imagen_model
+            if db_summary_imagen_model is not None
+            else chat_config.FEEDING_CONFIG.get("SUMMARY_IMAGEN_MODEL", "")
         ),
         "confession_response_image_url": (
             db_confession_response_image_url
@@ -6469,27 +6494,178 @@ async def clear_summary_logs(
         raise HTTPException(500, f"清除日志失败: {str(e)}")
 
 
+# ==================== 系统监控与容器运维 ====================
+# 后台系统采样：每 60s 采集一次，deque(maxlen=1440) 保留 24h 历史（1440 样本）。
+# 参考 web/web-main.py 的 collect_system_stats；守护线程不阻塞主线程。
+_SYSTEM_STATS_HISTORY: deque = deque(maxlen=1440)
+_system_stats_thread_started = False
+_SYSTEM_STATS_LOCK = threading.Lock()
+
+
+def _collect_system_stats() -> None:
+    """后台线程：定期采集 CPU/内存/磁盘/网络，写入历史 deque。"""
+    while True:
+        try:
+            cpu = psutil.cpu_percent(interval=1)
+            mem = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            net_io = psutil.net_io_counters()
+            _SYSTEM_STATS_HISTORY.append({
+                "t": datetime.utcnow().isoformat(),
+                "cpu": cpu,
+                "mem_percent": mem.percent,
+                "disk_percent": disk.percent,
+                "net_sent": net_io.bytes_sent,
+                "net_recv": net_io.bytes_recv,
+            })
+        except Exception as e:
+            log.error(f"采集系统统计失败: {e}", exc_info=True)
+        time.sleep(60)
+
+
+def _ensure_system_stats_thread() -> None:
+    """幂等地启动后台采样线程（守护线程，不阻塞主线程，不阻塞退出）。"""
+    global _system_stats_thread_started
+    with _SYSTEM_STATS_LOCK:
+        if _system_stats_thread_started:
+            return
+        t = threading.Thread(
+            target=_collect_system_stats,
+            daemon=True,
+            name="dashboard-system-stats",
+        )
+        t.start()
+        _system_stats_thread_started = True
+        log.info("系统统计后台采样线程已启动")
+
+
+# 模块加载即启动采样（与 web/web-main.py 一致；守护线程不会阻塞进程退出）
+_ensure_system_stats_thread()
+
+
+@app.get("/api/system/info")
+async def get_system_info(token: str = Depends(verify_token)):
+    """获取系统监控当前值与 24h 历史。
+
+    返回 current（实时快照）+ history（60s 采样，最多 1440 点）。
+    """
+    try:
+        # interval=None 非阻塞：返回自上次采样以来的 CPU 占用
+        cpu = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        net_io = psutil.net_io_counters()
+        current = {
+            "cpu": cpu,
+            "mem_used": mem.used,
+            "mem_total": mem.total,
+            "mem_percent": mem.percent,
+            "disk_used": disk.used,
+            "disk_total": disk.total,
+            "disk_percent": disk.percent,
+            "net_sent": net_io.bytes_sent,
+            "net_recv": net_io.bytes_recv,
+        }
+        history = list(_SYSTEM_STATS_HISTORY)
+        return {"current": current, "history": history}
+    except Exception as e:
+        log.error(f"获取系统信息失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取系统信息失败: {str(e)}")
+
+
+@app.post("/api/bot/restart")
+async def restart_bot(token: str = Depends(verify_token)):
+    """重启 Bot 容器。
+
+    安全提示：Dashboard 与 Bot 同容器运行（integrated_mode），重启容器会杀掉
+    Dashboard 自身，连接将立即断开，约 10-30 秒后随容器恢复而自动可访问。
+    前端需据此提示用户等待并自动重连/刷新。
+    """
+    container_name = os.getenv("BOT_CONTAINER_NAME", "Odysseia_Guidance")
+    try:
+        client = docker.from_env()
+        container = client.containers.get(container_name)
+        container.restart()
+        log.info(f"已重启容器 '{container_name}'（Dashboard 同容器，将随之断连）")
+        return {
+            "success": True,
+            "message": (
+                f"容器 '{container_name}' 正在重启。Dashboard 与 Bot 同容器运行，"
+                f"连接即将断开，约 10-30 秒后自动恢复，请稍候刷新页面。"
+            ),
+        }
+    except Exception as e:
+        log.error(f"重启容器 '{container_name}' 失败: {e}", exc_info=True)
+        return {"success": False, "message": f"重启失败: {str(e)}"}
+
+
+@app.post("/api/bot/shutdown")
+async def shutdown_bot(token: str = Depends(verify_token)):
+    """停止 Bot 容器。
+
+    安全提示：容器重启策略为 unless-stopped，手动 stop 后不会自动恢复，
+    需手动 `docker start <name>` 才能重新上线。Dashboard 同容器，连接会断开。
+    """
+    container_name = os.getenv("BOT_CONTAINER_NAME", "Odysseia_Guidance")
+    try:
+        client = docker.from_env()
+        container = client.containers.get(container_name)
+        container.stop()
+        log.info(f"已停止容器 '{container_name}'（Dashboard 同容器，将随之断连，需手动启动）")
+        return {
+            "success": True,
+            "message": (
+                f"容器 '{container_name}' 已停止。Dashboard 与 Bot 同容器运行，"
+                f"连接已断开；容器重启策略为 unless-stopped，手动停止后不会自动恢复，"
+                f"需手动执行 docker start {container_name} 重新上线。"
+            ),
+        }
+    except Exception as e:
+        log.error(f"停止容器 '{container_name}' 失败: {e}", exc_info=True)
+        return {"success": False, "message": f"停止失败: {str(e)}"}
+
+
 # --- 静态文件服务 ---
-# 前端构建后的静态文件将从这里提供
+# 前端构建后的静态文件将从这里提供（Vite 产物：index.html + assets/ 带 hash 文件名）
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# index.html 入口缓存头：HTML 必须每次拉新（否则改版后用户拿不到新 chunk 引用）
+_INDEX_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+def _serve_index() -> Response:
+    """返回 index.html（带 no-cache 头）。供根路由与 SPA fallback 共用。"""
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path, headers=_INDEX_HEADERS)
+    return Response(
+        content='{"message": "Dashboard API 正在运行。前端尚未构建。"}',
+        media_type="application/json",
+    )
 
 
 @app.get("/")
 async def serve_frontend():
     """提供前端页面"""
-    index_path = os.path.join(STATIC_DIR, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(
-            index_path,
-            headers={
-                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
-        )
-    return {"message": "Dashboard API 正在运行。前端尚未构建。"}
+    return _serve_index()
+
+
+# SPA fallback：Vue Router 走 history 模式，深链（如 /overview、/comfyui）需回 index.html
+# 排除 /api/* 与已 mount 的 /static——这些由 API 路由和 StaticFiles 处理。
+@app.get("/{path:path}")
+async def spa_fallback(path: str):
+    if path.startswith("api/") or path.startswith("static/"):
+        # 交给后续 API 路由 / StaticFiles，未命中则 404
+        raise HTTPException(status_code=404, detail="Not Found")
+    # assets/ 走 /static/assets（构建产物引用形如 /static/assets/xxx）
+    return _serve_index()
+
 
 
 # ==================== 每日换装配置 ====================

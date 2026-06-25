@@ -306,3 +306,15 @@ src/chat/features/games/blackjack-web/vite.config.ts
 /pgdata/
 # Ignore tutorial source files, as they are processed into the database
 tutorial/
+
+# ==================== Dashboard 前端工程 (dashboard-ui) ====================
+# 依赖不入库
+dashboard-ui/node_modules/
+dashboard-ui/.vite/
+# Vite 构建产物：CI 预构建，输出到 src/dashboard/static/，不入库（决策：CI预构建）
+# 注意：src/dashboard/static/index.html 原旧 SPA 已迁移为 Vite 产物，同样不入库
+src/dashboard/static/assets/
+src/dashboard/static/fonts/
+src/dashboard/static/index.html
+# 类型检查临时目录
+dashboard-ui/_buildcheck*/

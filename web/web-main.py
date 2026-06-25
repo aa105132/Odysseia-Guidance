@@ -1,3 +1,18 @@
+# ============================================================================
+# ⚠️ 本模块为废弃死代码，请勿使用或继续维护。
+#
+# 这是 Odysseia 的初代 Flask 管理端，已被 src/dashboard/（FastAPI + Vue3 SPA）
+# 完全取代且功能远超（75 路由 vs 11 路由）。证据：
+#   - 不在 docker-compose.yml（仅 bot_app 单服务，Dashboard 整合其中）
+#   - 心跳发送线程已在 src/main.py 注释禁用
+#   - 最后提交 2025-09-15，9 个月无改动，/api/status 永远 DOWN
+#
+# 其独有的「系统监控 + 容器重启/关机」功能已作为新需求并入 Dashboard：
+#   - 后端：src/dashboard/api.py 的 /api/system/info、/api/bot/restart、/api/bot/shutdown
+#   - 前端：dashboard-ui/src/views/SystemView.vue
+#
+# 保留此目录仅作历史参考，可安全整体删除（src/main.py 无 import 此包）。
+# ============================================================================
 import os
 import sys
 import logging

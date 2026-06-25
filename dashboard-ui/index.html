@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>月月 · 工坊台</title>
+    <!-- 字体自托管 woff2：preload 提前加载 Regular 字重（与 base.css 的 @font-face src 对齐）。
+         TODO 后续补实际 woff2 文件到 /public/fonts/，文件到位即生效 -->
+    <link rel="preload" href="/fonts/SourceHanSerifSC-Regular.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/SourceHanSansSC-Regular.woff2" as="font" type="font/woff2" crossorigin />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

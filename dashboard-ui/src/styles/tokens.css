@@ -1,0 +1,93 @@
+/* tokens.css — 设计 token / CSS 变量
+ * 方向B「月月的工坊台」：暖中性深色 + 单一琥珀强调
+ * 色板为 OKLCH，数值已锁定，禁改动。 */
+
+:root {
+  /* ===== 色板（OKLCH，逐字锁定，禁改动数值） ===== */
+  --bg-base: oklch(0.21 0.012 75);          /* 主背景 暖深棕灰 */
+  --bg-surface: oklch(0.26 0.014 75);       /* 卡片面 */
+  --bg-surface-2: oklch(0.30 0.016 75);     /* 次级面/悬停 */
+  --bg-inset: oklch(0.18 0.010 75);         /* 凹陷/输入底 */
+
+  --border: oklch(0.40 0.010 75 / 0.35);
+  --border-strong: oklch(0.52 0.012 75 / 0.55);
+
+  --text-primary: oklch(0.94 0.008 80);
+  --text-secondary: oklch(0.78 0.010 75);
+  /* 提亮至 AA：0.67 on bg-surface≈5.19:1、on bg-surface-2≈4.55:1（normal 文本 ≥4.5） */
+  --text-muted: oklch(0.67 0.010 75);
+  /* 提亮至 AA：0.59 on bg-inset≈4.58:1（占位符小字 ≥4.5） */
+  --text-placeholder: oklch(0.59 0.010 75);
+  /* 实心琥珀/危险底上的深字：on --accent≈6.9:1、on --accent-hover≈8.6:1（AAA） */
+  --text-on-accent: oklch(0.20 0.012 75);
+
+  --accent: oklch(0.72 0.135 68);           /* 灵石琥珀 单一强调 */
+  --accent-hover: oklch(0.78 0.140 68);
+  --accent-subtle: oklch(0.72 0.135 68 / 0.14);
+
+  --success: oklch(0.70 0.110 152);
+  /* 提亮至 AA：0.66 on bg-surface≈4.56:1（错误文案 ≥4.5）；图标/边框沿用此值 */
+  --danger: oklch(0.66 0.150 25);
+  /* 危险文案/按钮字 on 危险淡底：0.74 on 12%底≈4.8:1（≥4.5） */
+  --danger-text: oklch(0.74 0.150 25);
+  --warning: oklch(0.78 0.130 85);
+  --info: oklch(0.70 0.090 220);
+
+  /* ===== 间距阶梯（4/8/12/16/20/24/28/32/36/40/44/48px） ===== */
+  --space-1: 0.25rem;   /* 4 */
+  --space-2: 0.5rem;    /* 8 */
+  --space-3: 0.75rem;   /* 12 */
+  --space-4: 1rem;      /* 16 */
+  --space-5: 1.25rem;   /* 20 */
+  --space-6: 1.5rem;    /* 24 */
+  --space-7: 1.75rem;   /* 28 */
+  --space-8: 2rem;      /* 32 */
+  --space-9: 2.25rem;   /* 36 */
+  --space-10: 2.5rem;   /* 40 */
+  --space-11: 2.75rem;  /* 44 */
+  --space-12: 3rem;     /* 48 */
+
+  /* ===== 圆角 ===== */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  /* ===== 动效 ===== */
+  --dur-micro: 120ms;   /* 微交互 */
+  --dur-view: 240ms;    /* 视图切换 */
+  --dur-list: 180ms;    /* 列表 */
+  --ease-out-quart: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* ===== 字号阶梯（流体排版 clamp） ===== */
+  --text-xs: clamp(0.75rem, 0.72rem + 0.15vw, 0.8rem);
+  --text-sm: clamp(0.875rem, 0.84rem + 0.18vw, 0.9375rem);
+  --text-base: clamp(1rem, 0.96rem + 0.2vw, 1.0625rem);
+  --text-lg: clamp(1.125rem, 1.07rem + 0.28vw, 1.25rem);
+  --text-xl: clamp(1.25rem, 1.18rem + 0.35vw, 1.4375rem);
+  --text-2xl: clamp(1.5rem, 1.4rem + 0.5vw, 1.75rem);
+  --text-3xl: clamp(1.875rem, 1.73rem + 0.73vw, 2.25rem);
+  --text-4xl: clamp(2.25rem, 2.05rem + 1vw, 2.75rem);
+
+  /* ===== 字重 ===== */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* ===== 行高 ===== */
+  --lh-tight: 1.2;
+  --lh-snug: 1.4;
+  --lh-normal: 1.6;
+  --lh-relaxed: 1.75;
+
+  /* ===== 字体栈 ===== */
+  /* TODO: 后续补 woff2 自托管到 /public/fonts/，并 <link rel="preload"> 预加载 */
+  --font-display: 'Source Han Serif SC', 'Noto Serif SC', 'Songti SC', serif;
+  --font-sans: 'Source Han Sans SC', 'Noto Sans SC', system-ui, sans-serif;
+
+  /* ===== 阴影（暖色低饱和，hue 75 与底色同系，禁紫辉光） ===== */
+  --shadow-sm: 0 1px 2px oklch(0.1 0.01 75 / 0.3);
+  --shadow-md: 0 2px 4px oklch(0.1 0.01 75 / 0.35), 0 1px 2px oklch(0.1 0.01 75 / 0.25);
+  --shadow-lg: 0 4px 12px oklch(0.1 0.01 75 / 0.35), 0 2px 4px oklch(0.1 0.01 75 / 0.25);
+}
