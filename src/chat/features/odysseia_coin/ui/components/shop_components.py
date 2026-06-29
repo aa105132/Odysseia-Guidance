@@ -38,6 +38,19 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+
+# --- View expiry guard ---
+
+_EXPIRED_MSG = "⏰ 商店界面已过期，请重新使用 `/月光商店` 打开。"
+
+async def _send_expired(interaction: discord.Interaction) -> None:
+    """Send an ephemeral message when the shop view has expired."""
+    try:
+        await interaction.response.send_message(_EXPIRED_MSG, ephemeral=True)
+    except discord.errors.InteractionResponded:
+        await interaction.followup.send(_EXPIRED_MSG, ephemeral=True)
+
+
 # Use a TypeVar to specify the view type for better type hinting
 ViewT = TypeVar("ViewT", bound=discord.ui.View)
 
@@ -73,6 +86,9 @@ class EventButton(ShopButton["SimpleShopView"]):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         active_event = event_service.get_active_event()
         if not active_event:
             await interaction.response.send_message(
@@ -124,6 +140,9 @@ class DailyReportButton(ShopButton["SimpleShopView"]):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         if not hasattr(self.view, "daily_panel"):
             await interaction.response.send_message(
                 "日报功能暂未开放。", ephemeral=True
@@ -272,6 +291,9 @@ class CategorySelect(ShopSelect["SimpleShopView"]):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         selected_category = self.values[0]
         item_select = ItemSelect(
             selected_category, self.view.grouped_items[selected_category]
@@ -306,6 +328,9 @@ class ItemSelect(ShopSelect["SimpleShopView"]):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         self.view.selected_item_id = int(self.values[0])
         await interaction.response.defer()
 
@@ -319,6 +344,9 @@ class BackToCategoriesButton(ShopButton["SimpleShopView"]):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         self.view.clear_items()
         self.view.add_item(CategorySelect(list(self.view.grouped_items.keys())))
         self.view.add_item(PurchaseButton())
@@ -333,6 +361,9 @@ class LoanButton(ShopButton["SimpleShopView"]):
         super().__init__(label="借贷", style=discord.ButtonStyle.primary, emoji="🏦")
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         loan_view = LoanView(self.view.bot, self.view.author, self.view)
         await loan_view.initialize()
         embed = loan_view.create_loan_embed()
@@ -414,6 +445,9 @@ class LeaderboardButton(ShopButton["SimpleShopView"]):
         super().__init__(label="排行榜", style=discord.ButtonStyle.primary, emoji="🏆")
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         leaderboard_view = LeaderboardView(self.view.bot, self.view.author, self.view)
         embed = await leaderboard_view.create_leaderboard_embed()
         await interaction.response.edit_message(embeds=[embed], view=leaderboard_view)
@@ -426,6 +460,9 @@ class PurchaseButton(ShopButton["SimpleShopView"]):
         super().__init__(label="购买", style=discord.ButtonStyle.success, emoji="💰")
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         if self.view.selected_item_id is None:
             await interaction.response.send_message(
                 "请先从下拉菜单中选择一个商品。", ephemeral=True
@@ -640,6 +677,9 @@ class RefreshBalanceButton(ShopButton["SimpleShopView"]):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         await interaction.response.defer(ephemeral=True)
         new_balance = await coin_service.get_balance(interaction.user.id)
         if new_balance is not None:
@@ -805,6 +845,9 @@ class KnowledgeBaseButton(ShopButton["SimpleShopView"]):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        if self.view is None:
+            await _send_expired(interaction)
+            return
         from ..shop_ui import TutorialManagementView
 
         # This view will be created in the next step
