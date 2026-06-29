@@ -13,9 +13,6 @@ FROM python:3.11.5-slim
 
 WORKDIR /app
 
-# ffmpeg is required for video tail-frame extraction.
-RUN apt-get update     && apt-get install -y --no-install-recommends ffmpeg     && rm -rf /var/lib/apt/lists/*
-
 # We no longer need to install mysql client in the final image.
 
 COPY --from=builder /opt/pysetup/deps /usr/local/lib/python3.11/site-packages

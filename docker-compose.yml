@@ -15,7 +15,7 @@ services:
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
-    image: odysseia-guidance-bot_app:latest
+    # image: odysseia-guidance-bot_app:latest
     container_name: Odysseia_Guidance
     volumes:
       - .:/app
