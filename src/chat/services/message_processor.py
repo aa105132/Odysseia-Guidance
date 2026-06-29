@@ -23,7 +23,7 @@ MARKDOWN_LINK_URL_REGEX = re.compile(r"\[[^\]]+\]\((https?://[^\s\)]+)\)")
 BARE_URL_REGEX = re.compile(r"(https?://[^\s<>\]\)]+)")
 
 SUPPORTED_DISCORD_IMAGE_HOSTS = ("cdn.discordapp.com", "media.discordapp.net")
-SUPPORTED_VIDEO_HOSTS = ("artifact.anycap.cloud", "cdn.discordapp.com", "media.discordapp.net")
+SUPPORTED_EXTENSIONLESS_VIDEO_HOSTS = ("artifact.anycap.cloud",)
 IMAGE_EXT_TO_MIME = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -278,7 +278,12 @@ class MessageProcessor:
 
         if self._guess_video_mime_type_from_url(url) is not None:
             return True
-        return bool(host and any(host.endswith(h) for h in SUPPORTED_VIDEO_HOSTS))
+        # Discord CDN 同时承载图片和视频，不能只凭域名判成视频；
+        # 无扩展名视频 artifact 目前只对已知 artifact 域名放行。
+        return bool(
+            host
+            and any(host.endswith(video_host) for video_host in SUPPORTED_EXTENSIONLESS_VIDEO_HOSTS)
+        )
 
     async def _extract_images_from_text_links(
         self, content: str, source: str, seen_urls: Optional[Set[str]] = None

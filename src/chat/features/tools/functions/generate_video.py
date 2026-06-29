@@ -441,6 +441,9 @@ def _should_block_implicit_video_tool_call(
             and _has_explicit_video_generation_intent(prompt_text)
         )
 
+    if has_explicit_reference_selector:
+        return True
+
     return _has_image_generation_intent(user_request_text)
 
 

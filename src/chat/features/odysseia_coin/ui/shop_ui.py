@@ -168,8 +168,8 @@ class SimpleShopView(discord.ui.View):
         try:
             await interaction.response.edit_message(embeds=new_embeds_list, view=self)
         except discord.errors.InteractionResponded:
-            await interaction.followup.edit_message(
-                message_id=interaction.message.id, embeds=new_embeds_list, view=self
+            await interaction.edit_original_response(
+                embeds=new_embeds_list, view=self
             )
 
 

@@ -12,7 +12,9 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-if "discord" not in sys.modules:
+try:
+    import discord  # noqa: F401
+except ImportError:
     discord_module = types.ModuleType("discord")
     discord_module.Thread = type("Thread", (), {})
     discord_module.Message = type("Message", (), {})
@@ -273,6 +275,31 @@ def test_message_processor_extracts_mp4_attachment_with_missing_content_type():
             "data": b"mp4-bytes",
             "source": "attachment",
             "filename": "demo.mp4",
+        }
+    ]
+
+
+def test_message_processor_keeps_discord_cdn_image_attachment_as_image():
+    class _FakeImageAttachment:
+        filename = "reference.png"
+        content_type = "image/png"
+        size = 10
+        url = "https://cdn.discordapp.com/attachments/1/2/reference.png"
+
+        async def read(self):
+            return b"png-bytes"
+
+    processor = MessageProcessor()
+    result = asyncio.run(
+        processor._extract_images_from_attachments([_FakeImageAttachment()])
+    )
+
+    assert result == [
+        {
+            "mime_type": "image/png",
+            "data": b"png-bytes",
+            "source": "attachment",
+            "filename": "reference.png",
         }
     ]
 

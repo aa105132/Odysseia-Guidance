@@ -166,6 +166,18 @@ def test_video_tool_requires_explicit_video_intent_for_message_context():
         prompt_text="基于用户头像生成 0-6 秒视频",
         has_explicit_reference_selector=True,
     )
+    assert _should_block_implicit_video_tool_call(
+        "参考这几张图重新画一张月月",
+        has_message_context=True,
+        prompt_text="基于参考图生成一段镜头推进的视频",
+        has_explicit_reference_selector=True,
+    )
+    assert _should_block_implicit_video_tool_call(
+        "参考这些重新做一个月月",
+        has_message_context=True,
+        prompt_text="基于参考图生成一段镜头推进的视频",
+        has_explicit_reference_selector=True,
+    )
     assert not _should_block_implicit_video_tool_call(
         "把这张图动起来",
         has_message_context=True,
