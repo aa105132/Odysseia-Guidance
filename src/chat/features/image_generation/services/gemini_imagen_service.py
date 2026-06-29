@@ -87,24 +87,36 @@ class GeminiImagenService:
         )
 
     def _build_openai_timeout(self, streaming: bool = False) -> aiohttp.ClientTimeout:
-        """构建 OpenAI 兼容接口的超时配置。"""
+        """构建 OpenAI 兼容接口的超时配置。
+
+        流式图片生成会持续返回 SSE 心跳保活，不能设置 total 总时长，
+        否则即使一直收到 `: ping`，到达墙钟总时长后也会被 aiohttp 取消。
+        流式模式只限制连接耗时和两次收到数据之间的空窗时间。
+        """
         config = app_config.GEMINI_IMAGEN_CONFIG
-        total_default = 180 if streaming else 120
-        total_timeout = max(
+        timeout_default = 180 if streaming else 120
+        request_timeout = max(
             30,
             int(
                 config.get(
                     "STREAMING_TIMEOUT_SECONDS" if streaming else "REQUEST_TIMEOUT_SECONDS",
-                    total_default,
+                    timeout_default,
                 )
             ),
         )
         connect_timeout = max(3, int(config.get("CONNECT_TIMEOUT_SECONDS", 15)))
+        if streaming:
+            return aiohttp.ClientTimeout(
+                total=None,
+                connect=connect_timeout,
+                sock_connect=connect_timeout,
+                sock_read=request_timeout,
+            )
         return aiohttp.ClientTimeout(
-            total=total_timeout,
+            total=request_timeout,
             connect=connect_timeout,
             sock_connect=connect_timeout,
-            sock_read=total_timeout,
+            sock_read=request_timeout,
         )
 
     def _get_transient_retry_policy(self) -> tuple[int, float]:

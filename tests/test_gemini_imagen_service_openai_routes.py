@@ -72,6 +72,23 @@ def test_resolve_openai_image_api_mode_routes_regular_models_to_chat(monkeypatch
     assert service._resolve_openai_image_api_mode("imagen-3.0-generate-002") == "chat_completions"
 
 
+def test_openai_streaming_timeout_has_no_wall_clock_total(monkeypatch):
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "STREAMING_TIMEOUT_SECONDS", 240)
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "REQUEST_TIMEOUT_SECONDS", 120)
+    monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "CONNECT_TIMEOUT_SECONDS", 7)
+    service = GeminiImagenService()
+
+    streaming_timeout = service._build_openai_timeout(streaming=True)
+    request_timeout = service._build_openai_timeout(streaming=False)
+
+    assert streaming_timeout.total is None
+    assert streaming_timeout.connect == 7
+    assert streaming_timeout.sock_connect == 7
+    assert streaming_timeout.sock_read == 240
+    assert request_timeout.total == 120
+    assert request_timeout.sock_read == 120
+
+
 def test_generate_openai_format_keeps_grok_on_images_api(monkeypatch):
     monkeypatch.setitem(app_config.GEMINI_IMAGEN_CONFIG, "OPENAI_IMAGE_API_MODE", "auto")
     service = GeminiImagenService()
