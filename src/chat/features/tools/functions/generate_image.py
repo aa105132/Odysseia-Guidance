@@ -326,12 +326,14 @@ async def generate_image(
                 log.warning(f"移除反应失败: {e}")
 
     # 硬拦截：如果本轮已经调用过 image_search，禁止使用纯文生图
-    current_turn_tool_names_set = {
+    # 注意：必须同时检查 current_turn_tool_names（当前轮）和 called_tool_names（累计所有轮），
+    # 因为 image_search 和 generate_image 可能不在同一轮 API 返回中
+    all_called_tools = {
         str(name).strip().lower()
-        for name in (kwargs.get("current_turn_tool_names") or [])
+        for name in list(kwargs.get("current_turn_tool_names") or []) + list(kwargs.get("called_tool_names") or [])
         if str(name).strip()
     }
-    if "image_search" in current_turn_tool_names_set:
+    if "image_search" in all_called_tools:
         log.warning("generate_image 被拦截：本轮已调用 image_search，必须使用 edit_image 图生图")
         return {
             "generation_failed": True,
@@ -511,8 +513,8 @@ async def generate_image(
             actual_count = len(images_list)
             actual_cost = cost_per_image * actual_count
 
-            # AI重写路径：返回图片数据给月月审核，不直接发送
-            if was_rewritten:
+            # AI重写路径：NSFW内容返回给月月审核，SFW直接发频道
+            if was_rewritten and content_rating == "nsfw":
                 await remove_reaction(GENERATING_EMOJI)
                 await add_reaction("🔍")
                 return {
