@@ -325,6 +325,20 @@ async def generate_image(
             except Exception as e:
                 log.warning(f"移除反应失败: {e}")
 
+    # 硬拦截：如果本轮已经调用过 image_search，禁止使用纯文生图
+    current_turn_tool_names_set = {
+        str(name).strip().lower()
+        for name in (kwargs.get("current_turn_tool_names") or [])
+        if str(name).strip()
+    }
+    if "image_search" in current_turn_tool_names_set:
+        log.warning("generate_image 被拦截：本轮已调用 image_search，必须使用 edit_image 图生图")
+        return {
+            "generation_failed": True,
+            "reason": "must_use_edit_image",
+            "hint": "你刚才已经调用了 image_search 搜索到角色参考图，必须使用 edit_image 并传 image_search_reference_index 做图生图，不能再用 generate_image 纯文生图。请立即改用 edit_image，从搜索结果中选择参考图编号传入。"
+        }
+
     # 检查服务是否可用
     if not gemini_imagen_service.is_available():
         log.warning("Gemini Imagen 服务不可用")
