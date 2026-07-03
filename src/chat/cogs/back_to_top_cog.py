@@ -11,6 +11,9 @@ from discord.ext import commands
 import logging
 import asyncio
 import random
+import json
+import os
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -46,12 +49,35 @@ TSUNDERE_RESPONSES = [
 # 消息删除延迟时间（秒）
 DELETE_DELAY_SECONDS = 180  # 3分钟
 
+# 普通文字频道顶楼缓存文件
+CACHE_FILE = Path(__file__).parent.parent.parent / "data" / "channel_top_cache.json"
+
+
+def _load_channel_top_cache() -> dict:
+    """加载普通频道顶楼缓存"""
+    try:
+        if CACHE_FILE.exists():
+            return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_channel_top_cache(cache: dict) -> None:
+    """保存普通频道顶楼缓存"""
+    try:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CACHE_FILE.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.warning(f"保存频道顶楼缓存失败: {e}")
+
 
 class BackToTopCog(commands.Cog):
     """处理帖子回顶功能的Cog"""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.channel_top_cache: dict[str, str] = _load_channel_top_cache()
 
     def _is_back_to_top_request(self, content: str) -> bool:
         """检查消息内容是否为回顶请求"""
@@ -85,39 +111,52 @@ class BackToTopCog(commands.Cog):
             log.error(f"获取帖子顶楼链接时出错: {e}", exc_info=True)
             return None
 
+    async def _get_regular_channel_first_message_link(self, channel) -> str | None:
+        """获取普通文字频道第一条消息的链接（带缓存）"""
+        channel_id = str(channel.id)
+        # 先查缓存
+        if channel_id in self.channel_top_cache:
+            return self.channel_top_cache[channel_id]
+        # 查不到则从历史记录获取第一条消息
+        try:
+            async for first_msg in channel.history(limit=1, oldest_first=True):
+                link = first_msg.jump_url
+                self.channel_top_cache[channel_id] = link
+                _save_channel_top_cache(self.channel_top_cache)
+                return link
+        except Exception as e:
+            log.error(f"获取普通频道顶楼链接时出错: {e}", exc_info=True)
+        return None
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """监听消息，检测回顶请求"""
         # 忽略机器人消息
         if message.author.bot:
             return
-        
-        # 只处理帖子中的消息
-        if not isinstance(message.channel, discord.Thread):
-            return
-        
+
         # 检查是否为回顶请求
         if not self._is_back_to_top_request(message.content):
             return
-        
-        thread = message.channel
-        
-        log.info(
-            f"用户 {message.author.name} ({message.author.id}) "
-            f"在帖子 '{thread.name}' 中请求回顶"
-        )
-        
-        # 获取顶楼链接
-        top_link = await self._get_thread_first_message_link(thread)
+
+        channel = message.channel
+
+        # 帖子频道
+        if isinstance(channel, discord.Thread):
+            top_link = await self._get_thread_first_message_link(channel)
+            channel_label = f"帖子 '{channel.name}'"
+        # 普通文字频道
+        elif isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
+            top_link = await self._get_regular_channel_first_message_link(channel)
+            channel_label = f"频道 '{channel.name}'"
+        else:
+            return
         
         if not top_link:
-            # 如果无法获取链接，构造一个基本链接
-            # 格式: https://discord.com/channels/{guild_id}/{channel_id}/{message_id}
-            # 对于Thread，thread.id 通常就是第一条消息的ID
-            if thread.guild:
-                top_link = f"https://discord.com/channels/{thread.guild.id}/{thread.id}/{thread.id}"
+            if isinstance(channel, discord.Thread) and channel.guild:
+                top_link = f"https://discord.com/channels/{channel.guild.id}/{channel.id}/{channel.id}"
             else:
-                log.warning(f"无法获取帖子 {thread.id} 的顶楼链接")
+                log.warning(f"无法获取 {channel_label} 的顶楼链接")
                 return
         
         try:
@@ -142,31 +181,31 @@ class BackToTopCog(commands.Cog):
             
             reply_msg = await message.reply(embed=embed, mention_author=False)
             
-            log.info(f"已发送回顶链接到帖子 '{thread.name}'")
+            log.info(f"已发送回顶链接到{channel_label}")
             
             # 等待3分钟后删除消息
             await asyncio.sleep(DELETE_DELAY_SECONDS)
             
             try:
                 await reply_msg.delete()
-                log.info(f"已自动删除回顶链接消息 (帖子: '{thread.name}')")
+                log.info(f"已自动删除回顶链接消息 ({channel_label})")
             except discord.NotFound:
                 # 消息已被手动删除
                 pass
             except discord.Forbidden:
-                log.warning(f"无权限删除回顶链接消息 (帖子: '{thread.name}')")
+                log.warning(f"无权限删除回顶链接消息 ({channel_label})")
 
             try:
                 await message.delete()
-                log.info(f"已自动删除用户回顶消息 (帖子: '{thread.name}')")
+                log.info(f"已自动删除用户回顶消息 ({channel_label})")
             except discord.NotFound:
                 # 用户消息已被手动删除
                 pass
             except discord.Forbidden:
-                log.warning(f"无权限删除用户回顶消息 (帖子: '{thread.name}')")
+                log.warning(f"无权限删除用户回顶消息 ({channel_label})")
             
         except discord.Forbidden:
-            log.warning(f"无权限在帖子 '{thread.name}' 中发送回顶链接")
+            log.warning(f"无权限在{channel_label} 中发送回顶链接")
         except Exception as e:
             log.error(f"发送回顶链接时出错: {e}", exc_info=True)
 
