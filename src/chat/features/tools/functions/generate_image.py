@@ -166,7 +166,10 @@ async def generate_image(
     **kwargs
 ) -> dict:
     """
-    使用 Imagen (Gemini) 引擎生成图片。仅当默认绘图引擎为 "imagen" 时调用此工具。如果默认绘图引擎为 "novelai"，请改用 generate_image_novelai 工具。
+    使用 Imagen (Gemini) 引擎生成图片。仅当默认绘图引擎为 "imagen" 时调用此工具。
+    ⚠️ 本工具是纯文生图，不能传入参考图。如果你刚调用了 image_search 搜到了角色参考图，
+    必须改用 edit_image 并传 image_search_reference_index/image_search_reference_indexes 做图生图，
+    这样画出来才跟原角色像。不要搜了图之后还用本工具纯文生图臆造角色外观。如果默认绘图引擎为 "novelai"，请改用 generate_image_novelai 工具。
 
     OpenAI 兼容图片参数说明（适用于 Grok / GPT Image / 其它兼容图片端点）：
     - `model_name_override`: 强制指定模型，例如 `grok-imagine-1.0`
