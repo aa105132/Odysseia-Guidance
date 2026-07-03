@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import time
+from html import unescape
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -26,6 +27,7 @@ log = logging.getLogger(__name__)
 
 _REQUEST_TIMESTAMPS: List[float] = []
 _ALLOWED_BR = {128, 192, 320, 740, 999}
+_BILIBILI_BVID_RE = re.compile(r"\b(BV[0-9A-Za-z]{10})\b")
 _TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
     {
         "倫": "伦",
@@ -86,6 +88,99 @@ def _normalize_sources(source: Optional[str] = None) -> List[str]:
         if normalized and normalized not in sources:
             sources.append(normalized)
     return sources or ["joox", "netease", "bilibili"]
+
+
+def _prioritize_source(sources: List[str], preferred_source: str) -> List[str]:
+    preferred = str(preferred_source or "").strip().lower()
+    if not preferred:
+        return sources
+    return [preferred] + [source for source in sources if source != preferred]
+
+
+def _extract_bilibili_bvid(text: Any) -> Optional[str]:
+    match = _BILIBILI_BVID_RE.search(str(text or ""))
+    return match.group(1) if match else None
+
+
+def _clean_bilibili_title(title: Any) -> str:
+    text = unescape(str(title or "")).strip()
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[_\-\s]*(?:哔哩哔哩|bilibili|Bilibili)\s*$", "", text).strip()
+    return text
+
+
+def _extract_bilibili_embed_title(
+    message: Any,
+    *,
+    bvid: Optional[str],
+) -> Optional[str]:
+    embeds = list(getattr(message, "embeds", []) or [])
+    for embed in embeds:
+        title = _clean_bilibili_title(getattr(embed, "title", ""))
+        if not title:
+            continue
+        embed_url = str(getattr(embed, "url", "") or "")
+        if bvid and bvid in embed_url:
+            return title
+        if "bilibili.com" in embed_url or len(embeds) == 1:
+            return title
+    return None
+
+
+async def _fetch_bilibili_video_title(
+    session: aiohttp.ClientSession,
+    bvid: str,
+) -> Optional[str]:
+    if not bvid:
+        return None
+
+    try:
+        async with session.get(
+            "https://api.bilibili.com/x/web-interface/view",
+            params={"bvid": bvid},
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+                ),
+                "Referer": "https://www.bilibili.com/",
+            },
+        ) as response:
+            if response.status != 200:
+                return None
+            payload = await response.json(content_type=None)
+    except Exception as exc:
+        log.warning("解析 B 站视频标题失败: %s", exc)
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data") if payload.get("code") == 0 else None
+    if not isinstance(data, dict):
+        return None
+    title = _clean_bilibili_title(data.get("title"))
+    return title or None
+
+
+async def _resolve_bilibili_query(
+    session: aiohttp.ClientSession,
+    query: str,
+    *,
+    message: Any = None,
+) -> Tuple[str, Optional[str]]:
+    bvid = _extract_bilibili_bvid(query)
+    if not bvid:
+        return query, None
+
+    embed_title = _extract_bilibili_embed_title(message, bvid=bvid)
+    if embed_title:
+        return embed_title, "bilibili_embed"
+
+    fetched_title = await _fetch_bilibili_video_title(session, bvid)
+    if fetched_title:
+        return fetched_title, "bilibili_api"
+
+    return query, "bilibili_url"
 
 
 def _normalize_track(raw_track: Any, fallback_source: str) -> Optional[Dict[str, Any]]:
@@ -597,6 +692,8 @@ async def request_song(
       还是 live、翻唱、伴奏、纯音乐、MV 等版本偏好。
     - 用户只提供一句歌词或歌词片段时，不要把歌词直接当作随便的歌名；
       应把关键歌词和上下文整理成最可能命中的搜索关键词。
+    - 用户直接发送 bilibili 视频链接时，可以把链接放进 song_name；工具会优先解析链接预览/视频标题，
+      并把 bilibili 源提到最前面搜索，不要只拿裸 URL 当歌名。
     - 不要把闲聊解释当作歌名，也不要把情绪描述、短评请求、音乐知识问答误当成点歌。
     - song_name 写用户想听的歌名、完整关键词或关键歌词片段；如果用户指定歌手，把歌手放到 artist。
     - 默认会依次搜索配置中的音乐源，再让内部轻量 LLM 分析候选并选中最匹配曲目。
@@ -608,6 +705,7 @@ async def request_song(
     Args:
         song_name: 歌名、搜索关键词或用户只给歌词时的关键歌词片段，
             例如“晴天”“周杰伦 晴天”“从前从前有个人爱你很久”。
+            如果用户直接贴 bilibili 视频链接，可传入链接，工具会解析视频标题后搜索。
             调用前必须先从用户原话中提炼最适合搜索的关键词。
         artist: 可选歌手名，例如“周杰伦”。只有用户明确指定或高度确定时填写；
             不确定不要硬猜，可留空交给候选分析。
@@ -620,9 +718,11 @@ async def request_song(
         成功发送文件或链接时返回 skip_ai_response=True，避免月月再补发重复文本。
     """
     query = str(song_name or "").strip()
+    original_query = query
     artist_text = str(artist or "").strip()
     if artist_text and artist_text not in query:
         query = f"{artist_text} {query}".strip()
+    bilibili_bvid = _extract_bilibili_bvid(query)
     if not query:
         return {
             "error": True,
@@ -646,13 +746,25 @@ async def request_song(
         1024 * 1024,
         _coerce_int(MUSIC_REQUEST_CONFIG.get("MAX_DOWNLOAD_BYTES"), 24 * 1024 * 1024),
     )
-    sources = _normalize_sources(source)
     message = kwargs.get("message")
     channel = kwargs.get("channel") or (getattr(message, "channel", None) if message else None)
+    sources = _normalize_sources(source)
+    if bilibili_bvid:
+        sources = _prioritize_source(sources, "bilibili")
 
     try:
         timeout = aiohttp.ClientTimeout(total=timeout_seconds, connect=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
+            resolved_from: Optional[str] = None
+            if bilibili_bvid:
+                resolved_query, resolved_from = await _resolve_bilibili_query(
+                    session,
+                    query,
+                    message=message,
+                )
+                if resolved_query:
+                    query = resolved_query
+
             all_tracks: List[Dict[str, Any]] = []
             source_result_counts: Dict[str, int] = {}
             for source_name in sources:
@@ -681,6 +793,8 @@ async def request_song(
                     "success": False,
                     "reason": "no_results",
                     "query": query,
+                    "original_query": original_query,
+                    "resolved_from": resolved_from,
                     "sources": sources,
                     "source_result_counts": source_result_counts,
                     "hint": "没有搜到可点播的歌曲，请让用户换个歌名或加上歌手名。",
@@ -696,6 +810,8 @@ async def request_song(
             base_result: Dict[str, Any] = {
                 "success": True,
                 "query": query,
+                "original_query": original_query,
+                "resolved_from": resolved_from,
                 "track": selected,
                 "source": source_name,
                 "br": actual_br,

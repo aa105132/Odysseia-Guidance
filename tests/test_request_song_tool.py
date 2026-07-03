@@ -238,6 +238,79 @@ def test_request_song_single_candidate_still_uses_llm_comment(monkeypatch):
     assert "一点心事摊在阳光下" not in kwargs["content"]
 
 
+def test_request_song_resolves_bilibili_link_title_and_prioritizes_source(monkeypatch):
+    search_calls = []
+    bilibili_title = "在百万豪装录音棚大声听 五月天《干杯》【Hi-res】"
+
+    async def fake_search_source(session, source, query, count):
+        search_calls.append((source, query))
+        if source != "bilibili":
+            return []
+        return [
+            {
+                "id": "bili-target",
+                "name": bilibili_title,
+                "artist": ["五月天"],
+                "album": "B站视频",
+                "source": source,
+            }
+        ]
+
+    monkeypatch.setattr(request_song_tool, "_search_source", fake_search_source)
+    monkeypatch.setattr(
+        request_song_tool,
+        "_fetch_song_url",
+        AsyncMock(
+            return_value={
+                "url": "https://example.com/bili.mp3",
+                "br": 128,
+                "size": 4317292,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        request_song_tool,
+        "_download_audio",
+        AsyncMock(return_value=(b"audio-bytes", "audio/mpeg")),
+    )
+    monkeypatch.setattr(
+        request_song_tool,
+        "_generate_song_selection_response",
+        AsyncMock(
+            return_value=(
+                '{"selected_index": 1, "reason": "B站链接标题匹配", '
+                '"song_comment": "这版像把现场灯光推到耳边，热烈得很干净。"}'
+            )
+        ),
+    )
+    monkeypatch.setattr(request_song_tool.discord, "File", _FakeDiscordFile)
+    monkeypatch.setitem(
+        request_song_tool.MUSIC_REQUEST_CONFIG,
+        "DEFAULT_SOURCES",
+        ["joox", "netease", "bilibili"],
+    )
+    request_song_tool._REQUEST_TIMESTAMPS.clear()
+
+    embed = type("Embed", (), {"title": bilibili_title, "url": "https://m.bilibili.com/video/BV1K8411Z7GJ"})()
+    message = type("Message", (), {})()
+    message.embeds = [embed]
+    message.reply = AsyncMock()
+
+    result = asyncio.run(
+        request_song_tool.request_song(
+            song_name="https://m.bilibili.com/video/BV1K8411Z7GJ",
+            message=message,
+        )
+    )
+
+    assert result["success"] is True
+    assert result["query"] == bilibili_title
+    assert result["original_query"] == "https://m.bilibili.com/video/BV1K8411Z7GJ"
+    assert result["resolved_from"] == "bilibili_embed"
+    assert search_calls[0] == ("bilibili", bilibili_title)
+    assert all("BV1K8411Z7GJ" not in query for _, query in search_calls)
+
+
 def test_request_song_large_remote_file_falls_back_to_link(monkeypatch):
     monkeypatch.setattr(
         request_song_tool,
