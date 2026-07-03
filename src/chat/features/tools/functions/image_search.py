@@ -19,6 +19,9 @@ from urllib.parse import urljoin, urlparse
 
 import aiohttp
 import discord
+
+# dots2api does not support concurrent requests, use global lock to serialize
+_image_search_lock = asyncio.Lock()
 from src.chat.config.chat_config import IMAGE_SEARCH_CONFIG
 from src.chat.features.tools.tool_metadata import tool_metadata
 from src.chat.features.tools.utils.discord_image_utils import fetch_image_from_url
@@ -321,8 +324,9 @@ async def _post_openai_image_search(query: str, *, max_results: int, is_retry: b
 
     try:
         timeout = aiohttp.ClientTimeout(total=timeout_seconds, connect=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(endpoint, headers=headers, json=payload) as response:
+        async with _image_search_lock:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(endpoint, headers=headers, json=payload) as response:
                 response_text = await response.text()
                 if response.status != 200:
                     log.warning("图片搜索 API 返回错误 %s: %s", response.status, response_text[:300])
