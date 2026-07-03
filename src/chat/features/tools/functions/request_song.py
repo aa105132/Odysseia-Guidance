@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 _REQUEST_TIMESTAMPS: List[float] = []
 _ALLOWED_BR = {128, 192, 320, 740, 999}
+_MAX_SEARCH_ATTEMPTS = 3
 _BILIBILI_BVID_RE = re.compile(r"\b(BV[0-9A-Za-z]{10})\b")
 _TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
     {
@@ -326,6 +327,7 @@ def _build_song_selection_prompt(
         "3. 不要因为候选排在前面就选它，要比较歌名、歌手、专辑和版本信息。\n"
         "4. 如果多个候选都合理，选最贴近用户原话的一项。\n"
         "5. 即使候选只有一首，也要根据曲目信息输出自然的 song_comment，不要复读模板。\n"
+        "6. 如果候选明显都不是用户要的歌，selected_index 必须输出 0，不要硬选第一首。\n"
         f"{comment_instruction}\n\n"
         f"用户请求：{query}\n"
         f"指定歌手：{artist or '未指定'}\n\n"
@@ -333,7 +335,8 @@ def _build_song_selection_prompt(
         + "\n".join(candidate_lines)
         + "\n\n"
         "严格只输出 JSON，不要 markdown，不要解释。格式：\n"
-        '{"selected_index": 1, "reason": "选择理由", "song_comment": "月月短评"}'
+        '{"selected_index": 1, "reason": "选择理由；无匹配时 selected_index 为 0", '
+        '"song_comment": "月月短评", "retry_query": "无匹配时的新搜索词", "retry_source": "可选音乐源"}'
     )
 
 
@@ -387,7 +390,11 @@ async def _select_track_with_llm(
         return None, song_comment, {"selected_by": "none", "reason": "no_candidates"}
 
     candidates = _prepare_llm_candidates(tracks, query=query, artist=artist)
-    if len(candidates) == 1 and str(song_comment or "").strip():
+    if (
+        len(candidates) == 1
+        and str(song_comment or "").strip()
+        and _score_track(candidates[0], query=query, artist=artist) > 0
+    ):
         return candidates[0], song_comment, {
             "selected_by": "single_candidate_with_comment",
             "candidate_count": 1,
@@ -415,6 +422,30 @@ async def _select_track_with_llm(
             parsed.get("selected_index") or parsed.get("index") or parsed.get("choice"),
             0,
         )
+        if selected_index <= 0:
+            retry_query = str(
+                parsed.get("retry_query")
+                or parsed.get("next_query")
+                or parsed.get("search_query")
+                or ""
+            ).strip()
+            retry_source = str(
+                parsed.get("retry_source")
+                or parsed.get("next_source")
+                or parsed.get("source")
+                or ""
+            ).strip().lower()
+            selection_info = {
+                "selected_by": "llm_no_match",
+                "candidate_count": len(candidates),
+                "selected_index": selected_index,
+                "reason": str(parsed.get("reason") or "LLM 判断候选都不匹配。").strip(),
+            }
+            if retry_query:
+                selection_info["retry_query"] = retry_query[:160]
+            if retry_source:
+                selection_info["retry_source"] = retry_source[:40]
+            return None, song_comment, selection_info
         if 1 <= selected_index <= len(candidates):
             selected_track = candidates[selected_index - 1]
             selected_comment = str(
@@ -429,6 +460,14 @@ async def _select_track_with_llm(
                 "selected_index": selected_index,
                 "reason": str(parsed.get("reason") or "").strip(),
             }
+
+    if not fallback_track or _score_track(fallback_track, query=query, artist=artist) <= 0:
+        return None, song_comment, {
+            "selected_by": "heuristic_no_match",
+            "candidate_count": len(candidates),
+            "reason": "LLM 未返回有效选择，且启发式评分没有发现相关候选。",
+            "raw_response": str(raw_response or "")[:300],
+        }
 
     return fallback_track, song_comment, {
         "selected_by": "heuristic_fallback",
@@ -697,6 +736,8 @@ async def request_song(
     - 不要把闲聊解释当作歌名，也不要把情绪描述、短评请求、音乐知识问答误当成点歌。
     - song_name 写用户想听的歌名、完整关键词或关键歌词片段；如果用户指定歌手，把歌手放到 artist。
     - 默认会依次搜索配置中的音乐源，再让内部轻量 LLM 分析候选并选中最匹配曲目。
+    - 如果候选明显不对，内部 LLM 可以给出新的搜索词和音乐源，工具会最多重试 3 轮；
+      仍然没有可靠匹配时会停止发送，避免播错歌。
     - 发送歌曲时会附带一句“月月短评”；song_comment 可作为短评草稿，内部 LLM 可保留或润色。
     - 如果音频文件不超过发送上限，会直接作为 Discord 附件发出去，并返回 skip_ai_response=True。
     - 如果文件过大或下载失败，会把播放链接发到频道。
@@ -765,39 +806,93 @@ async def request_song(
                 if resolved_query:
                     query = resolved_query
 
+            selected: Optional[Dict[str, Any]] = None
+            llm_song_comment: Optional[str] = song_comment
+            selection_info: Dict[str, Any] = {"selected_by": "none"}
             all_tracks: List[Dict[str, Any]] = []
             source_result_counts: Dict[str, int] = {}
-            for source_name in sources:
-                try:
-                    tracks = await _search_source(
-                        session,
-                        source_name,
-                        query,
-                        search_count,
-                    )
-                except Exception as exc:
-                    log.warning("点歌搜索源 %s 失败: %s", source_name, exc)
-                    source_result_counts[source_name] = 0
-                    continue
-                source_result_counts[source_name] = len(tracks)
-                all_tracks.extend(tracks)
+            search_attempts: List[Dict[str, Any]] = []
+            attempted_queries = {query}
+            active_sources = list(sources)
 
-            selected, llm_song_comment, selection_info = await _select_track_with_llm(
-                all_tracks,
-                query=query,
-                artist=artist_text,
-                song_comment=song_comment,
-            )
+            for attempt in range(1, _MAX_SEARCH_ATTEMPTS + 1):
+                all_tracks = []
+                source_result_counts = {}
+                for source_name in active_sources:
+                    try:
+                        tracks = await _search_source(
+                            session,
+                            source_name,
+                            query,
+                            search_count,
+                        )
+                    except Exception as exc:
+                        log.warning("点歌搜索源 %s 失败: %s", source_name, exc)
+                        source_result_counts[source_name] = 0
+                        continue
+                    source_result_counts[source_name] = len(tracks)
+                    all_tracks.extend(tracks)
+
+                selected, llm_song_comment, selection_info = await _select_track_with_llm(
+                    all_tracks,
+                    query=query,
+                    artist=artist_text,
+                    song_comment=song_comment,
+                )
+                selection_info = {
+                    **selection_info,
+                    "attempt": attempt,
+                    "query": query,
+                }
+                search_attempts.append(
+                    {
+                        "attempt": attempt,
+                        "query": query,
+                        "sources": list(active_sources),
+                        "source_result_counts": dict(source_result_counts),
+                        "candidate_count": len(all_tracks),
+                        "selection": selection_info,
+                    }
+                )
+                if selected:
+                    break
+
+                retry_query = str(selection_info.get("retry_query") or "").strip()
+                if (
+                    not retry_query
+                    or retry_query in attempted_queries
+                    or attempt >= _MAX_SEARCH_ATTEMPTS
+                ):
+                    break
+
+                retry_source = str(selection_info.get("retry_source") or "").strip().lower()
+                if retry_source:
+                    active_sources = _prioritize_source(active_sources, retry_source)
+                attempted_queries.add(retry_query)
+                query = retry_query
+
             if not selected:
+                has_candidates = any(
+                    _coerce_int(attempt_info.get("candidate_count"))
+                    for attempt_info in search_attempts
+                )
+                no_match_reason = "no_relevant_results" if has_candidates else "no_results"
+                no_match_hint = (
+                    "搜到了候选，但都和用户点歌不够匹配，已停止发送，避免播错歌。"
+                    if has_candidates
+                    else "没有搜到可点播的歌曲，请让用户换个歌名或加上歌手名。"
+                )
                 return {
                     "success": False,
-                    "reason": "no_results",
+                    "reason": no_match_reason,
                     "query": query,
                     "original_query": original_query,
                     "resolved_from": resolved_from,
-                    "sources": sources,
+                    "sources": active_sources,
+                    "selection": selection_info,
+                    "search_attempts": search_attempts,
                     "source_result_counts": source_result_counts,
-                    "hint": "没有搜到可点播的歌曲，请让用户换个歌名或加上歌手名。",
+                    "hint": no_match_hint,
                 }
 
             final_song_comment = _normalize_song_comment(llm_song_comment, selected)
@@ -819,6 +914,7 @@ async def request_song(
                 "audio_url": audio_url,
                 "song_comment": final_song_comment,
                 "selection": selection_info,
+                "search_attempts": search_attempts,
                 "source_result_counts": source_result_counts,
             }
 

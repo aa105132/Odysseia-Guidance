@@ -311,6 +311,177 @@ def test_request_song_resolves_bilibili_link_title_and_prioritizes_source(monkey
     assert all("BV1K8411Z7GJ" not in query for _, query in search_calls)
 
 
+def test_request_song_rejects_irrelevant_fallback_candidate(monkeypatch):
+    async def fake_search_source(session, source, query, count):
+        return [
+            {
+                "id": "wrong",
+                "name": "體面（電影《前任3：再見前任》插曲）",
+                "artist": ["于文文"],
+                "album": "體面（電影《前任3：再見前任》插曲）",
+                "source": source,
+            }
+        ]
+
+    fetch_url_mock = AsyncMock()
+
+    monkeypatch.setattr(request_song_tool, "_search_source", fake_search_source)
+    monkeypatch.setattr(request_song_tool, "_fetch_song_url", fetch_url_mock)
+    monkeypatch.setattr(
+        request_song_tool,
+        "_generate_song_selection_response",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setitem(request_song_tool.MUSIC_REQUEST_CONFIG, "DEFAULT_SOURCES", ["joox"])
+    request_song_tool._REQUEST_TIMESTAMPS.clear()
+
+    message = type("Message", (), {})()
+    message.reply = AsyncMock()
+
+    result = asyncio.run(
+        request_song_tool.request_song(
+            song_name="人鱼公主",
+            message=message,
+        )
+    )
+
+    assert result["success"] is False
+    assert result["reason"] == "no_relevant_results"
+    assert result["selection"]["selected_by"] == "heuristic_no_match"
+    fetch_url_mock.assert_not_awaited()
+    message.reply.assert_not_awaited()
+
+
+def test_request_song_respects_llm_no_match_selection(monkeypatch):
+    async def fake_search_source(session, source, query, count):
+        return [
+            {
+                "id": "wrong",
+                "name": "體面",
+                "artist": ["于文文"],
+                "album": "尚未界定",
+                "source": source,
+            }
+        ]
+
+    fetch_url_mock = AsyncMock()
+
+    monkeypatch.setattr(request_song_tool, "_search_source", fake_search_source)
+    monkeypatch.setattr(request_song_tool, "_fetch_song_url", fetch_url_mock)
+    monkeypatch.setattr(
+        request_song_tool,
+        "_generate_song_selection_response",
+        AsyncMock(
+            return_value=(
+                '{"selected_index": 0, "reason": "候选都不是用户要的人鱼公主", '
+                '"song_comment": ""}'
+            )
+        ),
+    )
+    monkeypatch.setitem(request_song_tool.MUSIC_REQUEST_CONFIG, "DEFAULT_SOURCES", ["joox"])
+    request_song_tool._REQUEST_TIMESTAMPS.clear()
+
+    result = asyncio.run(
+        request_song_tool.request_song(
+            song_name="人鱼公主",
+            send_to_channel=False,
+        )
+    )
+
+    assert result["success"] is False
+    assert result["reason"] == "no_relevant_results"
+    assert result["selection"]["selected_by"] == "llm_no_match"
+    fetch_url_mock.assert_not_awaited()
+
+
+def test_request_song_retries_with_llm_refined_query_until_match(monkeypatch):
+    search_calls = []
+
+    async def fake_search_source(session, source, query, count):
+        search_calls.append((source, query))
+        if query == "人鱼公主" and source == "joox":
+            return [
+                {
+                    "id": "wrong",
+                    "name": "體面",
+                    "artist": ["于文文"],
+                    "album": "尚未界定",
+                    "source": source,
+                }
+            ]
+        if query == "人鱼公主 MV" and source == "bilibili":
+            return [
+                {
+                    "id": "right",
+                    "name": "人鱼公主",
+                    "artist": ["爱你卧蚕明眸俏模样"],
+                    "album": "MV",
+                    "source": source,
+                }
+            ]
+        return []
+
+    llm_mock = AsyncMock(
+        side_effect=[
+            (
+                '{"selected_index": 0, "reason": "joox 候选不相关", '
+                '"retry_query": "人鱼公主 MV", "retry_source": "bilibili", '
+                '"song_comment": ""}'
+            ),
+            (
+                '{"selected_index": 1, "reason": "标题与用户请求匹配", '
+                '"song_comment": "这首像从海面下慢慢亮起的一束光。"}'
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(request_song_tool, "_search_source", fake_search_source)
+    monkeypatch.setattr(
+        request_song_tool,
+        "_fetch_song_url",
+        AsyncMock(
+            return_value={
+                "url": "https://example.com/mermaid.mp3",
+                "br": 128,
+                "size": 4317292,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        request_song_tool,
+        "_download_audio",
+        AsyncMock(return_value=(b"audio-bytes", "audio/mpeg")),
+    )
+    monkeypatch.setattr(request_song_tool, "_generate_song_selection_response", llm_mock)
+    monkeypatch.setattr(request_song_tool.discord, "File", _FakeDiscordFile)
+    monkeypatch.setitem(request_song_tool.MUSIC_REQUEST_CONFIG, "DEFAULT_SOURCES", ["joox"])
+    request_song_tool._REQUEST_TIMESTAMPS.clear()
+
+    message = type("Message", (), {})()
+    message.reply = AsyncMock()
+
+    result = asyncio.run(
+        request_song_tool.request_song(
+            song_name="人鱼公主",
+            message=message,
+        )
+    )
+
+    assert result["success"] is True
+    assert result["track"]["id"] == "right"
+    assert result["query"] == "人鱼公主 MV"
+    assert result["original_query"] == "人鱼公主"
+    assert result["selection"]["selected_by"] == "llm"
+    assert result["selection"]["attempt"] == 2
+    assert len(result["search_attempts"]) == 2
+    assert ("joox", "人鱼公主") in search_calls
+    assert ("bilibili", "人鱼公主 MV") in search_calls
+    assert llm_mock.await_count == 2
+    _, kwargs = message.reply.await_args
+    assert "人鱼公主" in kwargs["content"]
+    assert "月月短评：这首像从海面下慢慢亮起的一束光。" in kwargs["content"]
+
+
 def test_request_song_large_remote_file_falls_back_to_link(monkeypatch):
     monkeypatch.setattr(
         request_song_tool,
