@@ -91,6 +91,7 @@ def test_request_song_falls_back_sources_and_sends_audio(monkeypatch):
         request_song_tool.request_song(
             song_name="周杰伦 晴天",
             artist="周杰伦",
+            song_comment="像雨后突然透进来的光，听起来很适合偷偷怀旧一下。",
             channel=channel,
             message=message,
         )
@@ -106,6 +107,7 @@ def test_request_song_falls_back_sources_and_sends_audio(monkeypatch):
     assert kwargs["mention_author"] is False
     assert kwargs["file"].filename.endswith(".mp3")
     assert "晴天" in kwargs["content"]
+    assert "月月短评：像雨后突然透进来的光，听起来很适合偷偷怀旧一下。" in kwargs["content"]
     channel.send.assert_not_called()
 
 

@@ -208,6 +208,28 @@ def _format_track_label(track: Dict[str, Any]) -> str:
     return f"{label}（{album}）" if album else label
 
 
+def _build_default_song_comment(track: Dict[str, Any]) -> str:
+    title = str(track.get("name") or "这首歌").strip() or "这首歌"
+    return f"{title}听起来像把一点心事摊在阳光下，轻轻晒干。"
+
+
+def _normalize_song_comment(
+    song_comment: Optional[str],
+    track: Dict[str, Any],
+) -> str:
+    comment = str(song_comment or "").strip()
+    comment = re.sub(r"\s+", " ", comment)
+    comment = comment.removeprefix("月月短评：").strip()
+    if not comment:
+        comment = _build_default_song_comment(track)
+    return comment[:160].rstrip()
+
+
+def _format_song_comment_line(song_comment: str) -> str:
+    comment = str(song_comment or "").strip()
+    return f"\n月月短评：{comment}" if comment else ""
+
+
 def _register_rate_limit() -> Optional[Dict[str, Any]]:
     limit = _coerce_int(MUSIC_REQUEST_CONFIG.get("RATE_LIMIT_PER_5_MINUTES"), 45)
     if limit <= 0:
@@ -342,10 +364,17 @@ async def _send_song_message(
     return True
 
 
-def _build_sent_content(track: Dict[str, Any], *, br: int, source: str) -> str:
+def _build_sent_content(
+    track: Dict[str, Any],
+    *,
+    br: int,
+    source: str,
+    song_comment: str,
+) -> str:
     return (
         f"点好啦：{_format_track_label(track)}\n"
         f"来源：GD音乐台 / {source}，音质：{br}kbps。"
+        f"{_format_song_comment_line(song_comment)}"
     )
 
 
@@ -356,10 +385,12 @@ def _build_link_fallback_content(
     source: str,
     audio_url: str,
     reason: str,
+    song_comment: str,
 ) -> str:
     return (
         f"找到了：{_format_track_label(track)}\n"
         f"来源：GD音乐台 / {source}，音质：{br}kbps。\n"
+        f"月月短评：{song_comment}\n"
         f"{reason}，先给你播放链接：{audio_url}"
     )
 
@@ -375,6 +406,7 @@ async def request_song(
     artist: Optional[str] = None,
     source: Optional[str] = None,
     br: Optional[int] = None,
+    song_comment: Optional[str] = None,
     send_to_channel: bool = True,
     **kwargs,
 ) -> dict:
@@ -385,6 +417,7 @@ async def request_song(
     - 用户明确说“点歌”“放一首”“想听”“来首”“播放某首歌”等需求时调用。
     - song_name 写用户想听的歌名或完整关键词；如果用户指定歌手，把歌手放到 artist。
     - 默认会依次搜索配置中的音乐源，找到最匹配的曲目后获取音频链接。
+    - 发送歌曲时要附带一句“月月短评”，请在 song_comment 里写一句自然、简短、带一点月月口吻的感悟或评价。
     - 如果音频文件不超过发送上限，会直接作为 Discord 附件发出去，并返回 skip_ai_response=True。
     - 如果文件过大或下载失败，会把播放链接发到频道。
     - 不要用于普通音乐知识问答；只有用户想“听歌/点歌/播放”时调用。
@@ -394,6 +427,7 @@ async def request_song(
         artist: 可选歌手名，例如“周杰伦”。用户明确指定歌手时应填写。
         source: 可选音乐源，支持 joox、netease、bilibili 等；留空使用默认兜底源。
         br: 可选音质，支持 128、192、320、740、999。默认 128，避免 Discord 附件过大。
+        song_comment: 发送歌曲时附带的一句月月短评/感悟，建议 15-60 个汉字；不要写成长篇乐评。
         send_to_channel: 是否发送到当前频道。默认 true。
 
     Returns:
@@ -466,6 +500,7 @@ async def request_song(
             actual_br = _coerce_int(url_info.get("br"), requested_br)
             remote_size = _coerce_int(url_info.get("size"))
             source_name = str(selected.get("source") or "").strip() or sources[0]
+            final_song_comment = _normalize_song_comment(song_comment, selected)
 
             base_result: Dict[str, Any] = {
                 "success": True,
@@ -475,6 +510,7 @@ async def request_song(
                 "br": actual_br,
                 "remote_size": remote_size,
                 "audio_url": audio_url,
+                "song_comment": final_song_comment,
                 "source_result_counts": source_result_counts,
             }
 
@@ -502,6 +538,7 @@ async def request_song(
                     source=source_name,
                     audio_url=audio_url,
                     reason="文件太大，不能直接当附件发送",
+                    song_comment=final_song_comment,
                 )
                 sent = await _send_song_message(
                     message=message,
@@ -529,6 +566,7 @@ async def request_song(
                     source=source_name,
                     audio_url=audio_url,
                     reason="文件太大，不能直接当附件发送",
+                    song_comment=final_song_comment,
                 )
                 sent = await _send_song_message(
                     message=message,
@@ -550,6 +588,7 @@ async def request_song(
                     source=source_name,
                     audio_url=audio_url,
                     reason="音频下载失败",
+                    song_comment=final_song_comment,
                 )
                 sent = await _send_song_message(
                     message=message,
@@ -566,7 +605,12 @@ async def request_song(
 
             extension = _infer_audio_extension(mime_type, audio_url)
             filename = _build_audio_filename(selected, extension=extension)
-            content = _build_sent_content(selected, br=actual_br, source=source_name)
+            content = _build_sent_content(
+                selected,
+                br=actual_br,
+                source=source_name,
+                song_comment=final_song_comment,
+            )
             sent = await _send_song_message(
                 message=message,
                 channel=channel,
