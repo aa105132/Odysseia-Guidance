@@ -277,7 +277,7 @@ def _parse_image_search_results(raw_text: str, *, base_url: str = "", max_result
     return _dedupe_results(candidates, max_results)
 
 
-async def _post_openai_image_search(query: str, *, max_results: int) -> Dict[str, Any]:
+async def _post_openai_image_search(query: str, *, max_results: int, is_retry: bool = False) -> Dict[str, Any]:
     api_url = str(await _get_image_search_setting("API_URL") or "").strip().rstrip("/")
     api_key = str(await _get_image_search_setting("API_KEY") or "").strip()
     model = str(await _get_image_search_setting("MODEL") or "").strip()
@@ -292,12 +292,20 @@ async def _post_openai_image_search(query: str, *, max_results: int) -> Dict[str
 
     endpoint = f"{api_url}/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    prompt = (
-        "请搜索与下面关键词最相关的图片。"
-        "必须返回 HTML 格式，优先包含 <img src=\"...\" alt=\"...\">。"
-        f"最多返回 {max_results} 张图片，并保留图片原始 URL。\n\n"
-        f"关键词：{query}"
-    )
+    if is_retry:
+        prompt = (
+            "你必须返回图片搜索结果，不要返回文字介绍或角色描述。"
+            "只返回 HTML 格式的 <img src=\"...\" alt=\"...\"> 标签列表，"
+            "不要输出任何其他文字。\n\n"
+            f"搜索关键词：{query}"
+        )
+    else:
+        prompt = (
+            "请搜索与下面关键词最相关的图片。"
+            "必须返回 HTML 格式，优先包含 <img src=\"...\" alt=\"...\">。"
+            f"最多返回 {max_results} 张图片，并保留图片原始 URL。\n\n"
+            f"关键词：{query}"
+        )
     payload = {
         "model": model,
         "messages": [
@@ -425,6 +433,18 @@ async def image_search(
     raw_html = str(upstream_result.get("html") or "")
     api_url = str(await _get_image_search_setting("API_URL") or "").strip()
     results = _parse_image_search_results(raw_html, base_url=api_url, max_results=max_results)
+
+    # If first search returns no images (API returned text descriptions instead), auto-retry
+    if not results:
+        log.warning("image_search first attempt returned no images for query=%s, retrying...", query)
+        retry_result = await _post_openai_image_search(query, max_results=max_results, is_retry=True)
+        if not retry_result.get("error"):
+            raw_html = str(retry_result.get("html") or "")
+            results = _parse_image_search_results(raw_html, base_url=api_url, max_results=max_results)
+            if results:
+                log.info("image_search retry succeeded for query=%s, found %d images", query, len(results))
+            else:
+                log.warning("image_search retry still returned no images for query=%s", query)
 
     image_data_list: List[Dict[str, Any]] = []
     inline_image = upstream_result.get("inline_image")
