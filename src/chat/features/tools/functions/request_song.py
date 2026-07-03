@@ -629,13 +629,15 @@ async def _download_audio(
     audio_url: str,
     max_bytes: int,
 ) -> Tuple[bytes, str]:
-    async with session.get(
-        audio_url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            **({"Referer": "https://www.bilibili.com"} if "bilivideo" in audio_url or "bilibili" in audio_url else {}),
-        },
-    ) as response:
+    # bilibili CDN requires Referer header, otherwise returns 403
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+    parsed = urlparse(audio_url)
+    host = parsed.hostname or ""
+    if "bilivideo" in host or "bili" in host:
+        headers["Referer"] = "https://www.bilibili.com"
+    async with session.get(audio_url, headers=headers) as response:
         if response.status != 200:
             raise RuntimeError(f"音频下载返回 HTTP {response.status}")
 
@@ -744,6 +746,7 @@ async def request_song(
     - 不要用于普通音乐知识问答；只有用户想“听歌/点歌/播放”时调用。
 
     Args:
+<<<<<<< Updated upstream
         song_name: 歌名、搜索关键词或用户只给歌词时的关键歌词片段，
             例如“晴天”“周杰伦 晴天”“从前从前有个人爱你很久”。
             如果用户直接贴 bilibili 视频链接，可传入链接，工具会解析视频标题后搜索。
@@ -751,6 +754,11 @@ async def request_song(
         artist: 可选歌手名，例如“周杰伦”。只有用户明确指定或高度确定时填写；
             不确定不要硬猜，可留空交给候选分析。
         source: 可选音乐源，支持 joox、netease、bilibili 等；留空使用默认兜底源。
+=======
+        song_name: 歌名或搜索关键词，例如“晴天”“周杰伦 晴天”。
+        artist: 可选歌手名，例如“周杰伦”。用户明确指定歌手时应填写。
+        source: 不要手动指定此参数，留空即可。系统默认按 joox > netease > bilibili 顺序搜索，joox 音源最稳定。
+>>>>>>> Stashed changes
         br: 可选音质，支持 128、192、320、740、999。默认 128，避免 Discord 附件过大。
         song_comment: 可选短评草稿；内部候选分析 LLM 会输出最终月月短评，建议 15-60 个汉字。
         send_to_channel: 是否发送到当前频道。默认 true。
