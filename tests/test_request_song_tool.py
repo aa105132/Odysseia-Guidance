@@ -181,6 +181,63 @@ def test_request_song_uses_llm_selection_before_fetching_url(monkeypatch):
     assert "月月短评：这首歌像把青春晒在操场边，风一吹就响起来。" in kwargs["content"]
 
 
+def test_request_song_single_candidate_still_uses_llm_comment(monkeypatch):
+    async def fake_search_source(session, source, query, count):
+        return [
+            {
+                "id": "asmr",
+                "name": "【asmr】穿耳prprpr",
+                "artist": ["未知歌手"],
+                "album": "耳边小剧场",
+                "source": source,
+            }
+        ]
+
+    llm_mock = AsyncMock(
+        return_value='{"selected_index": 1, "reason": "唯一候选，直接选择", '
+        '"song_comment": "这首听起来像有人在耳边放慢呼吸，细小又贴近。"}'
+    )
+
+    monkeypatch.setattr(request_song_tool, "_search_source", fake_search_source)
+    monkeypatch.setattr(
+        request_song_tool,
+        "_fetch_song_url",
+        AsyncMock(
+            return_value={
+                "url": "https://example.com/asmr.mp3",
+                "br": 128,
+                "size": 4317292,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        request_song_tool,
+        "_download_audio",
+        AsyncMock(return_value=(b"audio-bytes", "audio/mpeg")),
+    )
+    monkeypatch.setattr(request_song_tool, "_generate_song_selection_response", llm_mock)
+    monkeypatch.setattr(request_song_tool.discord, "File", _FakeDiscordFile)
+    monkeypatch.setitem(request_song_tool.MUSIC_REQUEST_CONFIG, "DEFAULT_SOURCES", ["joox"])
+    request_song_tool._REQUEST_TIMESTAMPS.clear()
+
+    message = type("Message", (), {})()
+    message.reply = AsyncMock()
+
+    result = asyncio.run(
+        request_song_tool.request_song(
+            song_name="穿耳prprpr",
+            message=message,
+        )
+    )
+
+    assert result["success"] is True
+    assert result["selection"]["selected_by"] == "llm"
+    llm_mock.assert_awaited_once()
+    _, kwargs = message.reply.await_args
+    assert "月月短评：这首听起来像有人在耳边放慢呼吸，细小又贴近。" in kwargs["content"]
+    assert "一点心事摊在阳光下" not in kwargs["content"]
+
+
 def test_request_song_large_remote_file_falls_back_to_link(monkeypatch):
     monkeypatch.setattr(
         request_song_tool,
@@ -206,6 +263,16 @@ def test_request_song_large_remote_file_falls_back_to_link(monkeypatch):
                 "br": 999,
                 "size": 30 * 1024 * 1024,
             }
+        ),
+    )
+    monkeypatch.setattr(
+        request_song_tool,
+        "_generate_song_selection_response",
+        AsyncMock(
+            return_value=(
+                '{"selected_index": 1, "reason": "唯一候选，直接选择", '
+                '"song_comment": "这首歌像雨后操场边的一阵风，适合慢慢回头听。"}'
+            )
         ),
     )
     download_mock = AsyncMock()

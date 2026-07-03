@@ -230,6 +230,7 @@ def _build_song_selection_prompt(
         "2. 优先选择正式录音室/专辑版本；除非用户明确要 live、翻唱、伴奏、纯音乐、教程或 MV，否则避开这些版本。\n"
         "3. 不要因为候选排在前面就选它，要比较歌名、歌手、专辑和版本信息。\n"
         "4. 如果多个候选都合理，选最贴近用户原话的一项。\n"
+        "5. 即使候选只有一首，也要根据曲目信息输出自然的 song_comment，不要复读模板。\n"
         f"{comment_instruction}\n\n"
         f"用户请求：{query}\n"
         f"指定歌手：{artist or '未指定'}\n\n"
@@ -291,12 +292,12 @@ async def _select_track_with_llm(
         return None, song_comment, {"selected_by": "none", "reason": "no_candidates"}
 
     candidates = _prepare_llm_candidates(tracks, query=query, artist=artist)
-    if len(candidates) == 1:
+    if len(candidates) == 1 and str(song_comment or "").strip():
         return candidates[0], song_comment, {
-            "selected_by": "single_candidate",
+            "selected_by": "single_candidate_with_comment",
             "candidate_count": 1,
             "selected_index": 1,
-            "reason": "只有一个候选结果。",
+            "reason": "只有一个候选结果，且已有短评草稿。",
         }
 
     prompt = _build_song_selection_prompt(
