@@ -371,6 +371,30 @@ IMAGE_SEARCH_CONFIG = {
     "EXTRA_BODY": _parse_json_object_env("IMAGE_SEARCH_EXTRA_BODY", {}),
 }
 
+# --- 点歌配置 ---
+# GD Studio 音乐 API。默认优先使用测试更稳定的 joox，再兜底 netease / bilibili。
+MUSIC_REQUEST_CONFIG = {
+    "API_URL": os.getenv(
+        "MUSIC_REQUEST_API_URL",
+        "https://music-api.gdstudio.xyz/api.php",
+    ),
+    "DEFAULT_SOURCES": _parse_str_list_env(
+        "MUSIC_REQUEST_SOURCES",
+        ["joox", "netease", "bilibili"],
+    ),
+    "DEFAULT_BR": _parse_int_env("MUSIC_REQUEST_DEFAULT_BR", 128),
+    "SEARCH_COUNT": _parse_int_env("MUSIC_REQUEST_SEARCH_COUNT", 8),
+    "MAX_DOWNLOAD_BYTES": _parse_int_env(
+        "MUSIC_REQUEST_MAX_DOWNLOAD_BYTES",
+        24 * 1024 * 1024,
+    ),
+    "TIMEOUT_SECONDS": _parse_int_env("MUSIC_REQUEST_TIMEOUT_SECONDS", 30),
+    "RATE_LIMIT_PER_5_MINUTES": _parse_int_env(
+        "MUSIC_REQUEST_RATE_LIMIT_PER_5_MINUTES",
+        45,
+    ),
+}
+
 # --- 历史消息搜索配置 ---
 # 回退扫描条数（当 Discord /messages/search API 返回 403 时）
 # - >0: 固定扫描条数
