@@ -495,7 +495,13 @@ async def _download_audio(
     audio_url: str,
     max_bytes: int,
 ) -> Tuple[bytes, str]:
-    async with session.get(audio_url) as response:
+    async with session.get(
+        audio_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            **({"Referer": "https://www.bilibili.com"} if "bilivideo" in audio_url or "bilibili" in audio_url else {}),
+        },
+    ) as response:
         if response.status != 200:
             raise RuntimeError(f"音频下载返回 HTTP {response.status}")
 
