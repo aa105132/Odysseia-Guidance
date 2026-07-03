@@ -141,6 +141,8 @@ export interface VoiceConfig {
 export interface VideoConfig {
   enabled?: boolean;
   api_url?: string;
+  /** 写入型：GET 不回传明文，仅 masked；PUT 时填入才覆盖 */
+  api_key?: string;
   api_key_masked?: string;
   has_api_key?: boolean;
   model?: string;
@@ -472,6 +474,8 @@ export interface EmbeddingConfig {
   provider?: string;
   api_url?: string;
   api_url_masked?: string;
+  /** 写入型：GET 不回传明文，仅 masked；PUT 时填入才覆盖 */
+  api_key?: string;
   api_key_masked?: string;
   has_api_key?: boolean;
   model?: string;

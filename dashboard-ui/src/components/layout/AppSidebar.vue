@@ -29,6 +29,8 @@ import {
 } from 'lucide-vue-next';
 import type { Component } from 'vue';
 
+const emit = defineEmits<{ (e: 'navigate'): void }>();
+
 interface NavItem {
   to: string;
   label: string;
@@ -98,7 +100,7 @@ const groups: NavGroup[] = [
         <p class="nav-group__heading" aria-hidden="true">{{ g.heading }}</p>
         <ul class="nav-group__list">
           <li v-for="item in g.items" :key="item.to">
-            <RouterLink :to="item.to" class="nav-item">
+            <RouterLink :to="item.to" class="nav-item" @click="emit('navigate')">
               <component :is="item.icon" class="nav-item__icon" :size="18" aria-hidden="true" />
               <span class="nav-item__label">{{ item.label }}</span>
             </RouterLink>
