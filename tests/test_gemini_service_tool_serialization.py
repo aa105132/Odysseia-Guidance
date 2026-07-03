@@ -143,16 +143,19 @@ def test_extract_tool_image_payload_accepts_bytearray_and_memoryview():
         "mime_type": "image/png",
         "data": b"avatar",
         "tool_name": "get_user_avatar",
+        "filename": "get_user_avatar_image_1.png",
     }
     assert extracted_memoryview == {
         "mime_type": "image/jpeg",
         "data": b"avatar-2",
         "tool_name": "render_newspaper_brief",
+        "filename": "render_newspaper_brief_image_1.png",
     }
 
 
 def test_build_openai_tool_image_followup_message_for_avatar():
-    message = GeminiService._build_openai_tool_image_followup_message(
+    service = object.__new__(GeminiService)
+    message = service._build_openai_tool_image_followup_message(
         "get_user_avatar",
         {
             "mime_type": "image/png",
@@ -173,7 +176,8 @@ def test_build_openai_tool_image_followup_message_for_avatar():
 
 
 def test_build_openai_tool_image_followup_message_ignores_other_tools():
-    message = GeminiService._build_openai_tool_image_followup_message(
+    service = object.__new__(GeminiService)
+    message = service._build_openai_tool_image_followup_message(
         "render_newspaper_brief",
         {
             "mime_type": "image/png",
@@ -483,6 +487,75 @@ def test_openai_image_content_parts_prefers_public_image_url():
                 "url": "https://cdn.discordapp.com/attachments/1/2/food.png",
                 "detail": "high",
             },
+        }
+    ]
+
+
+def test_interactions_api_format_and_endpoint_normalization():
+    assert GeminiService._normalize_api_format("interactions") == "interactions"
+    assert GeminiService._normalize_api_format("gemini_interactions") == "interactions"
+    assert (
+        GeminiService._resolve_interactions_endpoint(
+            "https://generativelanguage.googleapis.com/v1beta"
+        )
+        == "https://generativelanguage.googleapis.com/v1beta/interactions"
+    )
+    assert (
+        GeminiService._resolve_interactions_endpoint(
+            "https://generativelanguage.googleapis.com/v1beta/interactions"
+        )
+        == "https://generativelanguage.googleapis.com/v1beta/interactions"
+    )
+
+
+def test_interactions_media_blocks_keep_audio_and_video_native():
+    service = object.__new__(GeminiService)
+
+    blocks = service._build_interactions_media_blocks(
+        [
+            {
+                "data": b"fake-video",
+                "mime_type": "video/quicktime",
+                "filename": "clip.mov",
+            },
+            {
+                "data": b"fake-audio",
+                "mime_type": "audio/mpeg",
+                "filename": "voice.mp3",
+            },
+        ]
+    )
+
+    video_block = next(item for item in blocks if item.get("type") == "video")
+    audio_block = next(item for item in blocks if item.get("type") == "audio")
+    assert video_block["mime_type"] == "video/mov"
+    assert base64.b64decode(video_block["data"]) == b"fake-video"
+    assert audio_block["mime_type"] == "audio/mp3"
+    assert base64.b64decode(audio_block["data"]) == b"fake-audio"
+
+
+def test_interactions_response_extracts_model_output_text_and_function_calls():
+    response = {
+        "steps": [
+            {
+                "type": "function_call",
+                "id": "call_1",
+                "name": "web_search",
+                "arguments": {"query": "Interactions API"},
+            },
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": "最终回复"}],
+            },
+        ]
+    }
+
+    assert GeminiService._extract_interactions_output_text(response) == "最终回复"
+    assert GeminiService._extract_interactions_function_calls(response) == [
+        {
+            "id": "call_1",
+            "name": "web_search",
+            "arguments": {"query": "Interactions API"},
         }
     ]
 

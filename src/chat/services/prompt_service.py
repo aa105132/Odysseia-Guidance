@@ -685,15 +685,18 @@ class PromptService:
         )
 
         if attachment_images:
-            # 统计三类媒体数量，用于在路由提示中明确区分静态图/GIF/视频，
+            # 统计媒体数量，用于在路由提示中明确区分静态图/GIF/视频/音频，
             # 避免月月把多张静态图误当成视频帧序列。
             static_image_count = 0
             gif_count = 0
             video_count = 0
+            audio_count = 0
             for img in attachment_images:
                 mime_type = (img.get("mime_type", "") or "").lower()
                 if mime_type.startswith("video/"):
                     video_count += 1
+                elif mime_type.startswith("audio/"):
+                    audio_count += 1
                 elif "gif" in mime_type:
                     gif_count += 1
                 elif mime_type.startswith("image/"):
@@ -706,7 +709,9 @@ class PromptService:
                 media_summary_parts.append(f"{gif_count} 张 GIF 动图")
             if video_count:
                 media_summary_parts.append(f"{video_count} 个视频")
-            media_summary = "、".join(media_summary_parts) if media_summary_parts else "图片/视频"
+            if audio_count:
+                media_summary_parts.append(f"{audio_count} 个音频")
+            media_summary = "、".join(media_summary_parts) if media_summary_parts else "图片/视频/音频"
 
             route_hint_parts = [
                 f"绘图路由提示：检测到用户当前消息或回复上下文中存在{media_summary}。"
@@ -750,6 +755,10 @@ class PromptService:
             (img.get("mime_type", "") or "").lower().startswith("video/")
             for img in attachment_images
         )
+        has_audio_attachment = any(
+            (img.get("mime_type", "") or "").lower().startswith("audio/")
+            for img in attachment_images
+        )
         static_image_total = sum(
             1
             for img in attachment_images
@@ -790,6 +799,18 @@ class PromptService:
                 {
                     "role": "model",
                     "parts": ["收到，我会直接基于自动抽帧结果分析视频。"],
+                }
+            )
+
+        if has_audio_attachment:
+            final_conversation.append(
+                {
+                    "role": "user",
+                    "parts": [
+                        "系统提示：检测到用户消息中含音频附件。"
+                        "只有 Interactions API 路径会把音频作为原生 audio 输入解析；"
+                        "旧 Gemini/OpenAI 兼容路径只能知道音频附件存在，无法直接听内容。"
+                    ],
                 }
             )
 
@@ -861,7 +882,7 @@ class PromptService:
 
         # 如果没有任何文本，但有附件，添加一个默认的用户标签
         if not message and attachment_images:
-            current_user_parts.append(f"用户名:{user_name}, 用户消息:(图片消息)")
+            current_user_parts.append(f"用户名:{user_name}, 用户消息:(媒体消息)")
 
         # 追加所有附件图片到末尾
         gif_max_frames = chat_config.IMAGE_PROCESSING_CONFIG.get("GIF_MAX_FRAMES", 4)
@@ -872,6 +893,14 @@ class PromptService:
         for img_data in attachment_images:
             try:
                 mime_type = (img_data.get("mime_type", "") or "").lower()
+
+                if mime_type.startswith("audio/"):
+                    filename = img_data.get("filename") or "未命名音频"
+                    current_user_parts.append(
+                        f"[用户发送了一个音频附件：{filename}；MIME: {mime_type}。"
+                        "当前非 Interactions 路径无法原生解析音频内容。]"
+                    )
+                    continue
 
                 if mime_type.startswith("video/"):
                     frames, frame_meta = extract_video_frames_for_ai(

@@ -51,8 +51,8 @@ function validate(f: AIConfig): Record<string, string> | null {
     e.retry_delay_seconds = '重试延迟需在 0–30 秒';
   if (num(f.max_key_rotation_retries) && (f.max_key_rotation_retries < 1 || f.max_key_rotation_retries > 20))
     e.max_key_rotation_retries = '密钥轮换重试需在 1–20 之间';
-  if (f.api_format && f.api_format !== 'gemini' && f.api_format !== 'openai')
-    e.api_format = 'API 格式仅支持 gemini 或 openai';
+  if (f.api_format && !['gemini', 'openai', 'interactions'].includes(f.api_format))
+    e.api_format = 'API 格式仅支持 gemini、openai 或 interactions';
   return Object.keys(e).length ? e : null;
 }
 
@@ -112,6 +112,7 @@ const apiUrlPlaceholder = computed(
 
 const apiFormatOptions = [
   { value: 'gemini', label: 'Gemini' },
+  { value: 'interactions', label: 'Interactions' },
   { value: 'openai', label: 'OpenAI' },
 ];
 

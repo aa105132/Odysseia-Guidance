@@ -1434,6 +1434,14 @@ IMAGE_PROCESSING_CONFIG = {
     "GIF_MAX_FRAMES": 4,  # 动图识别时最多抽取的关键帧数量（防止上下文过大）
     "VIDEO_MAX_FRAMES": 4,  # 视频识别时最多抽取的关键帧数量（会拼成类似 GIF 的时间序列图）
     "VIDEO_MAX_BYTES": 64 * 1024 * 1024,  # 单个视频附件最大读取大小，防止内存过高
+    "AUDIO_MAX_BYTES": 64 * 1024 * 1024,  # 单个音频附件最大读取大小，防止内存过高
+    # Interactions API inline 请求总大小有上限；这里按 base64 膨胀预留余量。
+    "INTERACTIONS_INLINE_MEDIA_MAX_BYTES": _parse_int_env(
+        "INTERACTIONS_INLINE_MEDIA_MAX_BYTES", 14 * 1024 * 1024
+    ),
+    "INTERACTIONS_MEDIA_RESOLUTION": os.getenv(
+        "INTERACTIONS_MEDIA_RESOLUTION", "medium"
+    ),
 }
 
 # --- 调试配置 ---

@@ -397,12 +397,16 @@ class GeminiService:
         alias_map = {
             "openai_compatible": "openai",
             "openai-compatible": "openai",
+            "interactions_api": "interactions",
+            "interactions-api": "interactions",
+            "gemini_interactions": "interactions",
+            "google_interactions": "interactions",
         }
         normalized_value = alias_map.get(raw_value, raw_value or default)
-        if normalized_value not in {"gemini", "openai"}:
+        if normalized_value not in {"gemini", "openai", "interactions"}:
             return default
         return normalized_value
-    
+
     def reload_api_keys(self, new_keys_str: str = None) -> dict:
         """
         热更新 API 密钥。
@@ -2450,8 +2454,8 @@ class GeminiService:
             )
 
         # 稳定性优化：
-        # 当仅依赖 Dashboard 全局 URL 且格式是 openai 时，
-        # 直接走 OpenAI 兼容路径，避免误入官方 Gemini SDK 路径导致参数不兼容。
+        # 当仅依赖 Dashboard 全局 URL 且格式是 openai/interactions 时，
+        # 直接走对应 HTTP 路径，避免误入官方 Gemini SDK 路径导致参数不兼容。
         db_api_format_raw = getattr(app_config, "_db_api_format", None)
         if db_api_format_raw:
             api_format = self._normalize_api_format(db_api_format_raw)
@@ -2469,12 +2473,12 @@ class GeminiService:
             use_custom_endpoint
             and (not custom_endpoint_from_model)
             and custom_endpoint_from_global_url
-            and api_format == "openai"
+            and api_format in {"openai", "interactions"}
         ):
             direct_model_name = model_name or self.default_model_name
             log.info(
-                "检测到 Dashboard 全局 OpenAI 兼容端点且当前模型无专属端点配置，"
-                "将直接使用 OpenAI 兼容路径（跳过官方 API 回退）。"
+                "检测到 Dashboard 全局 HTTP 端点且当前模型无专属端点配置，"
+                f"将直接使用 {api_format} 路径（跳过官方 API 回退）。"
                 f"模型: '{direct_model_name}'。"
             )
             return await self._generate_with_custom_endpoint(
@@ -2540,10 +2544,10 @@ class GeminiService:
             # 如果所有尝试都失败了，则执行回退逻辑
             fallback_model_name = self.default_model_name
 
-            if api_format == "openai":
+            if api_format in {"openai", "interactions"}:
                 log.warning(
                     f"自定义端点 '{model_name}' 的所有 {max_attempts} 次尝试均失败。最终错误: {last_exception}. "
-                    "当前为 OpenAI 兼容格式，将回退到 OpenAI 兼容路径。"
+                    f"当前为 {api_format} 格式，将回退到对应 HTTP 路径。"
                 )
                 return await self._generate_with_custom_endpoint(
                     user_id=user_id,
@@ -2699,6 +2703,29 @@ class GeminiService:
         # 如果是 OpenAI 兼容格式，使用 OpenAI 客户端
         if api_format == "openai":
             return await self._generate_with_openai_compatible(
+                user_id=user_id,
+                guild_id=guild_id,
+                message=message,
+                channel=channel,
+                replied_message=replied_message,
+                images=images,
+                user_name=user_name,
+                channel_context=channel_context,
+                world_book_entries=world_book_entries,
+                personal_summary=personal_summary,
+                affection_status=affection_status,
+                user_profile_data=user_profile_data,
+                guild_name=guild_name,
+                location_name=location_name,
+                model_name=endpoint_config.get("model_name") or model_name,
+                discord_message=discord_message,
+                api_url=endpoint_config["base_url"],
+                api_key=endpoint_config["api_key"],
+                fallback_query=fallback_query,
+                recent_chat_history=recent_chat_history,
+            )
+        if api_format == "interactions":
+            return await self._generate_with_interactions_api(
                 user_id=user_id,
                 guild_id=guild_id,
                 message=message,
@@ -3948,6 +3975,858 @@ class GeminiService:
         
         return openai_tools
 
+    @staticmethod
+    def _resolve_interactions_endpoint(api_url: str) -> str:
+        """把 Dashboard 中的 Gemini base URL 解析为 Interactions endpoint。"""
+        normalized_url = str(api_url or "").strip().rstrip("/")
+        if not normalized_url:
+            return "https://generativelanguage.googleapis.com/v1beta/interactions"
+        if normalized_url.endswith("/interactions"):
+            return normalized_url
+        if normalized_url.endswith(("/v1", "/v1beta")):
+            return f"{normalized_url}/interactions"
+        if "/v1/" in normalized_url or "/v1beta/" in normalized_url:
+            return f"{normalized_url}/interactions"
+        return f"{normalized_url}/v1beta/interactions"
+
+    @staticmethod
+    def _normalize_interactions_media_mime(
+        mime_type: Optional[str],
+        filename: Optional[str] = None,
+    ) -> Optional[str]:
+        """把本地/Discord MIME 归一化为 Interactions API 更容易接受的 MIME。"""
+        normalized = str(mime_type or "").split(";", 1)[0].strip().lower()
+        ext = os.path.splitext(str(filename or "").lower())[1]
+
+        if not normalized and ext:
+            normalized = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".webp": "image/webp",
+                ".gif": "image/gif",
+                ".bmp": "image/bmp",
+                ".tif": "image/tiff",
+                ".tiff": "image/tiff",
+                ".mp4": "video/mp4",
+                ".m4v": "video/mp4",
+                ".webm": "video/webm",
+                ".mov": "video/mov",
+                ".avi": "video/avi",
+                ".mpg": "video/mpg",
+                ".mpeg": "video/mpeg",
+                ".wmv": "video/wmv",
+                ".3gp": "video/3gpp",
+                ".flv": "video/x-flv",
+                ".mp3": "audio/mp3",
+                ".wav": "audio/wav",
+                ".m4a": "audio/m4a",
+                ".aac": "audio/aac",
+                ".ogg": "audio/ogg",
+                ".oga": "audio/ogg",
+                ".opus": "audio/opus",
+                ".flac": "audio/flac",
+                ".aiff": "audio/aiff",
+                ".aif": "audio/aiff",
+            }.get(ext, "")
+
+        alias_map = {
+            "image/jpg": "image/jpeg",
+            "video/quicktime": "video/mov",
+            "video/x-msvideo": "video/avi",
+            "video/x-m4v": "video/mp4",
+            "audio/mpeg": "audio/mp3",
+            "audio/x-mpeg": "audio/mp3",
+            "audio/x-wav": "audio/wav",
+            "audio/wave": "audio/wav",
+            "audio/vnd.wave": "audio/wav",
+            "audio/x-m4a": "audio/m4a",
+            "audio/mp4": "audio/m4a",
+            "audio/x-aiff": "audio/aiff",
+        }
+        normalized = alias_map.get(normalized, normalized)
+
+        allowed_image = {
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/heic",
+            "image/heif",
+            "image/gif",
+            "image/bmp",
+            "image/tiff",
+        }
+        allowed_video = {
+            "video/mp4",
+            "video/mpeg",
+            "video/mov",
+            "video/avi",
+            "video/x-flv",
+            "video/mpg",
+            "video/webm",
+            "video/wmv",
+            "video/3gpp",
+        }
+        allowed_audio = {
+            "audio/aac",
+            "audio/flac",
+            "audio/mp3",
+            "audio/m4a",
+            "audio/mpeg",
+            "audio/mpga",
+            "audio/mp4",
+            "audio/opus",
+            "audio/pcm",
+            "audio/wav",
+            "audio/webm",
+            "audio/ogg",
+            "audio/aiff",
+            "audio/l16",
+            "audio/alaw",
+            "audio/mulaw",
+        }
+
+        if normalized in allowed_image or normalized in allowed_video or normalized in allowed_audio:
+            return normalized
+        return None
+
+    @classmethod
+    def _media_kind_from_mime(cls, mime_type: str) -> Optional[str]:
+        if mime_type.startswith("image/"):
+            return "image"
+        if mime_type.startswith("video/"):
+            return "video"
+        if mime_type.startswith("audio/"):
+            return "audio"
+        return None
+
+    @staticmethod
+    def _build_interactions_generation_config(
+        generation_config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """过滤成 Interactions API 支持的 generation_config 字段。"""
+        allowed_keys = {
+            "temperature",
+            "top_p",
+            "seed",
+            "stop_sequences",
+            "max_output_tokens",
+            "presence_penalty",
+            "frequency_penalty",
+            "thinking_level",
+            "thinking_summaries",
+        }
+        config: Dict[str, Any] = {}
+        for key, value in (generation_config or {}).items():
+            if key in allowed_keys and value is not None:
+                config[key] = value
+            elif key == "max_tokens" and value is not None:
+                config["max_output_tokens"] = value
+        return config
+
+    def _convert_tools_to_interactions_format(
+        self, tool_functions: Optional[List[Callable]] = None
+    ) -> List[Dict[str, Any]]:
+        """将现有工具声明转换为 Interactions API 的 function tool schema。"""
+        interactions_tools: List[Dict[str, Any]] = []
+        for tool in self._convert_tools_to_openai_format(tool_functions):
+            function_payload = tool.get("function") if isinstance(tool, dict) else None
+            if not isinstance(function_payload, dict):
+                continue
+            tool_name = function_payload.get("name")
+            if not tool_name:
+                continue
+            interactions_tools.append(
+                {
+                    "type": "function",
+                    "name": tool_name,
+                    "description": function_payload.get("description", ""),
+                    "parameters": function_payload.get(
+                        "parameters",
+                        {"type": "object", "properties": {}},
+                    ),
+                }
+            )
+        return interactions_tools
+
+    @staticmethod
+    def _image_to_interactions_block(image: Image.Image) -> Dict[str, Any]:
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        return {
+            "type": "image",
+            "data": base64.b64encode(buffered.getvalue()).decode("utf-8"),
+            "mime_type": "image/png",
+        }
+
+    def _build_interactions_media_blocks(
+        self,
+        media_items: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        """把提取到的媒体字节转换为 Interactions 原生 image/video/audio blocks。"""
+        if not media_items:
+            return []
+
+        max_media = int(
+            app_config.IMAGE_PROCESSING_CONFIG.get("MAX_IMAGES_PER_MESSAGE", 9) or 9
+        )
+        inline_limit = int(
+            app_config.IMAGE_PROCESSING_CONFIG.get(
+                "INTERACTIONS_INLINE_MEDIA_MAX_BYTES", 14 * 1024 * 1024
+            )
+            or 14 * 1024 * 1024
+        )
+        media_resolution = str(
+            app_config.IMAGE_PROCESSING_CONFIG.get(
+                "INTERACTIONS_MEDIA_RESOLUTION", "medium"
+            )
+            or "medium"
+        ).strip().lower()
+
+        blocks: List[Dict[str, Any]] = []
+        inline_bytes_used = 0
+
+        for index, item in enumerate(media_items[:max_media], 1):
+            if not isinstance(item, dict):
+                continue
+
+            filename = str(item.get("filename") or f"media_{index}").strip()
+            mime_type = self._normalize_interactions_media_mime(
+                item.get("mime_type"),
+                filename=filename,
+            )
+            if not mime_type:
+                raw_mime = str(item.get("mime_type") or "unknown").strip()
+                blocks.append(
+                    {
+                        "type": "text",
+                        "text": f"[媒体 {index}: {filename} 的 MIME {raw_mime} 暂不支持 Interactions 原生输入，已跳过文件内容。]",
+                    }
+                )
+                continue
+
+            media_kind = self._media_kind_from_mime(mime_type)
+            if not media_kind:
+                continue
+
+            media_bytes = item.get("data") or item.get("bytes")
+            if isinstance(media_bytes, memoryview):
+                media_bytes = media_bytes.tobytes()
+            elif isinstance(media_bytes, bytearray):
+                media_bytes = bytes(media_bytes)
+            url = str(item.get("url") or item.get("uri") or "").strip()
+
+            label = {"image": "图片", "video": "视频", "audio": "音频"}.get(
+                media_kind,
+                "媒体",
+            )
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": f"[本轮原生{label}附件 {index}: {filename}; MIME: {mime_type}]",
+                }
+            )
+
+            if (
+                isinstance(media_bytes, bytes)
+                and media_bytes
+                and inline_bytes_used + len(media_bytes) <= inline_limit
+            ):
+                media_block: Dict[str, Any] = {
+                    "type": media_kind,
+                    "data": base64.b64encode(media_bytes).decode("utf-8"),
+                    "mime_type": mime_type,
+                }
+                if media_kind == "image" and media_resolution in {
+                    "low",
+                    "medium",
+                    "high",
+                    "ultra_high",
+                }:
+                    media_block["resolution"] = media_resolution
+                blocks.append(media_block)
+                inline_bytes_used += len(media_bytes)
+                continue
+
+            if url.startswith(("http://", "https://")):
+                blocks.append(
+                    {
+                        "type": media_kind,
+                        "uri": url,
+                        "mime_type": mime_type,
+                    }
+                )
+                continue
+
+            media_size = len(media_bytes) if isinstance(media_bytes, bytes) else 0
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"[{label}附件 {filename} 大小 {media_size} bytes，超过本地 inline 限制 "
+                        f"{inline_limit} bytes，且没有可用 URI，未发送原生内容。]"
+                    ),
+                }
+            )
+
+        if len(media_items) > max_media:
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": f"[媒体附件数量超过上限，仅发送前 {max_media} 个。]",
+                }
+            )
+
+        return blocks
+
+    def _build_interactions_input_from_conversation(
+        self,
+        final_conversation: List[Dict[str, Any]],
+        media_items: Optional[List[Dict[str, Any]]] = None,
+    ) -> tuple[Optional[str], List[Dict[str, Any]]]:
+        """把内部 prompt conversation 压成 Interactions input blocks。"""
+        system_parts: List[str] = []
+        transcript_parts: List[str] = []
+        inline_blocks: List[Dict[str, Any]] = []
+        role_labels = {
+            "user": "用户",
+            "model": "月月",
+            "assistant": "月月",
+            "tool": "工具",
+        }
+
+        for turn in final_conversation or []:
+            role = str(turn.get("role") or "user").strip()
+            parts = turn.get("parts", [])
+            if not isinstance(parts, list):
+                parts = [parts]
+
+            text_parts: List[str] = []
+            for part in parts:
+                if isinstance(part, str):
+                    text_parts.append(part)
+                elif isinstance(part, Image.Image):
+                    inline_blocks.append({"type": "text", "text": "[内联图片/表情]"})
+                    inline_blocks.append(self._image_to_interactions_block(part))
+                elif isinstance(part, dict) and (part.get("data") or part.get("bytes")):
+                    inline_blocks.extend(self._build_interactions_media_blocks([part]))
+                elif part is not None:
+                    text_parts.append(str(part))
+
+            text = "\n".join(p for p in text_parts if p).strip()
+            if not text:
+                continue
+            if role == "system":
+                system_parts.append(text)
+            else:
+                transcript_parts.append(
+                    f"[{role_labels.get(role, role)}]\n{text}"
+                )
+
+        input_blocks: List[Dict[str, Any]] = []
+        transcript_text = "\n\n".join(transcript_parts).strip()
+        if transcript_text:
+            input_blocks.append({"type": "text", "text": transcript_text})
+        input_blocks.extend(inline_blocks)
+        input_blocks.extend(self._build_interactions_media_blocks(media_items))
+
+        if not input_blocks:
+            input_blocks.append({"type": "text", "text": "请回复用户。"})
+
+        system_instruction = "\n\n".join(system_parts).strip() or None
+        return system_instruction, input_blocks
+
+    @staticmethod
+    def _extract_interactions_output_text(response: Dict[str, Any]) -> str:
+        """从 Interactions REST 响应中提取模型文本输出。"""
+        output_text = response.get("output_text")
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text.strip()
+
+        texts: List[str] = []
+        for step in response.get("steps", []) or []:
+            if not isinstance(step, dict):
+                continue
+            if step.get("type") not in {"model_output", "message"}:
+                continue
+            for content in step.get("content", []) or []:
+                if isinstance(content, dict) and content.get("type") == "text":
+                    text = content.get("text")
+                    if isinstance(text, str) and text:
+                        texts.append(text)
+        return "\n".join(texts).strip()
+
+    @staticmethod
+    def _extract_interactions_function_calls(
+        response: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """从 Interactions 响应中提取 function_call steps。"""
+        calls: List[Dict[str, Any]] = []
+        for index, step in enumerate(response.get("steps", []) or [], 1):
+            if not isinstance(step, dict) or step.get("type") != "function_call":
+                continue
+            name = str(step.get("name") or "").strip()
+            if not name:
+                continue
+            arguments = step.get("arguments", {})
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+            calls.append(
+                {
+                    "id": step.get("id") or step.get("call_id") or f"call_{index}",
+                    "name": name,
+                    "arguments": arguments,
+                }
+            )
+        return calls
+
+    async def _post_interactions_with_fallback(
+        self,
+        api_url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        timeout_seconds: int,
+        log_prefix: str,
+    ) -> Dict[str, Any]:
+        retry_config = app_config.API_RETRY_CONFIG
+        max_attempts = max(1, int(retry_config.get("OPENAI_COMPAT_MAX_ATTEMPTS", 3)))
+        retry_base_delay = max(
+            0.2,
+            float(retry_config.get("OPENAI_COMPAT_RETRY_BASE_DELAY_SECONDS", 1.0)),
+        )
+        retryable_status_codes = {
+            int(str(code).strip())
+            for code in retry_config.get(
+                "OPENAI_COMPAT_RETRYABLE_STATUS_CODES",
+                ["408", "425", "429", "500", "502", "503", "504", "520", "522", "524"],
+            )
+            if str(code).strip().isdigit()
+        }
+        last_error_text = ""
+
+        for attempt in range(max_attempts):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        api_url,
+                        headers=headers,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+                    ) as response:
+                        response_text = await response.text()
+                        if response.status == 200:
+                            try:
+                                return json.loads(response_text)
+                            except json.JSONDecodeError as decode_error:
+                                body_preview = response_text[:500].replace("\n", "\\n")
+                                raise Exception(
+                                    f"{log_prefix} returned invalid JSON: {decode_error}; body={body_preview}"
+                                )
+
+                        last_error_text = response_text
+                        if response.status in retryable_status_codes and attempt < max_attempts - 1:
+                            delay = min(retry_base_delay * (2 ** attempt), 8.0)
+                            log.warning(
+                                f"{log_prefix} returned retryable status {response.status}; retry after {delay:.1f}s"
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+
+                        try:
+                            error_json = json.loads(response_text)
+                            error_msg = error_json.get("error", {}).get(
+                                "message",
+                                response_text,
+                            )
+                        except Exception:
+                            error_msg = response_text
+                        raise Exception(f"API returned {response.status}: {error_msg}")
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as request_error:
+                last_error_text = str(request_error) or type(request_error).__name__
+                if attempt < max_attempts - 1:
+                    delay = min(retry_base_delay * (2 ** attempt), 8.0)
+                    log.warning(
+                        f"{log_prefix} request failed: {last_error_text}; retry after {delay:.1f}s"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise Exception(
+                    f"{log_prefix} request failed after {attempt + 1}/{max_attempts} attempts: {last_error_text}"
+                )
+
+        raise Exception(
+            f"{log_prefix} retries exhausted after {max_attempts} attempts: {last_error_text}"
+        )
+
+    async def _generate_with_interactions_api(
+        self,
+        user_id: int,
+        guild_id: int,
+        message: str,
+        channel: Optional[Any] = None,
+        replied_message: Optional[str] = None,
+        images: Optional[List[Dict]] = None,
+        user_name: str = "用户",
+        channel_context: Optional[List[Dict]] = None,
+        world_book_entries: Optional[List[Dict]] = None,
+        personal_summary: Optional[str] = None,
+        affection_status: Optional[Dict[str, Any]] = None,
+        user_profile_data: Optional[Dict[str, Any]] = None,
+        guild_name: str = "未知服务器",
+        location_name: str = "未知位置",
+        model_name: Optional[str] = None,
+        discord_message: Optional[Any] = None,
+        api_url: str = "",
+        api_key: str = "",
+        fallback_query: Optional[str] = None,
+        recent_chat_history: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """使用 Gemini Interactions API 生成回复，原生支持 image/video/audio 输入。"""
+        if not model_name:
+            model_name = self.default_model_name
+
+        log.info(f"使用 Gemini Interactions API 生成回复: {api_url}, 模型: {model_name}")
+
+        thread_first_post_context = await self._load_thread_first_post_context(channel)
+        emoji_images = [
+            img for img in (images or []) if isinstance(img, dict) and img.get("source") == "emoji"
+        ]
+        native_media_items = [
+            img for img in (images or []) if isinstance(img, dict) and img.get("source") != "emoji"
+        ]
+        final_conversation = prompt_service.build_chat_prompt(
+            user_name=user_name,
+            message=message,
+            replied_message=replied_message,
+            images=emoji_images or None,
+            channel_context=channel_context,
+            world_book_entries=world_book_entries,
+            affection_status=affection_status,
+            personal_summary=personal_summary,
+            user_profile_data=user_profile_data,
+            guild_name=guild_name,
+            location_name=location_name,
+            model_name=model_name,
+            channel=channel,
+            user_id=user_id,
+            thread_first_post_context=thread_first_post_context,
+            recent_chat_history=recent_chat_history,
+        )
+        system_instruction, initial_input = self._build_interactions_input_from_conversation(
+            final_conversation,
+            native_media_items,
+        )
+
+        model_key = model_name or "default"
+        gen_config = copy.deepcopy(
+            app_config.MODEL_GENERATION_CONFIG.get(
+                model_key,
+                app_config.MODEL_GENERATION_CONFIG.get("default", {}),
+            )
+        )
+        generation_config = self._build_interactions_generation_config(gen_config)
+
+        visible_tool_declarations = self.available_tools
+        if (
+            hasattr(self, "tool_service")
+            and self.tool_service
+            and hasattr(self.tool_service, "get_visible_tool_declarations")
+        ):
+            candidate_tools = self.tool_service.get_visible_tool_declarations()
+            if isinstance(candidate_tools, list):
+                visible_tool_declarations = candidate_tools
+        visible_tool_declarations = self._filter_tool_declarations_for_openai_request(
+            visible_tool_declarations,
+            model_name=model_name,
+        )
+        interactions_tools = self._convert_tools_to_interactions_format(
+            visible_tool_declarations
+        )
+
+        endpoint = self._resolve_interactions_endpoint(api_url)
+        headers = {
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        }
+        timeout_seconds = max(
+            30,
+            int(app_config.API_RETRY_CONFIG.get("OPENAI_COMPAT_CHAT_TIMEOUT_SECONDS", 180)),
+        )
+
+        max_tool_calls = 20
+        max_completion_rounds = max_tool_calls + 2
+        max_web_search_calls = 1
+        web_search_call_count = 0
+        executed_tool_signatures: set[str] = set()
+        called_tool_names: List[str] = []
+        web_search_source_links: List[tuple] = []
+        previous_interaction_id: Optional[str] = None
+        current_input: List[Dict[str, Any]] = initial_input
+        force_text_response_without_tools = False
+
+        for iteration in range(max_completion_rounds):
+            iteration_tools = (
+                []
+                if force_text_response_without_tools or iteration >= max_tool_calls
+                else interactions_tools
+            )
+            payload: Dict[str, Any] = {
+                "model": model_name,
+                "input": current_input,
+            }
+            if system_instruction and previous_interaction_id is None:
+                payload["system_instruction"] = system_instruction
+            if generation_config:
+                payload["generation_config"] = generation_config
+            if iteration_tools:
+                payload["tools"] = iteration_tools
+                payload["store"] = True
+            else:
+                payload["store"] = False
+            if previous_interaction_id:
+                payload["previous_interaction_id"] = previous_interaction_id
+
+            if app_config.DEBUG_CONFIG.get("LOG_AI_FULL_CONTEXT", False):
+                log.info(
+                    "Interactions API 请求 URL: %s, 输入块=%s, 工具=%s, 迭代=%s",
+                    endpoint,
+                    len(current_input),
+                    len(iteration_tools),
+                    iteration + 1,
+                )
+
+            result = await self._post_interactions_with_fallback(
+                api_url=endpoint,
+                headers=headers,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+                log_prefix=f"Interactions API (iteration {iteration + 1}/{max_completion_rounds})",
+            )
+            previous_interaction_id = str(result.get("id") or previous_interaction_id or "")
+            if not previous_interaction_id:
+                previous_interaction_id = None
+
+            usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+            if usage:
+                log.info(
+                    "Interactions API Token 使用: 输入=%s, 输出=%s, 总计=%s",
+                    usage.get("total_input_tokens"),
+                    usage.get("total_output_tokens"),
+                    usage.get("total_tokens"),
+                )
+
+            function_calls = self._extract_interactions_function_calls(result)
+            if function_calls and iteration_tools:
+                log.info(f"Interactions API 返回 {len(function_calls)} 个工具调用")
+                current_turn_tool_names = [
+                    call["name"]
+                    for call in function_calls
+                    if str(call.get("name") or "").strip()
+                ]
+                function_results: List[Dict[str, Any]] = []
+                skip_ai_response_requested = False
+                executed_new_tool_in_this_turn = False
+                blocked_tool_call_in_this_turn = False
+
+                for call in function_calls:
+                    tool_name = str(call.get("name") or "").strip()
+                    tool_args = call.get("arguments") or {}
+                    call_id = str(call.get("id") or "").strip() or f"call_{len(function_results) + 1}"
+                    called_tool_names.append(tool_name)
+
+                    call_signature = self._build_tool_call_signature(
+                        tool_name,
+                        tool_args,
+                    )
+                    web_search_executed = False
+
+                    if (
+                        tool_name == "generate_voice"
+                        and self._should_block_generate_voice_for_info_context(
+                            called_tool_names=called_tool_names,
+                            current_turn_tool_names=current_turn_tool_names,
+                        )
+                    ):
+                        tool_result = self._build_voice_skip_message_for_info_context()
+                    elif tool_name == "web_search":
+                        if web_search_call_count >= max_web_search_calls:
+                            blocked_tool_call_in_this_turn = True
+                            tool_result = self._build_web_search_skip_message(
+                                f"本轮对话中 web_search 调用已达到上限 ({max_web_search_calls} 次)。"
+                            )
+                        elif call_signature in executed_tool_signatures:
+                            blocked_tool_call_in_this_turn = True
+                            tool_result = self._build_web_search_skip_message(
+                                "检测到相同参数的重复 web_search 请求。"
+                            )
+                        else:
+                            executed_tool_signatures.add(call_signature)
+                            web_search_call_count += 1
+                            web_search_executed = True
+                            executed_new_tool_in_this_turn = True
+                            if discord_message:
+                                try:
+                                    await discord_message.add_reaction("🔍")
+                                except Exception:
+                                    pass
+                            tool_result = await self._execute_openai_tool_call(
+                                tool_name=tool_name,
+                                tool_args=tool_args,
+                                channel=channel,
+                                user_id=user_id,
+                                discord_message=discord_message,
+                                current_turn_tool_names=current_turn_tool_names,
+                                user_name=user_name,
+                                fallback_query=fallback_query,
+                                channel_context=channel_context,
+                            )
+                    else:
+                        if call_signature in executed_tool_signatures:
+                            blocked_tool_call_in_this_turn = True
+                            tool_result = self._build_duplicate_tool_call_skip_message(
+                                tool_name,
+                                "检测到相同参数的重复工具请求。",
+                            )
+                        else:
+                            executed_tool_signatures.add(call_signature)
+                            executed_new_tool_in_this_turn = True
+                            tool_result = await self._execute_openai_tool_call(
+                                tool_name=tool_name,
+                                tool_args=tool_args,
+                                channel=channel,
+                                user_id=user_id,
+                                discord_message=discord_message,
+                                current_turn_tool_names=current_turn_tool_names,
+                                user_name=user_name,
+                                fallback_query=fallback_query,
+                                channel_context=channel_context,
+                            )
+
+                    if tool_name == "web_search" and web_search_executed and discord_message:
+                        try:
+                            await discord_message.remove_reaction("🔍", discord_message.guild.me)
+                        except Exception:
+                            pass
+                        try:
+                            await discord_message.add_reaction("☑️")
+                        except Exception:
+                            pass
+
+                    if tool_name == "web_search":
+                        search_result_text = (
+                            json.dumps(tool_result, ensure_ascii=False)
+                            if isinstance(tool_result, (dict, list))
+                            else str(tool_result)
+                        )
+                        extracted_links = self._extract_markdown_links_from_text(search_result_text)
+                        seen_urls = {u for _, u in web_search_source_links}
+                        for title, url in extracted_links:
+                            if url not in seen_urls:
+                                seen_urls.add(url)
+                                web_search_source_links.append((title, url))
+
+                    extracted_tool_images = self._extract_tool_image_payloads(
+                        tool_result,
+                        tool_name,
+                    )
+                    if extracted_tool_images:
+                        for image_payload in extracted_tool_images:
+                            self.last_tool_image_data = image_payload
+                            self._remember_tool_image_payload(image_payload)
+
+                    if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
+                        skip_ai_response_requested = True
+
+                    tool_result_for_history = self._sanitize_tool_result_for_history(
+                        tool_result
+                    )
+                    result_text = (
+                        json.dumps(tool_result_for_history, ensure_ascii=False)
+                        if isinstance(tool_result_for_history, (dict, list))
+                        else str(tool_result_for_history)
+                    )
+                    function_results.append(
+                        {
+                            "type": "function_result",
+                            "call_id": call_id,
+                            "name": tool_name,
+                            "result": [
+                                {
+                                    "type": "text",
+                                    "text": result_text,
+                                }
+                            ],
+                        }
+                    )
+
+                if skip_ai_response_requested:
+                    self.last_called_tools = called_tool_names
+                    self.last_tool_source_links = list(web_search_source_links)
+                    return None
+
+                if blocked_tool_call_in_this_turn and not executed_new_tool_in_this_turn:
+                    force_text_response_without_tools = True
+                else:
+                    force_text_response_without_tools = False
+
+                current_input = function_results
+                continue
+
+            raw_response = self._extract_interactions_output_text(result)
+            if raw_response:
+                from src.chat.services.context_service import context_service
+
+                await context_service.update_user_conversation_history(
+                    user_id,
+                    guild_id,
+                    message if message else "",
+                    raw_response,
+                )
+                final_response = await self._post_process_response(
+                    raw_response,
+                    user_id,
+                    guild_id,
+                )
+                if "web_search" in called_tool_names:
+                    final_response = self._append_message_sources_if_needed(
+                        final_response,
+                        web_search_source_links,
+                    )
+                self.last_called_tools = called_tool_names
+                self.last_tool_source_links = self._extract_source_links_from_response_text(
+                    final_response
+                )
+                return final_response
+
+            status = str(result.get("status") or "").strip()
+            if status == "requires_action" and not function_calls:
+                log.warning("Interactions API 要求工具动作，但响应中没有 function_call step。")
+                force_text_response_without_tools = True
+                current_input = [
+                    {
+                        "type": "text",
+                        "text": "上一轮没有可执行的函数调用。请直接输出最终回复，不要调用工具。",
+                    }
+                ]
+                continue
+
+            log.warning(f"Interactions API 返回空文本: status={status}, response={self._serialize_for_logging(result)}")
+            current_input = [
+                {
+                    "type": "text",
+                    "text": "你刚才返回了空文本。请基于当前上下文直接给出最终回复。",
+                }
+            ]
+            force_text_response_without_tools = True
+
+        self.last_called_tools = called_tool_names
+        log.warning("Interactions 工具调用循环达到最大次数，仍未得到文本响应。")
+        return "呜…脑子转太多圈了，晕掉了啦！重新问一次好不好？"
     async def _generate_with_openai_compatible(
         self,
         user_id: int,
@@ -4996,6 +5875,7 @@ class GeminiService:
 
         此方法会自动检测 Dashboard 配置的 API 格式：
         - 如果是 "openai" 格式，使用 OpenAI 兼容 API
+        - 如果是 "interactions" 格式，使用 Gemini Interactions API
         - 如果是 "gemini" 格式，使用 Gemini SDK
 
         Args:
@@ -5009,7 +5889,7 @@ class GeminiService:
                     当提供时会作为多模态输入附加到最后一条用户消息（或单轮 prompt）。
             api_url: (可选) 覆盖默认 API URL。常用于特定功能使用独立 LLM 端点。
             api_key: (可选) 覆盖默认 API Key。留空则沿用主配置。
-            api_format: (可选) 覆盖 API 格式，仅支持 "gemini"/"openai"。留空则沿用主配置。
+            api_format: (可选) 覆盖 API 格式，支持 "gemini"/"openai"/"interactions"。留空则沿用主配置。
             return_error_text: 发生异常时是否返回面向用户的错误文案。False 时返回 None。
 
         Returns:
@@ -5021,6 +5901,10 @@ class GeminiService:
         if normalized_raw_api_format and normalized_raw_api_format not in {
             "gemini",
             "openai",
+            "interactions",
+            "interactions_api",
+            "interactions-api",
+            "gemini_interactions",
             "openai_compatible",
             "openai-compatible",
         }:
@@ -5087,6 +5971,8 @@ class GeminiService:
         route_name = "gemini_key_rotation"
         if resolved_api_format == "openai" and resolved_api_url and resolved_api_key:
             route_name = "openai_compatible"
+        elif resolved_api_format == "interactions" and resolved_api_url and resolved_api_key:
+            route_name = "interactions"
         elif resolved_api_url and resolved_api_key:
             route_name = "gemini_custom_endpoint"
 
@@ -5127,6 +6013,18 @@ class GeminiService:
                 images=images,
                 return_error_text=return_error_text,
             )
+        if resolved_api_format == "interactions" and resolved_api_url and resolved_api_key:
+            log.info(f"generate_simple_response 使用 Interactions API: {resolved_api_url[:30]}..., 模型: {final_model_name}")
+            return await self._generate_simple_with_interactions_api(
+                prompt=prompt,
+                generation_config=generation_config,
+                model_name=final_model_name,
+                api_url=resolved_api_url,
+                api_key=resolved_api_key,
+                messages=messages,
+                images=images,
+                return_error_text=return_error_text,
+            )
         
         # 使用 Gemini SDK，优先使用 Dashboard 配置的 URL 和 Key
         if resolved_api_url and resolved_api_key:
@@ -5152,6 +6050,70 @@ class GeminiService:
             images=images,
             return_error_text=return_error_text,
         )
+
+    async def _generate_simple_with_interactions_api(
+        self,
+        prompt: str,
+        generation_config: Dict,
+        model_name: str,
+        api_url: str,
+        api_key: str,
+        messages: Optional[List[Dict[str, str]]] = None,
+        images: Optional[List[Dict[str, Any]]] = None,
+        return_error_text: bool = True,
+    ) -> Optional[str]:
+        """使用 Interactions API 生成简单响应（摘要、查询重写、投喂识别等）。"""
+        try:
+            if messages:
+                transcript_lines: List[str] = []
+                role_labels = {"user": "用户", "model": "月月", "assistant": "月月"}
+                for msg in messages:
+                    role = str(msg.get("role") or "user")
+                    transcript_lines.append(
+                        f"[{role_labels.get(role, role)}]\n{msg.get('content', '')}"
+                    )
+                input_blocks: List[Dict[str, Any]] = [
+                    {"type": "text", "text": "\n\n".join(transcript_lines)}
+                ]
+            else:
+                input_blocks = [{"type": "text", "text": prompt}]
+
+            input_blocks.extend(self._build_interactions_media_blocks(images))
+            payload: Dict[str, Any] = {
+                "model": model_name,
+                "input": input_blocks,
+                "store": False,
+            }
+            filtered_generation_config = self._build_interactions_generation_config(
+                generation_config
+            )
+            if filtered_generation_config:
+                payload["generation_config"] = filtered_generation_config
+
+            result = await self._post_interactions_with_fallback(
+                api_url=self._resolve_interactions_endpoint(api_url),
+                headers={
+                    "x-goog-api-key": api_key,
+                    "Content-Type": "application/json",
+                },
+                payload=payload,
+                timeout_seconds=max(
+                    30,
+                    int(
+                        app_config.API_RETRY_CONFIG.get(
+                            "OPENAI_COMPAT_CHAT_TIMEOUT_SECONDS", 180
+                        )
+                    ),
+                ),
+                log_prefix="Interactions API simple response",
+            )
+            text = self._extract_interactions_output_text(result)
+            return text or None
+        except Exception as e:
+            log.error(f"Interactions API 简单调用失败: {e}", exc_info=True)
+            if return_error_text:
+                return "呜…AI服务好像抽风了，等会再试试嘛…才不是我不行！"
+            return None
     
     async def _generate_simple_with_gemini_custom(
         self,

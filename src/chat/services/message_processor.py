@@ -41,6 +41,19 @@ VIDEO_EXT_TO_MIME = {
     ".avi": "video/x-msvideo",
     ".mkv": "video/x-matroska",
 }
+AUDIO_EXT_TO_MIME = {
+    ".mp3": "audio/mp3",
+    ".wav": "audio/wav",
+    ".m4a": "audio/m4a",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".opus": "audio/opus",
+    ".flac": "audio/flac",
+    ".aiff": "audio/aiff",
+    ".aif": "audio/aiff",
+    ".mpeg": "audio/mpeg",
+}
 TEXT_ATTACHMENT_MAX_BYTES = 3 * 1024 * 1024
 TEXT_ATTACHMENT_EXTENSIONS = {
     ".txt",
@@ -80,7 +93,7 @@ class MessageProcessor:
     async def _fetch_image_aio(
         self, session: aiohttp.ClientSession, url: str, proxy: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """下载图片/视频，返回字节数据及响应中的 MIME 类型。"""
+        """下载图片/视频/音频，返回字节数据及响应中的 MIME 类型。"""
         try:
             max_video_bytes = int(
                 chat_config.IMAGE_PROCESSING_CONFIG.get(
@@ -88,8 +101,14 @@ class MessageProcessor:
                 )
                 or 64 * 1024 * 1024
             )
+            max_audio_bytes = int(
+                chat_config.IMAGE_PROCESSING_CONFIG.get(
+                    "AUDIO_MAX_BYTES", 64 * 1024 * 1024
+                )
+                or 64 * 1024 * 1024
+            )
             headers = {
-                "Accept": "image/gif,image/png,image/jpeg,image/webp,video/mp4,video/webm,video/*,*/*",
+                "Accept": "image/gif,image/png,image/jpeg,image/webp,video/mp4,video/webm,video/*,audio/*,*/*",
                 "User-Agent": "OdysseiaDiscordBot/1.0",
             }
             async with session.get(
@@ -107,11 +126,21 @@ class MessageProcessor:
                 )
                 content_length = response.headers.get("Content-Length")
                 likely_video_by_url = self._is_supported_video_url(str(response.url)) or self._is_supported_video_url(url)
+                likely_audio_by_url = self._is_supported_audio_url(str(response.url)) or self._is_supported_audio_url(url)
                 if (content_type.startswith("video/") or likely_video_by_url) and content_length:
                     try:
                         if int(content_length) > max_video_bytes:
                             log.info(
                                 f"视频链接超过 {max_video_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {url[:120]}"
+                            )
+                            return None
+                    except ValueError:
+                        pass
+                if (content_type.startswith("audio/") or likely_audio_by_url) and content_length:
+                    try:
+                        if int(content_length) > max_audio_bytes:
+                            log.info(
+                                f"音频链接超过 {max_audio_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {url[:120]}"
                             )
                             return None
                     except ValueError:
@@ -123,6 +152,11 @@ class MessageProcessor:
                 if (content_type.startswith("video/") or likely_video_by_url) and len(media_bytes) > max_video_bytes:
                     log.info(
                         f"视频链接读取后超过 {max_video_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {url[:120]}"
+                    )
+                    return None
+                if (content_type.startswith("audio/") or likely_audio_by_url) and len(media_bytes) > max_audio_bytes:
+                    log.info(
+                        f"音频链接读取后超过 {max_audio_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {url[:120]}"
                     )
                     return None
 
@@ -222,6 +256,24 @@ class MessageProcessor:
                 return mime
         return None
 
+    def _guess_audio_mime_type_from_filename(self, filename: str) -> Optional[str]:
+        """根据附件文件名推断音频 MIME 类型。"""
+        ext = Path(filename or "").suffix.lower()
+        return AUDIO_EXT_TO_MIME.get(ext)
+
+    def _guess_audio_mime_type_from_url(self, url: str) -> Optional[str]:
+        """根据 URL 后缀推断音频 MIME 类型。"""
+        try:
+            parsed = urlparse(url.strip())
+            path = (parsed.path or "").lower()
+        except Exception:
+            return None
+
+        for ext, mime in AUDIO_EXT_TO_MIME.items():
+            if path.endswith(ext):
+                return mime
+        return None
+
     def _extract_image_urls_from_text(self, text: str) -> List[str]:
         """从文本中提取 URL（支持 Markdown 链接和裸链接），并保持顺序去重。"""
         if not text:
@@ -285,10 +337,14 @@ class MessageProcessor:
             and any(host.endswith(video_host) for video_host in SUPPORTED_EXTENSIONLESS_VIDEO_HOSTS)
         )
 
+    def _is_supported_audio_url(self, url: str) -> bool:
+        """判断是否允许尝试下载为音频的 URL。"""
+        return self._guess_audio_mime_type_from_url(url) is not None
+
     async def _extract_images_from_text_links(
         self, content: str, source: str, seen_urls: Optional[Set[str]] = None
     ) -> List[Dict[str, Any]]:
-        """从文本链接下载图片/视频，支持 Discord CDN、常见媒体后缀和已知视频 artifact 链接。"""
+        """从文本链接下载图片/视频/音频，支持常见媒体后缀。"""
         if not content:
             return []
 
@@ -303,11 +359,12 @@ class MessageProcessor:
         for url in candidate_urls:
             if url in seen_urls:
                 continue
-            # Discord CDN 图片、常见图片/视频后缀、已知视频 artifact 链接都允许。
+            # Discord CDN 图片、常见图片/视频/音频后缀、已知视频 artifact 链接都允许。
             if (
                 self._is_supported_discord_image_url(url)
                 or self._is_image_url_by_extension(url)
                 or self._is_supported_video_url(url)
+                or self._is_supported_audio_url(url)
             ):
                 seen_urls.add(url)
                 collected_urls.append(url)
@@ -336,16 +393,20 @@ class MessageProcessor:
                 or self._guess_mime_type_from_url(url)
                 or self._guess_video_mime_type_from_url(final_url)
                 or self._guess_video_mime_type_from_url(url)
+                or self._guess_audio_mime_type_from_url(final_url)
+                or self._guess_audio_mime_type_from_url(url)
             )
 
-            if response_mime_type.startswith(("image/", "video/")):
+            if response_mime_type.startswith(("image/", "video/", "audio/")):
                 mime_type = response_mime_type
             elif guessed_mime_type:
                 mime_type = guessed_mime_type
             elif response_mime_type in {"application/octet-stream", "binary/octet-stream"} and self._is_supported_video_url(url):
                 mime_type = "video/mp4"
+            elif response_mime_type in {"application/octet-stream", "binary/octet-stream"} and self._is_supported_audio_url(url):
+                mime_type = self._guess_audio_mime_type_from_url(url) or "audio/mp3"
             else:
-                log.warning(f"文本链接返回了非图片/视频内容，已跳过: {url}")
+                log.warning(f"文本链接返回了非图片/视频/音频内容，已跳过: {url}")
                 continue
 
             image_data_list.append(
@@ -354,9 +415,10 @@ class MessageProcessor:
                     "data": image_bytes,
                     "source": source,
                     "filename": Path(urlparse(final_url or url).path or "").name or None,
+                    "url": final_url or url,
                 }
             )
-            media_kind = "视频" if mime_type.startswith("video/") else "图片"
+            media_kind = "视频" if mime_type.startswith("video/") else ("音频" if mime_type.startswith("audio/") else "图片")
             log.debug(f"成功从文本链接下载{media_kind}: {url} ({mime_type})")
 
         return image_data_list
@@ -873,6 +935,7 @@ class MessageProcessor:
                     self._is_supported_discord_image_url(url)
                     or self._is_image_url_by_extension(url)
                     or self._is_supported_video_url(url)
+                    or self._is_supported_audio_url(url)
                 ):
                     seen_urls.add(url)
                     candidate_urls.append(url)
@@ -903,16 +966,20 @@ class MessageProcessor:
                 or self._guess_mime_type_from_url(url)
                 or self._guess_video_mime_type_from_url(final_url)
                 or self._guess_video_mime_type_from_url(url)
+                or self._guess_audio_mime_type_from_url(final_url)
+                or self._guess_audio_mime_type_from_url(url)
             )
 
-            if response_mime_type.startswith(("image/", "video/")):
+            if response_mime_type.startswith(("image/", "video/", "audio/")):
                 mime_type = response_mime_type
             elif guessed_mime_type:
                 mime_type = guessed_mime_type
             elif response_mime_type in {"application/octet-stream", "binary/octet-stream"} and self._is_supported_video_url(url):
                 mime_type = "video/mp4"
+            elif response_mime_type in {"application/octet-stream", "binary/octet-stream"} and self._is_supported_audio_url(url):
+                mime_type = self._guess_audio_mime_type_from_url(url) or "audio/mp3"
             else:
-                log.warning(f"embed 链接返回了非图片/视频内容，已跳过: {url[:120]}")
+                log.warning(f"embed 链接返回了非图片/视频/音频内容，已跳过: {url[:120]}")
                 continue
 
             image_data_list.append(
@@ -921,9 +988,10 @@ class MessageProcessor:
                     "data": image_bytes,
                     "source": "embed",
                     "filename": Path(urlparse(final_url or url).path or "").name or None,
+                    "url": final_url or url,
                 }
             )
-            media_kind = "视频" if mime_type.startswith("video/") else "图片"
+            media_kind = "视频" if mime_type.startswith("video/") else ("音频" if mime_type.startswith("audio/") else "图片")
             log.info(f"成功从 embed proxy_url 提取{media_kind}: {url[:120]} ({mime_type})")
 
         return image_data_list
@@ -988,11 +1056,17 @@ class MessageProcessor:
     async def _extract_images_from_attachments(
         self, attachments: List[discord.Attachment]
     ) -> List[Dict[str, Any]]:
-        """从附件列表中提取图片/视频数据。视频会在 PromptService 中抽帧成拼图。"""
+        """从附件列表中提取图片/视频/音频数据。视频在旧路径中会抽帧成拼图。"""
         image_data_list = []
         max_video_bytes = int(
             chat_config.IMAGE_PROCESSING_CONFIG.get(
                 "VIDEO_MAX_BYTES", 64 * 1024 * 1024
+            )
+            or 64 * 1024 * 1024
+        )
+        max_audio_bytes = int(
+            chat_config.IMAGE_PROCESSING_CONFIG.get(
+                "AUDIO_MAX_BYTES", 64 * 1024 * 1024
             )
             or 64 * 1024 * 1024
         )
@@ -1017,6 +1091,10 @@ class MessageProcessor:
                 self._guess_video_mime_type_from_filename(filename)
                 or self._guess_video_mime_type_from_url(attachment_url)
             )
+            guessed_audio_mime = (
+                self._guess_audio_mime_type_from_filename(filename)
+                or self._guess_audio_mime_type_from_url(attachment_url)
+            )
             is_image_attachment = bool(
                 (content_type and content_type.startswith("image/"))
                 or guessed_image_mime
@@ -1026,13 +1104,25 @@ class MessageProcessor:
                 or guessed_video_mime
                 or (attachment_url and self._is_supported_video_url(attachment_url))
             )
+            is_audio_attachment = bool(
+                (content_type and content_type.startswith("audio/"))
+                or guessed_audio_mime
+                or (attachment_url and self._is_supported_audio_url(attachment_url))
+            )
 
-            if is_image_attachment or is_video_attachment:
+            if is_image_attachment or is_video_attachment or is_audio_attachment:
                 if is_video_attachment:
                     attachment_size = getattr(attachment, "size", None)
                     if isinstance(attachment_size, int) and attachment_size > max_video_bytes:
                         log.info(
                             f"视频附件超过 {max_video_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {filename}"
+                        )
+                        continue
+                if is_audio_attachment:
+                    attachment_size = getattr(attachment, "size", None)
+                    if isinstance(attachment_size, int) and attachment_size > max_audio_bytes:
+                        log.info(
+                            f"音频附件超过 {max_audio_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {filename}"
                         )
                         continue
 
@@ -1062,11 +1152,18 @@ class MessageProcessor:
                             final_url = str(fetched_media.get("final_url") or attachment_url)
                             guessed_image_mime = guessed_image_mime or self._guess_mime_type_from_url(final_url)
                             guessed_video_mime = guessed_video_mime or self._guess_video_mime_type_from_url(final_url)
+                            guessed_audio_mime = guessed_audio_mime or self._guess_audio_mime_type_from_url(final_url)
                             is_video_attachment = bool(
                                 is_video_attachment
                                 or content_type.startswith("video/")
                                 or guessed_video_mime
                                 or self._is_supported_video_url(final_url)
+                            )
+                            is_audio_attachment = bool(
+                                is_audio_attachment
+                                or content_type.startswith("audio/")
+                                or guessed_audio_mime
+                                or self._is_supported_audio_url(final_url)
                             )
                             log.info(f"已通过 URL 下载媒体附件: {filename}")
                     except Exception as e:
@@ -1081,6 +1178,11 @@ class MessageProcessor:
                         f"视频附件读取后超过 {max_video_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {filename}"
                     )
                     continue
+                if is_audio_attachment and len(media_bytes) > max_audio_bytes:
+                    log.info(
+                        f"音频附件读取后超过 {max_audio_bytes / 1024 / 1024:.0f}MB 限制，已跳过: {filename}"
+                    )
+                    continue
 
                 if is_video_attachment:
                     resolved_mime_type = (
@@ -1088,6 +1190,13 @@ class MessageProcessor:
                         if content_type.startswith("video/")
                         else guessed_video_mime
                         or "video/mp4"
+                    )
+                elif is_audio_attachment:
+                    resolved_mime_type = (
+                        content_type
+                        if content_type.startswith("audio/")
+                        else guessed_audio_mime
+                        or "audio/mp3"
                     )
                 else:
                     resolved_mime_type = (
@@ -1102,9 +1211,10 @@ class MessageProcessor:
                         "data": media_bytes,
                         "source": "attachment",
                         "filename": filename,
+                        "url": attachment_url or None,
                     }
                 )
-                media_kind = "视频" if is_video_attachment else "图片"
+                media_kind = "视频" if is_video_attachment else ("音频" if is_audio_attachment else "图片")
                 log.info(
                     f"成功读取{media_kind}附件: {filename}, MIME: {resolved_mime_type}, 大小: {len(media_bytes)} 字节"
                 )

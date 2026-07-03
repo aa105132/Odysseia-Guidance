@@ -283,6 +283,27 @@ def test_message_processor_extracts_video_attachment():
     assert result[0]["filename"] == "demo.mp4"
 
 
+def test_message_processor_extracts_audio_attachment():
+    class _FakeAttachment:
+        content_type = "audio/mpeg"
+        filename = "voice.mp3"
+        size = 10
+        url = "https://cdn.discordapp.com/attachments/1/2/voice.mp3"
+
+        async def read(self):
+            return b"fake-audio"
+
+    processor = MessageProcessor()
+    result = __import__("asyncio").run(
+        processor._extract_images_from_attachments([_FakeAttachment()])
+    )
+
+    assert result[0]["mime_type"] == "audio/mpeg"
+    assert result[0]["data"] == b"fake-audio"
+    assert result[0]["filename"] == "voice.mp3"
+    assert result[0]["url"].endswith("voice.mp3")
+
+
 def test_message_processor_extracts_sticker_image(monkeypatch):
     from src.chat.features.tools.utils import discord_image_utils
 

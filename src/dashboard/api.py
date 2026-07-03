@@ -295,7 +295,7 @@ class AIConfigUpdate(BaseModel):
     max_tokens: Optional[int] = None
     api_url: Optional[str] = None
     api_key: Optional[str] = None
-    api_format: Optional[str] = None  # 'gemini' 或 'openai'
+    api_format: Optional[str] = None  # 'gemini'、'openai' 或 'interactions'
     summary_model: Optional[str] = None  # 摘要模型
     query_model: Optional[str] = None  # 查询重写模型
     available_models: Optional[List[str]] = None
@@ -598,7 +598,7 @@ class ModelListRequest(BaseModel):
     """获取模型列表请求"""
     api_url: Optional[str] = None
     api_key: Optional[str] = None
-    api_format: str = "gemini"  # 'gemini' 或 'openai'
+    api_format: str = "gemini"  # 'gemini'、'openai' 或 'interactions'
     model_type: str = "chat"  # 'chat' 或 'imagen'
 
 
@@ -1327,8 +1327,8 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         updated['available_models'] = normalized_available_models
 
     if config.api_format is not None:
-        if config.api_format not in ["gemini", "openai"]:
-            raise HTTPException(400, "API 格式必须是 'gemini' 或 'openai'")
+        if config.api_format not in ["gemini", "openai", "interactions"]:
+            raise HTTPException(400, "API 格式必须是 'gemini'、'openai' 或 'interactions'")
         chat_config._db_api_format = config.api_format
         # 写入数据库
         await chat_db_manager.set_global_setting("ai_api_format", config.api_format)
