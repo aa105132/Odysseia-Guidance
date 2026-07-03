@@ -171,6 +171,177 @@ def _pick_best_track(
     return max(tracks, key=lambda item: _score_track(item, query=query, artist=artist))
 
 
+def _prepare_llm_candidates(
+    tracks: List[Dict[str, Any]],
+    *,
+    query: str,
+    artist: Optional[str],
+    limit: int = 12,
+) -> List[Dict[str, Any]]:
+    """按启发式分数预筛候选数量，但保留 API 返回顺序给内部 LLM 分析。"""
+    scored = [
+        (
+            _score_track(track, query=query, artist=artist),
+            index,
+            track,
+        )
+        for index, track in enumerate(tracks)
+    ]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    kept_indexes = {index for _, index, _ in scored[: max(1, limit)]}
+    return [
+        track
+        for index, track in enumerate(tracks)
+        if index in kept_indexes
+    ]
+
+
+def _build_song_selection_prompt(
+    *,
+    query: str,
+    artist: Optional[str],
+    candidates: List[Dict[str, Any]],
+    song_comment: Optional[str] = None,
+) -> str:
+    candidate_lines = []
+    for index, track in enumerate(candidates, 1):
+        candidate_lines.append(
+            (
+                f"{index}. 歌名：{track.get('name') or '未知'} | "
+                f"歌手：{_track_artist_text(track) or '未知'} | "
+                f"专辑：{track.get('album') or '未知'} | "
+                f"来源：{track.get('source') or '未知'} | "
+                f"id：{track.get('id') or ''}"
+            )
+        )
+
+    existing_comment = str(song_comment or "").strip()
+    comment_instruction = (
+        f"用户/上一轮已经给过短评草稿：{existing_comment}\n"
+        "你可以保留或润色它，但必须仍输出 song_comment。"
+        if existing_comment
+        else "请顺便写一句 15-60 个汉字的 song_comment，像月月对这首歌的短短感悟。"
+    )
+
+    return (
+        "你是月月的点歌选择器。请只根据用户点歌请求和 API 候选列表，选出最应该播放的一首。\n"
+        "规则：\n"
+        "1. 用户指定歌手时，歌手匹配优先级最高。\n"
+        "2. 优先选择正式录音室/专辑版本；除非用户明确要 live、翻唱、伴奏、纯音乐、教程或 MV，否则避开这些版本。\n"
+        "3. 不要因为候选排在前面就选它，要比较歌名、歌手、专辑和版本信息。\n"
+        "4. 如果多个候选都合理，选最贴近用户原话的一项。\n"
+        f"{comment_instruction}\n\n"
+        f"用户请求：{query}\n"
+        f"指定歌手：{artist or '未指定'}\n\n"
+        "候选列表：\n"
+        + "\n".join(candidate_lines)
+        + "\n\n"
+        "严格只输出 JSON，不要 markdown，不要解释。格式：\n"
+        '{"selected_index": 1, "reason": "选择理由", "song_comment": "月月短评"}'
+    )
+
+
+def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    raw_text = str(text or "").strip()
+    if not raw_text:
+        return None
+
+    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE)
+    raw_text = re.sub(r"\s*```$", "", raw_text)
+
+    candidates = [raw_text]
+    match = re.search(r"\{.*\}", raw_text, flags=re.DOTALL)
+    if match:
+        candidates.append(match.group(0))
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+async def _generate_song_selection_response(prompt: str) -> Optional[str]:
+    """调用无工具的轻量 LLM，让月月在下载前分析候选并选择曲目。"""
+    from src.chat.services.gemini_service import gemini_service
+
+    return await gemini_service.generate_simple_response(
+        prompt=prompt,
+        generation_config={
+            "temperature": 0.2,
+            "max_output_tokens": 512,
+        },
+        return_error_text=False,
+    )
+
+
+async def _select_track_with_llm(
+    tracks: List[Dict[str, Any]],
+    *,
+    query: str,
+    artist: Optional[str],
+    song_comment: Optional[str] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], Dict[str, Any]]:
+    """让内部 LLM 从搜索候选中选曲；失败时回退启发式选择。"""
+    fallback_track = _pick_best_track(tracks, query=query, artist=artist)
+    if not tracks:
+        return None, song_comment, {"selected_by": "none", "reason": "no_candidates"}
+
+    candidates = _prepare_llm_candidates(tracks, query=query, artist=artist)
+    if len(candidates) == 1:
+        return candidates[0], song_comment, {
+            "selected_by": "single_candidate",
+            "candidate_count": 1,
+            "selected_index": 1,
+            "reason": "只有一个候选结果。",
+        }
+
+    prompt = _build_song_selection_prompt(
+        query=query,
+        artist=artist,
+        candidates=candidates,
+        song_comment=song_comment,
+    )
+
+    try:
+        raw_response = await _generate_song_selection_response(prompt)
+        parsed = _extract_json_object(raw_response or "")
+    except Exception as exc:
+        log.warning("点歌候选 LLM 分析失败，回退启发式选择: %s", exc, exc_info=True)
+        parsed = None
+        raw_response = ""
+
+    if isinstance(parsed, dict):
+        selected_index = _coerce_int(
+            parsed.get("selected_index") or parsed.get("index") or parsed.get("choice"),
+            0,
+        )
+        if 1 <= selected_index <= len(candidates):
+            selected_track = candidates[selected_index - 1]
+            selected_comment = str(
+                parsed.get("song_comment")
+                or parsed.get("comment")
+                or song_comment
+                or ""
+            ).strip()
+            return selected_track, selected_comment, {
+                "selected_by": "llm",
+                "candidate_count": len(candidates),
+                "selected_index": selected_index,
+                "reason": str(parsed.get("reason") or "").strip(),
+            }
+
+    return fallback_track, song_comment, {
+        "selected_by": "heuristic_fallback",
+        "candidate_count": len(candidates),
+        "reason": "LLM 未返回有效选择，已回退启发式评分。",
+        "raw_response": str(raw_response or "")[:300],
+    }
+
+
 def _infer_audio_extension(mime_type: str, audio_url: str) -> str:
     mime = str(mime_type or "").split(";", 1)[0].strip().lower()
     if mime in {"audio/mpeg", "audio/mp3"}:
@@ -397,7 +568,7 @@ def _build_link_fallback_content(
 
 @tool_metadata(
     name="点歌",
-    description="根据用户想听的歌曲搜索音乐，获取音频文件并发送到当前频道",
+    description="分析用户点歌意图，按歌名、歌手或歌词片段搜索音乐，获取音频文件并发送到当前频道",
     emoji="🎵",
     category="娱乐",
 )
@@ -415,19 +586,27 @@ async def request_song(
 
     使用场景：
     - 用户明确说“点歌”“放一首”“想听”“来首”“播放某首歌”等需求时调用。
-    - song_name 写用户想听的歌名或完整关键词；如果用户指定歌手，把歌手放到 artist。
-    - 默认会依次搜索配置中的音乐源，找到最匹配的曲目后获取音频链接。
-    - 发送歌曲时要附带一句“月月短评”，请在 song_comment 里写一句自然、简短、带一点月月口吻的感悟或评价。
+    - 调用前先仔细分析用户真实点歌意图：判断用户给的是歌名、歌手、歌词片段，
+      还是 live、翻唱、伴奏、纯音乐、MV 等版本偏好。
+    - 用户只提供一句歌词或歌词片段时，不要把歌词直接当作随便的歌名；
+      应把关键歌词和上下文整理成最可能命中的搜索关键词。
+    - 不要把闲聊解释当作歌名，也不要把情绪描述、短评请求、音乐知识问答误当成点歌。
+    - song_name 写用户想听的歌名、完整关键词或关键歌词片段；如果用户指定歌手，把歌手放到 artist。
+    - 默认会依次搜索配置中的音乐源，再让内部轻量 LLM 分析候选并选中最匹配曲目。
+    - 发送歌曲时会附带一句“月月短评”；song_comment 可作为短评草稿，内部 LLM 可保留或润色。
     - 如果音频文件不超过发送上限，会直接作为 Discord 附件发出去，并返回 skip_ai_response=True。
     - 如果文件过大或下载失败，会把播放链接发到频道。
     - 不要用于普通音乐知识问答；只有用户想“听歌/点歌/播放”时调用。
 
     Args:
-        song_name: 歌名或搜索关键词，例如“晴天”“周杰伦 晴天”。
-        artist: 可选歌手名，例如“周杰伦”。用户明确指定歌手时应填写。
+        song_name: 歌名、搜索关键词或用户只给歌词时的关键歌词片段，
+            例如“晴天”“周杰伦 晴天”“从前从前有个人爱你很久”。
+            调用前必须先从用户原话中提炼最适合搜索的关键词。
+        artist: 可选歌手名，例如“周杰伦”。只有用户明确指定或高度确定时填写；
+            不确定不要硬猜，可留空交给候选分析。
         source: 可选音乐源，支持 joox、netease、bilibili 等；留空使用默认兜底源。
         br: 可选音质，支持 128、192、320、740、999。默认 128，避免 Discord 附件过大。
-        song_comment: 发送歌曲时附带的一句月月短评/感悟，建议 15-60 个汉字；不要写成长篇乐评。
+        song_comment: 可选短评草稿；内部候选分析 LLM 会输出最终月月短评，建议 15-60 个汉字。
         send_to_channel: 是否发送到当前频道。默认 true。
 
     Returns:
@@ -484,7 +663,12 @@ async def request_song(
                 source_result_counts[source_name] = len(tracks)
                 all_tracks.extend(tracks)
 
-            selected = _pick_best_track(all_tracks, query=query, artist=artist_text)
+            selected, llm_song_comment, selection_info = await _select_track_with_llm(
+                all_tracks,
+                query=query,
+                artist=artist_text,
+                song_comment=song_comment,
+            )
             if not selected:
                 return {
                     "success": False,
@@ -495,12 +679,12 @@ async def request_song(
                     "hint": "没有搜到可点播的歌曲，请让用户换个歌名或加上歌手名。",
                 }
 
+            final_song_comment = _normalize_song_comment(llm_song_comment, selected)
             url_info = await _fetch_song_url(session, selected, requested_br)
             audio_url = str(url_info.get("url") or "").strip()
             actual_br = _coerce_int(url_info.get("br"), requested_br)
             remote_size = _coerce_int(url_info.get("size"))
             source_name = str(selected.get("source") or "").strip() or sources[0]
-            final_song_comment = _normalize_song_comment(song_comment, selected)
 
             base_result: Dict[str, Any] = {
                 "success": True,
@@ -511,6 +695,7 @@ async def request_song(
                 "remote_size": remote_size,
                 "audio_url": audio_url,
                 "song_comment": final_song_comment,
+                "selection": selection_info,
                 "source_result_counts": source_result_counts,
             }
 

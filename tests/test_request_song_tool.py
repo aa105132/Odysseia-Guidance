@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from unittest.mock import AsyncMock
 
 from src.chat.features.tools.functions import request_song as request_song_tool
@@ -111,6 +112,75 @@ def test_request_song_falls_back_sources_and_sends_audio(monkeypatch):
     channel.send.assert_not_called()
 
 
+def test_request_song_uses_llm_selection_before_fetching_url(monkeypatch):
+    async def fake_search_source(session, source, query, count):
+        return [
+            {
+                "id": "cover",
+                "name": "晴天 (翻唱版)",
+                "artist": ["其他歌手"],
+                "album": "晴天翻唱",
+                "source": source,
+            },
+            {
+                "id": "original",
+                "name": "晴天",
+                "artist": ["周杰倫"],
+                "album": "葉惠美",
+                "source": source,
+            },
+        ]
+
+    fetched_tracks = []
+
+    async def fake_fetch_song_url(session, track, br):
+        fetched_tracks.append(track)
+        return {
+            "url": "https://example.com/original.mp3",
+            "br": 128,
+            "size": 4317292,
+        }
+
+    monkeypatch.setattr(request_song_tool, "_search_source", fake_search_source)
+    monkeypatch.setattr(request_song_tool, "_fetch_song_url", fake_fetch_song_url)
+    monkeypatch.setattr(
+        request_song_tool,
+        "_download_audio",
+        AsyncMock(return_value=(b"audio-bytes", "audio/mpeg")),
+    )
+    monkeypatch.setattr(
+        request_song_tool,
+        "_generate_song_selection_response",
+        AsyncMock(
+            return_value=(
+                '{"selected_index": 2, "reason": "用户指定周杰伦，第二首是原唱专辑版本", '
+                '"song_comment": "这首歌像把青春晒在操场边，风一吹就响起来。"}'
+            )
+        ),
+    )
+    monkeypatch.setattr(request_song_tool.discord, "File", _FakeDiscordFile)
+    monkeypatch.setitem(request_song_tool.MUSIC_REQUEST_CONFIG, "DEFAULT_SOURCES", ["joox"])
+    request_song_tool._REQUEST_TIMESTAMPS.clear()
+
+    message = type("Message", (), {})()
+    message.reply = AsyncMock()
+
+    result = asyncio.run(
+        request_song_tool.request_song(
+            song_name="晴天",
+            artist="周杰伦",
+            message=message,
+        )
+    )
+
+    assert result["success"] is True
+    assert fetched_tracks[0]["id"] == "original"
+    assert result["track"]["id"] == "original"
+    assert result["selection"]["selected_by"] == "llm"
+    _, kwargs = message.reply.await_args
+    assert "月月短评：这首歌像把青春晒在操场边，风一吹就响起来。" in kwargs["content"]
+
+
 def test_request_song_large_remote_file_falls_back_to_link(monkeypatch):
     monkeypatch.setattr(
         request_song_tool,
@@ -174,3 +244,12 @@ def test_tool_loader_discovers_request_song():
     _, tool_map = load_tools_from_directory("src/chat/features/tools/functions")
 
     assert "request_song" in tool_map
+
+
+def test_request_song_prompt_requires_intent_and_lyric_analysis():
+    doc = inspect.getdoc(request_song_tool.request_song) or ""
+
+    assert "调用前先仔细分析用户真实点歌意图" in doc
+    assert "只提供一句歌词" in doc
+    assert "歌词片段" in doc
+    assert "不要把闲聊解释当作歌名" in doc
