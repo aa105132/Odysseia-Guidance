@@ -472,37 +472,77 @@ async def image_search(
         message = kwargs.get("message")
         if channel:
             try:
+                # Build mapping from index to downloaded image data
+                downloaded_by_index: Dict[int, Dict[str, Any]] = {}
+                for dl in image_data_list:
+                    idx_val = dl.get("index")
+                    if idx_val is not None and dl.get("data"):
+                        downloaded_by_index[int(idx_val)] = dl
+
+                files_to_send: List[discord.File] = []
                 embeds: List[discord.Embed] = []
                 for idx, item in enumerate(results[:max_send_images], 1):
-                    image_url = str(item.get("url") or "").strip()
-                    if not image_url:
-                        continue
                     title = str(item.get("title") or f"参考图 {idx}").strip()[:200]
-                    embed = discord.Embed(
-                        title=f"参考图 {idx}",
-                        description=title if title and title != f"参考图 {idx}" else None,
-                        color=0x2B2D31,
-                    )
-                    embed.set_image(url=image_url)
-                    source_url = str(item.get("source_url") or "").strip()
-                    if source_url:
-                        embed.url = source_url
-                    embed.set_footer(text="图片搜索参考图 · 仅作视觉参考")
-                    embeds.append(embed)
+                    dl = downloaded_by_index.get(idx)
+                    if dl and dl.get("data"):
+                        # Use downloaded image data as file attachment
+                        import io as _io
+                        mime = str(dl.get("mime_type") or "image/png").strip()
+                        ext = ".png"
+                        if "jpeg" in mime or "jpg" in mime:
+                            ext = ".jpg"
+                        elif "webp" in mime:
+                            ext = ".webp"
+                        elif "gif" in mime:
+                            ext = ".gif"
+                        fname = f"参考图_{idx}{ext}"
+                        files_to_send.append(discord.File(_io.BytesIO(dl["data"]), filename=fname))
+                        embed = discord.Embed(
+                            title=f"参考图 {idx}",
+                            description=title if title and title != f"参考图 {idx}" else None,
+                            color=0x2B2D31,
+                        )
+                        source_url = str(item.get("source_url") or "").strip()
+                        if source_url:
+                            embed.url = source_url
+                        embed.set_footer(text="图片搜索参考图 · 仅作视觉参考")
+                        embeds.append(embed)
+                    else:
+                        # Fallback to embed URL
+                        image_url = str(item.get("url") or "").strip()
+                        if not image_url:
+                            continue
+                        embed = discord.Embed(
+                            title=f"参考图 {idx}",
+                            description=title if title and title != f"参考图 {idx}" else None,
+                            color=0x2B2D31,
+                        )
+                        embed.set_image(url=image_url)
+                        source_url = str(item.get("source_url") or "").strip()
+                        if source_url:
+                            embed.url = source_url
+                        embed.set_footer(text="图片搜索参考图 · 仅作视觉参考")
+                        embeds.append(embed)
 
-                for batch_start in range(0, len(embeds), 10):
-                    batch = embeds[batch_start : batch_start + 10]
-                    if not batch:
+                # Discord limit: 10 attachments per message
+                total = max(len(files_to_send), len(embeds))
+                for batch_start in range(0, total, 10):
+                    batch_files = files_to_send[batch_start : batch_start + 10]
+                    batch_embeds = embeds[batch_start : batch_start + 10]
+                    if not batch_embeds and not batch_files:
                         continue
                     content = (
                         f"找到这些“{query}”的参考图，月月会先看图分析；"
                         "如果继续生成，参考图仅用于理解主体外观。"
                         if batch_start == 0 else None
                     )
+                    send_kwargs = {"content": content, "embeds": batch_embeds}
+                    if batch_files:
+                        send_kwargs["files"] = batch_files
                     if message is not None and batch_start == 0:
-                        sent = await message.reply(content=content, embeds=batch, mention_author=False)
+                        sent = await message.reply(**send_kwargs, mention_author=False)
                     else:
-                        sent = await channel.send(content=content, embeds=batch)
+                        sent = await channel.send(**send_kwargs)
                     sent_message_ids.append(int(sent.id))
                     sent_channel_id = int(sent.channel.id)
             except Exception as exc:
