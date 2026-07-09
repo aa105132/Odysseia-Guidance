@@ -137,6 +137,7 @@ class ComfyUIService:
         self.view_url = ''
         self.workflow_template: Optional[Dict[str, Any]] = None
         self._request_semaphore = asyncio.Semaphore(1)
+        self._workspace_start_lock = asyncio.Lock()
         self.reinitialize(server_address=server_address, workflow_path=workflow_path)
 
     @staticmethod
@@ -1368,112 +1369,118 @@ class ComfyUIService:
             log.error('CNB_TOKEN 未设置，无法自动启动 workspace')
             return None
 
-        headers = {
-            'Authorization': f'Bearer {self._CNB_TOKEN}',
-            'Accept': 'application/vnd.cnb.api+json',
-            'Content-Type': 'application/json',
-        }
+        async with self._workspace_start_lock:
+            # 拿到锁后先检查：可能在等锁期间前一个请求已经把 workspace 启动好了
+            if await self._check_comfyui_online():
+                log.info('等待 workspace 启动锁期间，ComfyUI 已被其他请求启动就绪，跳过重复启动')
+                return self.server_address
 
-        try:
-            # --- Step 0: 先检查是否已有 running 的 workspace（避免重复启动）---
-            existing_url = await self._find_running_workspace(headers)
-            if existing_url:
-                log.info(f'发现已有 running 的 workspace: {existing_url}')
-                # 验证该 workspace 的 ComfyUI 是否已就绪
-                if await self._wait_comfyui_ready(existing_url):
-                    self.server_address = self._normalize_server_address(existing_url)
-                    app_config.COMFYUI_CONFIG['SERVER_ADDRESS'] = self.server_address
-                    self._refresh_endpoints()
-                    log.info(f'ComfyUI 服务地址已更新为: {self.server_address}')
-                    return existing_url
-                else:
-                    log.warning(f'已有 workspace 的 ComfyUI 未就绪，将启动新 workspace')
+            headers = {
+                'Authorization': f'Bearer {self._CNB_TOKEN}',
+                'Accept': 'application/vnd.cnb.api+json',
+                'Content-Type': 'application/json',
+            }
 
-            # --- Step 1: 提交启动请求 ---
-            start_url = f'{self._CNB_API_BASE}/{self._CNB_REPO}/-/workspace/start'
-            log.info(f'正在启动 CNB workspace: POST {start_url}')
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as session:
-                async with session.post(
-                    start_url, json={'branch': 'main'}, headers=headers
-                ) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        log.error(f'启动 workspace 失败: status={resp.status}, body={body[:200]}')
-                        return None
-                    start_data = await resp.json(content_type=None)
-                    workspace_sn = str(start_data.get('sn') or '').strip()
-                    if not workspace_sn:
-                        log.error(f'启动 workspace 返回缺少 sn: {start_data}')
-                        return None
-                    log.info(f'Workspace 启动请求已提交, sn={workspace_sn}')
+            try:
+                # --- Step 0: 先检查是否已有 running 的 workspace（避免重复启动）---
+                existing_url = await self._find_running_workspace(headers)
+                if existing_url:
+                    log.info(f'发现已有 running 的 workspace: {existing_url}')
+                    # 验证该 workspace 的 ComfyUI 是否已就绪
+                    if await self._wait_comfyui_ready(existing_url):
+                        self.server_address = self._normalize_server_address(existing_url)
+                        app_config.COMFYUI_CONFIG['SERVER_ADDRESS'] = self.server_address
+                        self._refresh_endpoints()
+                        log.info(f'ComfyUI 服务地址已更新为: {self.server_address}')
+                        return existing_url
+                    else:
+                        log.warning(f'已有 workspace 的 ComfyUI 未就绪，将启动新 workspace')
 
-            # --- Step 2: 轮询 workspace list 直到 status 变为 running ---
-            # 优化：先等60秒再开始轮询（workspace构建至少需要~2分钟，早期轮询浪费时间）
-            business_id = None
-            initial_delay = 60  # 先等60秒
-            max_poll = 48       # 60s + 48*5s = 300s max
-            poll_interval = 5   # 5秒一次，更快发现就绪
+                # --- Step 1: 提交启动请求 ---
+                start_url = f'{self._CNB_API_BASE}/{self._CNB_REPO}/-/workspace/start'
+                log.info(f'正在启动 CNB workspace: POST {start_url}')
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as session:
+                    async with session.post(
+                        start_url, json={'branch': 'main'}, headers=headers
+                    ) as resp:
+                        if resp.status != 200:
+                            body = await resp.text()
+                            log.error(f'启动 workspace 失败: status={resp.status}, body={body[:200]}')
+                            return None
+                        start_data = await resp.json(content_type=None)
+                        workspace_sn = str(start_data.get('sn') or '').strip()
+                        if not workspace_sn:
+                            log.error(f'启动 workspace 返回缺少 sn: {start_data}')
+                            return None
+                        log.info(f'Workspace 启动请求已提交, sn={workspace_sn}')
 
-            log.info(f'等待 {initial_delay}s 后开始轮询 workspace 状态（构建约需2-3分钟）...')
-            await asyncio.sleep(initial_delay)
+                # --- Step 2: 轮询 workspace list 直到 status 变为 running ---
+                # 优化：先等60秒再开始轮询（workspace构建至少需要~2分钟，早期轮询浪费时间）
+                business_id = None
+                initial_delay = 60  # 先等60秒
+                max_poll = 48       # 60s + 48*5s = 300s max
+                poll_interval = 5   # 5秒一次，更快发现就绪
 
-            for attempt in range(max_poll):
-                await asyncio.sleep(poll_interval)
-                try:
-                    async with aiohttp.ClientSession(
-                        timeout=aiohttp.ClientTimeout(total=15)
-                    ) as session:
-                        list_url = f'{self._CNB_API_BASE}/workspace/list?page=1&pageSize=20'
-                        async with session.get(list_url, headers=headers) as resp:
-                            if resp.status != 200:
-                                continue
-                            list_data = await resp.json(content_type=None)
+                log.info(f'等待 {initial_delay}s 后开始轮询 workspace 状态（构建约需2-3分钟）...')
+                await asyncio.sleep(initial_delay)
 
-                        for item in list_data.get('list', []):
-                            if item.get('sn') == workspace_sn:
-                                status = str(item.get('status') or '').strip()
-                                bid = str(item.get('business_id') or '').strip()
-                                log.info(
-                                    f'Workspace 轮询 {attempt + 1}/{max_poll}: '
-                                    f'status={status}, business_id={bid}'
-                                )
-                                # 只要不是 closed/building/pending 就算就绪
-                                if status and status not in (
-                                    'closed', 'building', 'pending', 'queued', ''
-                                ) and bid:
-                                    business_id = bid
-                                    break
-                    if business_id:
-                        break
-                except Exception as e:
-                    log.warning(f'轮询 workspace 状态异常: {e}')
+                for attempt in range(max_poll):
+                    await asyncio.sleep(poll_interval)
+                    try:
+                        async with aiohttp.ClientSession(
+                            timeout=aiohttp.ClientTimeout(total=15)
+                        ) as session:
+                            list_url = f'{self._CNB_API_BASE}/workspace/list?page=1&pageSize=20'
+                            async with session.get(list_url, headers=headers) as resp:
+                                if resp.status != 200:
+                                    continue
+                                list_data = await resp.json(content_type=None)
 
-            if not business_id:
-                log.error(f'Workspace 启动超时 (sn={workspace_sn}, 等待 {max_poll * poll_interval}s)')
+                            for item in list_data.get('list', []):
+                                if item.get('sn') == workspace_sn:
+                                    status = str(item.get('status') or '').strip()
+                                    bid = str(item.get('business_id') or '').strip()
+                                    log.info(
+                                        f'Workspace 轮询 {attempt + 1}/{max_poll}: '
+                                        f'status={status}, business_id={bid}'
+                                    )
+                                    # 只要不是 closed/building/pending 就算就绪
+                                    if status and status not in (
+                                        'closed', 'building', 'pending', 'queued', ''
+                                    ) and bid:
+                                        business_id = bid
+                                        break
+                        if business_id:
+                            break
+                    except Exception as e:
+                        log.warning(f'轮询 workspace 状态异常: {e}')
+
+                if not business_id:
+                    log.error(f'Workspace 启动超时 (sn={workspace_sn}, 等待 {max_poll * poll_interval}s)')
+                    return None
+
+                # --- Step 3: 构造新公网 URL ---
+                new_url = f'https://{business_id}-8188.cnb.run'
+                log.info(f'Workspace 已就绪, 新公网地址: {new_url}')
+
+                # --- Step 4: 等待 ComfyUI 服务启动 ---
+                if not await self._wait_comfyui_ready(new_url):
+                    log.error(f'ComfyUI 在新 workspace 上未就绪: {new_url}')
+                    return None
+
+                # --- Step 5: 更新服务地址 ---
+                self.server_address = self._normalize_server_address(new_url)
+                app_config.COMFYUI_CONFIG['SERVER_ADDRESS'] = self.server_address
+                self._refresh_endpoints()
+                log.info(f'ComfyUI 服务地址已更新为: {self.server_address}')
+
+                return new_url
+
+            except Exception as e:
+                log.error(f'启动 CNB workspace 异常: {e}', exc_info=True)
                 return None
-
-            # --- Step 3: 构造新公网 URL ---
-            new_url = f'https://{business_id}-8188.cnb.run'
-            log.info(f'Workspace 已就绪, 新公网地址: {new_url}')
-
-            # --- Step 4: 等待 ComfyUI 服务启动 ---
-            if not await self._wait_comfyui_ready(new_url):
-                log.error(f'ComfyUI 在新 workspace 上未就绪: {new_url}')
-                return None
-
-            # --- Step 5: 更新服务地址 ---
-            self.server_address = self._normalize_server_address(new_url)
-            app_config.COMFYUI_CONFIG['SERVER_ADDRESS'] = self.server_address
-            self._refresh_endpoints()
-            log.info(f'ComfyUI 服务地址已更新为: {self.server_address}')
-
-            return new_url
-
-        except Exception as e:
-            log.error(f'启动 CNB workspace 异常: {e}', exc_info=True)
-            return None
 
     async def generate_media(
         self,
