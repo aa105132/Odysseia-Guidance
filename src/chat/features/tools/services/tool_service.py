@@ -159,6 +159,22 @@ class ToolService:
                 log.error(f"检查工具设置时出错: {e}", exc_info=True)
         # --- 结束检查 ---
 
+        # --- 检查频道绘图开关 ---
+        DRAWING_TOOL_NAMES = {'generate_image', 'generate_images_batch', 'generate_image_novelai', 'generate_image_comfyui', 'edit_image', 'edit_images_batch'}
+        if tool_name in DRAWING_TOOL_NAMES and channel is not None:
+            try:
+                from src.chat.features.chat_settings.services.chat_settings_service import chat_settings_service
+                effective_config = await chat_settings_service.get_effective_channel_config(channel)
+                if not effective_config.get("is_drawing_enabled", True):
+                    log.info(f"工具 '{tool_name}' 在频道 {channel.id} 被绘图开关禁用，拒绝执行。")
+                    return types.Part.from_function_response(
+                        name=tool_name,
+                        response={"error": "该频道的绘图功能已被关闭，无法执行绘图操作。"},
+                    )
+            except Exception as e:
+                log.error(f"检查频道绘图开关时出错: {e}", exc_info=True)
+        # --- 结束绘图开关检查 ---
+
         try:
             # 步骤 1: 从模型响应中提取参数
             tool_args: Dict[str, Any] = (
@@ -202,12 +218,19 @@ class ToolService:
                 tool_args["channel"] = channel
                 if log_detailed:
                     log.info(f"已注入 'channel' (ID: {channel.id}) 到 **kwargs。")
+                # 获取 guild_id: 优先 channel.guild，其次 message.guild，最后从 message 对象提取
+                resolved_guild = None
                 if channel.guild:
-                    # 同时注入 guild 对象本身和 guild_id，以提供最大的灵活性
-                    tool_args["guild"] = channel.guild
-                    tool_args["guild_id"] = str(channel.guild.id)
+                    resolved_guild = channel.guild
+                elif message and hasattr(message, "guild") and message.guild:
+                    resolved_guild = message.guild
+                if resolved_guild:
+                    tool_args["guild"] = resolved_guild
+                    tool_args["guild_id"] = str(resolved_guild.id)
                     if log_detailed:
-                        log.info(f"已注入 'guild' (ID: {channel.guild.id}) 实例。")
+                        log.info(f"已注入 'guild' (ID: {resolved_guild.id}) 实例。")
+                else:
+                    log.warning(f"无法获取 guild_id (channel={type(channel).__name__}, channel.guild={channel.guild}), issue_user_warning 等工具可能无法工作")
                 if isinstance(channel, discord.Thread):
                     tool_args["thread_id"] = channel.id
                     if log_detailed:

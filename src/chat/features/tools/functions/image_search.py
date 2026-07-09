@@ -327,26 +327,26 @@ async def _post_openai_image_search(query: str, *, max_results: int, is_retry: b
         async with _image_search_lock:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(endpoint, headers=headers, json=payload) as response:
-                response_text = await response.text()
-                if response.status != 200:
-                    log.warning("图片搜索 API 返回错误 %s: %s", response.status, response_text[:300])
-                    return {
-                        "error": True,
-                        "reason": "upstream_error",
-                        "status": response.status,
-                        "hint": f"图片搜索接口返回 HTTP {response.status}。",
-                    }
-                try:
-                    data = json.loads(response_text)
-                except json.JSONDecodeError:
-                    # 少数“兼容端口”可能直接返回 HTML。
-                    return {"html": response_text, "raw_response": response_text}
+                    response_text = await response.text()
+                    if response.status != 200:
+                        log.warning("图片搜索 API 返回错误 %s: %s", response.status, response_text[:300])
+                        return {
+                            "error": True,
+                            "reason": "upstream_error",
+                            "status": response.status,
+                            "hint": f"图片搜索接口返回 HTTP {response.status}。",
+                        }
+                    try:
+                        data = json.loads(response_text)
+                    except json.JSONDecodeError:
+                        # 少数“兼容端口”可能直接返回 HTML。
+                        return {"html": response_text, "raw_response": response_text}
 
-                choices = data.get("choices", []) if isinstance(data, dict) else []
-                message = choices[0].get("message", {}) if choices else {}
-                html_text = _extract_text_from_openai_message(message)
-                inline_image = _extract_inline_image_from_message(message)
-                return {"html": html_text, "raw_response": data, "inline_image": inline_image}
+                    choices = data.get("choices", []) if isinstance(data, dict) else []
+                    message = choices[0].get("message", {}) if choices else {}
+                    html_text = _extract_text_from_openai_message(message)
+                    inline_image = _extract_inline_image_from_message(message)
+                    return {"html": html_text, "raw_response": data, "inline_image": inline_image}
     except asyncio.TimeoutError:
         return {"error": True, "reason": "timeout", "hint": "图片搜索接口请求超时。"}
     except Exception as exc:

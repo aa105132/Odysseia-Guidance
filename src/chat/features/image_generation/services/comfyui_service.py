@@ -7,6 +7,7 @@ import logging
 import random
 import re
 import unicodedata
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -1279,6 +1280,201 @@ class ComfyUIService:
 
         return params
 
+
+    # ========================================================
+    # CNB Workspace 按需自动启动（小芸 2026-07-06）
+    # ========================================================
+    # 当 ComfyUI 不可达时，自动调用 CNB API 启动 workspace，
+    # 等待构建完成 + ComfyUI 就绪，然后更新 server_address。
+    # 30分钟无访问后 CNB 会自动关机（keepAliveTimeout: 30m）。
+
+    _CNB_TOKEN = os.getenv('CNB_TOKEN', '')
+    _CNB_REPO = os.getenv('CNB_WORKSPACE_REPO', 'bufan.live/krea-2')
+    _CNB_API_BASE = 'https://api.cnb.cool'
+
+    async def _check_comfyui_online(self, timeout_seconds: float = 5.0) -> bool:
+        """快速检测 ComfyUI 是否在线（ping /system_stats）。"""
+        if not self.server_address:
+            return False
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds)
+            ) as session:
+                async with session.get(f'{self.server_address}/system_stats') as resp:
+                    return resp.status == 200
+        except Exception:
+            return False
+
+    async def _find_running_workspace(self, headers: dict) -> Optional[str]:
+        """
+        检查 workspace list 中是否已有 running 状态的 workspace。
+        匹配条件：slug == self._CNB_REPO 且 status 不是 closed。
+        返回公网 URL 或 None。
+        """
+        try:
+            list_url = f'{self._CNB_API_BASE}/workspace/list?page=1&pageSize=50'
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as session:
+                async with session.get(list_url, headers=headers) as resp:
+                    if resp.status != 200:
+                        return None
+                    list_data = await resp.json(content_type=None)
+
+            for item in list_data.get('list', []):
+                slug = str(item.get('slug') or '').strip()
+                status = str(item.get('status') or '').strip()
+                bid = str(item.get('business_id') or '').strip()
+                if slug == self._CNB_REPO and status not in (
+                    'closed', 'building', 'pending', 'queued', '', None
+                ) and bid:
+                    return f'https://{bid}-8188.cnb.run'
+            return None
+        except Exception as e:
+            log.warning(f'查找已有 workspace 异常: {e}')
+            return None
+
+    async def _wait_comfyui_ready(
+        self, url: str, max_attempts: int = 72, interval: float = 5.0
+    ) -> bool:
+        """轮询指定 URL 的 /system_stats 直到 ComfyUI 就绪。"""
+        for attempt in range(max_attempts):
+            try:
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as session:
+                    async with session.get(f'{url}/system_stats') as resp:
+                        if resp.status == 200:
+                            log.info(f'ComfyUI 已就绪! (轮询 {attempt + 1}/{max_attempts})')
+                            return True
+            except Exception:
+                pass
+            if (attempt + 1) % 3 == 0:
+                log.info(f'等待 ComfyUI 启动中... (轮询 {attempt + 1}/{max_attempts})')
+            await asyncio.sleep(interval)
+        return False
+
+    async def _start_cnb_workspace(self) -> Optional[str]:
+        """
+        自动启动 CNB workspace 并等待 ComfyUI 就绪。
+        返回新的公网 URL，失败返回 None。
+        流程：
+        1. POST /{repo}/-/workspace/start → 获取 sn
+        2. 轮询 workspace list → 等 status 变为 running，取 business_id
+        3. 轮询新 URL /system_stats → 等 ComfyUI 就绪
+        4. 更新 self.server_address + config + endpoints
+        """
+        if not self._CNB_TOKEN:
+            log.error('CNB_TOKEN 未设置，无法自动启动 workspace')
+            return None
+
+        headers = {
+            'Authorization': f'Bearer {self._CNB_TOKEN}',
+            'Accept': 'application/vnd.cnb.api+json',
+            'Content-Type': 'application/json',
+        }
+
+        try:
+            # --- Step 0: 先检查是否已有 running 的 workspace（避免重复启动）---
+            existing_url = await self._find_running_workspace(headers)
+            if existing_url:
+                log.info(f'发现已有 running 的 workspace: {existing_url}')
+                # 验证该 workspace 的 ComfyUI 是否已就绪
+                if await self._wait_comfyui_ready(existing_url):
+                    self.server_address = self._normalize_server_address(existing_url)
+                    app_config.COMFYUI_CONFIG['SERVER_ADDRESS'] = self.server_address
+                    self._refresh_endpoints()
+                    log.info(f'ComfyUI 服务地址已更新为: {self.server_address}')
+                    return existing_url
+                else:
+                    log.warning(f'已有 workspace 的 ComfyUI 未就绪，将启动新 workspace')
+
+            # --- Step 1: 提交启动请求 ---
+            start_url = f'{self._CNB_API_BASE}/{self._CNB_REPO}/-/workspace/start'
+            log.info(f'正在启动 CNB workspace: POST {start_url}')
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as session:
+                async with session.post(
+                    start_url, json={'branch': 'main'}, headers=headers
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        log.error(f'启动 workspace 失败: status={resp.status}, body={body[:200]}')
+                        return None
+                    start_data = await resp.json(content_type=None)
+                    workspace_sn = str(start_data.get('sn') or '').strip()
+                    if not workspace_sn:
+                        log.error(f'启动 workspace 返回缺少 sn: {start_data}')
+                        return None
+                    log.info(f'Workspace 启动请求已提交, sn={workspace_sn}')
+
+            # --- Step 2: 轮询 workspace list 直到 status 变为 running ---
+            # 优化：先等60秒再开始轮询（workspace构建至少需要~2分钟，早期轮询浪费时间）
+            business_id = None
+            initial_delay = 60  # 先等60秒
+            max_poll = 48       # 60s + 48*5s = 300s max
+            poll_interval = 5   # 5秒一次，更快发现就绪
+
+            log.info(f'等待 {initial_delay}s 后开始轮询 workspace 状态（构建约需2-3分钟）...')
+            await asyncio.sleep(initial_delay)
+
+            for attempt in range(max_poll):
+                await asyncio.sleep(poll_interval)
+                try:
+                    async with aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(total=15)
+                    ) as session:
+                        list_url = f'{self._CNB_API_BASE}/workspace/list?page=1&pageSize=20'
+                        async with session.get(list_url, headers=headers) as resp:
+                            if resp.status != 200:
+                                continue
+                            list_data = await resp.json(content_type=None)
+
+                        for item in list_data.get('list', []):
+                            if item.get('sn') == workspace_sn:
+                                status = str(item.get('status') or '').strip()
+                                bid = str(item.get('business_id') or '').strip()
+                                log.info(
+                                    f'Workspace 轮询 {attempt + 1}/{max_poll}: '
+                                    f'status={status}, business_id={bid}'
+                                )
+                                # 只要不是 closed/building/pending 就算就绪
+                                if status and status not in (
+                                    'closed', 'building', 'pending', 'queued', ''
+                                ) and bid:
+                                    business_id = bid
+                                    break
+                    if business_id:
+                        break
+                except Exception as e:
+                    log.warning(f'轮询 workspace 状态异常: {e}')
+
+            if not business_id:
+                log.error(f'Workspace 启动超时 (sn={workspace_sn}, 等待 {max_poll * poll_interval}s)')
+                return None
+
+            # --- Step 3: 构造新公网 URL ---
+            new_url = f'https://{business_id}-8188.cnb.run'
+            log.info(f'Workspace 已就绪, 新公网地址: {new_url}')
+
+            # --- Step 4: 等待 ComfyUI 服务启动 ---
+            if not await self._wait_comfyui_ready(new_url):
+                log.error(f'ComfyUI 在新 workspace 上未就绪: {new_url}')
+                return None
+
+            # --- Step 5: 更新服务地址 ---
+            self.server_address = self._normalize_server_address(new_url)
+            app_config.COMFYUI_CONFIG['SERVER_ADDRESS'] = self.server_address
+            self._refresh_endpoints()
+            log.info(f'ComfyUI 服务地址已更新为: {self.server_address}')
+
+            return new_url
+
+        except Exception as e:
+            log.error(f'启动 CNB workspace 异常: {e}', exc_info=True)
+            return None
+
     async def generate_media(
         self,
         prompt: Optional[str] = None,
@@ -1303,6 +1499,23 @@ class ComfyUIService:
                 log.warning('ComfyUI 服务当前不可用，请检查开关或服务地址配置。')
                 return None
 
+            # --- 按需模式：检测 ComfyUI 是否在线，不在线则自动启动 CNB workspace ---
+            if not await self._check_comfyui_online():
+                log.info('ComfyUI 不可达，正在自动启动 CNB workspace（约需3分钟）...')
+                # 尝试通过 Discord 消息通知用户画板正在预热
+                try:
+                    notify_msg = kwargs.get('discord_message')
+                    if notify_msg and hasattr(notify_msg, 'channel') and hasattr(notify_msg.channel, 'send'):
+                        await notify_msg.channel.send('🎨 画板正在预热中，约需3分钟，请稍等一下哦~')
+                except Exception:
+                    pass  # 通知失败不影响主流程
+                new_url = await self._start_cnb_workspace()
+                if not new_url:
+                    log.error('无法启动 CNB workspace，请手动检查')
+                    return None
+                log.info(f'CNB workspace 已就绪: {new_url}')
+            # --- 按需模式结束 ---
+
             workflow_path_override = self._normalize_workflow_path(kwargs.get('workflow_path'))
             workflow_template_override: Optional[Dict[str, Any]] = None
             resolved_prompt_style = self.resolve_prompt_style(
@@ -1321,8 +1534,8 @@ class ComfyUIService:
             if workflow_path_override:
                 workflow_template_override = self._load_workflow_template_from_path(workflow_path_override)
                 if workflow_template_override is None:
-                    log.error(f'用户指定工作流加载失败: {workflow_path_override}')
-                    return None
+                    log.warning(f'用户指定工作流加载失败: {workflow_path_override}，回退到默认工作流')
+                    workflow_template_override = None
             elif default_style_workflow_path:
                 workflow_template_override = self._load_workflow_template_from_path(default_style_workflow_path)
                 if workflow_template_override is None:
@@ -1361,7 +1574,22 @@ class ComfyUIService:
                 workflow_template=workflow_template_override,
             )
 
-            media_meta = await self._queue_prompt_and_wait_result(workflow_payload)
+            # OOM/error retry: keep retrying for up to 300s
+            retry_max_attempts = 15
+            retry_delay_seconds = 10
+            media_meta = None
+            for retry_attempt in range(retry_max_attempts):
+                media_meta = await self._queue_prompt_and_wait_result(workflow_payload)
+                if media_meta:
+                    break
+                if retry_attempt < retry_max_attempts - 1:
+                    log.warning(
+                        f'ComfyUI 生成失败 (尝试 {retry_attempt + 1}/{retry_max_attempts})，'
+                        f'等待 {retry_delay_seconds}s 后重试'
+                    )
+                    await asyncio.sleep(retry_delay_seconds)
+                else:
+                    log.error(f'ComfyUI 生成失败，已达到最大重试次数 {retry_max_attempts}')
             if not media_meta:
                 return None
 

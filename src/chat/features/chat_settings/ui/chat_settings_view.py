@@ -281,8 +281,9 @@ class ChatSettingsView(View):
 
         await self._update_view(interaction)
 
-    async def on_entity_select(self, interaction: Interaction, values: List[str]):
+    async def on_entity_select(self, interaction: Interaction):
         """统一处理频道和分类的选择事件。"""
+        values = interaction.data.get("values", []) if interaction.data else []
         if not values or values[0] == "disabled":
             await interaction.response.defer()
             return
@@ -337,6 +338,7 @@ class ChatSettingsView(View):
                 entity_id=entity_id,
                 entity_type=entity_type,
                 is_chat_enabled=settings.get("is_chat_enabled"),
+                is_drawing_enabled=settings.get("is_drawing_enabled"),
                 cooldown_seconds=settings.get("cooldown_seconds"),
                 cooldown_duration=settings.get("cooldown_duration"),
                 cooldown_limit=settings.get("cooldown_limit"),

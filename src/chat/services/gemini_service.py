@@ -5250,6 +5250,13 @@ class GeminiService:
 
                 # 没有工具调用，返回最终响应
                 raw_response = message_response.get("content", "")
+                # 过滤 API 返回的 finish_reason 泄漏（如 STOP/MAX_TOKENS）
+                _raw_stripped = str(raw_response or "").strip()
+                if _raw_stripped.upper() in ("STOP", "MAX_TOKENS", "MAX_TOKEN", "LENGTH", "CONTENT_FILTER"):
+                    log.warning(
+                        f"OpenAI 兼容 API 返回了 finish_reason 泄漏文本: {_raw_stripped!r}，视为空文本处理。"
+                    )
+                    raw_response = ""
                 if not str(raw_response or "").strip():
                     finish_reason = choice.get("finish_reason")
                     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
@@ -5593,6 +5600,15 @@ class GeminiService:
                 tool_args["user_id"] = str(user_id)
             if channel is not None:
                 tool_args["channel"] = channel
+                # 注入 guild_id: 优先 channel.guild，其次 discord_message.guild
+                resolved_guild = None
+                if hasattr(channel, "guild") and channel.guild:
+                    resolved_guild = channel.guild
+                elif discord_message is not None and hasattr(discord_message, "guild") and discord_message.guild:
+                    resolved_guild = discord_message.guild
+                if resolved_guild:
+                    tool_args["guild"] = resolved_guild
+                    tool_args["guild_id"] = str(resolved_guild.id)
             if discord_message is not None:
                 tool_args["message"] = discord_message
             if current_turn_tool_names is not None:

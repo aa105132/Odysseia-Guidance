@@ -826,8 +826,8 @@ COMFYUI_CONFIG = {
     # 默认参数（可在 Dashboard 中覆盖）
     "DEFAULT_WIDTH": _parse_int_env("COMFYUI_DEFAULT_WIDTH", 832),
     "DEFAULT_HEIGHT": _parse_int_env("COMFYUI_DEFAULT_HEIGHT", 1216),
-    "DEFAULT_STEPS": _parse_int_env("COMFYUI_DEFAULT_STEPS", 28),
-    "DEFAULT_CFG": _parse_float_env("COMFYUI_DEFAULT_CFG", 5.0),
+    "DEFAULT_STEPS": _parse_int_env("COMFYUI_DEFAULT_STEPS", 8),
+    "DEFAULT_CFG": _parse_float_env("COMFYUI_DEFAULT_CFG", 1.0),
     "DEFAULT_SAMPLER": os.getenv("COMFYUI_DEFAULT_SAMPLER", "euler"),
     "DEFAULT_SCHEDULER": os.getenv("COMFYUI_DEFAULT_SCHEDULER", "normal"),
     "DEFAULT_SEED": _parse_int_env("COMFYUI_DEFAULT_SEED", 12345),
@@ -1477,4 +1477,27 @@ DEBUG_CONFIG = {
         "LOG_DETAILED_GEMINI_PROCESS", "False"
     ).lower()
     == "true",  # 控制是否输出详细的Gemini处理过程日志（工具调用、思考等）
+}
+
+# --- ComfyUI 视频生成配置 (独立于画图配置) ---
+# 小芸配置于 2026-07-06
+COMFYUI_VIDEO_CONFIG = {
+    # 总开关
+    "ENABLED": _parse_bool_env("COMFYUI_VIDEO_ENABLED", "False"),
+    # ComfyUI 视频服务地址（CNB workspace，每次重启会变）
+    "SERVER_ADDRESS": os.getenv("COMFYUI_VIDEO_SERVER_ADDRESS", ""),
+    # CNB 自动开机 token
+    "CNB_TOKEN": os.getenv("COMFYUI_VIDEO_CNB_TOKEN", os.getenv("CNB_TOKEN", "")),
+    # 工作流文件路径（留空则使用嵌入式模板）
+    "WORKFLOW_PATH": os.getenv("COMFYUI_VIDEO_WORKFLOW_PATH", ""),
+    # 视频生成超时（秒），视频比图片慢，给足时间
+    "REQUEST_TIMEOUT_SECONDS": _parse_int_env("COMFYUI_VIDEO_REQUEST_TIMEOUT_SECONDS", 600),
+    # 默认视频参数
+    "DEFAULT_WIDTH": _parse_int_env("COMFYUI_VIDEO_DEFAULT_WIDTH", 832),
+    "DEFAULT_HEIGHT": _parse_int_env("COMFYUI_VIDEO_DEFAULT_HEIGHT", 480),
+    "DEFAULT_LENGTH": _parse_int_env("COMFYUI_VIDEO_DEFAULT_LENGTH", 81),
+    "DEFAULT_FRAME_RATE": _parse_int_env("COMFYUI_VIDEO_DEFAULT_FRAME_RATE", 32),
+    "DEFAULT_SEED": _parse_int_env("COMFYUI_VIDEO_DEFAULT_SEED", -1),
+    # 视频生成金币消耗
+    "GENERATION_COST": _parse_int_env("COMFYUI_VIDEO_GENERATION_COST", 10),
 }

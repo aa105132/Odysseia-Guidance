@@ -769,11 +769,21 @@ async def generate_image_comfyui(
     **kwargs,
 ) -> dict:
     '''
-    使用 ComfyUI 工作流生成图片。
+    使用 ComfyUI 工作流生成图片（仅支持文生图 / text-to-image）。
 
     当默认绘图引擎是 comfyui 时，优先调用此工具。
     支持常见参数：步数、分辨率、CFG、采样器、调度器、seed、LoRA、底模；
-    支持图生视频：可传 generation_mode=image_to_video，并提供参考图（URL 或对话附件/回复）。
+
+    ⚠️ 当前 ComfyUI 默认工作流为纯文生图（EmptyLatentImage），不支持参考图、图生图、图生视频。
+    - 不要传 use_reference_image、reference_image_url、generation_mode 等参数，传了也会被静默忽略，不影响文生图。
+    - 如果用户提供了参考图/头像并要求"照着画"，应先用 get_user_avatar 获取头像，再凭头像特征描述以纯文生图方式调用本工具，不要切换到其他引擎。
+    - ⚠️ 绝对禁止：用户明确指定使用 ComfyUI 时，不要因为"不支持参考图"就擅自切换到 edit_image 或其他引擎。正确做法是忽略参考图参数，用纯文生图完成请求。
+
+    ⚠️ 提示词写作规则：
+    - 禁止在 prompt 中添加任何水印(watermark)、半透明叠加图案、贴纸、边框装饰或文字描述
+    - 禁止出现 "covered with about" "semi-transparent watermarks" "dancing anime characters" 等水印模板词
+    - NSFW 内容用自然构图遮挡（前景物、光影、镜头角度），不要用水印/贴纸遮挡
+    - prompt 只描述画面内容本身，不要描述画面上叠加的装饰元素
     '''
     message: Optional[discord.Message] = kwargs.get('message')
     channel = kwargs.get('channel')
@@ -968,37 +978,10 @@ async def generate_image_comfyui(
     if policy_block:
         return policy_block
 
+    # 当前 ComfyUI 默认工作流为纯文生图（EmptyLatentImage），不支持参考图/图生图/图生视频。
+    # 静默忽略参考图参数，不拦截、不返回失败，让文生图正常执行。
+    # LLM 传了参考图也不影响——参考图 URL 不会传入工作流，prompt 本身已经包含了角色描述。
     uploaded_reference_name = ''
-    if effective_use_reference_image or effective_generation_mode == 'image_to_video':
-        reference_image = await _resolve_reference_image(
-            message=message,
-            channel=channel,
-            reference_image_url=effective_reference_image_url,
-        )
-        if not reference_image:
-            return {
-                'generation_failed': True,
-                'reason': 'missing_reference_image',
-                'hint': '图生视频需要参考图。请让用户上传图片、回复图片，或传 reference_image_url 后重试。',
-            }
-
-        uploaded_reference_name = str(
-            await comfyui_service.upload_input_image(
-                image_bytes=reference_image.get('data') or b'',
-                filename=str(reference_image.get('filename') or 'reference_image.png'),
-            )
-            or ''
-        ).strip()
-        if not uploaded_reference_name:
-            return {
-                'generation_failed': True,
-                'reason': 'upload_reference_failed',
-                'hint': '参考图上传到 ComfyUI 失败，请检查 ComfyUI /upload/image 接口后重试。',
-            }
-
-        for alias_key in ('input_image', 'reference_image', 'init_image', 'image'):
-            if alias_key not in passthrough_runtime_kwargs:
-                passthrough_runtime_kwargs[alias_key] = uploaded_reference_name
 
     try:
         image_cost = max(0, int(COMFYUI_CONFIG.get('IMAGE_GENERATION_COST', 5)))
@@ -1029,6 +1012,19 @@ async def generate_image_comfyui(
                 await channel.send(processed_preview)
         except Exception as error:
             log.warning(f'发送 ComfyUI 预告消息失败: {error}')
+
+    # --- 按需模式：ComfyUI 不在线时通知用户画板正在预热 ---
+    try:
+        if not await comfyui_service._check_comfyui_online():
+            warmup_text = replace_emojis('🎨 画板正在预热中，约需3分钟，请稍等一下哦~')
+            if message:
+                await message.reply(warmup_text, mention_author=False)
+            elif channel:
+                await channel.send(warmup_text)
+            log.info('ComfyUI 不可达，已通知用户画板正在预热，自动启动中...')
+    except Exception as warmup_err:
+        log.warning(f'预热通知发送失败(不影响主流程): {warmup_err}')
+    # --- 按需模式结束 ---
 
     try:
         media_result = await comfyui_service.generate_media(

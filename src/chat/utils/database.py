@@ -370,10 +370,16 @@ class ChatDatabaseManager:
                     entity_id INTEGER NOT NULL, -- 频道ID或分类ID
                     entity_type TEXT NOT NULL, -- 'channel' or 'category'
                     is_chat_enabled BOOLEAN, -- 可空，为空则继承上级或全局
+                    is_drawing_enabled BOOLEAN, -- 可空，为空则继承上级或全局
                     cooldown_seconds INTEGER, -- 可空
                     UNIQUE(guild_id, entity_id)
                 );
             """)
+            # Migration: add is_drawing_enabled column if not exists
+            try:
+                cursor.execute("ALTER TABLE channel_chat_config ADD COLUMN is_drawing_enabled BOOLEAN")
+            except Exception:
+                pass  # Column already exists
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_channel_cooldown (
@@ -1454,17 +1460,19 @@ class ChatDatabaseManager:
         entity_id: int,
         entity_type: str,
         is_chat_enabled: Optional[bool],
-        cooldown_seconds: Optional[int],
-        cooldown_duration: Optional[int],
-        cooldown_limit: Optional[int],
+        is_drawing_enabled: Optional[bool] = None,
+        cooldown_seconds: Optional[int] = None,
+        cooldown_duration: Optional[int] = None,
+        cooldown_limit: Optional[int] = None,
     ) -> None:
         """更新或创建频道/分类的聊天配置，支持两种CD模式。"""
         query = """
-            INSERT INTO channel_chat_config (guild_id, entity_id, entity_type, is_chat_enabled, cooldown_seconds, cooldown_duration, cooldown_limit)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO channel_chat_config (guild_id, entity_id, entity_type, is_chat_enabled, is_drawing_enabled, cooldown_seconds, cooldown_duration, cooldown_limit)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id, entity_id) DO UPDATE SET
                 entity_type = excluded.entity_type,
                 is_chat_enabled = excluded.is_chat_enabled,
+                is_drawing_enabled = excluded.is_drawing_enabled,
                 cooldown_seconds = excluded.cooldown_seconds,
                 cooldown_duration = excluded.cooldown_duration,
                 cooldown_limit = excluded.cooldown_limit;
@@ -1474,6 +1482,7 @@ class ChatDatabaseManager:
             entity_id,
             entity_type,
             is_chat_enabled,
+            is_drawing_enabled,
             cooldown_seconds,
             cooldown_duration,
             cooldown_limit,

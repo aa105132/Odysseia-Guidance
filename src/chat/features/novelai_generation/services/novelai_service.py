@@ -683,7 +683,7 @@ class NovelAIService:
                 # 使用 /user/subscription 端点验证 token
                 # 该端点返回用户订阅信息，不消耗任何资源
                 async with session.get(
-                    "https://api.novelai.net/user/subscription",
+                    "https://image.novelai.net/user/subscription",
                     headers=headers,
                     proxy=proxy_url,
                 ) as response:

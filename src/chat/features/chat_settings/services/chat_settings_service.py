@@ -638,9 +638,10 @@ class ChatSettingsService:
         entity_id: int,
         entity_type: str,
         is_chat_enabled: Optional[bool],
-        cooldown_seconds: Optional[int],
-        cooldown_duration: Optional[int],
-        cooldown_limit: Optional[int],
+        is_drawing_enabled: Optional[bool] = None,
+        cooldown_seconds: Optional[int] = None,
+        cooldown_duration: Optional[int] = None,
+        cooldown_limit: Optional[int] = None,
     ):
         """设置频道或分类的聊天配置，支持所有CD模式。"""
         await self.db_manager.update_channel_config(
@@ -648,6 +649,7 @@ class ChatSettingsService:
             entity_id=entity_id,
             entity_type=entity_type,
             is_chat_enabled=is_chat_enabled,
+            is_drawing_enabled=is_drawing_enabled,
             cooldown_seconds=cooldown_seconds,
             cooldown_duration=cooldown_duration,
             cooldown_limit=cooldown_limit,
@@ -674,6 +676,7 @@ class ChatSettingsService:
                 config["entity_id"]: {
                     "entity_type": config["entity_type"],
                     "is_chat_enabled": config["is_chat_enabled"],
+                    "is_drawing_enabled": config["is_drawing_enabled"] if "is_drawing_enabled" in config.keys() else None,
                     "cooldown_seconds": config["cooldown_seconds"],
                     "cooldown_duration": config["cooldown_duration"],
                     "cooldown_limit": config["cooldown_limit"],
@@ -715,6 +718,7 @@ class ChatSettingsService:
         # 默认配置
         effective_config = {
             "is_chat_enabled": True,
+            "is_drawing_enabled": True,
             "cooldown_seconds": 0,
             "cooldown_duration": None,
             "cooldown_limit": None,
@@ -730,6 +734,8 @@ class ChatSettingsService:
         if category_config:
             if category_config["is_chat_enabled"] is not None:
                 effective_config["is_chat_enabled"] = category_config["is_chat_enabled"]
+            if "is_drawing_enabled" in category_config.keys() and category_config["is_drawing_enabled"] is not None:
+                effective_config["is_drawing_enabled"] = category_config["is_drawing_enabled"]
             if category_config["cooldown_seconds"] is not None:
                 effective_config["cooldown_seconds"] = category_config[
                     "cooldown_seconds"
@@ -746,6 +752,8 @@ class ChatSettingsService:
         if channel_config:
             if channel_config["is_chat_enabled"] is not None:
                 effective_config["is_chat_enabled"] = channel_config["is_chat_enabled"]
+            if "is_drawing_enabled" in channel_config.keys() and channel_config["is_drawing_enabled"] is not None:
+                effective_config["is_drawing_enabled"] = channel_config["is_drawing_enabled"]
             if channel_config["cooldown_seconds"] is not None:
                 effective_config["cooldown_seconds"] = channel_config[
                     "cooldown_seconds"

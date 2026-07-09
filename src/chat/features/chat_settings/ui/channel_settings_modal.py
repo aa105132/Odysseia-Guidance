@@ -25,6 +25,7 @@ class ChatSettingsModal(discord.ui.Modal):
         # --- 输入字段定义 ---
         if include_enable_option and entity_name:
             enabled_str = str(v).lower() if (v := current_config.get("is_chat_enabled")) is not None else ""
+            drawing_str = str(v).lower() if (v := current_config.get("is_drawing_enabled")) is not None else ""
             self.enabled_input = discord.ui.TextInput(
                 label=f"[{entity_name}] 是否开启聊天",
                 placeholder="true / false / 留空以继承",
@@ -33,22 +34,32 @@ class ChatSettingsModal(discord.ui.Modal):
                 row=0
             )
             self.add_item(self.enabled_input)
+            
+            self.drawing_input = discord.ui.TextInput(
+                label=f"[{entity_name}] 是否开启绘图",
+                placeholder="true / false / 留空以继承",
+                default=drawing_str,
+                required=False,
+                row=1
+            )
+            self.add_item(self.drawing_input)
         else:
             self.enabled_input = None
+            self.drawing_input = None
 
         self.cooldown_seconds_input = discord.ui.TextInput(
             label="模式一: 固定冷却",
             placeholder="每条消息冷却X秒。例如: 30",
             default=cooldown_sec_str,
             required=False,
-            row=1
+            row=2
         )
         self.duration_input = discord.ui.TextInput(
             label="模式二: 频率限制 - 时间窗口(秒)",
             placeholder="在X秒内... (例如: 60)",
             default=duration_str,
             required=False,
-            row=2
+            row=3
         )
         self.limit_input = discord.ui.TextInput(
             label="模式二: 频率限制 - 次数上限",
@@ -74,6 +85,16 @@ class ChatSettingsModal(discord.ui.Modal):
                     settings['is_chat_enabled'] = False
                 elif enabled_val == '':
                     settings['is_chat_enabled'] = None
+                else:
+                    raise ValueError("无效的布尔值")
+            if self.drawing_input:
+                drawing_val = self.drawing_input.value.strip().lower()
+                if drawing_val in ['true', '1', 'yes']:
+                    settings['is_drawing_enabled'] = True
+                elif drawing_val in ['false', '0', 'no']:
+                    settings['is_drawing_enabled'] = False
+                elif drawing_val == '':
+                    settings['is_drawing_enabled'] = None
                 else:
                     raise ValueError("无效的布尔值")
             
