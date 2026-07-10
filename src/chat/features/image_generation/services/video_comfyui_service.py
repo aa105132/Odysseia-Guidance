@@ -46,8 +46,7 @@ _COMMON_NODES = {
         "class_type": "CLIPLoader",
         "inputs": {
             "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-            "type": "wan",
-            "device": "default"
+            "type": "wan"
         }
     },
     "7": {
@@ -131,28 +130,10 @@ _COMMON_NODES = {
             "vae": ["7", 0]
         }
     },
-    "51": {
-        "class_type": "RIFE VFI",
-        "inputs": {
-            "frames": ["16", 0],
-            "ckpt_name": "rife47.pth",
-            "multiplier": 2,
-            "clear_cache_after_n_frames": 10, "fast_mode": True, "ensemble": True, "scale_factor": 1.0, "dtype": "float32", "torch_compile": False, "batch_size": 1
-        }
-    },
-    "47": {
-        "class_type": "RTXVideoSuperResolution",
-        "inputs": {
-            "images": ["51", 0],
-            "resize_type": "scale by multiplier",
-            "resize_type.scale": 2.0,
-            "quality": "ULTRA"
-        }
-    },
     "26": {
         "class_type": "VHS_VideoCombine",
         "inputs": {
-            "images": ["47", 0],
+            "images": ["16", 0],
             "frame_rate": 32,
             "loop_count": 0,
             "filename_prefix": "Wan22_Bernini",
@@ -164,7 +145,6 @@ _COMMON_NODES = {
         }
     },
     # easy cleanGpuUsed removed (plugin not installed)
-    }
 }
 
 
@@ -200,19 +180,14 @@ _WORKFLOW_I2V["43"] = {
 }
 _WORKFLOW_I2V["38"] = _make_bernini_node("i2v", {"image0": ["43", 0]})
 
-# R2V: 参考图生视频（2张参考图）
+# R2V: 参考图生视频（1张参考图, image1按需添加）
 _WORKFLOW_R2V = dict(_COMMON_NODES)
 _WORKFLOW_R2V["43"] = {
     "class_type": "LoadImage",
     "inputs": {"image": "%image0%"}
 }
-_WORKFLOW_R2V["46"] = {
-    "class_type": "LoadImage",
-    "inputs": {"image": "%image1%"}
-}
 _WORKFLOW_R2V["38"] = _make_bernini_node("r2v", {
     "image0": ["43", 0],
-    "image1": ["46", 0],
 })
 
 # 模板映射
@@ -498,25 +473,13 @@ class VideoComfyUIService:
             if "46" in workflow and "%image1%" in workflow["46"]["inputs"].get("image", ""):
                 if len(image_filenames) > 1 and image_filenames[1]:
                     workflow["46"]["inputs"]["image"] = image_filenames[1]
+            # r2v: 如果有第2张图但模板没有node 46, 动态添加
+            if task_type == "r2v" and len(image_filenames) > 1 and image_filenames[1] and "46" not in workflow:
+                workflow["46"] = {"class_type": "LoadImage", "inputs": {"image": image_filenames[1]}}
+                workflow["38"]["inputs"]["image1"] = ["46", 0]
 
-        # RIFE/RTX 后处理链控制
-        if use_rife and use_rtx_upscale:
-            # 完整链: VAEDecode(16) → RIFE(51) → RTX(47) → VHS(26) → easy(52)
-            pass  # 模板已经是这个链路
-        elif use_rife and not use_rtx_upscale:
-            # 只用 RIFE: VAEDecode(16) → RIFE(51) → VHS(26)
-            workflow["26"]["inputs"]["images"] = ["51", 0]
-            workflow.pop("47", None)
-        elif not use_rife and use_rtx_upscale:
-            # 只用 RTX: VAEDecode(16) → RTX(47) → VHS(26)
-            workflow["47"]["inputs"]["images"] = ["16", 0]
-            workflow.pop("51", None)
-        else:
-            # 都不用: VAEDecode(16) → VHS(26)
-            workflow["26"]["inputs"]["images"] = ["16", 0]
-            workflow.pop("51", None)
-            workflow.pop("47", None)
-
+        # RIFE/RTX 后处理已移除 (v0.27不兼容RIFE VFI, 共享GPU不支持RTX)
+        # VHS_VideoCombine 直接连接 VAEDecode(16)
         return workflow
 
     async def _queue_prompt_and_wait(
@@ -575,8 +538,27 @@ class VideoComfyUIService:
 
                     # 任务完成，提取输出
                     prompt_result = hist_data[prompt_id]
-                    # 检测执行错误（如 OOM）
+                    # 检测执行错误（如 OOM / missing node）
                     status_info = prompt_result.get("status", {})
+                    status_str = status_info.get("status_str", "")
+                    if status_str == "error":
+                        err_msg = ""
+                        err_type = "execution_error"
+                        for msg in status_info.get("messages", []):
+                            if isinstance(msg, list) and len(msg) >= 2 and msg[0] == "execution_error":
+                                err_info = msg[1] if isinstance(msg[1], dict) else {}
+                                err_msg = err_info.get("exception_message", str(msg[1]))
+                                err_type = err_info.get("exception_type", "execution_error")
+                        # Also check for validation errors
+                        for msg in status_info.get("messages", []):
+                            if isinstance(msg, list) and len(msg) >= 2 and "validation" in str(msg[0]).lower():
+                                err_msg = str(msg[1])[:300]
+                                err_type = "validation_error"
+                        if not err_msg:
+                            err_msg = str(status_info.get("messages", []))[:300]
+                        log.error(f"VideoComfyUI: 任务执行失败: {err_type}: {err_msg[:200]}")
+                        return {"error": True, "type": err_type, "message": err_msg}
+                    # Fallback: old-style execution_error key
                     exec_error = status_info.get("execution_error", {})
                     if exec_error:
                         err_msg = exec_error.get("exception_message", "")
