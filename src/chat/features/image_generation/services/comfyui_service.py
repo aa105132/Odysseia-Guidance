@@ -1831,8 +1831,21 @@ class ComfyUIService:
     ) -> Optional[Dict[str, str]]:
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         history_url = f'{self.history_url_base}/{prompt_id}'
+        last_keepalive_ping = 0.0
 
         while asyncio.get_running_loop().time() < deadline:
+            # 每 120 秒 ping 一次 system_stats 保持 CNB workspace 外部连接活跃
+            now = asyncio.get_running_loop().time()
+            if now - last_keepalive_ping >= 120:
+                last_keepalive_ping = now
+                try:
+                    async with session.get(
+                        f'{self.server_address}/system_stats',
+                        timeout=aiohttp.ClientTimeout(total=5)
+                    ) as _ka_resp:
+                        pass
+                except Exception:
+                    pass
             try:
                 async with session.get(history_url) as response:
                     if response.status != 200:

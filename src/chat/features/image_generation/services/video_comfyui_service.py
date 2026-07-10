@@ -517,9 +517,23 @@ class VideoComfyUIService:
                 # 轮询 /history/{prompt_id}
                 poll_interval = 3.0
                 elapsed = 0
+                last_keepalive_ping = 0
                 while elapsed < timeout_seconds:
                     await asyncio.sleep(poll_interval)
                     elapsed += poll_interval
+
+                    # 每 120 秒 ping 一次 system_stats 保持 CNB workspace 外部连接活跃
+                    # 防止 keepAliveTimeout 30m 内因无外部连接而被自动回收
+                    if elapsed - last_keepalive_ping >= 120:
+                        last_keepalive_ping = elapsed
+                        try:
+                            async with session.get(
+                                f"{self.server_address}/system_stats",
+                                timeout=aiohttp.ClientTimeout(total=5)
+                            ) as ka_resp:
+                                pass
+                        except Exception:
+                            pass
 
                     try:
                         async with session.get(
