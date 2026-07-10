@@ -28,7 +28,7 @@ async def generate_video_comfyui(
     seed: Optional[int] = None,
     task_type: str = "t2v",
     frame_rate: int = 32,
-    use_rife: bool = True,
+    use_rife: bool = False,
     use_rtx_upscale: bool = False,
     reference_images: Optional[List[str]] = None,  # 传图片 URL 字符串列表
     **kwargs
@@ -68,7 +68,7 @@ async def generate_video_comfyui(
             - "r2v" = 参考图生视频。用户提供2张参考图时使用。需要 reference_images（2张）。
             用户给了图片就用 i2v/r2v，没给图片就用 t2v。
         frame_rate: 输出视频帧率。默认 32
-        use_rife: 是否使用 RIFE 帧插值提升流畅度。默认 True
+        use_rife: 是否使用 RIFE 帧插值提升流畅度。默认 False (v0.27不兼容)
         use_rtx_upscale": False
         reference_images: 参考图片 URL 列表。i2v 需要1张，r2v 需要2张。
             当 task_type 是 i2v 或 r2v 时必须提供。

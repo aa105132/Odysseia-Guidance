@@ -84,7 +84,7 @@ _COMMON_NODES = {
         "class_type": "LoraLoaderModelOnly",
         "inputs": {
             "model": ["14", 0],
-            "lora_name": "Bernini-R_LightX2V_low_noise.safetensors",
+            "lora_name": "Bernini-R_LightX2V_high_noise.safetensors",
             "strength_model": 1.0
         }
     },
@@ -120,7 +120,7 @@ _COMMON_NODES = {
             "sampler_name": "euler",
             "scheduler": "simple",
             "start_at_step": 2,
-            "end_at_step": 10000,
+            "end_at_step": 4,
             "return_with_leftover_noise": "disable"
         }
     },
@@ -157,17 +157,13 @@ _COMMON_NODES = {
             "loop_count": 0,
             "filename_prefix": "Wan22_Bernini",
             "format": "video/h264-mp4",
-            "pix_fmt": "yuv420p",
+            "pix_format": "yuv420p",
             "crf": 19,
             "pingpong": False, "save_metadata": True,
             "save_output": True
         }
     },
-    "52": {
-        "class_type": "easy cleanGpuUsed",
-        "inputs": {
-            "anything": ["26", 0]
-        }
+    # easy cleanGpuUsed removed (plugin not installed)
     }
 }
 
@@ -185,12 +181,7 @@ def _make_bernini_node(task_type: str, extra_inputs: dict = None) -> dict:
         "prompt": "%prompt%",
         "negative_prompt": "%negative_prompt%",
         "use_default_neg": True,
-        "ref_max_size": 832,
-        "auto_enhance": False,
-        "unload_ollama": False,
-        "ollama_url": "",
-        "ollama_model": "",
-        "api_format": "Ollama"
+        
     }
     if extra_inputs:
         inputs.update(extra_inputs)
@@ -468,7 +459,7 @@ class VideoComfyUIService:
         length: int = 81,
         task_type: str = "t2v",
         frame_rate: int = 32,
-        use_rife: bool = True,
+        use_rife: bool = False,
         use_rtx_upscale: bool = False,
         image_filenames: Optional[list] = None,
     ) -> Dict[str, Any]:
@@ -688,7 +679,7 @@ class VideoComfyUIService:
         length: int = 81,
         task_type: str = "t2v",
         frame_rate: int = 32,
-        use_rife: bool = True,
+        use_rife: bool = False,
         use_rtx_upscale: bool = False,
         notify_callback=None,
         reference_images: Optional[list] = None,

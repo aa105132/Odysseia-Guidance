@@ -62,7 +62,7 @@ class VideoComfyUICog(commands.Cog):
         length="视频帧数 (81帧≈2.5秒, 161帧≈5秒)",
         seed="随机种子 (相同种子=相同结果)",
         negative_prompt="负面提示词，描述不想要的内容",
-        use_rife="是否使用 RIFE 帧插值提升流畅度 (默认开启)",
+        use_rife="是否使用 RIFE 帧插值提升流畅度 (默认关闭, v0.27不兼容)",
         use_rtx_upscale="是否使用 RTX 视频超分 (实验性, 共享GPU可能不支持)",
         frame_rate="输出帧率 (默认32)",
     )
@@ -88,7 +88,7 @@ class VideoComfyUICog(commands.Cog):
         length: int = 81,
         seed: Optional[int] = None,
         negative_prompt: str = "低质量视频, 模糊, 变形",
-        use_rife: bool = True,
+        use_rife: bool = False,
         use_rtx_upscale: bool = False,
         frame_rate: int = 32,
     ):
