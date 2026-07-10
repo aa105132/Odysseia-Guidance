@@ -60,21 +60,27 @@ async def issue_user_warning(**kwargs) -> Dict[str, Any]:
         current_warnings = result["new_warning_count"]
 
         if was_blacklisted:
-            message = f"User {target_id} has been blacklisted for {ban_duration} minutes due to accumulating 3 warnings. Their warning count has been reset to {current_warnings}."
+            message = f"User {target_id} has been blacklisted for {ban_duration} minutes due to reaching the warning threshold. Their warning count has been reset to {current_warnings}."
             log.info(message)
             return {
                 "status": "blacklisted",
                 "user_id": str(target_id),
                 "duration_minutes": ban_duration,
                 "current_warnings": current_warnings,
+                "threshold": chat_config.BLACKLIST_WARNING_THRESHOLD,
+                "remaining_warnings": 0,
             }
         else:
             message = f"User {target_id} has received a warning. They now have {current_warnings} warning(s)."
             log.info(message)
+            threshold = chat_config.BLACKLIST_WARNING_THRESHOLD
+            remaining = threshold - current_warnings
             return {
                 "status": "warned",
                 "user_id": str(target_id),
                 "current_warnings": current_warnings,
+                "threshold": threshold,
+                "remaining_warnings": remaining,
             }
 
     except Exception as e:
