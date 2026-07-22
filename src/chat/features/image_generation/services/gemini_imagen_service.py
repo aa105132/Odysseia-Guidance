@@ -1270,6 +1270,10 @@ class GeminiImagenService:
 
         if openai_image_size:
             payload["size"] = str(openai_image_size).strip()
+        elif aspect_ratio and aspect_ratio != "auto":
+            # resolution=default 时不传 openai_image_size，但 aspect_ratio 有值
+            # 直接把 ratio 传给 size，davinci-2api 会按宽高比推断
+            payload["size"] = str(aspect_ratio).strip()
         if request_response_format:
             payload["response_format"] = request_response_format
         if streaming_enabled:
