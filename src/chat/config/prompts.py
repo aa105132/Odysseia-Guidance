@@ -219,6 +219,12 @@ PROMPT_CONFIG = {
 ## 绘图工具选择决策树（最高优先级 - 违反即为严重错误）：
 **当前策略：新画默认优先 {default_new_image_tool}（默认引擎：{default_image_engine}）；只有明确图生图编辑才用 Imagen 的 `edit_image`。**
 
+### 第负一步：判断是否是已知角色/人物（最高优先级，先于一切引擎选择）
+- 如果用户要求画**已知角色/人物**（动漫、游戏、小说、影视、现实中的名人/角色），**必须先调用 `image_search` 搜索该角色的参考图**，否则禁止调用任何画图工具。
+- 判断标准：角色名是否来自已有作品（如火影忍者、原神、凡人修仙传、海贼王等），或用户明确说"画XXX（某作品角色）"。
+- **禁止**：跳过 image_search 直接用 generate_image / generate_image_comfyui / generate_image_novelai 画已知角色——画出来跟原角色完全不像。
+- **唯一例外**：用户明确说"不用搜图""直接画""按我的描述画"时，才允许跳过 image_search。
+
 ### 第零步：先区分图片请求和视频请求（最高优先级）
 - **图片、截图、附件图片、回复图片本身不是视频请求。**
 - 只有用户明确说"生成视频"、"做成视频"、"短片"、"动图/GIF"、"让这张图动起来"、"把这张图做成动画"等，才允许调用 `generate_video`。
@@ -277,16 +283,8 @@ PROMPT_CONFIG = {
 - **禁止**：用 `get_user_avatar` 看完头像后用文生图描述头像画——头像必须作为图片传入图生图工具（`edit_image` + `avatar_user_id`），文字描述画出来跟本人完全不像
 - **禁止**：在 `edit_image` 中传 `model_name_override="comfyui"`——`edit_image` 不支持 ComfyUI 引擎。当默认引擎是 ComfyUI 时，图生图请用 `generate_image_comfyui`（传 `use_reference_image=true` + `reference_image_url`）
 
-### 搜索参考图再画图（重要，容易遗漏）：
-当用户要求画**已知角色 / 动漫 / 小说 / 影视 / 游戏人物**时（如"画玄骨上人""画鸣人""画某个动漫角色"），**禁止直接用文生图臆造外观**。
-正确流程：
-1. 先调用 `image_search` 搜索该角色的图片（query 用角色名 + 作品名）
-2. 从搜索结果中选择 1-3 张最符合角色的参考图
-3. **默认引擎是 ComfyUI 时**：调用 `generate_image_comfyui`，传 `use_reference_image=true` 和 `reference_image_url`（搜索结果中参考图的 URL），做图生图
-   **默认引擎是 Imagen 时**：调用 `edit_image` 并传 `image_search_reference_index` 或 `image_search_reference_indexes` 指定参考图，做图生图
-4. `edit_prompt` 只写"保持参考图角色身份、脸、发型、服装、画风不变，改动作/场景/构图为……"
-**禁止**：画已知角色时跳过 image_search 直接 generate_image 纯文生图——画出来跟原角色完全不像。
-**禁止**：在 `edit_image` 里传 `model_name_override="comfyui"`——ComfyUI 引擎请用 `generate_image_comfyui`。
+### 已知角色画图流程（简化版，详见第负一步）：
+已知角色 → `image_search` → `edit_image`（传 `image_search_reference_index` 或 `image_search_reference_indexes`）。
 
 ### 多人物/多角色画图（重要，月月经常犯错）：
 当用户要求画**两个或以上不同角色**出现在同一张图中时（如"画鸣人和佐助""画南宫婉和韩立"），**必须先把所有人物的参考图全部搜完，再一起拿去图生图**。

@@ -146,7 +146,7 @@ class PromptService:
             f"- ComfyUI 通用默认底模：{comfyui_default_model}",
             f"- ComfyUI 写实默认底模：{comfyui_realistic_model}",
             f"- ComfyUI 动漫默认底模：{comfyui_anime_model}",
-            "- 用户指定模型名时（如'用gpt画'），通过 model_name_override 参数传入对应模型名。",
+            "- ⚠️ model_name_override 只在用户明确指定模型名时才传（如用户说用seedream画→传 SEEDREAM_5_PRO，用gpt画→传 gpt-image-2）。用户没指定模型时**绝对不要传 model_name_override**，让系统自动用默认模型（SFW→图片生成，NSFW→SEEDREAM_5_PRO）。禁止自己编造模型名如 gpt-4o-mini。",
             '- 频道用户/群友/Discord 成员优先级最高：用户要画 @某人、用户名、昵称、“我”或频道里的某个成员时，不要用 image_search 联网搜图；先用 get_user_avatar / get_user_profile，头像/名片才是参考源。',
             '- 【强制】用户要生成非频道用户的外部人物/同人角色/IP角色（现实人物、动漫/小说/游戏角色、明星、角色名等，例如“凡人动漫南宫婉”）时，第一步必须先调用 image_search(send_to_channel=false, analyze_images=true) 搜多张参考图；不要直接用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图臆造外观。',
             '- image_search 一次只能搜索一个人物/角色/主体，禁止把多个名字塞进同一个 query，禁止在 image_search 里使用 [BATCH]、换行、||、逗号分隔或“A B / A和B”这类多名字混搜。多人物混搜返回的图片无法可靠区分谁是谁，会导致后续图生图乱生成。如果任务包含多个外部人物/同人角色/IP角色，必须为每个人物分别调用一次 image_search，并记清“哪一批全局编号对应哪个人物”；最后选择参考图时必须从每个人物对应批次里各选至少 1 张，禁止只从同一人物/同一批里选多张来冒充不同人物。image_search 返回后，由你先分析该人物的多张参考图并决定哪张或哪几张最适合；多次搜索结果会累计为本轮全局参考图编号；全部搜完后，原始任务是生成图片时必须调用 edit_image 或 edit_images_batch，并用 image_search_reference_indexes=[...] 一次性选择所有人物参考图。edit_prompt / edit_prompts 必须短，只写“保持参考图人物身份、脸、发型、服装、画风不变，仅改动作/场景/构图为……”；不要复述外观、服饰、发色、作品名、画风标签或整套文生图提示词；禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。原始任务是视频时调用 generate_video(use_reference_image=true, image_search_reference_indexes=[...])。代码不会自动替你选图或硬传图。',

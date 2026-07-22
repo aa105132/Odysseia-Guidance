@@ -882,6 +882,7 @@ class GeminiService:
             )
 
         self.tool_service.cached_search_reference_images = search_refs[-30:]
+        log.info("[DIAG] sync_search_cache: %d refs synced, indexes=%s", len(search_refs), [r.get("image_search_reference_index") for r in search_refs])
 
     def _remember_tool_image_payload(self, image_payload: Dict[str, Any]) -> None:
         """缓存本轮已获取的工具图片，供后续生成工具按 ID 复用。"""
@@ -1043,6 +1044,7 @@ class GeminiService:
                     "source_url": item.get("source_url"),
                 }
             )
+        log.info("[DIAG] select_explicit: requested=%s, cached=%d, index_keys=%s", requested_indexes, len(cached_images), sorted(by_global_index.keys()))
         if missing_indexes:
             log.warning(
                 "模型选择了不存在的 image_search 全局编号，已忽略: requested=%s, missing=%s, available=%s",
@@ -5464,6 +5466,8 @@ class GeminiService:
                         normalized_tool_name,
                         len(selected_search_refs),
                     )
+                else:
+                    log.warning("[DIAG] edit_image: _select_explicit returned EMPTY! args_keys=%s, last_tool_images=%d", list(tool_args.keys()), len(self.last_tool_images_data))
 
             if (
                 normalized_tool_name in ("edit_image", "edit_images_batch", "generate_video")

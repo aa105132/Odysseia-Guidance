@@ -277,7 +277,14 @@ def _parse_image_search_results(raw_text: str, *, base_url: str = "", max_result
         if normalized_url and _looks_like_image_url(normalized_url):
             candidates.append({"url": normalized_url, "title": "", "source_url": ""})
 
-    return _dedupe_results(candidates, max_results)
+    results = _dedupe_results(candidates, max_results)
+    log.info("image_search parse: %d candidates -> %d after dedup", len(candidates), len(results))
+    if results:
+        for idx, r in enumerate(results[:3], 1):
+            log.info("  result %d: url=%s, title=%s", idx, str(r.get("url",""))[:200], r.get("title",""))
+    else:
+        log.warning("image_search parse EMPTY! raw_text[:500]=%s", text[:500])
+    return results
 
 
 async def _post_openai_image_search(query: str, *, max_results: int, is_retry: bool = False) -> Dict[str, Any]:
@@ -617,6 +624,10 @@ async def image_search(
         output.update({"success": False, "reason": "no_image_results", "hint": "搜索接口没有返回可识别的图片 URL。"})
         return output
 
+    log.info("image_search download: image_data_list len=%d, results=%d, analyze=%s", len(image_data_list), len(results), analyze_images)
+    if image_data_list:
+        for idx, item in enumerate(image_data_list[:3], 1):
+            log.info("  dl %d: size=%d, filename=%s, index=%s", idx, len(item.get("data",b"")), item.get("filename",""), item.get("index",""))
     if image_data_list:
         output["image_data"] = image_data_list[0]
         output["image_data_list"] = image_data_list

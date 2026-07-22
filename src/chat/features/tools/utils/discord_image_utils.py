@@ -11,7 +11,7 @@ import re
 import io
 import os
 import asyncio
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 import discord
@@ -26,6 +26,28 @@ IMAGE_URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 MARKDOWN_IMAGE_PATTERN = re.compile(r'!\[[^\]]*\]\((https?://[^\)]+)\)', re.IGNORECASE)
+
+# 小红书 CDN 域名 fallback：image.xiaohongshu.com 在某些 DNS 下解析失败，替换为可用域名
+_XIAOHONGSHU_DOMAIN_FALLBACK = {
+    "image.xiaohongshu.com": "sns-diandian-i1.xhscdn.com",
+}
+
+def _replace_xiaohongshu_domain(url: str) -> str:
+    """如果 URL 包含小红书失效域名，替换为可用域名。"""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        if host in _XIAOHONGSHU_DOMAIN_FALLBACK:
+            new_host = _XIAOHONGSHU_DOMAIN_FALLBACK[host]
+            parsed = parsed._replace(netloc=new_host)
+            new_url = urlunparse(parsed)
+            log.info(f"小红书域名替换: {host} -> {new_host}")
+            return new_url
+    except Exception:
+        pass
+    return url
 
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "tiff", "avif"}
 MIME_TO_EXTENSION = {
@@ -120,6 +142,9 @@ async def fetch_image_from_url(
     """
     if not url or not isinstance(url, str):
         return None
+
+    # 小红书 CDN 域名替换（image.xiaohongshu.com 在某些 DNS 下 NXDOMAIN）
+    url = _replace_xiaohongshu_domain(url)
 
     try:
         async with aiohttp.ClientSession() as session:
