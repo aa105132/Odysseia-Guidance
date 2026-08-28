@@ -44,6 +44,12 @@ class VoiceGenerationService:
         self._doubao_rr_index: int = -1
         self._initialize_client()
 
+    def _can_fallback_to_elevenlabs(self) -> bool:
+        """检查 ElevenLabs fallback 是否可用（需要 API Key）。"""
+        import os
+        api_key = str(os.getenv("ELEVENLABS_API_KEY", "") or "").strip()
+        return bool(api_key)
+
     def _initialize_client(self):
         config = app_config.VOICE_CONFIG
 
@@ -52,6 +58,27 @@ class VoiceGenerationService:
             return
 
         provider = str(config.get("PROVIDER", "doubao")).strip().lower()
+
+        if provider == "elevenlabs":
+            api_key = str(config.get("API_KEY", "")).strip()
+            voice_id = str(config.get("VOICE_TYPE", "")).strip()
+            model_name = str(config.get("MODEL_NAME", "")).strip() or "eleven_v3"
+            if not api_key or not voice_id:
+                log.warning("ElevenLabs 语音配置不完整：缺少 API_KEY 或 VOICE_TYPE(voice_id)")
+                return
+            self._client = {
+                "provider": "elevenlabs",
+                "api_key": api_key,
+                "voice_id": voice_id,
+                "model_name": model_name,
+                "base_url": "https://api.elevenlabs.io/v1",
+            }
+            log.info(
+                "语音服务已初始化（provider=elevenlabs, voice_id=%s, model=%s）",
+                voice_id, model_name,
+            )
+            return
+
         if provider == "doubao":
             app_id = str(config.get("APP_ID", "")).strip()
             access_token = str(config.get("ACCESS_TOKEN", "")).strip()
@@ -509,8 +536,16 @@ class VoiceGenerationService:
         timeout_seconds = max(10, int(config.get("REQUEST_TIMEOUT_SECONDS", 120)))
         provider = self._client.get("provider")
 
+        if provider == "elevenlabs":
+            return await self._generate_with_elevenlabs(
+                text=text,
+                timeout_seconds=timeout_seconds,
+                voice_type=voice_type,
+                speed_ratio=speed_ratio,
+            )
+
         if provider == "doubao":
-            return await self._generate_with_doubao(
+            result = await self._generate_with_doubao(
                 text=text,
                 timeout_seconds=timeout_seconds,
                 voice_type=voice_type,
@@ -522,6 +557,18 @@ class VoiceGenerationService:
                 emotion_scale=emotion_scale,
                 user_id=user_id,
             )
+            if result and result.audio_bytes:
+                return result
+            # 豆包失败，fallback 到 ElevenLabs
+            log.warning("豆包语音生成失败，自动回退到 ElevenLabs V3")
+            if self._can_fallback_to_elevenlabs():
+                return await self._generate_with_elevenlabs(
+                    text=text,
+                    timeout_seconds=timeout_seconds,
+                    voice_type=None,
+                    speed_ratio=speed_ratio,
+                )
+            return None
 
         if provider == "xiaomi":
             return await self._generate_with_xiaomi(
@@ -850,9 +897,14 @@ class VoiceGenerationService:
                         "Authorization": auth_value,
                         "Content-Type": "application/json",
                         "Resource-Id": resource_id,
+                        "X-Api-App-Id": str(app_id),
+                        "X-Api-Access-Key": str(access_token),
+                        "X-Api-Resource-Id": resource_id,
+                        "X-Api-Request-Id": str(uuid.uuid4()),
                     }
-                    # 关键：HTTP /api/v1/tts 复刻链路不携带 X-Api-Resource-Id。
-                    # 实测该头会导致 403(resource not granted)；最小必填请求仅需 Resource-Id。
+                    # 新版控制台账号需要 X-Api-* 鉴权（2026-08-21 新增）。
+                    # 旧版账号仅需 Authorization + Resource-Id 即可。
+                    # X-Api-* header 不会影响旧版账号，旧版服务端会忽略。
                     try:
                         async with session.post(
                             endpoint, headers=headers, json=payload
@@ -1628,6 +1680,103 @@ class VoiceGenerationService:
             return None
         except Exception as e:
             log.error(f"语音合成异常（{provider}）: {e}", exc_info=True)
+            return None
+
+
+    async def _generate_with_elevenlabs(
+        self,
+        text: str,
+        timeout_seconds: int,
+        voice_type: Optional[str] = None,
+        speed_ratio: Optional[float] = None,
+    ) -> Optional[VoiceResult]:
+        """使用 ElevenLabs TTS API 生成语音（PCM → ffmpeg 转 ogg_opus）。"""
+        import aiohttp
+        import subprocess
+
+        client = self._client
+        api_key = client["api_key"]
+        base_url = client["base_url"]
+        model_name = client["model_name"]
+
+        voice_id = client["voice_id"]
+        if voice_type and not str(voice_type).startswith("S_"):
+            voice_id = str(voice_type).strip()
+
+        voice_settings = {
+            "stability": 0.2,
+            "similarity_boost": 0.95,
+            "style": 0.3,
+            "use_speaker_boost": True,
+        }
+
+        # 请求 PCM 格式，再用 ffmpeg 转成 ogg_opus（原生语音消息需要 ogg/opus）
+        url = f"{base_url}/text-to-speech/{voice_id}?output_format=pcm_44100"
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=timeout_seconds, connect=15)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    url,
+                    headers={
+                        "xi-api-key": api_key,
+                        "Content-Type": "application/json",
+                        "Accept": "audio/mpeg",
+                    },
+                    json={
+                        "text": text,
+                        "model_id": model_name,
+                        "voice_settings": voice_settings,
+                    },
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        log.error(
+                            f"ElevenLabs TTS 失败: {response.status} - {error_text[:300]}"
+                        )
+                        return None
+
+                    pcm_bytes = await response.read()
+                    if not pcm_bytes or len(pcm_bytes) < 1000:
+                        log.error("ElevenLabs TTS 返回空音频")
+                        return None
+
+                    # PCM(s16le, 44100Hz, mono) → ogg_opus
+                    proc = subprocess.run(
+                        [
+                            "ffmpeg", "-y",
+                            "-f", "s16le", "-ar", "44100", "-ac", "1",
+                            "-i", "pipe:0",
+                            "-c:a", "libopus", "-b:a", "64k",
+                            "-f", "ogg", "pipe:1",
+                        ],
+                        input=pcm_bytes,
+                        capture_output=True,
+                        timeout=15,
+                    )
+                    if proc.returncode != 0 or not proc.stdout:
+                        log.error(
+                            f"ElevenLabs PCM→OGG 转换失败: {proc.stderr.decode()[-300:]}"
+                        )
+                        return None
+
+                    ogg_bytes = proc.stdout
+                    log.info(
+                        f"ElevenLabs TTS 成功: pcm={len(pcm_bytes)} bytes → ogg={len(ogg_bytes)} bytes, "
+                        f"voice_id={voice_id}, model={model_name}"
+                    )
+
+                    return VoiceResult(
+                        audio_bytes=ogg_bytes,
+                        mime_type="audio/ogg",
+                        file_ext="opus",
+                        provider="elevenlabs",
+                        model_name=model_name,
+                        voice_type=voice_id,
+                    )
+
+        except Exception as exc:
+            log.error(f"ElevenLabs TTS 异常: {exc}", exc_info=True)
             return None
 
 

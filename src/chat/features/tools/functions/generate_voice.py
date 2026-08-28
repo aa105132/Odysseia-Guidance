@@ -224,6 +224,7 @@ async def generate_voice(
     emotion_scale: Optional[float] = None,
     force_send: bool = False,
     send_text_after_voice: bool = False,
+    voice_provider: Optional[str] = None,
     **kwargs,
 ) -> dict:
     """
@@ -257,6 +258,8 @@ async def generate_voice(
         emotion_scale: （可选）情感强度，建议 1.0~5.0（推荐 4.0）。
         force_send: 是否强制执行发送。默认 False。通常无需设置，除非用户明确要求语音，或你明确要在极度愤怒场景无条件发语音。
         send_text_after_voice: 语音发送成功后，是否补发一条同文文本消息。默认 False。
+        voice_provider: （可选）语音合成引擎，可选值：doubao（默认，火山引擎豆包 TTS 银月克隆音色）、elevenlabs（ElevenLabs V3 银月音色，豆包失败时自动回退）。
+            留空使用系统默认（doubao/火山引擎，银月克隆音色）。豆包失败时自动回退到 ElevenLabs V3。
 
     Returns:
         成功时会把音频文件直接发送到频道，并返回 skip_ai_response=True。
@@ -330,10 +333,14 @@ async def generate_voice(
     should_send_text_after_voice = bool(send_text_after_voice)
 
     try:
-        voice_provider = str(
-            chat_config.VOICE_CONFIG.get("PROVIDER", "") or ""
-        ).strip().lower()
-        preferred_output_format = "opus" if voice_provider == "xiaomi" else None
+        # 优先用工具参数指定的 provider，否则用系统默认
+        effective_provider = str(voice_provider or "").strip().lower()
+        if effective_provider not in ("elevenlabs", "doubao", "xiaomi"):
+            effective_provider = str(
+                chat_config.VOICE_CONFIG.get("PROVIDER", "") or ""
+            ).strip().lower()
+        voice_provider = effective_provider
+        preferred_output_format = "opus" if voice_provider in ("xiaomi", "elevenlabs") else None
 
         result = await voice_service.generate_voice(
             text=text,
@@ -369,6 +376,7 @@ async def generate_voice(
         await add_reaction(SUCCESS_EMOJI)
 
         text_sent_after_voice = False
+        send_failed = False
 
         # 发送语音文件（优先原生语音消息样式；失败自动回退普通附件）
         if channel:
@@ -426,10 +434,19 @@ async def generate_voice(
 
             except Exception as e:
                 log.error(f"发送语音到频道失败: {e}", exc_info=True)
+                send_failed = True
+
+        if send_failed:
+            return {
+                "generation_failed": True,
+                "reason": "send_failed",
+                "hint": "语音生成成功但发送到频道失败。请用自己的语气安慰用户，并建议稍后重试。",
+            }
 
         return {
             "success": True,
             "skip_ai_response": True,
+            "voice_text": text,
             "cost": 0,
             "charged": False,
             "requested_by_user": bool(user_requested),
