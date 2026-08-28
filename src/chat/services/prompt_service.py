@@ -146,7 +146,7 @@ class PromptService:
             f"- ComfyUI 通用默认底模：{comfyui_default_model}",
             f"- ComfyUI 写实默认底模：{comfyui_realistic_model}",
             f"- ComfyUI 动漫默认底模：{comfyui_anime_model}",
-            "- ⚠️ model_name_override 只在用户明确指定模型名时才传（如用户说用seedream画→传 SEEDREAM_5_PRO，用gpt画→传 gpt-image-2）。用户没指定模型时**绝对不要传 model_name_override**，让系统自动用默认模型（SFW→图片生成，NSFW→SEEDREAM_5_PRO）。禁止自己编造模型名如 gpt-4o-mini。",
+            "- ⚠️ model_name_override 只在用户明确指定模型名时才传（如用户说用gpt画→传 gpt-image-2）。用户没指定模型时**绝对不要传 model_name_override**，让系统自动用默认模型。禁止自己编造模型名如 gpt-4o-mini。",
             '- 频道用户/群友/Discord 成员优先级最高：用户要画 @某人、用户名、昵称、“我”或频道里的某个成员时，不要用 image_search 联网搜图；先用 get_user_avatar / get_user_profile，头像/名片才是参考源。',
             '- 【强制】用户要生成非频道用户的外部人物/同人角色/IP角色（现实人物、动漫/小说/游戏角色、明星、角色名等，例如“凡人动漫南宫婉”）时，第一步必须先调用 image_search(send_to_channel=false, analyze_images=true) 搜多张参考图；不要直接用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图臆造外观。',
             '- image_search 一次只能搜索一个人物/角色/主体，禁止把多个名字塞进同一个 query，禁止在 image_search 里使用 [BATCH]、换行、||、逗号分隔或“A B / A和B”这类多名字混搜。多人物混搜返回的图片无法可靠区分谁是谁，会导致后续图生图乱生成。如果任务包含多个外部人物/同人角色/IP角色，必须为每个人物分别调用一次 image_search，并记清“哪一批全局编号对应哪个人物”；最后选择参考图时必须从每个人物对应批次里各选至少 1 张，禁止只从同一人物/同一批里选多张来冒充不同人物。image_search 返回后，由你先分析该人物的多张参考图并决定哪张或哪几张最适合；多次搜索结果会累计为本轮全局参考图编号；全部搜完后，原始任务是生成图片时必须调用 edit_image 或 edit_images_batch，并用 image_search_reference_indexes=[...] 一次性选择所有人物参考图。edit_prompt / edit_prompts 必须短，只写“保持参考图人物身份、脸、发型、服装、画风不变，仅改动作/场景/构图为……”；不要复述外观、服饰、发色、作品名、画风标签或整套文生图提示词；禁止再调用 generate_image / generate_image_novelai / generate_image_comfyui 纯文生图。原始任务是视频时调用 generate_video(use_reference_image=true, image_search_reference_indexes=[...])。代码不会自动替你选图或硬传图。',
@@ -158,11 +158,12 @@ class PromptService:
     @staticmethod
     def _build_master_alias_guidance() -> str:
         return (
-            "[主人身份补充线索]\n"
-            "- 你的主人常用用户名是 guayue20。\n"
-            "- 主人在社区里的常见名字/别名是 瓜瓜喵、瓜月。\n"
-            "- 这些名字是识别主人的辅助线索，方便你在聊天、搜索记录、读取上下文时更快联想到主人。\n"
-            "- 如果用户自称或他人提到 guayue20、瓜瓜喵、瓜月，默认优先理解为同一位主人。"
+            "[主人身份字段规则]\n"
+            "- 主人的 Discord user_id（内置数字ID）是 1336989287127711784。\n"
+            "- 主人的 Discord username（账号用户名，可修改）是 guayue69997；精确匹配时可独立确认主人身份。\n"
+            "- 主人的 display_name / 服务器昵称常用 瓜瓜喵 或 guayue20，另有别名 瓜月；昵称只作辅助，不能单独完成身份认证。\n"
+            "- user_id、username、display_name 是三个不同字段，绝对不要混用。\n"
+            "- 只有 user_id 精确匹配，或 username 精确匹配 guayue69997，才直接确认是主人。"
         )
 
     def _build_compact_tool_guidance(self) -> str:
@@ -199,6 +200,9 @@ class PromptService:
             "     只有 get_user_avatar 完全查不到该名字时才视为虚构角色。",
             f"6) 当前语音 provider：{voice_provider}；凡是搜索、总结、教程、结构化结果场景，一律优先文字，不要发语音。",
             "7) 用户若点名具体预设、音色、ComfyUI 底模/VAE/CLIP/LoRA 或其他实时清单，先查 get_tool_usage_guide，确认后再传参。",
+            "8) 【网络用语主动解析】当你或用户消息中出现你不认识、不确定含义的缩写、拼音缩写、网络用语、圈子黑话（如 yyds/xswl/awsl/gg/op/nft/defi/awd 等），"
+            "或用户直接问'xxx是什么意思''xxx什么梗'时，必须主动调用 decode_slang(text='要解析的词或文本') 查询含义。"
+            "调用后根据返回的 formatted 结果用大白话告诉用户，不要原样贴工具输出。如果 decode_slang 也没查到（unknown 非空），再用 web_search 搜一下补充。",
             *self._build_image_model_hint_lines(),
         ]
         return "\n".join(lines)
@@ -209,6 +213,7 @@ class PromptService:
         return "\n".join(
             [
                 "聊天风格补充（高优先级）：",
+                "0) 【回复前必做】先回顾上下文中最近的历史消息——看看是谁在跟你说话、话题聊到了哪里、上一轮说了什么。确认这些之后再回复。不要凭空猜测说话人是谁、不要认错人、不要把之前聊过的内容当作没发生过。如果你不认得这个人或者不确定话题进展到哪里了，可以先翻看频道历史再回答，而不是装作了解地乱回。",
                 "1) 先像正在这个频道里聊天的真人群友一样理解眼前这句话，再决定要不要撒娇、嘴硬、玩梗或用表情。",
                 "2) 不要为了维持人设硬塞“哼”、叠词、撒娇、傲娇、感叹号或表情标签；没有必要时就正常说话。",
                 "3) 优先回应具体内容、情绪和上下文，再表达态度；少说空泛安慰、模板夸夸或像营业一样的话。",
@@ -403,7 +408,7 @@ class PromptService:
         )
 
         final_conversation.append({"role": "user", "parts": [core_prompt]})
-        final_conversation.append({"role": "model", "parts": ["我在线啦，随时开聊！"]})
+        final_conversation.append({"role": "model", "parts": ["收到。"]})
 
         # --- 工具调用精简协议：详细清单按需通过工具查询 ---
         final_conversation.append(
@@ -416,10 +421,30 @@ class PromptService:
             {
                 "role": "model",
                 "parts": [
-                    "收到，遇到需要工具但细节不确定的场景，我会先调用 get_tool_usage_guide，再决定真正要用的工具和参数。"
+                    "收到。"
                 ],
             }
         )
+
+        # --- 月月技能索引注入 ---
+        try:
+            from src.chat.features.skills.skill_manager import get_skill_index
+            _skill_index = get_skill_index()
+            if _skill_index:
+                final_conversation.append(
+                    {
+                        "role": "user",
+                        "parts": [_skill_index],
+                    }
+                )
+                final_conversation.append(
+                    {
+                        "role": "model",
+                        "parts": ["收到。"],
+                    }
+                )
+        except Exception as _skill_err:
+            log.warning(f"技能索引注入失败: {_skill_err}")
 
         # --- 聊天风格补充：让表达更像群友而不是模板 ---
         final_conversation.append(
@@ -431,7 +456,7 @@ class PromptService:
         final_conversation.append(
             {
                 "role": "model",
-                "parts": ["知道啦，我会先像真人接话，再自然带出月月自己的语气。"],
+                "parts": ["收到。"],
             }
         )
 
@@ -446,7 +471,7 @@ class PromptService:
             final_conversation.append(
                 {
                     "role": "model",
-                    "parts": ["我先看过首楼了，会按这个语境继续聊。"],
+                    "parts": ["收到。"],
                 }
             )
 
@@ -496,7 +521,7 @@ class PromptService:
                     ],
                 }
             )
-            final_conversation.append({"role": "model", "parts": ["这事我知道了"]})
+            final_conversation.append({"role": "model", "parts": ["收到。"]})
 
         # --- 3. 最近聊天历史注入（好感度与频道历史之前） ---
         if recent_chat_history:
@@ -505,14 +530,9 @@ class PromptService:
             )
             if recent_chat_text:
                 final_conversation.append({"role": "user", "parts": [recent_chat_text]})
-                final_conversation.append({"role": "model", "parts": ["我记得了"]})
+                final_conversation.append({"role": "model", "parts": ["收到。"]})
 
-        # --- 3. 频道历史上下文注入 ---
-        if channel_context:
-            final_conversation.extend(channel_context)
-            log.debug(f"已合并频道上下文，长度为: {len(channel_context)}")
-
-        # --- 4. 好感度注入（频道历史之后，单独动态块） ---
+        # --- 3. 好感度注入（频道历史之前） ---
         affection_prompt = (
             affection_status.get("prompt", "").replace("用户", user_name)
             if affection_status
@@ -527,7 +547,7 @@ class PromptService:
                     ],
                 }
             )
-            final_conversation.append({"role": "model", "parts": ["收到"]})
+            final_conversation.append({"role": "model", "parts": ["收到。"]})
 
         # --- 5. 回复上下文注入 (后置) ---
         if replied_message:
@@ -557,8 +577,13 @@ class PromptService:
             final_conversation.append(
                 {"role": "user", "parts": [reply_injection_prompt]}
             )
-            final_conversation.append({"role": "model", "parts": ["收到"]})
-            log.debug("已在频道历史后注入回复消息上下文。")
+            final_conversation.append({"role": "model", "parts": ["收到。"]})
+            log.debug("已注入回复消息上下文。")
+
+        # --- 频道历史上下文注入（紧挨用户消息之前，确保模型最后看到） ---
+        if channel_context:
+            final_conversation.extend(channel_context)
+            log.debug(f"已合并频道上下文，长度为: {len(channel_context)}")
 
         # --- 最终指令注入 ---
         # 将最终指令合并到最后一条 'model' 消息中，并防止重复注入。
@@ -581,15 +606,29 @@ class PromptService:
             else:
                 # 准备主人ID显示（如果未配置则显示"未配置"）
                 master_id_display = str(MASTER_USER_ID) if MASTER_USER_ID else "未配置"
-                # 准备用户ID显示
+                # 明确拆分 Discord 的三个身份字段：
+                # user_id = 内置数字ID；username = Member.name；display_name = 昵称/服务器昵称。
                 user_id_display = str(user_id) if user_id else "未知"
-                
+                display_name_display = str(user_name or "未知")
+                discord_username_display = "未知"
+                try:
+                    guild = getattr(channel, "guild", None) if channel is not None else None
+                    member = guild.get_member(int(user_id)) if guild is not None and user_id else None
+                    if member is not None:
+                        discord_username_display = str(getattr(member, "name", None) or "未知")
+                        display_name_display = str(
+                            getattr(member, "display_name", None) or display_name_display
+                        )
+                except (AttributeError, TypeError, ValueError):
+                    log.warning("解析 Discord username/display_name 失败，已使用现有显示名兜底")
+
                 final_injection_content = final_instruction_template.format(
                     guild_name=guild_name,
                     location_name=location_name,
                     current_time=current_beijing_time,
                     user_id=user_id_display,
-                    username=user_name,
+                    username=discord_username_display,
+                    display_name=display_name_display,
                     master_id=master_id_display,
                 )
 
@@ -743,7 +782,7 @@ class PromptService:
             final_conversation.append(
                 {
                     "role": "model",
-                    "parts": [f"收到，我会先看图再决定调用 edit_image 还是 {default_new_image_tool}。"],
+                    "parts": ["收到。"],
                 }
             )
 
@@ -780,7 +819,7 @@ class PromptService:
             final_conversation.append(
                 {
                     "role": "model",
-                    "parts": ["收到，我会直接基于自动拆帧结果分析 GIF。"],
+                    "parts": ["收到。"],
                 }
             )
 
@@ -798,7 +837,7 @@ class PromptService:
             final_conversation.append(
                 {
                     "role": "model",
-                    "parts": ["收到，我会直接基于自动抽帧结果分析视频。"],
+                    "parts": ["收到。"],
                 }
             )
 
