@@ -136,11 +136,16 @@ class GeminiImagenService:
         return max(30, int(config.get("TOTAL_TIMEOUT_SECONDS", 600)))
 
     @staticmethod
-    def _deadline_exceeded(start_time, log_prefix: str) -> bool:
+    def _deadline_exceeded(
+        start_time, log_prefix: str, total_timeout_override: Optional[int] = None
+    ) -> bool:
         """检查总超时是否已到，到点则记录日志并返回 True。"""
         if start_time is None:
             return False
-        total_timeout = GeminiImagenService._get_total_timeout_seconds()
+        if total_timeout_override is not None:
+            total_timeout = max(30, int(total_timeout_override))
+        else:
+            total_timeout = GeminiImagenService._get_total_timeout_seconds()
         elapsed = time.monotonic() - start_time
         if elapsed >= total_timeout:
             log.warning(
@@ -491,6 +496,7 @@ class GeminiImagenService:
         openai_quality: Optional[str] = None,
         openai_style: Optional[str] = None,
         openai_image_api_mode: Optional[str] = None,
+        total_timeout_override: Optional[int] = None,
     ) -> Optional[List[bytes]]:
         """
         使用 Gemini Imagen 生成图像
@@ -548,6 +554,7 @@ class GeminiImagenService:
                 openai_quality=openai_quality,
                 openai_style=openai_style,
                 openai_image_api_mode=openai_image_api_mode,
+                total_timeout_override=total_timeout_override,
             )
         elif self._api_format == "gemini_chat":
             # 使用 Gemini 多模态聊天接口生成图像
@@ -1012,6 +1019,7 @@ class GeminiImagenService:
         openai_quality: Optional[str] = None,
         openai_style: Optional[str] = None,
         openai_image_api_mode: Optional[str] = None,
+        total_timeout_override: Optional[int] = None,
     ) -> Optional[List[bytes]]:
         """
         根据模型和配置决定走 OpenAI 兼容的 chat/completions 还是 /images/generations。
@@ -1060,6 +1068,13 @@ class GeminiImagenService:
                 return [edited_image]
             if self._normalize_openai_image_api_mode(openai_image_api_mode) != "auto":
                 return None
+            if total_timeout_override is not None:
+                log.warning(
+                    "OpenAI /images/edits 参考图路由未拿到结果，"
+                    "但总超时 %ds 已设，跳过 chat/completions 回退避免双重等待。",
+                    total_timeout_override
+                )
+                return None
             log.warning(
                 "OpenAI /images/edits 参考图路由未拿到结果，"
                 "回退到 chat/completions 多模态路由再试一次。"
@@ -1078,6 +1093,7 @@ class GeminiImagenService:
                 openai_stream=openai_stream,
                 openai_quality=openai_quality,
                 openai_style=openai_style,
+                total_timeout_override=total_timeout_override,
             )
             if images or self._normalize_openai_image_api_mode(openai_image_api_mode) != "auto":
                 return images
@@ -1088,6 +1104,13 @@ class GeminiImagenService:
                 log.warning(
                     "检测到 Grok Imagine 模型，文生图将固定使用 /images/generations；"
                     "本次未回收到图像结果，已跳过 chat/completions 回退。"
+                )
+                return None
+            if total_timeout_override is not None:
+                log.warning(
+                    "OpenAI 图片接口 auto 路由未拿到结果，"
+                    "但总超时 %ds 已设，跳过 chat/completions 回退避免双重等待。",
+                    total_timeout_override
                 )
                 return None
             log.warning(
@@ -1104,6 +1127,7 @@ class GeminiImagenService:
             reference_image_mime=reference_image_mime,
             openai_response_format=openai_response_format,
             openai_stream=openai_stream,
+            total_timeout_override=total_timeout_override,
         )
 
     async def _generate_image_openai_chat_completions_format(
@@ -1117,6 +1141,7 @@ class GeminiImagenService:
         reference_image_mime: str = "image/png",
         openai_response_format: Optional[str] = None,
         openai_stream: Optional[bool] = None,
+        total_timeout_override: Optional[int] = None,
     ) -> Optional[List[bytes]]:
         """使用 chat/completions 兼容接口生成图像。"""
         base_url = self._client["base_url"].rstrip("/")
@@ -1185,10 +1210,18 @@ class GeminiImagenService:
 
         retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
         timeout = self._build_openai_timeout(streaming=False)
+        if total_timeout_override is not None:
+            wall = max(30, int(total_timeout_override))
+            timeout = aiohttp.ClientTimeout(
+                total=wall,
+                connect=timeout.connect,
+                sock_connect=timeout.connect,
+                sock_read=min(timeout.sock_read or wall, wall),
+            )
 
         start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
-            if self._deadline_exceeded(start_time, "image generation "):
+            if self._deadline_exceeded(start_time, "image generation ", total_timeout_override):
                 return None
             try:
                 async with aiohttp.ClientSession() as session:
@@ -1268,6 +1301,7 @@ class GeminiImagenService:
         openai_stream: Optional[bool] = None,
         openai_quality: Optional[str] = None,
         openai_style: Optional[str] = None,
+        total_timeout_override: Optional[int] = None,
     ) -> Optional[List[bytes]]:
         """使用 /images/generations 接口生成图像。"""
         base_url = self._client["base_url"].rstrip("/")
@@ -1317,10 +1351,20 @@ class GeminiImagenService:
 
         retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
         timeout = self._build_openai_timeout(streaming=streaming_enabled)
+        if total_timeout_override is not None:
+            wall = max(30, int(total_timeout_override))
+            timeout = aiohttp.ClientTimeout(
+                total=wall,
+                connect=timeout.connect,
+                sock_connect=timeout.connect,
+                sock_read=min(timeout.sock_read or wall, wall),
+            )
 
         start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
-            if self._deadline_exceeded(start_time, "image generation "):
+            if self._deadline_exceeded(
+                start_time, "image generation ", total_timeout_override
+            ):
                 return None
             try:
                 async with aiohttp.ClientSession() as session:
@@ -2058,6 +2102,7 @@ class GeminiImagenService:
         openai_quality: Optional[str] = None,
         openai_style: Optional[str] = None,
         openai_image_api_mode: Optional[str] = None,
+        total_timeout_override: Optional[int] = None,
     ) -> Optional[bytes]:
         """
         生成单张图像的便捷方法（内置空回自动重试）
@@ -2080,7 +2125,7 @@ class GeminiImagenService:
 
         start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
-            if self._deadline_exceeded(start_time, "image generation "):
+            if self._deadline_exceeded(start_time, "image generation ", total_timeout_override):
                 return None
             images = await self.generate_image(
                 prompt=prompt,
@@ -2098,6 +2143,7 @@ class GeminiImagenService:
                 openai_quality=openai_quality,
                 openai_style=openai_style,
                 openai_image_api_mode=openai_image_api_mode,
+                total_timeout_override=total_timeout_override,
             )
 
             if images and len(images) > 0:
@@ -2201,7 +2247,7 @@ class GeminiImagenService:
 
         start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
-            if self._deadline_exceeded(start_time, "image generation "):
+            if self._deadline_exceeded(start_time, "image generation ", total_timeout_override):
                 return None
             # 根据 API 格式选择不同的编辑方法
             if self._api_format == "openai":
@@ -2469,7 +2515,7 @@ class GeminiImagenService:
 
         start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
-            if self._deadline_exceeded(start_time, "image generation "):
+            if self._deadline_exceeded(start_time, "image generation ", total_timeout_override):
                 return None
             try:
                 async with aiohttp.ClientSession() as session:
@@ -2548,6 +2594,7 @@ class GeminiImagenService:
         openai_stream: Optional[bool] = None,
         openai_quality: Optional[str] = None,
         openai_style: Optional[str] = None,
+        total_timeout_override: Optional[int] = None,
     ) -> Optional[bytes]:
         """使用 multipart /images/edits 接口做图生图。"""
         base_url = self._client["base_url"].rstrip("/")
@@ -2571,10 +2618,20 @@ class GeminiImagenService:
 
         retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
         timeout = self._build_openai_timeout(streaming=streaming_enabled)
+        if total_timeout_override is not None:
+            wall = max(30, int(total_timeout_override))
+            timeout = aiohttp.ClientTimeout(
+                total=wall,
+                connect=timeout.connect,
+                sock_connect=timeout.connect,
+                sock_read=min(timeout.sock_read or wall, wall),
+            )
 
         start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
-            if self._deadline_exceeded(start_time, "image generation "):
+            if self._deadline_exceeded(
+                start_time, "image generation ", total_timeout_override
+            ):
                 return None
             try:
                 form = aiohttp.FormData()

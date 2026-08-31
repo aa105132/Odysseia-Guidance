@@ -157,6 +157,7 @@ async def render_newspaper_brief(
                 generated_bytes = await gemini_imagen_service.generate_single_image(
                     prompt=image_prompt,
                     aspect_ratio="1:1",
+                    total_timeout_override=180,
                 )
                 if generated_bytes:
                     # 成功：编辑消息替换占位图

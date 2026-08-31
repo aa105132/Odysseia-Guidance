@@ -498,6 +498,7 @@ class AIChatCog(commands.Cog):
                         aspect_ratio="16:9",
                         resolution=summary_resolution,
                         model_name_override=summary_model,
+                        total_timeout_override=180,
                     )
                     if img:
                         image_bytes = img
@@ -608,6 +609,8 @@ class AIChatCog(commands.Cog):
         """
         监听所有消息，当bot被@mention时进行回复
         """
+        # DEBUG: 记录所有收到的消息（含私聊）
+        log.debug(f"[DEBUG on_message] author={message.author.name}, guild={message.guild is not None}, channel_type={type(message.channel).__name__}, content={message.content[:50]}")
         if not CHAT_ENABLED:
             return
 
@@ -712,6 +715,7 @@ class AIChatCog(commands.Cog):
                         message.channel,
                         _send_summary_reply,
                     )
+                    log.warning(f"[SUMMARY_DEBUG] sent={sent}, response_text_len={len(response_text or '')}, will_return={sent}")
                     if sent:
                         await self._record_bot_reply_usage_if_needed(message)
                         return
