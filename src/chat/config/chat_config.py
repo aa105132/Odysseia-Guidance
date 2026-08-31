@@ -566,6 +566,9 @@ def _get_imagen_config():
         # 瞬态错误（如 502/503/504/超时）重试配置
         "TRANSIENT_MAX_RETRIES": _parse_int_env("GEMINI_IMAGEN_TRANSIENT_MAX_RETRIES", 2),
         "TRANSIENT_RETRY_BASE_DELAY_SECONDS": _parse_float_env("GEMINI_IMAGEN_TRANSIENT_RETRY_BASE_DELAY_SECONDS", 1.0),
+        # 单次生成任务总超时（秒）：从第一次请求开始计时，含所有重试/空回重试
+        # 到点后不再重试，直接放弃
+        "TOTAL_TIMEOUT_SECONDS": _parse_int_env("GEMINI_IMAGEN_TOTAL_TIMEOUT_SECONDS", 600),
     }
 
 GEMINI_IMAGEN_CONFIG = _get_imagen_config()
@@ -1162,6 +1165,7 @@ FEEDING_CONFIG = {
     "DAILY_LIMIT": _parse_int_env("FEEDING_DAILY_LIMIT", 3),  # 每日投喂次数上限，0为关闭
     "RESPONSE_IMAGE_URL": "https://cdn.discordapp.com/attachments/1466427893809680560/1466712053413839032/1769761543935.png",  # 投喂回应的默认图片URL
     "IMAGEN_ENABLED": _parse_bool_env("FEEDING_IMAGEN_ENABLED", "False"),  # 投喂AI绘图开关
+    "VISION_MODEL": os.getenv("FEEDING_VISION_MODEL", "月月专用Gemini"),  # 投喂看图评价专用模型
     "SUMMARY_IMAGEN_ENABLED": _parse_bool_env("SUMMARY_IMAGEN_ENABLED", "False"),  # 总结AI配图开关
     "SUMMARY_IMAGEN_RESOLUTION": os.getenv("SUMMARY_IMAGEN_RESOLUTION", "default"),  # 总结配图分辨率: default/2k/4k
     "SUMMARY_IMAGEN_MODEL": os.getenv("SUMMARY_IMAGEN_MODEL", ""),  # 总结配图指定模型，留空用分辨率自动匹配

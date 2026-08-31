@@ -11,6 +11,7 @@ Gemini Imagen 图像生成服务
 
 import logging
 import asyncio
+import time
 import aiohttp
 import json
 import re
@@ -127,6 +128,27 @@ class GeminiImagenService:
             0.2, float(config.get("TRANSIENT_RETRY_BASE_DELAY_SECONDS", 1.0))
         )
         return max_attempts, base_delay
+
+    @staticmethod
+    def _get_total_timeout_seconds() -> int:
+        """单次生成任务的总超时（含所有重试）。"""
+        config = app_config.GEMINI_IMAGEN_CONFIG
+        return max(30, int(config.get("TOTAL_TIMEOUT_SECONDS", 600)))
+
+    @staticmethod
+    def _deadline_exceeded(start_time, log_prefix: str) -> bool:
+        """检查总超时是否已到，到点则记录日志并返回 True。"""
+        if start_time is None:
+            return False
+        total_timeout = GeminiImagenService._get_total_timeout_seconds()
+        elapsed = time.monotonic() - start_time
+        if elapsed >= total_timeout:
+            log.warning(
+                f"{log_prefix}总耗时 {elapsed:.1f}s 已超过上限 {total_timeout}s，"
+                f"停止重试"
+            )
+            return True
+        return False
 
     @staticmethod
     def _normalize_openai_image_api_mode(raw_mode: Optional[str]) -> str:
@@ -1164,7 +1186,10 @@ class GeminiImagenService:
         retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
         timeout = self._build_openai_timeout(streaming=False)
 
+        start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
+            if self._deadline_exceeded(start_time, "image generation "):
+                return None
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
@@ -1293,7 +1318,10 @@ class GeminiImagenService:
         retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
         timeout = self._build_openai_timeout(streaming=streaming_enabled)
 
+        start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
+            if self._deadline_exceeded(start_time, "image generation "):
+                return None
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
@@ -2050,7 +2078,10 @@ class GeminiImagenService:
             1, int(app_config.GEMINI_IMAGEN_CONFIG.get("EMPTY_RESULT_MAX_RETRIES", 3))
         )
 
+        start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
+            if self._deadline_exceeded(start_time, "image generation "):
+                return None
             images = await self.generate_image(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
@@ -2168,7 +2199,10 @@ class GeminiImagenService:
             1, int(app_config.GEMINI_IMAGEN_CONFIG.get("EMPTY_RESULT_MAX_RETRIES", 3))
         )
 
+        start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
+            if self._deadline_exceeded(start_time, "image generation "):
+                return None
             # 根据 API 格式选择不同的编辑方法
             if self._api_format == "openai":
                 edited_image = await self._edit_image_openai_format(
@@ -2433,7 +2467,10 @@ class GeminiImagenService:
         retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
         timeout = self._build_openai_timeout(streaming=True)
 
+        start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
+            if self._deadline_exceeded(start_time, "image generation "):
+                return None
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
@@ -2535,7 +2572,10 @@ class GeminiImagenService:
         retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
         timeout = self._build_openai_timeout(streaming=streaming_enabled)
 
+        start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
+            if self._deadline_exceeded(start_time, "image generation "):
+                return None
             try:
                 form = aiohttp.FormData()
                 form.add_field("model", model_name)
