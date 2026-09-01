@@ -1,3 +1,4 @@
+from collections import defaultdict
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -109,10 +110,23 @@ class ConfessionCog(commands.Cog):
                 1,
             )
 
-            persona_prompt = tolerant_persona.format(
-                current_time="",  # 在此场景下时间无关紧要
-                user_name=interaction.user.display_name,
-            )
+            # 安全替换: SYSTEM_PROMPT 里含 JSON 示例（如 {"url":"...","data":{...}}），
+            # str.format_map 会把这些花括号当 positional 字段解析而抛
+            # "Format string contains positional fields"。改用白名单 replace，
+            # 只替换已知占位符，其余花括号原样保留。
+            _safe_replacements = {
+                "{default_new_image_tool}": prompt_service._get_default_new_image_tool(
+                    chat_config.DEFAULT_IMAGE_ENGINE
+                ),
+                "{default_image_engine}": prompt_service._normalize_default_image_engine(
+                    chat_config.DEFAULT_IMAGE_ENGINE
+                ),
+                "{current_time}": "",
+                "{user_name}": interaction.user.display_name,
+            }
+            persona_prompt = tolerant_persona
+            for _ph, _val in _safe_replacements.items():
+                persona_prompt = persona_prompt.replace(_ph, _val)
 
             formatted_prompt = CONFESSION_PROMPT.format(
                 persona=persona_prompt,
