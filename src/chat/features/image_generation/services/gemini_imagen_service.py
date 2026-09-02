@@ -106,15 +106,14 @@ class GeminiImagenService:
             ),
         )
         connect_timeout = max(3, int(config.get("CONNECT_TIMEOUT_SECONDS", 15)))
-        if streaming:
-            return aiohttp.ClientTimeout(
-                total=None,
-                connect=connect_timeout,
-                sock_connect=connect_timeout,
-                sock_read=request_timeout,
-            )
+        # total 硬顶：流式 SSE 心跳会无限续命 sock_read，必须给整条请求
+        # 一律加 total 硬顶（默认 600s），这是防挂起的最后防线。
+        wall_total = max(
+            request_timeout,
+            int(config.get("TOTAL_TIMEOUT_SECONDS", 600)),
+        )
         return aiohttp.ClientTimeout(
-            total=request_timeout,
+            total=wall_total,
             connect=connect_timeout,
             sock_connect=connect_timeout,
             sock_read=request_timeout,
@@ -2283,6 +2282,7 @@ class GeminiImagenService:
                     openai_quality=openai_quality,
                     openai_style=openai_style,
                     openai_image_api_mode=openai_image_api_mode,
+                    total_timeout_override=total_timeout_override,
                 )
             else:
                 # 使用 Gemini 多模态聊天接口（gemini 或 gemini_chat 格式都使用这个）
@@ -2420,6 +2420,7 @@ class GeminiImagenService:
         openai_quality: Optional[str] = None,
         openai_style: Optional[str] = None,
         openai_image_api_mode: Optional[str] = None,
+        total_timeout_override: Optional[int] = None,
     ) -> Optional[bytes]:
         """
         根据模型和配置决定走 OpenAI 兼容的 chat/completions 还是 /images/edits。
@@ -2440,6 +2441,7 @@ class GeminiImagenService:
                 openai_stream=openai_stream,
                 openai_quality=openai_quality,
                 openai_style=openai_style,
+                total_timeout_override=total_timeout_override,
             )
             if edited_image or self._normalize_openai_image_api_mode(openai_image_api_mode) != "auto":
                 return edited_image
@@ -2462,6 +2464,7 @@ class GeminiImagenService:
             aspect_ratio=aspect_ratio,
             model_name=model_name,
             openai_response_format=openai_response_format,
+            total_timeout_override=total_timeout_override,
         )
 
     async def _edit_image_openai_chat_completions_format(
@@ -2471,6 +2474,7 @@ class GeminiImagenService:
         aspect_ratio: str,
         model_name: str,
         openai_response_format: Optional[str] = None,
+        total_timeout_override: Optional[int] = None,
     ) -> Optional[bytes]:
         """使用 chat/completions 接口做图生图。"""
         base_url = self._client["base_url"].rstrip("/")
@@ -2532,7 +2536,17 @@ class GeminiImagenService:
         }
 
         retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
+        # 图生图编辑是阻塞请求：response.text() 一次读完，sock_read 管得住；
+        # 但 total 必须有硬顶（build 现在默认带 600s），否则 SSE 心跳会把请求无限续命
         timeout = self._build_openai_timeout(streaming=True)
+        if total_timeout_override is not None:
+            wall = max(30, int(total_timeout_override))
+            timeout = aiohttp.ClientTimeout(
+                total=wall,
+                connect=timeout.connect,
+                sock_connect=timeout.connect,
+                sock_read=min(timeout.sock_read or wall, wall),
+            )
 
         start_time = time.monotonic()
         for attempt in range(1, retry_max_attempts + 1):
