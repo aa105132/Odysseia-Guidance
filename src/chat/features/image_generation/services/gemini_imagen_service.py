@@ -1351,6 +1351,15 @@ class GeminiImagenService:
 
         retry_max_attempts, retry_base_delay = self._get_transient_retry_policy()
         timeout = self._build_openai_timeout(streaming=streaming_enabled)
+        # SSE 心跳会无限续命 sock_read，流式模式必须加 total 硬顶防挂起
+        if streaming_enabled:
+            wall_hard = self._get_total_timeout_seconds()
+            timeout = aiohttp.ClientTimeout(
+                total=wall_hard,
+                connect=timeout.connect,
+                sock_connect=timeout.connect,
+                sock_read=timeout.sock_read,
+            )
         if total_timeout_override is not None:
             wall = max(30, int(total_timeout_override))
             timeout = aiohttp.ClientTimeout(
@@ -1497,9 +1506,20 @@ class GeminiImagenService:
                     # 使用缓冲区正确处理 SSE 按行读取
                     buffer = ""
                     chunk_count = 0
+                    # 墙钟硬闸：流式请求 total=None 会被 SSE 心跳无限续命，
+                    # 必须在应用层检查总耗时，超限直接中断
+                    stream_start = time.monotonic()
+                    stream_wall_limit = self._get_total_timeout_seconds()
                     
                     async for raw_chunk in response.content.iter_any():
                         chunk_count += 1
+                        _elapsed = time.monotonic() - stream_start
+                        if _elapsed >= stream_wall_limit:
+                            log.warning(
+                                f"[流式画图] 总耗时 {_elapsed:.1f}s 已超过上限 {stream_wall_limit}s，"
+                                f"上游疑似挂起（心跳不吐数据），强制中断。chunk_count={chunk_count}"
+                            )
+                            break
                         try:
                             chunk_text = raw_chunk.decode('utf-8')
                         except UnicodeDecodeError:
