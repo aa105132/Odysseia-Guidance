@@ -1,3 +1,4 @@
+import base64
 # -*- coding: utf-8 -*-
 
 """
@@ -11,7 +12,7 @@ import re
 import io
 import os
 import asyncio
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, parse_qs, urlparse, urlunparse
 
 import aiohttp
 import discord
@@ -139,9 +140,41 @@ async def fetch_image_from_url(
 ) -> Optional[Dict[str, Any]]:
     """
     从 URL 下载图片，返回统一的图像数据结构。
+    支持: 普通 URL、base64 data URL、dots2api proxy URL 自动解包。
     """
     if not url or not isinstance(url, str):
         return None
+
+    # --- 处理 base64 data URL ---
+    if url.startswith("data:image/"):
+        try:
+            # 格式: data:image/jpeg;base64,/9j/4AAQ...
+            header, b64_data = url.split(",", 1)
+            mime_type = header.split(";")[0].replace("data:", "")
+            image_bytes = base64.b64decode(b64_data)
+            if image_bytes and len(image_bytes) <= max_size_bytes:
+                ext = mime_type.split("/")[-1] if "/" in mime_type else "png"
+                return {
+                    "data": image_bytes,
+                    "mime_type": mime_type,
+                    "filename": f"image_from_base64.{ext}",
+                }
+        except Exception as e:
+            log.warning(f"解析 base64 data URL 失败: {e}")
+        return None
+
+    # --- 解包 dots2api proxy URL，提取原始 CDN URL ---
+    # 格式: https://dots.bufan.de5.net/v1/images/proxy?url=http%3A%2F%2Fxhscdn.com%2F...
+    if "/v1/images/proxy" in url and "url=" in url:
+        try:
+            parsed = urlparse(url)
+            qs = parse_qs(parsed.query)
+            real_urls = qs.get("url", [])
+            if real_urls:
+                url = unquote(real_urls[0])
+                log.info(f"[proxy unwrap] 从代理 URL 提取原始 CDN: {url[:120]}")
+        except Exception as e:
+            log.debug(f"解包 proxy URL 失败: {e}")
 
     # 小红书 CDN 域名替换（image.xiaohongshu.com 在某些 DNS 下 NXDOMAIN）
     url = _replace_xiaohongshu_domain(url)

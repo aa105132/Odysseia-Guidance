@@ -53,6 +53,8 @@ function validate(f: AIConfig): Record<string, string> | null {
     e.max_key_rotation_retries = '密钥轮换重试需在 1–20 之间';
   if (f.api_format && !['gemini', 'openai', 'interactions'].includes(f.api_format))
     e.api_format = 'API 格式仅支持 gemini、openai 或 interactions';
+  if (num(f.thinking_budget) && (f.thinking_budget < -1 || f.thinking_budget > 32768))
+    e.thinking_budget = '思考预算需在 -1–32768 之间';
   return Object.keys(e).length ? e : null;
 }
 
@@ -114,6 +116,12 @@ const apiFormatOptions = [
   { value: 'gemini', label: 'Gemini' },
   { value: 'interactions', label: 'Interactions' },
   { value: 'openai', label: 'OpenAI' },
+];
+
+const thinkingLevelOptions = [
+  { value: 'Low', label: 'Low' },
+  { value: 'Medium', label: 'Medium' },
+  { value: 'Max', label: 'Max' },
 ];
 
 // ===== 字段写入助手（BaseInput 始终 emit string，数值字段需转换） =====
@@ -392,6 +400,25 @@ onMounted(() => {
             :disabled="saving || loading"
             @update:model-value="(v) => setNum('newspaper_brief_threshold', v)"
           />
+        </div>
+        <div class="card__grid">
+          <BaseInput
+            :model-value="form.thinking_budget ?? ''"
+            type="number"
+            label="思考预算"
+            hint="-1=动态, 0=关闭, 1–32768=固定"
+            :error="fieldErrors.thinking_budget"
+            :disabled="saving || loading"
+            @update:model-value="(v) => setNum('thinking_budget', v)"
+          />
+          <div class="choice-field">
+            <span class="field-label font-display">思考强度</span>
+            <ChoiceChip
+              :model-value="form.thinking_level ?? 'Max'"
+              :options="thinkingLevelOptions"
+              @update:model-value="(v) => setStr('thinking_level', String(v))"
+            />
+          </div>
         </div>
         <div class="toggle-row">
           <ToggleSwitch

@@ -1,3 +1,4 @@
+import os
 import discord
 import json
 import io
@@ -89,14 +90,29 @@ class FeedingCog(commands.Cog):
                 base_prompt += f"\n\n## 重要：月月今日穿着\n{outfit_desc}\n请在 `<image_prompt>` 的图片描述中体现月月的今日穿着。"
             prompt = f"{persona_part}\n\n{base_prompt}"
 
+            vision_model = str(FEEDING_CONFIG.get("VISION_MODEL") or "").strip()
+            logger.info(
+                "投喂视觉评价开始: model=%s, mime=%s, image_bytes=%s",
+                vision_model or "<default>",
+                image.content_type,
+                len(image_bytes),
+            )
             response_text = await self.gemini_service.generate_text_with_image(
                 prompt=prompt,
                 image_bytes=image_bytes,
                 mime_type=image.content_type,
-                image_url=image.url,
+                # Discord CDN URL 可能过期；只传已经下载成功的图片数据，避免重复输入同一张图。
+                image_url=None,
+                model_name_override=vision_model or None,
             )
 
             if not response_text:
+                logger.error(
+                    "投喂视觉评价返回空内容: model=%s, mime=%s, image_bytes=%s",
+                    vision_model or "<default>",
+                    image.content_type,
+                    len(image_bytes),
+                )
                 await interaction.edit_original_response(
                     content="呜…嚼不动了，脑子转不起来了，等会再喂嘛…"
                 )
@@ -124,31 +140,7 @@ class FeedingCog(commands.Cog):
                 affection_gain = int(match.group(2))
                 coin_gain = int(match.group(3))
 
-            # AI 绘图：月月与投喂图片互动的画面。即使图片不是食物，也由月月自己决定互动方式。
-            fallback_image_prompt_text = (
-                "银白色长发扎成高马尾的可爱银狐少女月月正在认真观察用户投喂的参考图片，"
-                "左眼淡绿色右眼淡蓝色异色瞳，白皙肤色，毛茸茸的白色狐耳内侧粉色，"
-                "银白色蓬松大尾巴，马尾处插着银色月牙发簪，两侧戴着细微尖三角形耳坠。"
-                "请以参考图内容为核心道具或画面主题：如果是食物就吃掉或评价；"
-                "如果不是食物，就吐槽、研究、摆弄、举起来展示或用可爱的方式互动。"
-                "Q版风格，温暖明亮，画面里要能看出参考图的主要元素。"
-            )
-            effective_image_prompt_text = image_prompt_text or fallback_image_prompt_text
-            generated_image_bytes = None
-            if (
-                FEEDING_CONFIG.get("IMAGEN_ENABLED")
-                and gemini_imagen_service.is_available()
-            ):
-                try:
-                    generated_image_bytes = await gemini_imagen_service.generate_single_image(
-                        prompt=effective_image_prompt_text,
-                        aspect_ratio="1:1",
-                        reference_image_bytes=image_bytes,
-                        reference_image_mime=image.content_type,
-                    )
-                except Exception as img_err:
-                    logger.warning(f"投喂绘图失败，回退到静态贴纸: {img_err}")
-
+            # --- 第一步：先发送文字评价（不等绘图） ---
             await self.affection_service.add_affection_points(user_id, affection_gain)
 
             # 只有当 coin_gain 是正数时才增加灵石
@@ -163,51 +155,141 @@ class FeedingCog(commands.Cog):
             if coin_gain > 0:
                 system_message = f"> 你获得了 {coin_gain} 枚灵石！"
 
-            # 创建 Embed
+            # 创建 Embed（先不带生成图）
             embed_description = evaluation_with_emojis
             if system_message:
                 embed_description += f"\n\n{system_message}"
 
             embed = discord.Embed(
                 description=embed_description,
-                color=discord.Color.pink(),  # 你可以自定义颜色
+                color=discord.Color.pink(),
             )
-
-            # 设置作者信息
             embed.set_author(
                 name=interaction.user.display_name,
                 icon_url=interaction.user.display_avatar.url,
             )
 
-            # 从配置中获取图片 URL
-            # --- 动态获取图片 ---
-
-            # 构建附件列表
-            attachments_to_send = []
-
             # 用户上传的食物图片作为缩略图
             food_file = discord.File(fp=io.BytesIO(image_bytes), filename=image.filename)
-            attachments_to_send.append(food_file)
             embed.set_thumbnail(url=f"attachment://{image.filename}")
-
-            if generated_image_bytes:
-                gen_file = discord.File(fp=io.BytesIO(generated_image_bytes), filename="yueyue_feeding.png")
-                attachments_to_send.append(gen_file)
-                embed.set_image(url="attachment://yueyue_feeding.png")
-            else:
-                sticker_url = FEEDING_CONFIG.get("RESPONSE_IMAGE_URL")
-                if sticker_url:
-                    embed.set_image(url=sticker_url)
-
             embed.set_footer(text="月月对你的投喂做出回应...")
+
+            # 占位图：月月正在画画中
+            placeholder_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "..", "assets", "feeding_placeholder.png"
+            )
+            attachments_first = [food_file]
+            if os.path.exists(placeholder_path):
+                ph_file = discord.File(fp=open(placeholder_path, "rb"), filename="yueyue_drawing.png")
+                attachments_first.append(ph_file)
+                embed.set_image(url="attachment://yueyue_drawing.png")
 
             await self.feeding_service.record_feeding(user_id)
 
-            logger.info(f"准备发送投喂回复: attachments={len(attachments_to_send)}, 有生成图={generated_image_bytes is not None}")
+            # 立即发送文字评价 + 占位图
             await interaction.edit_original_response(
-                content=None, embed=embed, attachments=attachments_to_send
+                content=None, embed=embed, attachments=attachments_first
             )
-            logger.info("投喂回复已发送到频道")
+            logger.info("投喂文字回复+占位图已发送，开始生成配图...")
+
+            # --- 第二步：后台生成图片，完成后编辑消息贴上 ---
+            fallback_image_prompt_text = (
+                "银白色长发扎成高马尾的可爱银狐少女月月正在认真观察用户投喂的参考图片，"
+                "左眼淡绿色右眼淡蓝色异色瞳，白皙肤色，毛茸茸的白色狐耳内侧粉色，"
+                "银白色蓬松大尾巴，马尾处插着银色月牙发簪，两侧戴着细微尖三角形耳坠。"
+                "请以参考图内容为核心道具或画面主题：如果是食物就吃掉或评价；"
+                "如果不是食物，就吐槽、研究、摆弄、举起来展示或用可爱的方式互动。"
+                "Q版风格，温暖明亮，画面里要能看出参考图的主要元素。"
+            )
+            effective_image_prompt_text = image_prompt_text or fallback_image_prompt_text
+
+            if (
+                FEEDING_CONFIG.get("IMAGEN_ENABLED")
+                and gemini_imagen_service.is_available()
+            ):
+                try:
+                    generated_image_bytes = await gemini_imagen_service.generate_single_image(
+                        prompt=effective_image_prompt_text,
+                        aspect_ratio="1:1",
+                        reference_image_bytes=image_bytes,
+                        reference_image_mime=image.content_type,
+                    )
+                    if generated_image_bytes:
+                        # 重新构建 embed 和附件（编辑需要重新提供所有附件）
+                        embed2 = discord.Embed(
+                            description=embed_description,
+                            color=discord.Color.pink(),
+                        )
+                        embed2.set_author(
+                            name=interaction.user.display_name,
+                            icon_url=interaction.user.display_avatar.url,
+                        )
+                        food_file2 = discord.File(fp=io.BytesIO(image_bytes), filename=image.filename)
+                        gen_file = discord.File(fp=io.BytesIO(generated_image_bytes), filename="yueyue_feeding.png")
+                        embed2.set_thumbnail(url=f"attachment://{image.filename}")
+                        embed2.set_image(url="attachment://yueyue_feeding.png")
+                        embed2.set_footer(text="月月对你的投喂做出回应...")
+
+                        await interaction.edit_original_response(
+                            content=None, embed=embed2, attachments=[food_file2, gen_file]
+                        )
+                        logger.info("投喂配图已追加到消息")
+                    else:
+                        # generate_single_image 返回 None（静默失败），替换为失败占位图
+                        failed_path = os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            "..", "assets", "feeding_failed.png"
+                        )
+                        if os.path.exists(failed_path):
+                            try:
+                                embed_fail = discord.Embed(
+                                    description=embed_description,
+                                    color=discord.Color.pink(),
+                                )
+                                embed_fail.set_author(
+                                    name=interaction.user.display_name,
+                                    icon_url=interaction.user.display_avatar.url,
+                                )
+                                food_file3 = discord.File(fp=io.BytesIO(image_bytes), filename=image.filename)
+                                fail_file = discord.File(fp=open(failed_path, "rb"), filename="yueyue_failed.png")
+                                embed_fail.set_thumbnail(url=f"attachment://{image.filename}")
+                                embed_fail.set_image(url="attachment://yueyue_failed.png")
+                                embed_fail.set_footer(text="月月对你的投喂做出回应...")
+                                await interaction.edit_original_response(
+                                    content=None, embed=embed_fail, attachments=[food_file3, fail_file]
+                                )
+                                logger.info("投喂绘图返回空，已替换为失败占位图")
+                            except Exception as edit_err:
+                                logger.error(f"替换失败占位图也失败了: {edit_err}")
+                except Exception as img_err:
+                    logger.warning(f"投喂绘图失败: {img_err}")
+                    # 绘图失败：替换占位图为失败提示图
+                    failed_path = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "..", "assets", "feeding_failed.png"
+                    )
+                    if os.path.exists(failed_path):
+                        try:
+                            embed_fail = discord.Embed(
+                                description=embed_description,
+                                color=discord.Color.pink(),
+                            )
+                            embed_fail.set_author(
+                                name=interaction.user.display_name,
+                                icon_url=interaction.user.display_avatar.url,
+                            )
+                            food_file3 = discord.File(fp=io.BytesIO(image_bytes), filename=image.filename)
+                            fail_file = discord.File(fp=open(failed_path, "rb"), filename="yueyue_failed.png")
+                            embed_fail.set_thumbnail(url=f"attachment://{image.filename}")
+                            embed_fail.set_image(url="attachment://yueyue_failed.png")
+                            embed_fail.set_footer(text="月月对你的投喂做出回应...")
+                            await interaction.edit_original_response(
+                                content=None, embed=embed_fail, attachments=[food_file3, fail_file]
+                            )
+                            logger.info("投喂绘图失败，已替换为失败占位图")
+                        except Exception as edit_err:
+                            logger.error(f"替换失败占位图也失败了: {edit_err}")
 
         except json.JSONDecodeError:
             logger.error(f"Failed to decode JSON response from Gemini: {response_text}")

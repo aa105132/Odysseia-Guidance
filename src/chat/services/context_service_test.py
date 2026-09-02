@@ -274,15 +274,21 @@ class ContextServiceTest:
             # 构建最终的上下文列表
             final_context = []
 
-            # 1. 将所有历史记录打包成一个 user 消息作为背景
             if history_parts:
-                background_prompt = "这是本频道最近的对话记录:\n\n" + "\n\n".join(
-                    history_parts
-                )
-                final_context.append({"role": "user", "parts": [background_prompt]})
-
-            # 2. 添加一个确认收到历史背景的 model 回复，以维持对话轮次
-            final_context.append({"role": "model", "parts": ["我已了解频道的历史对话"]})
+                # [优化] 把历史拆成多条连续消息，让模型像读真实对话流一样理解上下文
+                # 而不是把35条全压成1条巨大文本——那样模型注意力会稀释
+                # 按时间顺序，每5条历史消息打包成1条user消息，中间插model确认
+                chunk_size = 5
+                for i in range(0, len(history_parts), chunk_size):
+                    chunk = history_parts[i:i + chunk_size]
+                    chunk_text = "\n".join(chunk)
+                    final_context.append({"role": "user", "parts": [chunk_text]})
+                    if i + chunk_size < len(history_parts):
+                        final_context.append({"role": "model", "parts": ["（继续看下文）"]})
+                    else:
+                        final_context.append({"role": "model", "parts": ["我已了解频道的历史对话"]})
+            else:
+                final_context.append({"role": "model", "parts": ["我已了解频道的历史对话"]})
 
             return final_context
         except discord.Forbidden:

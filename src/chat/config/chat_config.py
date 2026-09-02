@@ -933,7 +933,7 @@ MODEL_GENERATION_CONFIG = {
         "max_output_tokens": 16800,
         "thinking_config": {
             "include_thoughts": True,
-            "thinking_budget": -1,  # 默认使用动态思考预算
+            "thinking_budget": int(os.getenv("THINKING_BUDGET", "-1")),  # 动态思考（catapi转发不支持固定值如32768）
         },
     },
     # 为 gemini-3-flash-preview 模型定制的配置
@@ -944,7 +944,7 @@ MODEL_GENERATION_CONFIG = {
         "max_output_tokens": 16800,
         "thinking_config": {
             "include_thoughts": True,
-            "thinking_level": "Medium",  # 使用新的思考等级设置
+            "thinking_level": os.getenv("THINKING_LEVEL", "Max"),  # 思考强度（low/medium/max）
         },
     },
     # 你可以在这里为其他模型添加更多自定义配置

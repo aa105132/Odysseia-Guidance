@@ -1,0 +1,263 @@
+# -*- coding: utf-8 -*-
+"""
+月月自维护工具 — 让月月通过独立侧车容器安全地诊断和修改自己的代码。
+
+架构：
+  - 月月主容器 (Odysseia_Guidance) 通过 docker SDK 调用侧车容器
+  - 侧车容器 (yueyue-self-maintainer) 挂载 /opt/Odysseia-Guidance 仓库
+  - 侧车内安装了 Hermes CLI，可执行 hermes chat -q '...'
+  - 侧车不挂 Docker Socket，无权重启月月主容器
+
+权限：
+  - 仅 DEVELOPER_USER_IDS 中的用户可调用
+  - 普通用户调用会收到权限拒绝提示
+"""
+
+import asyncio
+import json
+import logging
+import os
+import shlex
+from typing import Any, Dict, Optional
+
+from src.chat.features.tools.tool_metadata import tool_metadata
+from src.config import DEVELOPER_USER_IDS
+
+log = logging.getLogger(__name__)
+
+# 侧车容器名 — 与 docker-compose.self-maintainer.yml 中一致
+_SIDECAR_CONTAINER = "yueyue-self-maintainer"
+
+# 允许在侧车内执行的命令前缀白名单
+# 不包含 docker / systemctl / reboot 等系统级命令
+_ALLOWED_COMMAND_PREFIXES = (
+    "hermes",
+    "python3",
+    "pip",
+    "git",
+    "grep",
+    "find",
+    "cat",
+    "head",
+    "tail",
+    "ls",
+    "wc",
+    "diff",
+    "sed",
+    "echo",
+    "test",
+    "mkdir",
+    "cp",
+    "mv",
+    "touch",
+    "node",
+    "npm",
+    "npx",
+)
+
+
+def _is_developer(user_id: Any) -> bool:
+    """检查调用者是否为开发者。"""
+    if not user_id:
+        return False
+    try:
+        uid = int(str(user_id))
+    except (TypeError, ValueError):
+        return False
+    return uid in DEVELOPER_USER_IDS
+
+
+def _validate_command(command: str) -> tuple[bool, str]:
+    """验证命令是否在白名单内，拒绝危险操作。"""
+    stripped = command.strip()
+    if not stripped:
+        return False, "命令为空。"
+
+    # 拆分命令的第一个 token（处理管道、分号等）
+    first_token = stripped.split()[0] if stripped.split() else ""
+
+    # 检查是否以白名单前缀开头
+    is_allowed = any(
+        first_token == prefix or first_token.startswith(prefix + "/")
+        for prefix in _ALLOWED_COMMAND_PREFIXES
+    )
+    if not is_allowed:
+        return False, f"命令 '{first_token}' 不在允许列表中。"
+
+    # 拒绝管道到危险命令
+    dangerous = ("docker", "systemctl", "reboot", "shutdown", "kill", "pkill", "rm -rf /")
+    lower = stripped.lower()
+    for danger in dangerous:
+        if danger in lower:
+            return False, f"命令中包含被禁止的操作: '{danger}'。"
+
+    return True, "ok"
+
+
+async def _exec_in_sidecar(command: str, timeout: int = 120) -> Dict[str, Any]:
+    """在侧车容器中执行命令，返回结果。"""
+    try:
+        import docker
+    except ImportError:
+        return {"error": "Docker SDK 未安装。"}
+
+    try:
+        client = docker.from_env()
+        container = client.containers.get(_SIDECAR_CONTAINER)
+    except Exception as e:
+        return {"error": f"无法连接侧车容器: {e}"}
+
+    try:
+        # 在侧车内执行，工作目录为 /workspace（即月月仓库）
+        # 显式设置 PATH 让 hermes CLI 可用
+        wrapped = f'export PATH=/opt/hermes-venv/bin:$PATH\n{command}'
+        result = container.exec_run(
+            ["bash", "-c", wrapped],
+            workdir="/workspace",
+            demux=True,
+        )
+        stdout = result.output[0].decode("utf-8", errors="replace") if result.output[0] else ""
+        stderr = result.output[1].decode("utf-8", errors="replace") if result.output[1] else ""
+        exit_code = result.exit_code
+
+        return {
+            "exit_code": exit_code,
+            "stdout": stdout[:8000],
+            "stderr": stderr[:4000],
+            "success": exit_code == 0,
+        }
+    except Exception as e:
+        return {"error": f"执行失败: {e}"}
+
+
+@tool_metadata(
+    name="自维护",
+    description="让月月诊断和修改自己的代码、安装 Skills/MCP、跑测试（仅开发者可用）",
+    emoji="🔧",
+    category="系统",
+)
+async def self_maintain(
+    action: str = "diagnose",
+    command: str = "",
+    **kwargs,
+) -> Dict[str, Any]:
+    """
+    月月的自维护工具。仅开发者 (DEVELOPER_USER_IDS) 可调用。
+
+    支持的操作 (action):
+    - diagnose: 读取最近日志、检查容器状态、列出近期改动
+    - exec: 在侧车容器中执行白名单命令 (需提供 command)
+    - hermes_one_shot: 用 Hermes CLI 执行一次性自修任务 (需提供 command 作为 prompt)
+    - install_skill: 安装 Hermes Skill (需提供 command 作为 skill ID 或 URL)
+    - list_skills: 列出已安装的 Hermes Skills
+    - add_mcp: 添加 MCP 服务器 (需提供 command 作为 JSON: {"name":"...","url":"..."} 或 {"name":"...","command":"..."})
+    - list_mcp: 列出已配置的 MCP 服务器
+    - test_mcp: 测试 MCP 服务器连接 (需提供 command 作为服务器名)
+    - git_status: 查看仓库 Git 状态
+    - git_diff: 查看未提交的改动
+
+    所有命令在隔离的侧车容器中执行，不挂载 Docker Socket，
+    无法重启月月主容器或修改宿主机配置。
+
+    Returns:
+        包含执行结果或错误信息的字典。
+    """
+    user_id = kwargs.get("user_id")
+
+    # 权限检查
+    if not _is_developer(user_id):
+        log.warning(f"self_maintain: 非开发者用户 {user_id} 尝试调用自维护工具")
+        return {
+            "error": "此工具仅限开发者使用。",
+            "hint": "如果你需要月月调整自身功能，请联系开发者。",
+        }
+
+    action_normalized = str(action or "diagnose").strip().lower()
+
+    # --- 诊断模式 ---
+    if action_normalized == "diagnose":
+        commands = [
+            "echo '=== 容器状态 ==='",
+            "echo '侧车运行中'",
+            "echo '=== 仓库 Git 状态 ==='",
+            "git status --short 2>/dev/null | head -20",
+            "echo '=== 最近改动的文件 ==='",
+            "git diff --stat HEAD~5 2>/dev/null | tail -10",
+            "echo '=== Python 语法检查 ==='",
+            "python3 -c \"import py_compile, glob; [py_compile.compile(f, doraise=False) for f in glob.glob('src/**/*.py', recursive=True)[:50]]; print('语法检查完成')\"",
+        ]
+        full_command = " && ".join(commands)
+        return await _exec_in_sidecar(full_command, timeout=30)
+
+    # --- 执行命令 ---
+    if action_normalized == "exec":
+        if not command:
+            return {"error": "exec 操作需要提供 command 参数。"}
+        ok, msg = _validate_command(command)
+        if not ok:
+            return {"error": msg}
+        return await _exec_in_sidecar(command, timeout=120)
+
+    # --- Hermes 一次性任务 ---
+    if action_normalized == "hermes_one_shot":
+        if not command:
+            return {"error": "hermes_one_shot 操作需要提供 command 作为任务描述。"}
+        # 先检查 Hermes 是否已初始化
+        check = await _exec_in_sidecar("hermes --version 2>&1", timeout=15)
+        if not check.get("success"):
+            return {
+                "error": "Hermes CLI 未就绪，可能需要先初始化。",
+                "detail": check.get("stderr", "")[:500],
+            }
+        # 用 -q 非交互模式执行
+        escaped_prompt = shlex.quote(command)
+        hermes_cmd = f"hermes chat -q {escaped_prompt} --yolo 2>&1"
+        return await _exec_in_sidecar(hermes_cmd, timeout=300)
+
+    # --- Skills 管理 ---
+    if action_normalized == "install_skill":
+        if not command:
+            return {"error": "install_skill 需要 skill ID 或 URL。"}
+        skill_arg = shlex.quote(command)
+        return await _exec_in_sidecar(f"hermes skills install {skill_arg} 2>&1", timeout=120)
+
+    if action_normalized == "list_skills":
+        return await _exec_in_sidecar("hermes skills list 2>&1", timeout=30)
+
+    # --- MCP 管理 ---
+    if action_normalized == "add_mcp":
+        if not command:
+            return {"error": "add_mcp 需要 JSON 配置，如 {\"name\":\"...\",\"url\":\"...\"}"}
+        try:
+            mcp_config = json.loads(command)
+        except json.JSONDecodeError as e:
+            return {"error": f"JSON 解析失败: {e}"}
+        name = str(mcp_config.get("name", "")).strip()
+        url = str(mcp_config.get("url", "")).strip()
+        cmd = str(mcp_config.get("command", "")).strip()
+        if not name:
+            return {"error": "MCP 配置必须包含 name"}
+        if url:
+            return await _exec_in_sidecar(f"hermes mcp add {shlex.quote(name)} --url {shlex.quote(url)} 2>&1", timeout=30)
+        elif cmd:
+            return await _exec_in_sidecar(f"hermes mcp add {shlex.quote(name)} --command {shlex.quote(cmd)} 2>&1", timeout=30)
+        else:
+            return {"error": "MCP 配置必须包含 url 或 command"}
+
+    if action_normalized == "list_mcp":
+        return await _exec_in_sidecar("hermes mcp list 2>&1", timeout=30)
+
+    if action_normalized == "test_mcp":
+        if not command:
+            return {"error": "test_mcp 需要服务器名。"}
+        name = shlex.quote(command)
+        return await _exec_in_sidecar(f"hermes mcp test {name} 2>&1", timeout=60)
+
+    # --- Git 操作 ---
+    if action_normalized == "git_status":
+        return await _exec_in_sidecar("git status 2>&1", timeout=15)
+
+    if action_normalized == "git_diff":
+        return await _exec_in_sidecar("git diff 2>&1", timeout=15)
+
+    return {"error": f"未知的 action: '{action}'。支持的: diagnose, exec, hermes_one_shot, install_skill, list_skills, add_mcp, list_mcp, test_mcp, git_status, git_diff"}

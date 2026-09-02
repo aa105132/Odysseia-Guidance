@@ -2178,6 +2178,7 @@ class GeminiImagenService:
         openai_quality: Optional[str] = None,
         openai_style: Optional[str] = None,
         openai_image_api_mode: Optional[str] = None,
+        total_timeout_override: Optional[int] = None,
     ) -> Optional[bytes]:
         """
         使用 Gemini 多模态接口进行图生图（图像编辑）

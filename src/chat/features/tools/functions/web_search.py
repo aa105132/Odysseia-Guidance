@@ -667,7 +667,7 @@ async def web_search(
     **kwargs,
 ) -> str:
     """
-    搜索互联网获取实时信息。默认仅使用 Grok；需要更详细信息时可按标记启用 Tavily。
+    搜索互联网获取实时信息。默认并行使用 Grok + Tavily；任一上游失败时自动使用另一条结果。
 
     适用场景:
     - 用户询问**实时新闻**、**最新事件**、**当前信息**
@@ -711,7 +711,8 @@ async def web_search(
     detail_level = str(kwargs.get('detail_level', 'normal') or 'normal')
     wants_tavily = force_tavily or _should_enable_tavily(use_tavily_kw, detail_level)
     tavily_available = await _config.is_tavily_configured()
-    enable_tavily = wants_tavily and tavily_available
+    # Tavily 是默认实时检索底座；Grok 负责补充与整理。任一路故障不应拖死另一条。
+    enable_tavily = tavily_available
 
     max_parallel_raw = kwargs.get('max_parallel', 3)
     try:
@@ -740,26 +741,62 @@ async def web_search(
     show_sources = await _config.get_show_sources()
 
     async def run_single(single_query: str) -> str:
-        try:
-            grok_task = _grok_search(single_query, platform)
-            if enable_tavily:
-                grok_result, tavily_results = await asyncio.wait_for(
-                    asyncio.gather(
-                        grok_task,
-                        _tavily_search(single_query, max_results=5),
-                    ),
-                    timeout=per_query_timeout,
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        grok_task = asyncio.create_task(_grok_search(single_query, platform))
+        tavily_task = (
+            asyncio.create_task(_tavily_search(single_query, max_results=5))
+            if enable_tavily else None
+        )
+
+        tavily_results = []
+        if tavily_task is not None:
+            try:
+                tavily_results = await asyncio.wait_for(
+                    tavily_task,
+                    timeout=min(per_query_timeout, 45),
                 )
-            else:
-                grok_result = await asyncio.wait_for(grok_task, timeout=per_query_timeout)
-                tavily_results = []
-            return _format_search_result(single_query, grok_result, tavily_results, show_sources=show_sources)
+            except asyncio.TimeoutError:
+                log.warning("Tavily 搜索超时，保留 Grok 路径")
+            except Exception as exc:
+                log.warning(f"Tavily 搜索异常，保留 Grok 路径: {_normalize_exception_message(exc)}")
+
+        elapsed = loop.time() - started_at
+        remaining = max(1.0, per_query_timeout - elapsed)
+        try:
+            grok_result = await asyncio.wait_for(grok_task, timeout=remaining)
         except asyncio.TimeoutError:
+            grok_result = {"content": "", "sources": []}
+            log.warning("Grok 搜索超时，使用 Tavily 结果兜底")
+        except Exception as exc:
+            grok_result = {"content": "", "sources": []}
+            log.warning(f"Grok 搜索异常，使用 Tavily 结果兜底: {_normalize_exception_message(exc)}")
+
+        grok_content = str(grok_result.get("content") or "")
+        bad_grok_markers = (
+            "<tool_call>",
+            "搜索请求失败",
+            "搜索请求网络错误",
+            "搜索过程中发生错误",
+            "Grok API 未配置",
+        )
+        if any(marker in grok_content for marker in bad_grok_markers):
+            log.warning("Grok 返回不可用内容，已丢弃并使用 Tavily 结果")
+            grok_result = {"content": "", "sources": []}
+            grok_content = ""
+
+        if not grok_content and not tavily_results:
             return (
                 f"[网络搜索结果 - 查询: {single_query}]\n\n"
-                f"搜索超时（>{per_query_timeout}s）。"
-                "请缩小查询范围、减少批量子查询，或稍后重试。"
+                "Grok 与 Tavily 都没有返回可用结果，请稍后重试。"
             )
+
+        return _format_search_result(
+            single_query,
+            grok_result,
+            tavily_results,
+            show_sources=show_sources,
+        )
 
     if len(query_list) == 1:
         try:

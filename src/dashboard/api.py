@@ -305,6 +305,8 @@ class AIConfigUpdate(BaseModel):
     max_attempts_per_key: Optional[int] = None  # 主聊天单密钥最大重试次数
     retry_delay_seconds: Optional[int] = None  # 主聊天重试延迟（秒）
     max_key_rotation_retries: Optional[int] = None  # 主聊天密钥轮换重试次数
+    thinking_budget: Optional[int] = None  # 思考预算 (-1=动态, 0=关闭, 1-32768=固定)
+    thinking_level: Optional[str] = None  # 思考强度 (low/medium/max)
 
 
 AI_AVAILABLE_MODELS_SETTING_KEY = 'ai_available_models'
@@ -1212,6 +1214,20 @@ async def get_ai_config(token: str = Depends(verify_token)):
         if model and model not in available_models:
             available_models.insert(0, model)
 
+    # 思考强度设置
+    db_thinking_budget = await chat_db_manager.get_global_setting("ai_thinking_budget")
+    db_thinking_level = await chat_db_manager.get_global_setting("ai_thinking_level")
+    _default_thinking = chat_config.MODEL_GENERATION_CONFIG.get("default", {}).get("thinking_config", {})
+    thinking_budget = (
+        int(db_thinking_budget)
+        if db_thinking_budget is not None
+        else int(_default_thinking.get("thinking_budget", -1))
+    )
+    thinking_level = (
+        db_thinking_level
+        or _default_thinking.get("thinking_level", "Max")
+    )
+
     return {
         "model": model,
         "temperature": temperature,
@@ -1227,6 +1243,8 @@ async def get_ai_config(token: str = Depends(verify_token)):
         "available_models": available_models,
         "channel_history_limit": chat_config.CHANNEL_MEMORY_CONFIG.get("formatted_history_limit", 35),
         "newspaper_brief_threshold": newspaper_brief_threshold,
+        "thinking_budget": thinking_budget,
+        "thinking_level": thinking_level,
         "long_reply_in_dm_enabled": long_reply_in_dm_enabled,
         "max_attempts_per_key": max_attempts_per_key,
         "retry_delay_seconds": retry_delay_seconds,
@@ -1400,6 +1418,28 @@ async def update_ai_config(config: AIConfigUpdate, token: str = Depends(verify_t
         await chat_db_manager.set_global_setting("ai_max_key_rotation_retries", str(rotation_val))
         log.info(f"✅ 主聊天轮换重试次数已更新为: {rotation_val}")
     
+    # 思考强度
+    if config.thinking_budget is not None:
+        if not -1 <= config.thinking_budget <= 32768:
+            raise HTTPException(400, "思考预算必须在 -1 到 32768 之间")
+        chat_config.MODEL_GENERATION_CONFIG["default"]["thinking_config"]["thinking_budget"] = config.thinking_budget
+        os.environ["THINKING_BUDGET"] = str(config.thinking_budget)
+        env_updates["THINKING_BUDGET"] = str(config.thinking_budget)
+        updated["thinking_budget"] = config.thinking_budget
+        await chat_db_manager.set_global_setting("ai_thinking_budget", str(config.thinking_budget))
+        log.info(f"✅ 思考预算已更新: {config.thinking_budget}")
+
+    if config.thinking_level is not None:
+        level = config.thinking_level.strip().lower()
+        if level not in ("low", "medium", "max"):
+            raise HTTPException(400, "思考强度必须是 low、medium 或 max")
+        chat_config.MODEL_GENERATION_CONFIG["default"]["thinking_config"]["thinking_level"] = level.capitalize()
+        os.environ["THINKING_LEVEL"] = level.capitalize()
+        env_updates["THINKING_LEVEL"] = level.capitalize()
+        updated["thinking_level"] = level.capitalize()
+        await chat_db_manager.set_global_setting("ai_thinking_level", level.capitalize())
+        log.info(f"✅ 思考强度已更新: {level.capitalize()}")
+
     # 如果有环境变量更新，尝试写入 .env 文件（作为备份）
     if env_updates:
         try:

@@ -14,6 +14,11 @@ from src import config as app_config
 from src.chat.features.tools.tool_metadata import tool_metadata
 from src.chat.config.chat_config import SUMMARY_CONFIG
 
+# 防止同一用户短时间内被重复调用年度总结（防死循环）
+import time as _time
+_yearly_summary_cooldown: dict = {}  # {user_id: last_call_timestamp}
+_YEARLY_SUMMARY_COOLDOWN_SECONDS = 30  # 同一用户至少间隔30秒
+
 log = logging.getLogger(__name__)
 
 
@@ -58,6 +63,17 @@ async def get_yearly_summary(**kwargs) -> Dict[str, Any]:
 
     # 强制将user_id转换为整数，以防止模型传入浮点数或科学记数法导致错误
     user_id = int(user_id_str)
+
+    # 步骤 1.5: 防死循环冷却检查
+    _now = _time.time()
+    _last_call = _yearly_summary_cooldown.get(user_id, 0)
+    if _now - _last_call < _YEARLY_SUMMARY_COOLDOWN_SECONDS:
+        log.warning(f"get_yearly_summary 冷却中: user_id={user_id}, 距上次调用仅 {_now - _last_call:.1f}s，拒绝执行")
+        return {
+            "status": "cooldown",
+            "message": "年度总结刚刚已经发送过了，请稍后再试哦~",
+        }
+    _yearly_summary_cooldown[user_id] = _now
 
     # 步骤 2: 从配置读取年份和生成上限（Dashboard 可动态修改）
     year = SUMMARY_CONFIG.get("year", 2025)

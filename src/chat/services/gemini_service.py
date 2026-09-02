@@ -1237,8 +1237,7 @@ class GeminiService:
     ) -> Optional[Dict[str, Any]]:
         """为 OpenAI 兼容链路构造包含工具参考图的后续用户消息。"""
         normalized_tool_name = str(tool_name or "").strip()
-        if normalized_tool_name not in {"get_user_avatar", "image_search"} or not image_payload:
-            return None
+
 
         image_payloads = image_payload if isinstance(image_payload, list) else [image_payload]
         image_payloads = [item for item in image_payloads if isinstance(item, dict) and item.get("data")]
@@ -1305,6 +1304,7 @@ class GeminiService:
     def _build_duplicate_tool_call_skip_message(tool_name: str, reason: str) -> str:
         """当检测到同参数重复工具调用时，返回给模型的强约束提示。"""
         normalized_tool_name = str(tool_name or "").strip() or "该工具"
+
         return (
             f"[{normalized_tool_name} 已跳过] {reason}\n"
             f"请不要再次调用 {normalized_tool_name}。"
@@ -1889,7 +1889,7 @@ class GeminiService:
         messages: Optional[List[Dict[str, str]]] = None,
         images: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         gen_config_data = copy.deepcopy(generation_config)
         thinking_config_data = gen_config_data.pop('thinking_config', None)
         gen_config_params = {**gen_config_data, 'safety_settings': self.safety_settings}
@@ -2544,7 +2544,19 @@ class GeminiService:
                         await asyncio.sleep(1)  # 在重试前稍作等待
 
             # 如果所有尝试都失败了，则执行回退逻辑
-            fallback_model_name = self.default_model_name
+            # 429 (quota exhausted) 时不能回退到同一个模型——换一个不同上游的模型
+            error_str = str(last_exception) if last_exception else ""
+            is_quota_error = (
+                "429" in error_str or "exhausted" in error_str.lower() or "quota" in error_str.lower()
+                or "503" in error_str or "unavailable" in error_str.lower()
+            )
+            if is_quota_error:
+                fallback_model_name = "gemini-3.5-flash-auto"
+                log.warning(
+                    f"模型 '{model_name}' 触发上游不可用(429/503/渠道不可用)，回退到不同上游模型 '{fallback_model_name}'。"
+                )
+            else:
+                fallback_model_name = self.default_model_name
 
             if api_format in {"openai", "interactions"}:
                 log.warning(
@@ -2825,12 +2837,6 @@ class GeminiService:
                         )
 
                         log.info(f"第 {idx}/{len(images_to_process)} 张图片处理完成。")
-
-                        # [内存优化] 如果启用了顺序处理，在每张图片处理后强制垃圾回收
-                        if sequential_processing:
-                            import gc
-
-                            gc.collect()
 
                     except Exception as e:
                         # 如果净化失败，记录错误并通知用户
@@ -3271,7 +3277,7 @@ class GeminiService:
                     or (hasattr(response, "function_calls") and response.function_calls)
                 ):
                     break
-                log.warning(f"模型返回空响应 (尝试 {attempt + 1}/2)。将在1秒后重试...")
+                log.warning(f"模型返回空响应 (尝试 {attempt + 1}/4)。将在1秒后重试...")
                 if attempt < 3:
                     await asyncio.sleep(1)
 
@@ -3758,6 +3764,36 @@ class GeminiService:
             if skip_ai_response:
                 self.last_called_tools = called_tool_names
                 log.info("生成工具已成功完成并直接发送内容，无需后续AI回复。")
+                # 把语音文本注入对话历史，让月月下一轮知道自己发过什么语音
+                for part in tool_result_parts:
+                    if (
+                        isinstance(part, types.Part)
+                        and part.function_response
+                        and part.function_response.response
+                    ):
+                        result_data = part.function_response.response.get("result", {})
+                        if isinstance(result_data, dict):
+                            voice_text = result_data.get("voice_text", "")
+                            tool_name = part.function_response.name or ""
+                            if voice_text and "voice" in tool_name:
+                                # 注入到 conversation_history
+                                conversation_history.append(
+                                    types.Content(
+                                        role="model",
+                                        parts=[types.Part.from_text(
+                                            f"[语音消息] {voice_text}"
+                                        )]
+                                    )
+                                )
+                                # 注入到 context_service 持久化
+                                from src.chat.services.context_service import context_service
+                                await context_service.update_user_conversation_history(
+                                    user_id, guild_id,
+                                    message if message else "",
+                                    f"[语音消息] {voice_text}"
+                                )
+                                log.info(f"语音文本已注入对话历史: {voice_text[:50]}...")
+                                break
                 return None
             # --- skip_ai_response 检查结束 ---
 
@@ -3809,6 +3845,7 @@ class GeminiService:
                     model_name=api_model_name or self.default_model_name,
                     input_contents=conversation_history,
                     output_text=raw_ai_response,
+                    usage_metadata=getattr(response, "usage_metadata", None),
                 )
                 total_tokens = 0
                 if response and response.usage_metadata:
@@ -3936,13 +3973,13 @@ class GeminiService:
                                     # Pydantic 模型
                                     try:
                                         param_schema = first_arg.model_json_schema()
-                                    except:
+                                    except Exception:
                                         param_schema = {"type": "object"}
                         elif hasattr(param_type, '__mro__') and BaseModel in param_type.__mro__:
                             # Pydantic 模型
                             try:
                                 param_schema = param_type.model_json_schema()
-                            except:
+                            except Exception:
                                 param_schema = {"type": "object"}
                     
                     param_description = param_descriptions.get(param_name)
@@ -4744,6 +4781,14 @@ class GeminiService:
                     if isinstance(tool_result, dict) and tool_result.get("skip_ai_response"):
                         skip_ai_response_requested = True
 
+                    # [修复] 图片生成失败后禁止后续 generate_image 调用，防止刷屏重试
+                    if isinstance(tool_result, dict) and tool_result.get("generation_failed"):
+                        _image_gen_failed_count = getattr(self, "_image_gen_failed_count", 0) + 1
+                        self._image_gen_failed_count = _image_gen_failed_count
+                        if _image_gen_failed_count >= 2:
+                            force_text_response_without_tools = True
+                            log.warning(f"图片生成连续失败 {_image_gen_failed_count} 次，强制停止后续 generate_image 调用。")
+
                     tool_result_for_history = self._sanitize_tool_result_for_history(
                         tool_result
                     )
@@ -4769,6 +4814,32 @@ class GeminiService:
                 if skip_ai_response_requested:
                     self.last_called_tools = called_tool_names
                     self.last_tool_source_links = list(web_search_source_links)
+                    # 把语音文本注入对话历史，让月月下一轮知道自己发过什么语音
+                    for _fresult in function_results:
+                        if isinstance(_fresult, dict) and _fresult.get("type") == "function_result":
+                            _result_list = _fresult.get("result", [])
+                            if isinstance(_result_list, list):
+                                for _ritem in _result_list:
+                                    if isinstance(_ritem, dict) and _ritem.get("type") == "text":
+                                        try:
+                                            _parsed = json.loads(_ritem.get("text", ""))
+                                            if isinstance(_parsed, dict):
+                                                _voice_text = _parsed.get("voice_text", "")
+                                                _tool_name = _fresult.get("name", "")
+                                                if _voice_text and "voice" in _tool_name:
+                                                    from src.chat.services.context_service import context_service
+                                                    await context_service.update_user_conversation_history(
+                                                        user_id, guild_id,
+                                                        message if message else "",
+                                                        f"[语音消息] {_voice_text}"
+                                                    )
+                                                    log.info(f"语音文本已注入对话历史: {_voice_text[:50]}...")
+                                                    break
+                                        except (json.JSONDecodeError, TypeError):
+                                            pass
+                                else:
+                                    continue
+                                break
                     return None
 
                 if blocked_tool_call_in_this_turn and not executed_new_tool_in_this_turn:
@@ -4957,18 +5028,7 @@ class GeminiService:
                 else openai_tools
             )
 
-            payload = {
-                "model": model_name,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            }
-            
-            # 添加工具定义（如果有的话）
-            if iteration_tools:
-                payload["tools"] = iteration_tools
-                payload["tool_choice"] = "auto"
-            
+            # [修复] 移除冗余的手动 payload 构建，直接使用 _build_openai_chat_payload 统一生成
             payload = self._build_openai_chat_payload(
                 model_name=model_name,
                 messages=messages,
@@ -4984,6 +5044,8 @@ class GeminiService:
                 log.info(f"OpenAI API 消息数量: {len(messages)}, 迭代: {iteration + 1}")
                 if openai_tools:
                     log.info(f"OpenAI API 工具数量: {len(openai_tools)}")
+            
+
             
             try:
                 result = await self._post_openai_chat_completion_with_fallback(
@@ -5232,6 +5294,23 @@ class GeminiService:
                     if skip_ai_response_requested:
                         self.last_called_tools = called_tool_names
                         self.last_tool_source_links = list(web_search_source_links)
+                        # 把语音文本注入对话历史，让月月下一轮知道自己发过什么语音
+                        for _tmsg in tool_result_messages:
+                            try:
+                                _parsed = json.loads(_tmsg.get("content", ""))
+                                if isinstance(_parsed, dict):
+                                    _voice_text = _parsed.get("voice_text", "")
+                                    if _voice_text and "voice" in str(_parsed.get("message", "")):
+                                        from src.chat.services.context_service import context_service
+                                        await context_service.update_user_conversation_history(
+                                            user_id, guild_id,
+                                            message if message else "",
+                                            f"[语音消息] {_voice_text}"
+                                        )
+                                        log.info(f"语音文本已注入对话历史: {_voice_text[:50]}...")
+                                        break
+                            except (json.JSONDecodeError, TypeError):
+                                pass
                         return None
 
                     if blocked_tool_call_in_this_turn and not executed_new_tool_in_this_turn:
@@ -5443,6 +5522,19 @@ class GeminiService:
         
         try:
             normalized_tool_name = str(tool_name or "").strip()
+
+            # --- 检查频道绘图开关（OpenAI路径） ---
+            DRAWING_TOOL_NAMES = {"generate_image", "generate_images_batch", "generate_image_novelai", "generate_image_comfyui", "edit_image", "edit_images_batch"}
+            if normalized_tool_name in DRAWING_TOOL_NAMES and channel is not None:
+                try:
+                    from src.chat.features.chat_settings.services.chat_settings_service import chat_settings_service
+                    effective_config = await chat_settings_service.get_effective_channel_config(channel)
+                    if not effective_config.get("is_drawing_enabled", True):
+                        log.info(f"工具 {tool_name} 在频道 {channel.id} 被绘图开关禁用(OpenAI路径)，拒绝执行。")
+                        return {"error": "该频道的绘图功能已被关闭，无法执行绘图操作。请告诉用户这个频道不能画图。"}
+                except Exception as e:
+                    log.error(f"检查频道绘图开关时出错(OpenAI路径): {e}")
+            # --- 结束绘图开关检查 ---
             cached_tool_image = self.last_tool_image_data or {}
             cached_image_bytes = cached_tool_image.get("data")
             if isinstance(cached_image_bytes, memoryview):
@@ -5763,7 +5855,7 @@ class GeminiService:
             else:
                 client = genai.Client(api_key=api_key)
             
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             embed_config = types.EmbedContentConfig(task_type=task_type)
             if title and task_type == "retrieval_document":
                 embed_config.title = title
@@ -6473,6 +6565,7 @@ class GeminiService:
         mime_type: str,
         client: Any = None,
         image_url: Optional[str] = None,
+        model_name_override: Optional[str] = None,
     ) -> Optional[str]:
         """
         一个用于简单图文生成的精简方法。
@@ -6495,7 +6588,10 @@ class GeminiService:
                 for marker in ("generativelanguage.googleapis.com", "aiplatform.googleapis.com", "/v1beta")
             )
             resolved_api_format = "gemini" if is_gemini_url else "openai"
-        final_model_name = self._get_current_model_name()
+        final_model_name = (
+            str(model_name_override or "").strip()
+            or self._get_current_model_name()
+        )
 
         if resolved_api_format == "openai" and resolved_api_url and resolved_api_key:
             log.info(
@@ -6693,27 +6789,44 @@ class GeminiService:
         model_name: str,
         input_contents: List[types.Content],
         output_text: str,
+        usage_metadata: Any = None,  # [优化] 优先使用响应中的 usage_metadata
     ):
-        """记录 API 调用的 Token 使用情况到数据库。"""
+        """记录 API 调用的 Token 使用情况到数据库。
+
+        优先使用响应附带的 usage_metadata；不可用时才回退到 count_tokens API 或估算。
+        """
         try:
-            # 尝试使用 count_tokens API，如果不支持则使用估算
-            try:
-                input_token_response = await client.aio.models.count_tokens(  # type: ignore
-                    model=model_name, contents=input_contents
-                )
-                output_token_response = await client.aio.models.count_tokens(  # type: ignore
-                    model=model_name, contents=[output_text]
-                )
-                input_tokens = input_token_response.total_tokens
-                output_tokens = output_token_response.total_tokens
-            except Exception as count_error:
-                # 代理站可能不支持 count_tokens，使用估算
-                # 中文约每字符 1.5 token，英文约每 4 字符 1 token
-                log.debug(f"count_tokens API 不可用，使用估算: {count_error}")
-                input_text = str(input_contents)
-                input_tokens = self._estimate_tokens(input_text)
-                output_tokens = self._estimate_tokens(output_text)
-            
+            if (
+                usage_metadata is not None
+                and getattr(usage_metadata, "total_token_count", None) is not None
+            ):
+                # [优化] response.usage_metadata 已包含 token 计数，直接使用，避免额外 count_tokens 调用
+                total_tokens = usage_metadata.total_token_count
+                input_tokens = getattr(usage_metadata, "prompt_token_count", None)
+                output_tokens = getattr(usage_metadata, "candidates_token_count", None)
+                if input_tokens is None or output_tokens is None:
+                    # 有总数但缺少分项时，用估算补齐分项
+                    input_tokens = self._estimate_tokens(str(input_contents))
+                    output_tokens = self._estimate_tokens(output_text)
+            else:
+                # usage_metadata 不可用，回退到 count_tokens API
+                try:
+                    input_token_response = await client.aio.models.count_tokens(  # type: ignore
+                        model=model_name, contents=input_contents
+                    )
+                    output_token_response = await client.aio.models.count_tokens(  # type: ignore
+                        model=model_name, contents=[output_text]
+                    )
+                    input_tokens = input_token_response.total_tokens
+                    output_tokens = output_token_response.total_tokens
+                except Exception as count_error:
+                    # 代理站可能不支持 count_tokens，使用估算
+                    # 中文约每字符 1.5 token，英文约每 4 字符 1 token
+                    log.debug(f"count_tokens API 不可用，使用估算: {count_error}")
+                    input_text = str(input_contents)
+                    input_tokens = self._estimate_tokens(input_text)
+                    output_tokens = self._estimate_tokens(output_text)
+
             total_tokens = input_tokens + output_tokens
 
             # 获取当前日期并更新数据库

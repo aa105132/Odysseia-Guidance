@@ -42,6 +42,11 @@ class ContextService:
         current_history.append({"role": "user", "parts": [user_message]})
         current_history.append({"role": "model", "parts": [ai_response]})
 
+        # [修复] 对话历史截断：超过上限则保留最近 MAX_HISTORY_MESSAGES 条，防止无限增长
+        MAX_HISTORY_MESSAGES = 50
+        if len(current_history) > MAX_HISTORY_MESSAGES:
+            current_history = current_history[-MAX_HISTORY_MESSAGES:]
+
         await chat_db_manager.update_ai_conversation_context(
             user_id, guild_id, current_history
         )
@@ -247,10 +252,17 @@ class ContextService:
                 ):
                     # Bot的消息 (model) - 冲洗用户缓冲区，然后将消息添加到模型缓冲区
                     if user_messages_buffer:
+                        # 分离文本和图片 parts
+                        _text_parts = [p for p in user_messages_buffer if isinstance(p, str)]
+                        _img_parts = [p for p in user_messages_buffer if isinstance(p, dict)]
+                        _parts = []
+                        if _text_parts:
+                            _parts.append("\n\n".join(_text_parts))
+                        _parts.extend(_img_parts)
                         history_list.append(
                             {
                                 "role": "user",
-                                "parts": ["\n\n".join(user_messages_buffer)],
+                                "parts": _parts if _parts else [""],
                             }
                         )
                         user_messages_buffer = []
@@ -271,18 +283,38 @@ class ContextService:
                         )
                         model_messages_buffer = []
 
-                    # 处理图片附件信息
+                    # 处理图片附件信息 — 下载实际图片数据加入多模态上下文
                     media_info_parts = []
+                    history_image_parts = []
                     if msg.attachments:
                         image_attachments = [
                             att for att in msg.attachments
                             if att.content_type and att.content_type.startswith("image/")
                         ]
                         if image_attachments:
-                            # 标记用户发送了图片，让 AI 知道可以使用 edit_image 工具
                             media_info_parts.append(
                                 f"[发送了{len(image_attachments)}张图片]"
                             )
+                            # 下载最近历史图片（最多3张/条消息，避免过度膨胀）
+                            for att in image_attachments[:3]:
+                                try:
+                                    # [修复] 先检查 att.size，超过 10MB 直接跳过，避免把整个文件下载到内存
+                                    MAX_IMAGE_BYTES = 10 * 1024 * 1024
+                                    att_size = getattr(att, "size", 0) or 0
+                                    if att_size > MAX_IMAGE_BYTES:
+                                        log.warning(
+                                            f"历史图片附件过大，跳过下载: {att.filename} " f"({att_size} bytes > {MAX_IMAGE_BYTES} bytes)"
+                                        )
+                                        continue
+                                    img_bytes = await att.read()
+                                    if img_bytes and len(img_bytes) <= MAX_IMAGE_BYTES:
+                                        history_image_parts.append({
+                                            "data": img_bytes,
+                                            "mime_type": att.content_type or "image/png",
+                                            "filename": att.filename,
+                                        })
+                                except Exception as e:
+                                    log.warning(f"下载历史图片附件失败: {e}")
                     if sticker_info:
                         media_info_parts.append(sticker_info.strip())
                     attachment_info = (
@@ -295,12 +327,28 @@ class ContextService:
                     formatted_message = (
                         f"{bot_tag}[{msg.author.display_name}<{msg.author.id}>]: {attachment_info}{reply_info}{clean_content}"
                     )
-                    user_messages_buffer.append(formatted_message)
+                    if history_image_parts:
+                        # 有图片：先把之前的纯文本buffer提交，然后单独创建带图的user turn
+                        if user_messages_buffer:
+                            # 先把之前积累的纯文本提交
+                            pass  # 保持在buffer中，最终一起提交
+                        user_messages_buffer.append(formatted_message)
+                        # 将图片 dict 放入 parts（会被 _convert_conversation_to_openai_messages 处理为 image_url）
+                        for img_part in history_image_parts:
+                            user_messages_buffer.append(img_part)
+                    else:
+                        user_messages_buffer.append(formatted_message)
 
             # 循环结束后，如果缓冲区还有用户消息，全部作为最后一个'user'回合提交
             if user_messages_buffer:
+                _text_parts = [p for p in user_messages_buffer if isinstance(p, str)]
+                _img_parts = [p for p in user_messages_buffer if isinstance(p, dict)]
+                _parts = []
+                if _text_parts:
+                    _parts.append("\n\n".join(_text_parts))
+                _parts.extend(_img_parts)
                 history_list.append(
-                    {"role": "user", "parts": ["\n\n".join(user_messages_buffer)]}
+                    {"role": "user", "parts": _parts if _parts else [""]}
                 )
 
             # 同样，如果模型缓冲区还有消息，也全部提交
@@ -322,8 +370,11 @@ class ContextService:
         except discord.Forbidden:
             log.error(f"机器人没有权限读取频道 {channel_id} 的消息历史。")
             return []
+        except discord.HTTPException as e:
+            log.error(f"获取并格式化频道 {channel_id} 消息历史时发生 HTTP 错误: {e}", exc_info=True)
+            return []
         except Exception as e:
-            log.error(f"获取并格式化频道 {channel_id} 消息历史时出错: {e}")
+            log.error(f"获取并格式化频道 {channel_id} 消息历史时发生不可恢复错误: {e}", exc_info=True)
             return []
 
     def clean_message_content(
@@ -347,15 +398,15 @@ class ContextService:
         )
 
         # 3. 将用户提及 <@USER_ID> 替换为 @USERNAME
-        log.info("[Mention Clean] ----- Start Mention Cleaning -----")
-        log.info(f"[Mention Clean] Initial content: '{content}'")
-        log.info(f"[Mention Clean] Guild available: {bool(guild)}")
+        log.debug("[Mention Clean] ----- Start Mention Cleaning -----")
+        log.debug(f"[Mention Clean] Initial content: '{content}'")
+        log.debug(f"[Mention Clean] Guild available: {bool(guild)}")
 
         if guild:
 
             def replace_mention(match):
                 user_id_str = match.group(1)
-                log.info(f"[Mention Clean] Matched user ID string: '{user_id_str}'")
+                log.debug(f"[Mention Clean] Matched user ID string: '{user_id_str}'")
                 try:
                     user_id = int(user_id_str)
                     member = guild.get_member(user_id)
@@ -374,7 +425,7 @@ class ContextService:
                             f"[Mention Clean] Could not find member with ID {user_id} in guild '{guild.name}'."
                         )
                         replacement = f"未知用户<{user_id}>"
-                        log.info(f"[Mention Clean] Replacing with: '{replacement}'")
+                        log.debug(f"[Mention Clean] Replacing with: '{replacement}'")
                         return replacement
                 except ValueError:
                     log.error(
@@ -385,13 +436,13 @@ class ContextService:
                     )  # Return the original mention if conversion fails
 
             content = re.sub(r"<@!?(\d+)>", replace_mention, content)
-            log.info(f"[Mention Clean] Content after replacement: '{content}'")
+            log.debug(f"[Mention Clean] Content after replacement: '{content}'")
         else:
             log.warning(
                 "[Mention Clean] No guild object provided, skipping mention replacement."
             )
 
-        log.info("[Mention Clean] ----- End Mention Cleaning -----")
+        log.debug("[Mention Clean] ----- End Mention Cleaning -----")
 
         # 4. 移除自定义表情符号 (例如 <:name:id> 或 <a:name:id>)
         content = re.sub(r"<a?:\w+:\d+>", "", content)

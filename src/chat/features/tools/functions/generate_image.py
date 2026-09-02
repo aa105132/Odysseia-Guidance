@@ -13,12 +13,71 @@ from typing import Optional, List, Tuple
 from src.chat.features.image_generation.utils.spoiler_policy import (
     should_spoiler_image,
 )
+from src.chat.features.tools.functions._image_compress import compress_image_for_discord
 from src.chat.features.tools.functions.image_policy_guard import (
     check_yueyue_self_nsfw_violation,
 )
 from src.chat.utils.prompt_utils import replace_emojis
 
 log = logging.getLogger(__name__)
+
+
+def _make_transparent_background(image_bytes: bytes) -> tuple[bytes, str]:
+    """将图片的白色/浅色背景变透明，保留人物。"""
+    try:
+        from PIL import Image
+        import io as _io
+        import numpy as np
+
+        img = Image.open(_io.BytesIO(image_bytes))
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+
+        arr = np.array(img)
+        r, g, b, a = arr[:,:,0], arr[:,:,1], arr[:,:,2], arr[:,:,3]
+
+        # 检测背景颜色——取四角像素的均值
+        corners = [
+            arr[0, 0, :3], arr[0, -1, :3],
+            arr[-1, 0, :3], arr[-1, -1, :3],
+        ]
+        bg_r = np.mean([c[0] for c in corners])
+        bg_g = np.mean([c[1] for c in corners])
+        bg_b = np.mean([c[2] for c in corners])
+
+        log.info(f"[透明背景] 检测背景色: R={bg_r:.0f} G={bg_g:.0f} B={bg_b:.0f}")
+
+        # 背景色阈值——容差 40
+        threshold = 40
+        bg_mask = (
+            (np.abs(r.astype(int) - bg_r) < threshold) &
+            (np.abs(g.astype(int) - bg_g) < threshold) &
+            (np.abs(b.astype(int) - bg_b) < threshold)
+        )
+        arr[bg_mask, 3] = 0  # 完全透明
+
+        # 边缘半透明（渐变区域）
+        edge_threshold = 60
+        near_bg = (
+            (np.abs(r.astype(int) - bg_r) < edge_threshold) &
+            (np.abs(g.astype(int) - bg_g) < edge_threshold) &
+            (np.abs(b.astype(int) - bg_b) < edge_threshold) &
+            ~bg_mask
+        )
+        arr[near_bg, 3] = 100  # 半透明
+
+        result = Image.fromarray(arr)
+        buf = _io.BytesIO()
+        result.save(buf, format="PNG", optimize=True)
+        out = buf.getvalue()
+
+        transparent_pct = (arr[:,:,3] == 0).sum() / (arr.shape[0] * arr.shape[1]) * 100
+        log.info(f"[透明背景] 处理完成: {len(out)/1024:.0f}KB, 透明区域 {transparent_pct:.1f}%")
+        return out, "png"
+    except Exception as e:
+        log.error(f"[透明背景] 处理失败: {e}", exc_info=True)
+        return image_bytes, "png"
+
 
 # 图片生成相关的emoji
 GENERATING_EMOJI = "🎨"  # 正在生成
@@ -28,8 +87,6 @@ FAILED_EMOJI = "❌"       # 生成失败
 _ASCII_TAG_SEGMENT_RE = re.compile(r"[a-zA-Z0-9_:\-\.#()/'+\s]+")
 _ENGLISH_LETTER_RE = re.compile(r"[A-Za-z]")
 _CHINESE_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
-
-
 def _looks_like_ascii_tag_prompt(text: str) -> bool:
     """粗略判断是否像英文标签/Tag 串。"""
     normalized = str(text or "").strip()
@@ -42,8 +99,6 @@ def _looks_like_ascii_tag_prompt(text: str) -> bool:
 
     ascii_like = sum(1 for token in tokens if _ASCII_TAG_SEGMENT_RE.fullmatch(token))
     return ascii_like / max(1, len(tokens)) >= 0.7
-
-
 def _needs_chinese_rewrite(text: Optional[str]) -> bool:
     """判断 Imagen 请求是否需要先改写成中文自然语言。"""
     normalized = str(text or "").strip()
@@ -61,8 +116,6 @@ def _needs_chinese_rewrite(text: Optional[str]) -> bool:
         return True
 
     return english_letters >= max(int(chinese_chars * 1.2), 10)
-
-
 async def _rewrite_imagen_text_to_chinese(
     text: Optional[str],
     *,
@@ -115,8 +168,6 @@ async def _rewrite_imagen_text_to_chinese(
         log.warning("Imagen %s 中文改写失败，回退原文: %s", field_name, e)
 
     return normalized or None
-
-
 async def _normalize_imagen_request_language(
     prompt: str,
     negative_prompt: Optional[str],
@@ -172,7 +223,7 @@ async def generate_image(
     这样画出来才跟原角色像。不要搜了图之后还用本工具纯文生图臆造角色外观。如果默认绘图引擎为 "novelai"，请改用 generate_image_novelai 工具。
 
     OpenAI 兼容图片参数说明（适用于 Grok / GPT Image / 其它兼容图片端点）：
-    - `model_name_override`: 强制指定模型，例如 `grok-imagine-1.0`
+    - `model_name_override`: 【禁止使用】不要传此参数！系统会根据 resolution 和 content_rating 自动选择最优模型。
     - `openai_image_size`: 透传 `size`，例如 `1024x1024`、`1792x1024`
     - `openai_response_format`: 透传 `response_format`，支持 `url` / `b64_json` / `base64`
     - `openai_stream`: 透传 `stream`
@@ -215,6 +266,12 @@ async def generate_image(
 
         negative_prompt: 负面提示词（可选），也要用简体中文描述不希望出现的内容，不要写英文标签。
                 例如："低画质, 模糊, 变形"
+
+        透明背景说明：
+        - 用户要求"透明背景""抠图""PNG"时，在 prompt 中明确写上"透明背景，PNG with alpha channel"。
+        - 系统会自动保留图片的透明通道，不会强制转成 JPEG。
+        - 如果生成的图片本身没有透明通道（如 Gemini Imagen 返回 RGB），系统会尝试用白色背景。
+        - 提示词可以加"纯白背景"方便后期处理。
 
         aspect_ratio: 图片宽高比，根据内容类型选择合适的比例：
                 - "1:1" 适合头像、图标
@@ -352,7 +409,6 @@ async def generate_image(
                 "balance": balance,
                 "hint": f"用户灵石不足（需要{total_cost}，只有{balance}）。请用自己的语气告诉用户余额不够，让他们去赚点灵石再来。"
             }
-
     log.info(f"调用图片生成工具，提示词: {prompt[:100]}...，数量: {number_of_images}")
 
     # 添加"正在生成"反应
@@ -623,16 +679,24 @@ async def generate_image(
                             user_id=parsed_user_id,
                         )
 
+                    _wants_transparent = "透明背景" in prompt or "transparent background" in prompt.lower() or "transparent" in prompt.lower() and "background" in prompt.lower()
                     # 将图片分批，每批最多10张（Discord上限）
                     MAX_FILES_PER_MESSAGE = 10
                     for batch_start in range(0, len(images_list), MAX_FILES_PER_MESSAGE):
                         batch_end = min(batch_start + MAX_FILES_PER_MESSAGE, len(images_list))
                         batch_files = []
                         for idx in range(batch_start, batch_end):
+                            _img_data = images_list[idx]
+                        _img_ext = "png"
+                        # 透明背景后处理
+                        if _wants_transparent:
+                            _img_data, _img_ext = _make_transparent_background(_img_data)
+                        else:
+                            _img_data, _img_ext = compress_image_for_discord(_img_data)
                             batch_files.append(
                                 discord.File(
-                                    io.BytesIO(images_list[idx]),
-                                    filename=f"generated_image_{idx+1}.png",
+                                    io.BytesIO(_img_data),
+                                    filename=f"generated_image_{idx+1}.{_img_ext}",
                                     spoiler=use_spoiler
                                 )
                             )
@@ -735,8 +799,6 @@ async def generate_image(
             "reason": "system_error",
             "hint": f"图片生成时发生了系统错误。请用自己的语气安慰用户，告诉他们稍后再试。"
         }
-
-
 async def generate_images_batch(
     prompts: List[str],
     negative_prompt: Optional[str] = None,
@@ -1037,14 +1099,21 @@ async def generate_images_batch(
                     MAX_FILES_PER_MESSAGE = 10
                     all_images = [img for img, _ in successful_images]
 
+                    _wants_transparent = "透明背景" in prompt or "transparent background" in prompt.lower()
                     for batch_start in range(0, len(all_images), MAX_FILES_PER_MESSAGE):
                         batch_end = min(batch_start + MAX_FILES_PER_MESSAGE, len(all_images))
                         batch_files = []
                         for idx in range(batch_start, batch_end):
+                            _img_data = all_images[idx]
+                            _img_ext = "png"
+                            if _wants_transparent:
+                                _img_data, _img_ext = _make_transparent_background(_img_data)
+                            else:
+                                _img_data, _img_ext = compress_image_for_discord(_img_data)
                             batch_files.append(
                                 discord.File(
-                                    io.BytesIO(all_images[idx]),
-                                    filename=f"generated_image_{idx+1}.png",
+                                    io.BytesIO(_img_data),
+                                    filename=f"generated_image_{idx+1}.{_img_ext}",
                                     spoiler=use_spoiler
                                 )
                             )

@@ -45,6 +45,8 @@ export interface AIConfig {
   max_attempts_per_key?: number;
   retry_delay_seconds?: number;
   max_key_rotation_retries?: number;
+  thinking_budget?: number;
+  thinking_level?: string;
 }
 
 // --- Imagen 配置（GET/PUT /api/config/imagen） ---

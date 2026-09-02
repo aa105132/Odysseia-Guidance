@@ -90,6 +90,9 @@ class MessageProcessor:
     负责处理和解析 discord.Message 对象，提取用于 AI 对话所需的信息。
     """
 
+    def __init__(self, bot=None):
+        self.bot = bot
+
     async def _fetch_image_aio(
         self, session: aiohttp.ClientSession, url: str, proxy: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
@@ -1184,20 +1187,42 @@ class MessageProcessor:
                     )
                     continue
 
-                if is_video_attachment:
+                if is_video_attachment or is_audio_attachment:
+                    # [Whisper 转录] 音频/视频用 whisper 转录为文字，不放进 image_data_list
                     resolved_mime_type = (
                         content_type
-                        if content_type.startswith("video/")
-                        else guessed_video_mime
-                        or "video/mp4"
+                        if (is_video_attachment and content_type.startswith("video/"))
+                        or (is_audio_attachment and content_type.startswith("audio/"))
+                        else (guessed_video_mime or "video/mp4")
+                        if is_video_attachment
+                        else (guessed_audio_mime or "audio/mp3")
                     )
-                elif is_audio_attachment:
-                    resolved_mime_type = (
-                        content_type
-                        if content_type.startswith("audio/")
-                        else guessed_audio_mime
-                        or "audio/mp3"
+                    media_kind = "视频" if is_video_attachment else "音频"
+                    log.info(
+                        f"成功读取{media_kind}附件: {filename}, MIME: {resolved_mime_type}, 大小: {len(media_bytes)} 字节, 开始 Whisper 转录..."
                     )
+                    try:
+                        from src.chat.features.tools.functions.whisper_transcribe import transcribe_audio
+                        transcript = await transcribe_audio(
+                            audio_bytes=media_bytes,
+                            filename=filename,
+                        )
+                        if transcript:
+                            log.info(f"Whisper 转录成功: {transcript[:100]}...")
+                            # 把转录文本作为音频信息标记
+                            image_data_list.append({
+                                "mime_type": "text/plain",
+                                "data": transcript.encode("utf-8"),
+                                "source": "audio_transcription",
+                                "filename": filename,
+                                "url": attachment_url or None,
+                                "media_type": "audio" if is_audio_attachment else "video",
+                                "transcript": transcript,
+                            })
+                        else:
+                            log.warning(f"Whisper 转录失败，跳过该{media_kind}附件")
+                    except Exception as whisper_err:
+                        log.error(f"Whisper 转录异常: {whisper_err}", exc_info=True)
                 else:
                     resolved_mime_type = (
                         content_type
@@ -1205,19 +1230,18 @@ class MessageProcessor:
                         else guessed_image_mime
                         or "image/png"
                     )
-                image_data_list.append(
-                    {
-                        "mime_type": resolved_mime_type,
-                        "data": media_bytes,
-                        "source": "attachment",
-                        "filename": filename,
-                        "url": attachment_url or None,
-                    }
-                )
-                media_kind = "视频" if is_video_attachment else ("音频" if is_audio_attachment else "图片")
-                log.info(
-                    f"成功读取{media_kind}附件: {filename}, MIME: {resolved_mime_type}, 大小: {len(media_bytes)} 字节"
-                )
+                    image_data_list.append(
+                        {
+                            "mime_type": resolved_mime_type,
+                            "data": media_bytes,
+                            "source": "attachment",
+                            "filename": filename,
+                            "url": attachment_url or None,
+                        }
+                    )
+                    log.info(
+                        f"成功读取图片附件: {filename}, MIME: {resolved_mime_type}, 大小: {len(media_bytes)} 字节"
+                    )
         return image_data_list
 
     def _clean_message_content(

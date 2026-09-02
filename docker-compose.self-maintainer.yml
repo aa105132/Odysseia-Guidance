@@ -1,0 +1,26 @@
+services:
+  yueyue_self_maintainer:
+    build:
+      context: ./self-maintainer
+      dockerfile: Dockerfile
+    image: yueyue-self-maintainer:latest
+    container_name: yueyue-self-maintainer
+    restart: unless-stopped
+    working_dir: /workspace
+    environment:
+      HERMES_HOME: /hermes
+      HOME: /root
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - .:/workspace
+      - ./data/hermes-self:/hermes
+    mem_limit: 1536m
+    cpus: 1.5
+    command: ["sleep", "infinity"]
+    networks:
+      - bot_network
+
+networks:
+  bot_network:
+    external: true
+    name: 1panel-network

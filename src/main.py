@@ -196,6 +196,7 @@ class GuidanceBot(commands.Bot):
         intents.members = True  # 需要监听成员加入、角色变化
         intents.message_content = True  # 根据 discord.py v2.0+ 的要求
         intents.reactions = True  # 需要监听反应事件
+        intents.dm_messages = True  # 接收私聊消息
 
         # 解析 GUILD_ID 环境变量，支持用逗号分隔的多个 ID
         debug_guilds = None
@@ -398,6 +399,19 @@ class GuidanceBot(commands.Bot):
 
         log.info("--------------------")
         log.info("--- 启动成功 ---")
+
+        # 从数据库加载管理配置（如警告阈值），防止重启后丢失 Dashboard 设置
+        try:
+            from src.chat.utils.database import chat_db_manager
+            from src.chat.config import chat_config
+            db_warning_threshold = await chat_db_manager.get_global_setting("warning_threshold")
+            if db_warning_threshold:
+                chat_config.BLACKLIST_WARNING_THRESHOLD = int(db_warning_threshold)
+                log.info(f"从数据库加载警告阈值: {chat_config.BLACKLIST_WARNING_THRESHOLD}")
+            else:
+                log.info(f"数据库无警告阈值设置，使用环境变量/默认值: {chat_config.BLACKLIST_WARNING_THRESHOLD}")
+        except Exception as e:
+            log.warning(f"从数据库加载管理配置失败: {e}")
 
 
 def handle_exception(exc_type, exc_value, exc_traceback):

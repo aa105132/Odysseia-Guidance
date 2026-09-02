@@ -520,6 +520,10 @@ class RegenerateView(discord.ui.View):
             if key in self.original_params:
                 params[key] = self.original_params.get(key)
 
+        # 当用户通过下拉切换了分辨率或分级时，清除 model_name_override
+        # 让系统根据新的 resolution/content_rating 自动选择正确模型
+        if params.get("resolution") != self.original_params.get("resolution", "default") or params.get("content_rating") != self.original_params.get("content_rating", "sfw"):
+            params.pop("model_name_override", None)
         # 不传入 message（因为这是按钮交互，不是原始消息）
         params.pop("message", None)
         params.pop("original_success_message", None)

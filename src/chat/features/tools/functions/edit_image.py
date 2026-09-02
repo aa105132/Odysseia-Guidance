@@ -7,6 +7,7 @@
 """
 
 import logging
+from src.chat.features.tools.functions._image_compress import compress_image_for_discord
 import discord
 from typing import Optional, List, Dict, Any
 
@@ -53,7 +54,7 @@ async def edit_image(
     修改用户发送的图片，或基于已有图片（包括自定义表情、贴纸、用户头像）进行再创作。
 
     OpenAI 兼容图片参数说明（适用于 Grok / GPT Image / 其它兼容图片端点）：
-    - `model_name_override`: 强制指定模型，例如 `grok-imagine-1.0-edit`
+    - `model_name_override`: 【禁止使用】不要传此参数！系统会根据 resolution 和 content_rating 自动选择最优模型。
     - `openai_image_size`: 透传 `size`
     - `openai_response_format`: 透传 `response_format`
     - `openai_stream`: 透传 `stream`
@@ -129,7 +130,7 @@ async def edit_image(
                 - "3:4" 或 "4:3" 竖版/横版
                 - "9:16" 手机壁纸比例
                 - "16:9" 电脑壁纸比例
-                如果用户没有特别要求，建议保持原图的大致比例。
+                如果用户没有特别要求，必须根据参考图的实际比例来选择最接近的宽高比（竖图选3:4或9:16，横图选4:3或16:9，方图选1:1）。绝对不要把竖图变成1:1正方形！
 
         resolution: 图片分辨率，根据用户需求选择：
                 - "default" 默认分辨率（最快）
@@ -676,6 +677,34 @@ async def edit_image(
             aspect_ratio = "1:1"
             log.warning(f"无效的宽高比，已重置为默认值 1:1")
 
+        # 自动从参考图推断宽高比（当 AI 传了默认 1:1 但参考图不是正方形时）
+        if aspect_ratio == "1:1":
+            _ref_data = None
+            if reference_images and len(reference_images) > 0:
+                _ref_data = reference_images[0].get("data") if isinstance(reference_images[0], dict) else None
+            elif reference_image and isinstance(reference_image, dict):
+                _ref_data = reference_image.get("data")
+            if _ref_data:
+                try:
+                    from PIL import Image
+                    import io as _io
+                    _img = Image.open(_io.BytesIO(_ref_data))
+                    _w, _h = _img.size
+                    _ratio = _w / _h
+                    if _ratio > 1.4:
+                        aspect_ratio = "16:9"
+                    elif _ratio > 1.1:
+                        aspect_ratio = "4:3"
+                    elif _ratio < 0.65:
+                        aspect_ratio = "9:16"
+                    elif _ratio < 0.85:
+                        aspect_ratio = "3:4"
+                    # else keep 1:1
+                    if aspect_ratio != "1:1":
+                        log.info(f"[自动比例] 从参考图推断宽高比: {_w}x{_h} -> {aspect_ratio}")
+                except Exception as _e:
+                    log.debug(f"[自动比例] 推断失败: {_e}")
+
         # 验证内容分级参数
         if content_rating not in ["sfw", "nsfw"]:
             content_rating = "sfw"
@@ -764,11 +793,28 @@ async def edit_image(
                         color=0x2b2d31,
                     )
                     # 设置请求者头像和名称
+                    _author_name = None
+                    _author_avatar = None
                     if message and hasattr(message, 'author') and message.author:
-                        embed.set_author(
-                            name=message.author.display_name,
-                            icon_url=message.author.display_avatar.url if message.author.display_avatar else None,
-                        )
+                        _author_name = message.author.display_name
+                        _author_avatar = message.author.display_avatar.url if message.author.display_avatar else None
+                    elif parsed_user_id is not None:
+                        _bot = kwargs.get("bot")
+                        _guild = channel.guild if hasattr(channel, "guild") and channel.guild else None
+                        if _bot:
+                            try:
+                                _member = await _bot.fetch_member(parsed_user_id) if hasattr(_bot, "fetch_member") else None
+                                if not _member and _guild:
+                                    _member = await _guild.fetch_member(parsed_user_id)
+                                if _member:
+                                    _author_name = _member.display_name
+                                    _author_avatar = _member.display_avatar.url if _member.display_avatar else None
+                            except Exception:
+                                pass
+                        if not _author_name:
+                            _author_name = f"用户 {parsed_user_id}"
+                    if _author_name:
+                        embed.set_author(name=_author_name, icon_url=_author_avatar)
                     embed.add_field(
                         name="编辑提示词",
                         value=f"```\n{edit_prompt[:1016]}\n```",
@@ -816,9 +862,10 @@ async def edit_image(
                             user_id=parsed_user_id,
                         )
 
+                    _img_data, _img_ext = compress_image_for_discord(edited_image_bytes)
                     file = discord.File(
-                        io.BytesIO(edited_image_bytes),
-                        filename="edited_image.png",
+                        io.BytesIO(_img_data),
+                        filename=f"edited_image.{_img_ext}",
                         spoiler=use_spoiler,
                     )
                     send_kwargs = {"embed": embed, "file": file}
@@ -1157,8 +1204,8 @@ async def edit_images_batch(
                     batch_end = min(batch_start + MAX_FILES_PER_MESSAGE, len(all_images))
                     batch_files = [
                         discord.File(
-                            io.BytesIO(all_images[idx]),
-                            filename=f"edited_image_{idx + 1}.png",
+                            io.BytesIO(compress_image_for_discord(all_images[idx])[0]),
+                            filename=f"edited_image_{idx + 1}.jpg",
                             spoiler=use_spoiler,
                         )
                         for idx in range(batch_start, batch_end)

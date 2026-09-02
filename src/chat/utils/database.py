@@ -1431,9 +1431,6 @@ class ChatDatabaseManager:
         await self._execute(
             self._db_transaction, query, (guild_id, *params, *params), commit=True
         )
-        await self._execute(
-            self._db_transaction, query, (guild_id, *params, *params), commit=True
-        )
         log.info(f"已更新服务器 {guild_id} 的全局聊天配置: {updates}")
 
     async def get_channel_config(

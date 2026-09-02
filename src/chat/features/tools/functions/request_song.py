@@ -316,7 +316,16 @@ def _build_song_selection_prompt(
         f"用户/上一轮已经给过短评草稿：{existing_comment}\n"
         "你可以保留或润色它，但必须仍输出 song_comment。"
         if existing_comment
-        else "请顺便写一句 15-60 个汉字的 song_comment，像月月对这首歌的短短感悟。"
+        else (
+            "请顺便写一句 15-60 个汉字的 song_comment，作为月月对这首歌的点评。\n"
+            "月月人设：九分娇一分傲的银狐少女，温柔善良，容易害羞，会撒娇，偶尔嘴硬但不会凶人。\n"
+            "点评要求：\n"
+            "- 用月月的口吻说话，像在跟点歌的用户聊天，不要像百科词条或乐评人。\n"
+            "- 可以结合歌名、歌手、专辑名做自然联想，也可以表达对这首歌的感受或对用户点这首歌的小反应。\n"
+            "- 可以带一点点傲娇或撒娇，但不要每次都用同一种句式。\n"
+            "- 如果用户点歌的时机或氛围有讲究（比如深夜点了一首慢歌），可以自然地带一句感受。\n"
+            "- 不要用百科式开头，每次换新说法，不要复读模板。"
+        )
     )
 
     return (
@@ -516,7 +525,10 @@ def _format_track_label(track: Dict[str, Any]) -> str:
 
 def _build_default_song_comment(track: Dict[str, Any]) -> str:
     title = str(track.get("name") or "这首歌").strip() or "这首歌"
-    return f"{title}听起来像把一点心事摊在阳光下，轻轻晒干。"
+    artist = _track_artist_text(track) or ""
+    if artist:
+        return f"{title}呀…这首我还挺喜欢的，{artist}的歌总是让人忍不住想哼两句呢。"
+    return f"{title}呀…这首还挺好听的嘛，你点的时候我耳朵都竖起来了。"
 
 
 def _normalize_song_comment(
@@ -624,6 +636,175 @@ async def _fetch_song_url(
     return payload
 
 
+async def _fetch_cover_url(
+    session: aiohttp.ClientSession,
+    track: Dict[str, Any],
+) -> Optional[str]:
+    """用 GD 音乐 API 的 pic 接口获取封面图 URL。"""
+    pic_id = str(track.get("pic_id") or "").strip()
+    if not pic_id:
+        return None
+    try:
+        payload = await _fetch_json(
+            session,
+            {
+                "types": "pic",
+                "source": track.get("source", "netease"),
+                "id": pic_id,
+                "size": 300,
+            },
+        )
+        if isinstance(payload, dict):
+            return str(payload.get("url") or "").strip() or None
+    except Exception as exc:
+        log.warning("获取封面图失败: %s", exc)
+    return None
+
+
+def _build_song_embed(
+    track: Dict[str, Any],
+    *,
+    br: int,
+    source: str,
+    song_comment: str,
+    cover_url: Optional[str] = None,
+) -> discord.Embed:
+    """构建 Discord Embed 面板：封面+歌曲信息+月月点评。"""
+    artist_text = _track_artist_text(track) or "未知歌手"
+    album = str(track.get("album") or "").strip() or "未知专辑"
+    title = str(track.get("name") or "未知歌曲").strip()
+
+    embed = discord.Embed(
+        title=f"🎵 {title}",
+        description=f"**{artist_text}** — {album}",
+        color=discord.Color(0x9B59B6),  # 紫色
+    )
+    if cover_url:
+        embed.set_thumbnail(url=cover_url)
+    embed.add_field(name="歌手", value=artist_text, inline=True)
+    embed.add_field(name="专辑", value=album, inline=True)
+    embed.add_field(name="音质", value=f"{br}kbps", inline=True)
+    if song_comment:
+        embed.add_field(name="月月点评", value=song_comment, inline=False)
+    embed.set_footer(text="月月点歌台 🎵")
+    return embed
+
+
+
+
+async def _fetch_lyrics(
+    session: aiohttp.ClientSession,
+    track: Dict[str, Any],
+) -> Optional[str]:
+    """获取歌词前几行，用于让月月点评结合歌曲内容。"""
+    lyric_id = str(track.get("lyric_id") or track.get("id") or "").strip()
+    source = str(track.get("source") or "netease").strip()
+    if not lyric_id:
+        return None
+    try:
+        payload = await _fetch_json(session, {
+            "types": "lyric",
+            "source": source,
+            "id": lyric_id,
+        })
+        if isinstance(payload, dict):
+            lyric = str(payload.get("lyric") or "").strip()
+            if lyric:
+                # 只取前20行，够 LLM 理解歌曲内容
+                lines = [l for l in lyric.split("\n") if l.strip() and not l.startswith("作词") and not l.startswith("作曲") and not l.startswith("编曲")][:20]
+                return "\n".join(lines) if lines else None
+    except Exception as exc:
+        log.warning("获取歌词失败: %s", exc)
+    return None
+
+
+async def _regenerate_song_comment(
+    track: Dict[str, Any],
+    lyrics: Optional[str],
+    original_query: str,
+    existing_comment: Optional[str],
+) -> Optional[str]:
+    """获取歌词后让 LLM 基于歌曲内容重新写点评。"""
+    title = str(track.get("name") or "").strip()
+    artist = _track_artist_text(track) or "未知"
+    album = str(track.get("album") or "").strip()
+
+    lyrics_preview = lyrics[:500] if lyrics else "（无歌词）"
+
+    prompt = (
+        "你是月月。用户刚点了一首歌，请基于歌曲信息写一句 15-60 个汉字的点评。\n"
+        "\n"
+        "月月人设：九分娇一分傲的银狐少女，温柔善良，容易害羞，会撒娇，偶尔嘴硬但不会凶人。\n"
+        "点评要求：\n"
+        "- 用月月的口吻说话，像在跟点歌的用户聊天。\n"
+        "- 必须结合歌曲本身的内容！你拿到了歌词，要基于歌词的内容和情感来点评，不要泛泛而谈。\n"
+        "- 可以引用或提到歌词里的一句词、一个意象、一种情绪，让点评跟这首歌真正有关。\n"
+        "- 可以带一点点傲娇或撒娇，但不要每次都用同一种句式。\n"
+        "- 不要用百科式开头（这首歌讲述了/表达了），每次换新说法。\n"
+        "- 只输出点评文本，不要输出 JSON，不要解释，不要引号。\n"
+        f"\n歌曲：{title}\n歌手：{artist}\n专辑：{album or '未知'}\n"
+        f"\n歌词节选：\n{lyrics_preview}\n"
+        f"\n用户点歌时的原话：{original_query}\n"
+    )
+
+    try:
+        raw = await _generate_song_selection_response(prompt)
+        comment = str(raw or "").strip()
+        # 去掉可能的引号和换行
+        comment = comment.strip('"').strip("'").strip()
+        comment = comment.replace("\n", " ")
+        comment = re.sub(r"\s+", " ", comment).strip()
+        if comment and len(comment) >= 5:
+            return comment[:160]
+    except Exception as exc:
+        log.warning("重新生成歌曲点评失败: %s", exc)
+
+    return None
+
+
+async def _send_song_message(
+    *,
+    message: Optional[discord.Message],
+    channel: Optional[discord.abc.Messageable],
+    track: Dict[str, Any],
+    br: int,
+    source: str,
+    song_comment: str,
+    cover_url: Optional[str] = None,
+    audio_bytes: Optional[bytes] = None,
+    filename: Optional[str] = None,
+    is_link_fallback: bool = False,
+    audio_url: Optional[str] = None,
+) -> bool:
+    """用 Discord Embed 面板发送歌曲信息，音频文件作为附件。"""
+    if message is None and channel is None:
+        return False
+
+    embed = _build_song_embed(
+        track,
+        br=br,
+        source=source,
+        song_comment=song_comment,
+        cover_url=cover_url,
+    )
+    if is_link_fallback and audio_url:
+        embed.add_field(
+            name="播放链接",
+            value=f"[点击播放]({audio_url})",
+            inline=False,
+        )
+
+    kwargs: Dict[str, Any] = {"embed": embed}
+    if audio_bytes is not None and filename:
+        kwargs["file"] = discord.File(io.BytesIO(audio_bytes), filename=filename)
+
+    if message is not None:
+        await message.reply(**kwargs, mention_author=False)
+    elif channel is not None:
+        await channel.send(**kwargs)
+    return True
+
+
 async def _download_audio(
     session: aiohttp.ClientSession,
     audio_url: str,
@@ -656,59 +837,6 @@ async def _download_audio(
         return bytes(chunks), str(mime_type or "audio/mpeg")
 
 
-async def _send_song_message(
-    *,
-    message: Optional[discord.Message],
-    channel: Optional[discord.abc.Messageable],
-    content: str,
-    audio_bytes: Optional[bytes] = None,
-    filename: Optional[str] = None,
-) -> bool:
-    if message is None and channel is None:
-        return False
-
-    kwargs: Dict[str, Any] = {"content": content}
-    if audio_bytes is not None and filename:
-        kwargs["file"] = discord.File(io.BytesIO(audio_bytes), filename=filename)
-
-    if message is not None:
-        await message.reply(**kwargs, mention_author=False)
-    elif channel is not None:
-        await channel.send(**kwargs)
-    return True
-
-
-def _build_sent_content(
-    track: Dict[str, Any],
-    *,
-    br: int,
-    source: str,
-    song_comment: str,
-) -> str:
-    return (
-        f"点好啦：{_format_track_label(track)}\n"
-        f"来源：GD音乐台 / {source}，音质：{br}kbps。"
-        f"{_format_song_comment_line(song_comment)}"
-    )
-
-
-def _build_link_fallback_content(
-    track: Dict[str, Any],
-    *,
-    br: int,
-    source: str,
-    audio_url: str,
-    reason: str,
-    song_comment: str,
-) -> str:
-    return (
-        f"找到了：{_format_track_label(track)}\n"
-        f"来源：GD音乐台 / {source}，音质：{br}kbps。\n"
-        f"月月短评：{song_comment}\n"
-        f"{reason}，先给你播放链接：{audio_url}"
-    )
-
-
 @tool_metadata(
     name="点歌",
     description="分析用户点歌意图，按歌名、歌手或歌词片段搜索音乐，获取音频文件并发送到当前频道",
@@ -728,7 +856,7 @@ async def request_song(
     点歌并把音频发送到当前频道。
 
     使用场景：
-    - 用户明确说“点歌”“放一首”“想听”“来首”“播放某首歌”等需求时调用。
+    - 用户明确说"点歌""放一首""想听""来首""播放某首歌"等需求时调用。
     - 调用前先仔细分析用户真实点歌意图：判断用户给的是歌名、歌手、歌词片段，
       还是 live、翻唱、伴奏、纯音乐、MV 等版本偏好。
     - 用户只提供一句歌词或歌词片段时，不要把歌词直接当作随便的歌名；
@@ -740,25 +868,19 @@ async def request_song(
     - 默认会依次搜索配置中的音乐源，再让内部轻量 LLM 分析候选并选中最匹配曲目。
     - 如果候选明显不对，内部 LLM 可以给出新的搜索词和音乐源，工具会最多重试 3 轮；
       仍然没有可靠匹配时会停止发送，避免播错歌。
-    - 发送歌曲时会附带一句“月月短评”；song_comment 可作为短评草稿，内部 LLM 可保留或润色。
+    - 发送歌曲时会附带一句"月月短评"；song_comment 可作为短评草稿，内部 LLM 可保留或润色。
     - 如果音频文件不超过发送上限，会直接作为 Discord 附件发出去，并返回 skip_ai_response=True。
     - 如果文件过大或下载失败，会把播放链接发到频道。
-    - 不要用于普通音乐知识问答；只有用户想“听歌/点歌/播放”时调用。
+    - 不要用于普通音乐知识问答；只有用户想"听歌/点歌/播放"时调用。
 
     Args:
-<<<<<<< Updated upstream
         song_name: 歌名、搜索关键词或用户只给歌词时的关键歌词片段，
-            例如“晴天”“周杰伦 晴天”“从前从前有个人爱你很久”。
+            例如"晴天""周杰伦 晴天""从前从前有个人爱你很久"。
             如果用户直接贴 bilibili 视频链接，可传入链接，工具会解析视频标题后搜索。
             调用前必须先从用户原话中提炼最适合搜索的关键词。
-        artist: 可选歌手名，例如“周杰伦”。只有用户明确指定或高度确定时填写；
+        artist: 可选歌手名，例如"周杰伦"。只有用户明确指定或高度确定时填写；
             不确定不要硬猜，可留空交给候选分析。
-        source: 可选音乐源，支持 joox、netease、bilibili 等；留空使用默认兜底源。
-=======
-        song_name: 歌名或搜索关键词，例如“晴天”“周杰伦 晴天”。
-        artist: 可选歌手名，例如“周杰伦”。用户明确指定歌手时应填写。
         source: 不要手动指定此参数，留空即可。系统默认按 joox > netease > bilibili 顺序搜索，joox 音源最稳定。
->>>>>>> Stashed changes
         br: 可选音质，支持 128、192、320、740、999。默认 128，避免 Discord 附件过大。
         song_comment: 可选短评草稿；内部候选分析 LLM 会输出最终月月短评，建议 15-60 个汉字。
         send_to_channel: 是否发送到当前频道。默认 true。
@@ -904,6 +1026,14 @@ async def request_song(
                 }
 
             final_song_comment = _normalize_song_comment(llm_song_comment, selected)
+            cover_url = await _fetch_cover_url(session, selected)
+            lyrics = await _fetch_lyrics(session, selected)
+            if lyrics:
+                regenerated = await _regenerate_song_comment(
+                    selected, lyrics, original_query, final_song_comment,
+                )
+                if regenerated:
+                    final_song_comment = _normalize_song_comment(regenerated, selected)
             url_info = await _fetch_song_url(session, selected, requested_br)
             audio_url = str(url_info.get("url") or "").strip()
             actual_br = _coerce_int(url_info.get("br"), requested_br)
@@ -921,6 +1051,7 @@ async def request_song(
                 "remote_size": remote_size,
                 "audio_url": audio_url,
                 "song_comment": final_song_comment,
+                "cover_url": cover_url,
                 "selection": selection_info,
                 "search_attempts": search_attempts,
                 "source_result_counts": source_result_counts,
@@ -944,18 +1075,16 @@ async def request_song(
                 }
 
             if remote_size and remote_size > max_download_bytes:
-                content = _build_link_fallback_content(
-                    selected,
-                    br=actual_br,
-                    source=source_name,
-                    audio_url=audio_url,
-                    reason="文件太大，不能直接当附件发送",
-                    song_comment=final_song_comment,
-                )
                 sent = await _send_song_message(
                     message=message,
                     channel=channel,
-                    content=content,
+                    track=selected,
+                    br=actual_br,
+                    source=source_name,
+                    song_comment=final_song_comment,
+                    cover_url=cover_url,
+                    is_link_fallback=True,
+                    audio_url=audio_url,
                 )
                 return {
                     **base_result,
@@ -972,18 +1101,16 @@ async def request_song(
                     max_download_bytes,
                 )
             except _AudioTooLargeError:
-                content = _build_link_fallback_content(
-                    selected,
-                    br=actual_br,
-                    source=source_name,
-                    audio_url=audio_url,
-                    reason="文件太大，不能直接当附件发送",
-                    song_comment=final_song_comment,
-                )
                 sent = await _send_song_message(
                     message=message,
                     channel=channel,
-                    content=content,
+                    track=selected,
+                    br=actual_br,
+                    source=source_name,
+                    song_comment=final_song_comment,
+                    cover_url=cover_url,
+                    is_link_fallback=True,
+                    audio_url=audio_url,
                 )
                 return {
                     **base_result,
@@ -994,18 +1121,16 @@ async def request_song(
                 }
             except Exception as exc:
                 log.warning("点歌音频下载失败，回退链接: %s", exc, exc_info=True)
-                content = _build_link_fallback_content(
-                    selected,
-                    br=actual_br,
-                    source=source_name,
-                    audio_url=audio_url,
-                    reason="音频下载失败",
-                    song_comment=final_song_comment,
-                )
                 sent = await _send_song_message(
                     message=message,
                     channel=channel,
-                    content=content,
+                    track=selected,
+                    br=actual_br,
+                    source=source_name,
+                    song_comment=final_song_comment,
+                    cover_url=cover_url,
+                    is_link_fallback=True,
+                    audio_url=audio_url,
                 )
                 return {
                     **base_result,
@@ -1017,16 +1142,14 @@ async def request_song(
 
             extension = _infer_audio_extension(mime_type, audio_url)
             filename = _build_audio_filename(selected, extension=extension)
-            content = _build_sent_content(
-                selected,
-                br=actual_br,
-                source=source_name,
-                song_comment=final_song_comment,
-            )
             sent = await _send_song_message(
                 message=message,
                 channel=channel,
-                content=content,
+                track=selected,
+                br=actual_br,
+                source=source_name,
+                song_comment=final_song_comment,
+                cover_url=cover_url,
                 audio_bytes=audio_bytes,
                 filename=filename,
             )

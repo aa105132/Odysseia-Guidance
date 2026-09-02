@@ -128,6 +128,26 @@ class ChatService:
         replied_content = processed_data["replied_content"]
         image_data_list = processed_data["image_data_list"]
 
+        # [Whisper 转录] 从 image_data_list 中提取音频/视频转录文本，注入到用户消息中
+        audio_transcripts = []
+        pure_image_list = []
+        for item in (image_data_list or []):
+            if item.get("source") == "audio_transcription" and item.get("transcript"):
+                media_type = item.get("media_type", "音频")
+                transcript_text = item["transcript"]
+                audio_transcripts.append(f"[{media_type}转录] {transcript_text}")
+            else:
+                pure_image_list.append(item)
+
+        if audio_transcripts:
+            transcript_block = "\n".join(audio_transcripts)
+            if user_content:
+                user_content = f"{user_content}\n\n{transcript_block}"
+            else:
+                user_content = transcript_block
+            log.info(f"已注入 {len(audio_transcripts)} 条音视频转录文本到用户消息")
+            image_data_list = pure_image_list
+
         try:
             # 2. --- 上下文与知识库检索 ---
             # 获取频道历史上下文
@@ -321,7 +341,7 @@ class ChatService:
 
         except Exception as e:
             log.error(f"[ChatService] 处理聊天消息时出错: {e}", exc_info=True)
-            return "呜…刚才脑子卡了一下，你再说一遍好不好？"
+            return "呜…刚才走神了，你再说一次嘛？"
 
     def _format_ai_response(self, ai_response: str) -> str:
         """清理和格式化AI的原始回复。"""

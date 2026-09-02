@@ -98,6 +98,18 @@ class RegexService:
         # 替换 1011 为 [数据删除]
         text = re.sub(r"1011", "[数据删除]", text)
 
+        # 移除模型可能输出的内部指令标签（如 <stay_silent/> 等）
+        # 这些标签是工具调用的残留，不应出现在用户可见的回复中
+        internal_tag_pattern = re.compile(
+            r"<(?:stay_silent|silent|no_reply|skip_response|skip_ai_response)\s*/?>",
+            re.IGNORECASE,
+        )
+        text = internal_tag_pattern.sub("", text)
+
+        # 如果清理后只剩下空白，返回空字符串（让上层逻辑决定是否跳过发送）
+        if not text.strip():
+            return ""
+
         return text.strip()
 
     def clean_user_input(self, text: str) -> str:
