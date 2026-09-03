@@ -304,22 +304,20 @@ async def _post_openai_image_search(query: str, *, max_results: int, is_retry: b
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     if is_retry:
         prompt = (
-            "你必须返回图片搜索结果，不要返回文字介绍或角色描述。"
-            "只返回 HTML 格式的 <img src=\"...\" alt=\"...\"> 标签列表，"
-            "不要输出任何其他文字。\n\n"
+            "直接在回复中展示搜索到的图片（用图片形式，不要只给文字描述）。"
+            "每张图片保留原始链接。不要输出代码、不要解释格式。\n\n"
             f"搜索关键词：{query}"
         )
     else:
         prompt = (
-            "请搜索与下面关键词最相关的图片。"
-            "必须返回 HTML 格式，优先包含 <img src=\"...\" alt=\"...\">。"
+            "请搜索与下面关键词最相关的图片，并直接把图片展示在回复里（不要只给文字描述）。"
             f"最多返回 {max_results} 张图片，并保留图片原始 URL。\n\n"
             f"关键词：{query}"
         )
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are an image search tool. Return image results as HTML."},
+            {"role": "system", "content": "You are an image search tool. Search the web and show the actual images directly in your reply, each with its original URL."},
             {"role": "user", "content": prompt},
         ],
         "stream": False,
