@@ -295,11 +295,13 @@ class GeminiImagenService:
         collected_content: List[str] = []
         collected_data_items: List[Dict[str, Any]] = []
         last_payload: Optional[dict] = None
+        saw_data_line = False
 
         for raw_line in str(raw_text or "").splitlines():
             line = raw_line.strip()
             if not line or not line.startswith("data: "):
                 continue
+            saw_data_line = True
 
             data_str = line[6:].strip()
             if not data_str or data_str == "[DONE]":
@@ -366,6 +368,22 @@ class GeminiImagenService:
                     }
                 ]
             }
+
+        if collected_data_items:
+            merged = dict(last_payload) if isinstance(last_payload, dict) else {}
+            merged["__data_items"] = collected_data_items
+            return merged
+
+        if not saw_data_line:
+            stripped = str(raw_text or "").lstrip()
+            if stripped:
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, dict):
+                        log.info("SSE 响应体实为裸 JSON（伪流式），已按 JSON 解析")
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
 
         return last_payload
 
