@@ -91,6 +91,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '管理设置' },
   },
   {
+    path: '/character-refs',
+    name: 'character-refs',
+    component: () => import('@/views/CharacterRefsView.vue'),
+    meta: { title: '角色图库' },
+  },
+  {
     path: '/emoji',
     name: 'emoji',
     component: () => import('@/views/EmojiView.vue'),

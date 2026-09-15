@@ -39,3 +39,4 @@ pytest-asyncio
 pytest-dotenv
 # This is for Alembic's sync operations, our main app still uses asyncpg
 psycopg2-binary
+python-multipart

@@ -26,6 +26,7 @@ import {
   Shirt,
   Cog,
   Gem,
+  FileImage,
 } from 'lucide-vue-next';
 import type { Component } from 'vue';
 
@@ -68,6 +69,7 @@ const groups: NavGroup[] = [
       { to: '/knowledge', label: '知识库', icon: BookOpen },
       { to: '/embedding', label: '向量嵌入', icon: Search },
       { to: '/emoji', label: '表情管理', icon: Smile },
+      { to: '/character-refs', label: '角色图库', icon: FileImage },
     ],
   },
   {
