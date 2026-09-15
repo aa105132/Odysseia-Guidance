@@ -79,6 +79,12 @@ async def edit_image(
     **重要：当用户消息中包含自定义表情（如 <:name:123456>）或贴纸（Sticker），并且要求基于它画图、改图、
     做成头像等操作时，必须调用此工具！工具会自动从用户消息中提取表情/贴纸图片，你不需要手动提取。**
 
+    **【工具路由 — 先看这里】**
+    - 用户要画的如果是**角色图库里的预设角色**（凡人修仙传角色：紫灵/梅凝/南宫婉/韩立/银月/元瑶等，
+      已由 角色参考图生图 工具管理）的新图、多人同框图 —— **不要用本工具+image_search 拼凑！**
+      改用 角色参考图生图（generate_image_with_refs），它会从图库拿官方参考图，人物身份准确得多。
+    - 本工具适合：用户发了图要改、表情/贴纸再创作、用户头像合照、搜索到的真实人物参考。
+
     使用场景（必须调用此工具）：
     - 用户发送一张图片并说"帮我把背景改成蓝色"
     - 用户发送一张图片并说"把这个人物变成动漫风格"
@@ -365,6 +371,32 @@ async def edit_image(
         # 否则容易把无关聊天图片当底图，造成普通画图被历史图污染。
 
         return []
+
+    # 兜底：模型没显式选图、当前消息/回复也没图时，回退用本轮用户上传的图
+    # （场景：用户发图 → 月月回一句 → 用户追加"把这张图改成xx"，当前消息无附件）
+    if not prepared_reference_images and not prepared_reference_image:
+        try:
+            from src.chat.services.gemini_service import gemini_service as _gs
+            _user_uploads = [
+                item for item in (_gs.last_tool_images_data or [])
+                if item.get("tool_name") == "user_upload" and item.get("data")
+            ]
+            if _user_uploads:
+                latest = _user_uploads[-1]
+                prepared_reference_images = [
+                    {
+                        "data": latest["data"],
+                        "mime_type": str(latest.get("mime_type") or "image/png").strip() or "image/png",
+                        "source": "user:message_attachment",
+                        "filename": latest.get("filename") or "user_upload.png",
+                    }
+                ]
+                log.info(
+                    "当前消息无附件，回退使用本轮用户上传图作为参考图 (filename=%s, 大小=%d bytes)",
+                    latest.get("filename"), len(latest.get("data") or b""),
+                )
+        except Exception as e:
+            log.warning(f"回退用户上传图失败: {e}")
 
     prepared_candidates = _select_reference_images(prepared_reference_images)
     if prepared_candidates:
@@ -827,7 +859,8 @@ async def edit_image(
                             value=processed_success[:1024],
                             inline=False,
                         )
-                    embed.set_footer(text=f"模型: {edit_model_name}")
+                    actual_edit_model = str(gemini_imagen_service.last_actual_model or "").strip()
+                    embed.set_footer(text=f"模型: {actual_edit_model or edit_model_name}")
 
                     # 创建重新生成按钮视图
                     regenerate_view = None
@@ -900,6 +933,16 @@ async def edit_image(
                         parsed_user_id, cost, f"AI图生图: {edit_prompt[:30]}..."
                     )
                     log.info(f"用户 {parsed_user_id} 图生图成功，扣除 {cost} 灵石")
+                    # 扣费后把灵石消耗+余额写回 Embed footer
+                    try:
+                        _bal_after = await coin_service.get_balance(parsed_user_id)
+                        if sent_message and sent_message.embeds:
+                            _emb = sent_message.embeds[0]
+                            _old_footer = _emb.footer.text or ""
+                            _emb.set_footer(text=f"{_old_footer} · 灵石 -{cost}（余 {_bal_after}）" if _old_footer else f"灵石 -{cost}（余 {_bal_after}）")
+                            await sent_message.edit(embed=_emb)
+                    except Exception as _e:
+                        log.warning(f"更新Embed灵石信息失败: {_e}")
                 except Exception as e:
                     log.error(f"扣除灵石失败: {e}")
 
@@ -1249,6 +1292,16 @@ async def edit_images_batch(
                 )
             except Exception as e:
                 log.error(f"扣除灵石失败: {e}")
+            # 扣费后把灵石消耗+余额写回 Embed footer
+            try:
+                _bal_after = await coin_service.get_balance(parsed_user_id)
+                if sent_message and sent_message.embeds:
+                    _emb = sent_message.embeds[0]
+                    _old_footer = _emb.footer.text or ""
+                    _emb.set_footer(text=f"{_old_footer} · 灵石 -{actual_cost}（余 {_bal_after}）" if _old_footer else f"灵石 -{actual_cost}（余 {_bal_after}）")
+                    await sent_message.edit(embed=_emb)
+            except Exception as _e:
+                log.warning(f"更新Embed灵石信息失败: {_e}")
 
         return {
             "success": True,
