@@ -44,6 +44,11 @@ const uploading = ref(false);
 const uploadErr = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 
+// 批量导入（zip）
+const zipInput = ref<HTMLInputElement | null>(null);
+const zipBusy = ref(false);
+const zipResult = ref<{ imported: number; skipped: string[] } | null>(null);
+
 // 大图查看
 const viewing = ref<RefItem | null>(null);
 
@@ -105,6 +110,33 @@ function onFileChange(e: Event) {
   if (f && !uploadName.value.trim()) {
     const stem = f.name.replace(/\.[^.]+$/, '');
     if (stem) uploadName.value = stem;
+  }
+}
+
+async function onZipChange(e: Event) {
+  const f = (e.target as HTMLInputElement).files?.[0] ?? null;
+  if (!f) return;
+  if (zipBusy.value) return;
+  zipBusy.value = true;
+  zipResult.value = null;
+  error.value = null;
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    const res = await fetch('/api/character-refs/import-zip', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${auth.token}` },
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail ?? `导入失败 (${res.status})`);
+    zipResult.value = { imported: data.imported ?? 0, skipped: data.skipped ?? [] };
+    await load();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '导入失败';
+  } finally {
+    zipBusy.value = false;
+    if (zipInput.value) zipInput.value.value = '';
   }
 }
 
@@ -172,13 +204,21 @@ onMounted(load);
     <div class="toolbar">
       <BaseInput v-model="q" placeholder="搜角色名…" class="search" />
       <div class="toolbar__actions">
-        <BaseButton variant="ghost" :disabled="loading" @click="load">
-          <RefreshCw :size="16" :class="{ spin: loading }" /> 刷新
+        <BaseButton variant="ghost" :disabled="zipBusy" @click="zipInput?.click()">
+          <RefreshCw :size="16" :class="{ spin: zipBusy }" />
+          {{ zipBusy ? '导入中…' : '导入zip' }}
         </BaseButton>
+        <input ref="zipInput" type="file" accept=".zip" class="upload__input" @change="onZipChange" />
         <BaseButton variant="primary" @click="pickFile">
           <ImagePlus :size="16" /> 添加角色
         </BaseButton>
       </div>
+    </div>
+
+    <div v-if="zipResult" class="banner banner--ok">
+      ✅ 导入 {{ zipResult.imported }} 个角色
+      <span v-if="zipResult.skipped.length">，跳过：{{ zipResult.skipped.join('、') }}</span>
+      <button class="banner__retry" @click="zipResult = null">知道了</button>
     </div>
 
     <div v-if="error" class="banner banner--error">
@@ -263,6 +303,7 @@ onMounted(load);
 .toolbar__actions { display: flex; gap: 8px; }
 .banner { padding: 10px 14px; border-radius: 8px; font-size: 13px; display: flex; gap: 10px; align-items: center; }
 .banner--error { background: rgba(220, 60, 60, 0.12); color: #d33; }
+.banner--ok { background: rgba(60, 180, 100, 0.12); color: #2a7; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .banner__retry { background: none; border: none; color: #d33; text-decoration: underline; cursor: pointer; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
 .card { background: var(--surface, #fff); border: 1px solid rgba(0,0,0,0.08); border-radius: 10px; overflow: hidden; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; }

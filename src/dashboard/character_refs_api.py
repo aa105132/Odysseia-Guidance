@@ -129,6 +129,9 @@ def register(app, verify_token):
         file: UploadFile = File(...),
         token: str = Depends(verify_token),
     ):
+        if name == "import-zip":
+            # 交给下方批量导入端点（/{name} 先注册会截胡，这里转发）
+            return await import_zip(file=file, token=token)
         name = _safe_name(name)
         data = await file.read()
         if not data:
@@ -169,6 +172,96 @@ def register(app, verify_token):
             "name": name,
             "size": st.st_size,
             "message": f"参考图 {name} 已入库",
+        }
+
+    @router.post("/import-zip")
+    async def import_zip(
+        file: UploadFile = File(...),
+        token: str = Depends(verify_token),
+    ):
+        """批量导入：zip 包内顶层图片按文件名（去扩展）当角色名入库。
+        跳过目录项/非图片/非法名；同名覆盖。zip 单文件上限 500MB。"""
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="空文件")
+        if len(data) > 500 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="zip 上限 500MB")
+
+        import zipfile
+        from datetime import datetime as _dt
+
+        results: List[Dict[str, Any]] = []
+        skipped: List[str] = []
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(data))
+        except Exception:
+            raise HTTPException(status_code=400, detail="不是有效的 zip 文件")
+
+        # zip 内中文名编码修复：Windows 打的包没有 UTF-8 标志位（0x800）时，文件名是 cp437 毛刺，还原成 GBK
+        def _fix_zipname(info: zipfile.ZipInfo) -> str:
+            n = info.filename
+            if info.flag_bits & 0x800:  # 已声明 UTF-8
+                return n
+            try:
+                return n.encode("cp437").decode("gbk")
+            except Exception:
+                return n
+
+        REF_DIR.mkdir(parents=True, exist_ok=True)
+        with zf:
+            names = zf.namelist()
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                raw = _fix_zipname(info)
+                base = os.path.basename(raw)
+                stem, ext = os.path.splitext(base)
+                if ext.lower() not in ALLOWED_EXT:
+                    skipped.append(f"{base}（不是图片）")
+                    continue
+                try:
+                    name = _safe_name(stem)
+                except HTTPException:
+                    skipped.append(f"{base}（角色名不合规）")
+                    continue
+                try:
+                    img_bytes = zf.read(info)
+                    from PIL import Image
+
+                    img = Image.open(io.BytesIO(img_bytes))
+                    img.load()
+                except Exception:
+                    skipped.append(f"{base}（损坏/非图片）")
+                    continue
+
+                for old in REF_DIR.glob(f"{name}.*"):
+                    if old.suffix.lower() in ALLOWED_EXT:
+                        old.unlink()
+                dst = REF_DIR / f"{name}.png"
+
+                def _save_zip(img=img, dst=dst):
+                    if img.mode == "P" and getattr(img, "is_animated", False):
+                        img.save(dst, format="GIF")
+                    else:
+                        if img.mode not in ("RGB", "RGBA", "L"):
+                            img = img.convert("RGBA")
+                        img.save(dst, format="PNG")
+
+                await asyncio.to_thread(_save_zip)
+                results.append({
+                    "name": name,
+                    "size": dst.stat().st_size,
+                    "zip_mtime": (
+                        _dt(*info.date_time).timestamp() if info.date_time else time.time()
+                    ),
+                })
+
+        return {
+            "success": True,
+            "imported": len(results),
+            "items": results,
+            "skipped": skipped,
+            "message": f"导入 {len(results)} 个角色，跳过 {len(skipped)} 个文件",
         }
 
     @router.delete("/{name}")
