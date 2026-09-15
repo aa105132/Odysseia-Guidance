@@ -159,10 +159,10 @@ def find_character_images(character_names: List[str]) -> Dict[str, Dict[str, Any
             ".gif": "image/gif",
         }.get(ext, "image/png")
 
-        # 上游 /images/edits 单个 part 上限 1MB（超过报 400 Part exceeded maximum size of 1024KB）
-        # 参考图统一压缩到 950KB 以下再上传；压缩产物是 JPEG，mime 要跟着改
-        if len(data) > 950 * 1024:
-            data, compressed_mime = _compress_ref_image(data, max_bytes=950 * 1024)
+        # 防御性压缩：上游 edits 接口本身无 1MB 限制（实测 1.77MB PNG 直传 OK），
+        # 但 10MB 级异常大图仍会拖慢请求/撑爆 multipart，超 9MB 才压
+        if len(data) > 9 * 1024 * 1024:
+            data, compressed_mime = _compress_ref_image(data, max_bytes=9 * 1024 * 1024)
             if compressed_mime:
                 mime = compressed_mime
 
