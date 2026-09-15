@@ -15,8 +15,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +27,9 @@ REF_DIR = Path(os.getenv("CHARACTER_REF_DIR", "/app/data/character_refs"))
 THUMB_DIR = REF_DIR / ".thumbs"
 ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20MB，防御性上限
-NAME_RE = re.compile(r"^[\w\u4e00-\u9fa5·\-]{1,32}$")
+NAME_RE = re.compile(r"^[\w\u4e00-\u9fa5·\-（）()]{1,32}$")
+# register() 时由 api.py 传入（闭包捕获），用于 ?token= 兜底校验
+DASHBOARD_SECRET_REF = ""
 
 
 def _safe_name(name: str) -> str:
@@ -85,16 +88,38 @@ def _list_dir() -> List[Dict[str, Any]]:
     return items
 
 
-def register(app, verify_token):
-    """挂到主 FastAPI app；鉴权与既有端点一致。"""
+def register(app, verify_token, dashboard_secret: str = ""):
+    """挂到主 FastAPI app；鉴权与既有端点一致。
+    图片类端点（thumb/原图）支持 ?token= 查询参数兜底——浏览器 <img> 标签
+    发不了 Authorization 头，不放开 query 的话缩略图全是 401 裂图。"""
     import asyncio
+    from fastapi import Query
+
+    global DASHBOARD_SECRET_REF
+    DASHBOARD_SECRET_REF = dashboard_secret
+
+    _query_security = HTTPBearer(auto_error=False)
+
+    def _verify_flex(
+        credentials: HTTPAuthorizationCredentials = Depends(_query_security),
+        token: str = Query(""),
+    ):
+        """Bearer 头优先，?token= 兜底（<img> 标签用）。"""
+        if credentials is not None and credentials.credentials == DASHBOARD_SECRET_REF:
+            return credentials.credentials
+        if token and token == DASHBOARD_SECRET_REF:
+            return token
+        raise HTTPException(status_code=401, detail="无效的认证令牌")
 
     @router.get("")
     async def list_refs(token: str = Depends(verify_token)):
         return {"items": await asyncio.to_thread(_list_dir)}
 
     @router.get("/{name}/thumb")
-    async def get_thumb(name: str, token: str = Depends(verify_token)):
+    async def get_thumb(
+        name: str,
+        token: str = Depends(_verify_flex),
+    ):
         name = _safe_name(name)
         src = next(
             (p for p in REF_DIR.glob(f"{name}.*") if p.suffix.lower() in ALLOWED_EXT), None
@@ -114,7 +139,7 @@ def register(app, verify_token):
         return FileResponse(tp, headers={"Cache-Control": "private, max-age=3600"})
 
     @router.get("/{name}")
-    async def get_ref(name: str, token: str = Depends(verify_token)):
+    async def get_ref(name: str, token: str = Depends(_verify_flex)):
         name = _safe_name(name)
         src = next(
             (p for p in REF_DIR.glob(f"{name}.*") if p.suffix.lower() in ALLOWED_EXT), None

@@ -146,7 +146,7 @@ class VideoConfigUpdate(BaseModel):
 class VoiceConfigUpdate(BaseModel):
     """语音合成配置更新"""
     enabled: Optional[bool] = None
-    provider: Optional[str] = None  # doubao/siliconflow/custom/xiaomi
+    provider: Optional[str] = None  # elevenlabs/doubao/siliconflow/custom/xiaomi
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     model_name: Optional[str] = None
@@ -2368,7 +2368,7 @@ async def get_voice_config(token: str = Depends(verify_token)):
     # 数据库优先
     enabled = db_enabled == "true" if db_enabled is not None else bool(config.get("ENABLED", False))
     provider = str(db_provider or config.get("PROVIDER", "doubao")).strip().lower()
-    if provider not in {"doubao", "siliconflow", "custom", "xiaomi"}:
+    if provider not in {"elevenlabs", "doubao", "siliconflow", "custom", "xiaomi"}:
         provider = "doubao"
     provider_defaults = chat_config.get_voice_provider_defaults(provider)
 
@@ -2577,6 +2577,7 @@ async def get_voice_config(token: str = Depends(verify_token)):
         "request_timeout_seconds": request_timeout_seconds,
         "service_available": service_available,
         "available_providers": [
+            {"id": "elevenlabs", "name": "ElevenLabs V3（银月）"},
             {"id": "doubao", "name": "火山引擎（豆包）"},
             {"id": "siliconflow", "name": "硅基流动（OpenAI 兼容）"},
             {"id": "custom", "name": "自定义 OpenAI 兼容"},
@@ -2592,7 +2593,7 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
 
     updated = {}
     env_updates = {}
-    allowed_providers = {"doubao", "siliconflow", "custom", "xiaomi"}
+    allowed_providers = {"elevenlabs", "doubao", "siliconflow", "custom", "xiaomi"}
     allowed_formats = {"mp3", "wav", "ogg", "opus", "flac", "aac", "pcm"}
     effective_provider = str(
         config.provider
@@ -2611,7 +2612,7 @@ async def update_voice_config(config: VoiceConfigUpdate, token: str = Depends(ve
     if config.provider is not None:
         provider = str(config.provider).strip().lower()
         if provider not in allowed_providers:
-            raise HTTPException(400, "语音 provider 必须是 doubao/siliconflow/custom/xiaomi")
+            raise HTTPException(400, "语音 provider 必须是 elevenlabs/doubao/siliconflow/custom/xiaomi")
         chat_config.VOICE_CONFIG["PROVIDER"] = provider
         os.environ["VOICE_PROVIDER"] = provider
         env_updates["VOICE_PROVIDER"] = provider
@@ -6663,6 +6664,12 @@ async def shutdown_bot(token: str = Depends(verify_token)):
     except Exception as e:
         log.error(f"停止容器 '{container_name}' 失败: {e}", exc_info=True)
         return {"success": False, "message": f"停止失败: {str(e)}"}
+
+
+# --- 角色参考图库管理（/api/character-refs）---
+from src.dashboard.character_refs_api import register as register_character_refs
+
+register_character_refs(app, verify_token, DASHBOARD_SECRET)
 
 
 # --- 静态文件服务 ---

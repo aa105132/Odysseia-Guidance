@@ -72,11 +72,12 @@ function fmtTime(ts: number): string {
 }
 
 function thumbUrl(it: RefItem): string {
-  return `/api/character-refs/${encodeURIComponent(it.name)}/thumb`;
+  // <img> 标签带不了 Authorization 头，token 走 query
+  return `/api/character-refs/${encodeURIComponent(it.name)}/thumb?token=${encodeURIComponent(auth.token)}`;
 }
 
 function fullUrl(it: RefItem): string {
-  return `/api/character-refs/${encodeURIComponent(it.name)}`;
+  return `/api/character-refs/${encodeURIComponent(it.name)}?token=${encodeURIComponent(auth.token)}`;
 }
 
 async function load() {
