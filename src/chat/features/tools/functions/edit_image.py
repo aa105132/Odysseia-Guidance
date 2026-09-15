@@ -38,6 +38,7 @@ async def edit_image(
     image_search_reference_index: Optional[int] = None,
     image_search_reference_indexes: Optional[List[int]] = None,
     reference_image_mode: str = "auto",
+    character_ref_names: Optional[List[str]] = None,
     max_reference_images: int = 30,
     preview_message: Optional[str] = None,
     success_message: Optional[str] = None,
@@ -119,6 +120,9 @@ async def edit_image(
     如果以上都没有，请提示用户先发送一张图片。
 
     Args:
+        character_ref_names: 角色图库角色名列表。当用户要求"图库角色+用户头像/用户上传图"混合编辑
+            （如"把紫灵和我画在一起"）时传此参数，图库参考图将与头像/上传图一起作为参考。
+            纯画图库角色新图（无用户图参与）时不要用本工具，用 角色参考图生图。
         edit_prompt: 编辑指令，用中文描述希望如何修改图片。
                 你需要根据用户的请求，用中文详细描述想要的修改效果。
 
@@ -297,6 +301,43 @@ async def edit_image(
     user_id = kwargs.get("user_id")  # 获取当前用户ID
     prepared_reference_images = kwargs.get("_prepared_reference_images") or kwargs.get("prepared_reference_images")
     prepared_reference_image = kwargs.get("_prepared_reference_image") or kwargs.get("prepared_reference_image")
+
+    # 图库角色参考图：与用户头像/上传图混合编辑时使用
+    character_ref_images: List[Dict[str, Any]] = []
+    if character_ref_names:
+        import glob as _glob
+        import os as _os
+        ref_dir = "/app/data/character_refs"
+        for _name in character_ref_names:
+            _safe = _os.path.basename(_name)
+            _hits = sorted(
+                _glob.glob(f"{ref_dir}/{_safe}.*")
+            )
+            _hits = [h for h in _hits if not h.endswith((".thumb",)) and "/." not in h]
+            if not _hits:
+                log.warning(f"[edit_image] 图库中未找到角色参考图: {_name}")
+                continue
+            with open(_hits[0], "rb") as _f:
+                _data = _f.read()
+            _mime = "image/png" if _hits[0].endswith(".png") else (
+                "image/webp" if _hits[0].endswith(".webp") else (
+                    "image/gif" if _hits[0].endswith(".gif") else "image/jpeg"
+                )
+            )
+            character_ref_images.append({
+                "data": _data,
+                "mime_type": _mime,
+                "source": "character_ref",
+            })
+            log.info(f"[edit_image] 已加载图库角色参考图: {_name} ({len(_data)//1024}KB)")
+        if character_ref_images:
+            edit_prompt = (
+                "【参考图说明】其中包含角色图库参考图（出场角色："
+                + "、".join(character_ref_names)
+                + "）。保持图库参考图角色的人物身份、脸型、发型、瞳色、服装特征不变，"
+                "按用户要求与用户头像/上传图中的内容自然合成。\n"
+                f"【编辑要求】{edit_prompt}"
+            )
 
     # 由 AI 控制参考图策略（single / multi / auto）
     reference_image_mode = (reference_image_mode or "auto").strip().lower()
@@ -561,6 +602,16 @@ async def edit_image(
             )
         elif explicit_avatar_reference_requested:
             log.info("已获取头像参考图，但未找到明确底图，将按头像参考图直接图生图。")
+
+    # 图库角色参考图合并：用户底图/头像在前，图库角色图追加在后
+    if character_ref_images:
+        existing = list(reference_images or [])
+        slots = max(0, max_reference_images - len(existing))
+        merged = existing + character_ref_images[:slots]
+        reference_images = merged
+        if not reference_image:
+            reference_image = merged[0]
+        log.info(f"[edit_image] 已合并图库角色参考图 {len(character_ref_images[:slots])} 张（总参考 {len(merged)} 张）")
 
     # 然后检查当前消息的附件
     if not reference_image and not reference_images and message:

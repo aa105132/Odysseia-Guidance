@@ -101,6 +101,26 @@ class PromptService:
         normalized = str(value or "").strip()
         return normalized or fallback
 
+    @staticmethod
+    def _get_character_ref_names() -> str:
+        """动态读取角色图库目录，返回角色名顿号串（图库加删图 prompt 自动跟随）。"""
+        try:
+            from pathlib import Path
+            ref_dir = Path(__file__).resolve().parents[3] / "data" / "character_refs"
+            if not ref_dir.is_dir():
+                return "（图库为空）"
+            names = sorted(
+                f.stem
+                for f in ref_dir.iterdir()
+                if f.is_file()
+                and f.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+                and not f.name.startswith(".")
+            )
+            return "、".join(names) if names else "（图库为空）"
+        except Exception as e:
+            log.warning(f"读取角色图库名单失败: {e}")
+            return "（图库读取失败）"
+
     def _build_image_model_hint_lines(self) -> List[str]:
         default_image_engine = self._normalize_default_image_engine(
             chat_config.DEFAULT_IMAGE_ENGINE
@@ -403,6 +423,7 @@ class PromptService:
                 "{default_image_engine}", default_image_engine
             )
             .replace("{default_new_image_tool}", default_new_image_tool)
+            .replace("{character_ref_names}", self._get_character_ref_names())
             .replace("__CURRENT_OUTFIT__", outfit_service.get_current_outfit_description())
             .replace("__CURRENT_OUTFIT_TAGS__", outfit_service.get_current_outfit_tags())
         )
