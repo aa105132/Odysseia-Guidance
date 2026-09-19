@@ -4929,7 +4929,32 @@ class GeminiService:
         支持工具调用循环。
         """
         log.info(f"使用 OpenAI 兼容 API 生成回复: {api_url}, 模型: {model_name}")
-        
+
+        # 用户本轮消息带图时，缓存进 last_tool_images_data（tool_name=user_upload），
+        # 供 edit_image 等工具在"当前消息无附件"时回退使用（修：发图后隔消息改图扒不到）
+        try:
+            user_upload_images = [
+                img for img in (images or [])
+                if isinstance(img, dict) and img.get("data") and img.get("source") != "emoji"
+            ]
+            if user_upload_images:
+                for img_data in user_upload_images[:3]:
+                    self._remember_tool_image_payload(
+                        {
+                            "data": img_data["data"],
+                            "mime_type": str(img_data.get("mime_type") or "image/png").strip() or "image/png",
+                            "tool_name": "user_upload",
+                            "filename": str(img_data.get("filename") or "user_upload.png"),
+                            "source": "user:message_attachment",
+                        }
+                    )
+                log.info(
+                    "[DIAG] cached %d user_upload image(s) into last_tool_images_data (total=%d)",
+                    min(len(user_upload_images), 3), len(self.last_tool_images_data),
+                )
+        except Exception as e:
+            log.warning(f"缓存用户上传参考图失败: {e}")
+
         # 构建完整的对话提示
         thread_first_post_context = await self._load_thread_first_post_context(channel)
         final_conversation = prompt_service.build_chat_prompt(
@@ -5010,7 +5035,7 @@ class GeminiService:
             1,
             int(app_config.API_RETRY_CONFIG.get("EMPTY_RESPONSE_MAX_ATTEMPTS", 2)),
         )
-        max_completion_rounds = max_tool_calls + 1 + empty_text_max_retries
+        max_completion_rounds = max_tool_calls + 2 + empty_text_max_retries
         max_web_search_calls = 1
         web_search_call_count = 0
         empty_text_retry_count = 0
@@ -5347,13 +5372,30 @@ class GeminiService:
                         f"total_tokens={usage.get('total_tokens')}}}"
                     )
                     if iteration_tools:
+                        empty_text_retry_count += 1
+                        if empty_text_retry_count <= empty_text_max_retries - 1:
+                            # 第一次空重试：保留工具原样重试（用户可能要求画图，禁工具会变成光说不画）
+                            log.warning(
+                                "OpenAI 兼容 API 返回空文本且没有工具调用；"
+                                f"finish_reason={finish_reason}, {usage_summary}。"
+                                "先原样重试（保留工具）。"
+                            )
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "上一轮返回了空文本。请基于对话内容重新回应；"
+                                        "如果用户要求画图或生图，必须调用对应的图片工具，不要只口头答应。"
+                                    ),
+                                }
+                            )
+                            continue
                         log.warning(
-                            "OpenAI 兼容 API 返回空文本且没有工具调用；"
+                            "OpenAI 兼容 API 保留工具重试后仍空文本；"
                             f"finish_reason={finish_reason}, {usage_summary}。"
                             "将禁用工具补发纯文本请求。"
                         )
                         force_text_response_without_tools = True
-                        empty_text_retry_count += 1
                         messages.append(
                             {
                                 "role": "user",
