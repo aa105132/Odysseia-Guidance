@@ -1230,6 +1230,58 @@ class MessageProcessor:
                         else guessed_image_mime
                         or "image/png"
                     )
+                    # AVIF 参考图上游生图模型不吃（报"参考图须为非空文件或有效 base64"），
+                    # Discord 新版贴纸/表情常见 image/avif。这里统一转码成 PNG 再入库。
+                    if resolved_mime_type == "image/avif":
+                        try:
+                            import asyncio as _asyncio
+                            import subprocess as _subprocess
+                            import uuid as _uuid
+
+                            _in = f"/tmp/avif_in_{_uuid.uuid4().hex[:8]}.avif"
+                            _out = f"/tmp/avif_out_{_uuid.uuid4().hex[:8]}.png"
+                            with open(_in, "wb") as _f:
+                                _f.write(media_bytes)
+                            _proc = await _asyncio.create_subprocess_exec(
+                                "ffmpeg",
+                                "-y",
+                                "-i",
+                                _in,
+                                "-v",
+                                "error",
+                                _out,
+                                stdout=_asyncio.subprocess.DEVNULL,
+                                stderr=_asyncio.subprocess.PIPE,
+                            )
+                            _, _err = await _asyncio.wait_for(_proc.communicate(), timeout=20)
+                            if _proc.returncode == 0:
+                                import os as _os
+
+                                with open(_out, "rb") as _f:
+                                    _png_bytes = _f.read()
+                                if _png_bytes:
+                                    media_bytes = _png_bytes
+                                    resolved_mime_type = "image/png"
+                                    filename = filename.rsplit(".", 1)[0] + ".png"
+                                    log.info(
+                                        f"AVIF 附件已转码为 PNG: {filename}, 大小: {len(media_bytes)} 字节"
+                                    )
+                                else:
+                                    log.warning("AVIF 转码后为空，保留原始 bytes")
+                            else:
+                                log.warning(
+                                    f"AVIF 转 PNG 失败 (rc={_proc.returncode}): {_err.decode(errors='ignore')[:200]}"
+                                )
+                            try:
+                                import os as _os2
+
+                                _os2.remove(_in)
+                                if _os2.path.exists(_out):
+                                    _os2.remove(_out)
+                            except Exception:
+                                pass
+                        except Exception as _avif_err:
+                            log.warning(f"AVIF 转码异常，保留原始 bytes: {_avif_err}")
                     image_data_list.append(
                         {
                             "mime_type": resolved_mime_type,
