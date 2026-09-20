@@ -17,6 +17,13 @@ from src.config import MASTER_USER_ID
 
 log = logging.getLogger(__name__)
 
+# ===== [系统注入标记] 区分"系统设定"与"用户发言"，防止模型把注入当聊天记录 =====
+SYSTEM_INJECTION_HEADER = (
+    "【系统注入】以下内容是程序写入的系统设定/协议/记忆，不是频道里任何用户的发言，"
+    "不要把它当成谁说过的话，也不要在回复里引用它的字句。\n"
+)
+# ===== end =====
+
 EMOJI_PLACEHOLDER_REGEX = re.compile(r"__EMOJI_(\w+)__")
 
 
@@ -400,7 +407,7 @@ class PromptService:
             model_name, "JAILBREAK_MODEL_RESPONSE"
         )
         if jailbreak_user and jailbreak_model:
-            final_conversation.append({"role": "user", "parts": [jailbreak_user]})
+            final_conversation.append({"role": "user", "parts": [SYSTEM_INJECTION_HEADER + jailbreak_user]})
             final_conversation.append({"role": "model", "parts": [jailbreak_model]})
 
         # --- 1. 核心身份注入 ---
@@ -428,14 +435,14 @@ class PromptService:
             .replace("__CURRENT_OUTFIT_TAGS__", outfit_service.get_current_outfit_tags())
         )
 
-        final_conversation.append({"role": "user", "parts": [core_prompt]})
+        final_conversation.append({"role": "user", "parts": [SYSTEM_INJECTION_HEADER + core_prompt]})
         final_conversation.append({"role": "model", "parts": ["收到。"]})
 
         # --- 工具调用精简协议：详细清单按需通过工具查询 ---
         final_conversation.append(
             {
                 "role": "user",
-                "parts": [self._build_compact_tool_guidance()],
+                "parts": [SYSTEM_INJECTION_HEADER + self._build_compact_tool_guidance()],
             }
         )
         final_conversation.append(
@@ -455,7 +462,7 @@ class PromptService:
                 final_conversation.append(
                     {
                         "role": "user",
-                        "parts": [_skill_index],
+                        "parts": [SYSTEM_INJECTION_HEADER + _skill_index],
                     }
                 )
                 final_conversation.append(
@@ -471,7 +478,7 @@ class PromptService:
         final_conversation.append(
             {
                 "role": "user",
-                "parts": [self._build_human_style_guidance()],
+                "parts": [SYSTEM_INJECTION_HEADER + self._build_human_style_guidance()],
             }
         )
         final_conversation.append(
@@ -486,7 +493,7 @@ class PromptService:
             final_conversation.append(
                 {
                     "role": "user",
-                    "parts": [thread_first_post_context],
+                    "parts": [SYSTEM_INJECTION_HEADER + thread_first_post_context],
                 }
             )
             final_conversation.append(
@@ -550,7 +557,7 @@ class PromptService:
                 recent_chat_history, user_name
             )
             if recent_chat_text:
-                final_conversation.append({"role": "user", "parts": [recent_chat_text]})
+                final_conversation.append({"role": "user", "parts": [SYSTEM_INJECTION_HEADER + recent_chat_text]})
                 final_conversation.append({"role": "model", "parts": ["收到。"]})
 
         # --- 3. 好感度注入（频道历史之前） ---
