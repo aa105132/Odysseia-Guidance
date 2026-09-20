@@ -114,7 +114,7 @@ class MultiplayerBlackjackService:
             current_turn_user_id = room.turn_order[room.current_turn_index]
 
         return {
-            "user_id": player.user_id,
+            "user_id": str(player.user_id),
             "username": player.username,
             "avatar_url": player.avatar_url,
             "seat_index": player.seat_index,
@@ -162,10 +162,10 @@ class MultiplayerBlackjackService:
 
         return {
             "room_id": room.room_id,
-            "host_user_id": room.host_user_id,
+            "host_user_id": str(room.host_user_id),
             "max_players": self.MAX_PLAYERS,
             "state": room.state,
-            "current_turn_user_id": current_turn_user_id,
+            "current_turn_user_id": str(current_turn_user_id) if current_turn_user_id is not None else None,
             "ready_player_count": ready_player_count,
             "all_players_ready": all_players_ready,
             "dealer": {

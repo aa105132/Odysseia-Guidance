@@ -24,7 +24,7 @@ type ProfileResponse = {
 };
 
 type PlayerState = {
-  user_id: number;
+  user_id: string;
   username: string;
   avatar_url: string;
   seat_index: number;
@@ -48,10 +48,10 @@ type DealerState = {
 
 type RoomState = {
   room_id: string;
-  host_user_id: number;
+  host_user_id: string;
   max_players: number;
   state: RoomStage;
-  current_turn_user_id: number | null;
+  current_turn_user_id: string | null;
   ready_player_count: number;
   all_players_ready: boolean;
   dealer: DealerState;
@@ -86,7 +86,7 @@ type SingleGameState =
   | "finished_blackjack";
 
 type SingleGameStatePayload = {
-  user_id: number;
+  user_id: string;
   bet_amount: number;
   game_state: SingleGameState;
   player_hand: string[];
@@ -140,14 +140,14 @@ const seatClassByIndex: Record<number, string> = {
   2: "seat-bottom-right",
 };
 
-const viewerUserId = computed(() => Number(profile.value?.user_id ?? 0));
+const viewerUserId = computed(() => String(profile.value?.user_id ?? ""));
 const isDiscordMode = computed(() => shouldUseDiscordAuth.value);
 
 const hostDisplayName = computed(() => {
   if (!roomState.value) return "";
-  const hostId = Number(roomState.value.host_user_id);
+  const hostId = String(roomState.value.host_user_id);
   return (
-    roomState.value.players.find((p) => Number(p.user_id) === hostId)?.username ??
+    roomState.value.players.find((p) => String(p.user_id) === hostId)?.username ??
     String(roomState.value.host_user_id)
   );
 });
@@ -173,12 +173,12 @@ const seatPlayerMap = computed<Record<number, PlayerState | null>>(() => {
 const viewerPlayer = computed(() => {
   const uid = viewerUserId.value;
   if (!uid) return null;
-  return players.value.find((p) => Number(p.user_id) === uid) ?? null;
+  return players.value.find((p) => String(p.user_id) === uid) ?? null;
 });
 
 const isHost = computed(() => {
   if (!roomState.value) return false;
-  return Number(roomState.value.host_user_id) === viewerUserId.value;
+  return String(roomState.value.host_user_id) === viewerUserId.value;
 });
 
 const isMyTurn = computed(() => Boolean(viewerPlayer.value?.is_current_turn));
@@ -1107,7 +1107,7 @@ onBeforeUnmount(() => {
 
         <div v-if="profile && viewMode !== 'single' && viewMode !== 'table'" class="profile-chip">
           <img class="profile-avatar" :src="playerAvatarSrc({
-            user_id: Number(profile.user_id),
+            user_id: String(profile.user_id),
             username: profile.username,
             avatar_url: profile.avatar_url,
             seat_index: -1,
@@ -1348,7 +1348,7 @@ onBeforeUnmount(() => {
                   <img v-for="(card, idx) in seatPlayerMap[1]?.hand || []" :key="`p1-${idx}-${card}`" :src="cardImageSrc(card)" class="card multi-large-card">
               </TransitionGroup>
               <div v-if="seatPlayerMap[1]" class="balance-text" :class="{'turn-active': seatPlayerMap[1]?.is_current_turn}" style="font-size: 1.2em; padding: 5px 20px; margin: 10px 0;">
-                  <span v-if="Number(seatPlayerMap[1]?.user_id) === viewerUserId">余额：{{ profile?.balance ?? 0 }} | </span>下注: {{ seatPlayerMap[1]?.bet_amount ?? 0 }}
+                  <span v-if="String(seatPlayerMap[1]?.user_id) === viewerUserId">余额：{{ profile?.balance ?? 0 }} | </span>下注: {{ seatPlayerMap[1]?.bet_amount ?? 0 }}
                   <span v-if="seatPlayerMap[1]?.result"> | {{ getPlayerResultText(seatPlayerMap[1]!) }}</span>
                   <span v-if="roomState.state === 'waiting'"> | {{ seatPlayerMap[1]?.is_ready ? '已准备' : '未准备' }}</span>
               </div>

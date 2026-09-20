@@ -49,7 +49,7 @@ class BlackjackGame:
             ui_dealer_score = BlackjackService._calculate_hand_score(self.dealer_hand)
 
         return {
-            "user_id": self.user_id,
+            "user_id": str(self.user_id),
             "bet_amount": self.bet_amount,
             "game_state": self.game_state,
             "player_hand": self.player_hand,
