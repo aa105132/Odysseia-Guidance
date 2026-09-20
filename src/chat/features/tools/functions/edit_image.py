@@ -418,10 +418,28 @@ async def edit_image(
     if not prepared_reference_images and not prepared_reference_image:
         try:
             from src.chat.services.gemini_service import gemini_service as _gs
-            _user_uploads = [
+            # 频道隔离：只回退当前频道用户上传的图，防止多频道并发时 A 频道的图串到 B 频道。
+            _cur_channel_id = None
+            try:
+                if channel is not None and getattr(channel, "id", None):
+                    _cur_channel_id = str(channel.id)
+            except Exception:
+                pass
+            _all_uploads = [
                 item for item in (_gs.last_tool_images_data or [])
                 if item.get("tool_name") == "user_upload" and item.get("data")
             ]
+            _same_channel = [
+                item for item in _all_uploads
+                if str(item.get("channel_id") or "") == str(_cur_channel_id or "")
+            ]
+            if _same_channel:
+                _user_uploads = _same_channel
+            elif len(_all_uploads) == 1 and not _all_uploads[0].get("channel_id"):
+                # 兼容旧缓存（无 channel_id 标记）：仅一条时保守使用
+                _user_uploads = _all_uploads
+            else:
+                _user_uploads = []
             if _user_uploads:
                 latest = _user_uploads[-1]
                 prepared_reference_images = [

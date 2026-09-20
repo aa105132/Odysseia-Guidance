@@ -4938,6 +4938,12 @@ class GeminiService:
                 if isinstance(img, dict) and img.get("data") and img.get("source") != "emoji"
             ]
             if user_upload_images:
+                _up_channel_id = None
+                try:
+                    if channel is not None and getattr(channel, "id", None):
+                        _up_channel_id = str(channel.id)
+                except Exception:
+                    pass
                 for img_data in user_upload_images[:3]:
                     self._remember_tool_image_payload(
                         {
@@ -4946,6 +4952,7 @@ class GeminiService:
                             "tool_name": "user_upload",
                             "filename": str(img_data.get("filename") or "user_upload.png"),
                             "source": "user:message_attachment",
+                            "channel_id": _up_channel_id,
                         }
                     )
                 log.info(
