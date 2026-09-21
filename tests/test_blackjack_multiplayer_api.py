@@ -596,6 +596,7 @@ def test_concurrent_single_starts_create_only_one_game_and_charge(single_api):
 @pytest.mark.parametrize("endpoint", ["/api/profile", "/api/game/current"])
 @pytest.mark.parametrize(("client_host", "configured_client"), [
     ("203.0.113.10", ""), ("203.0.113.10", "123456789"), ("127.0.0.1", "123456789"),
+    ("127.0.0.1", ""), ("::1", ""), ("testclient", ""),
 ])
 def test_production_without_token_rejects_development_identity_headers(single_api, monkeypatch, endpoint, client_host, configured_client):
     single_api.module.app.dependency_overrides.clear()
@@ -613,7 +614,7 @@ def test_production_without_token_rejects_development_identity_headers(single_ap
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("client_host", ["127.0.0.1", "::1"])
+@pytest.mark.parametrize("client_host", ["127.0.0.1", "::1", "testclient"])
 def test_unconfigured_loopback_development_auth_uses_same_single_and_multi_identity(single_api, monkeypatch, client_host):
     single_api.module.app.dependency_overrides.clear()
     monkeypatch.delenv("BLACKJACK_ALLOW_DEV_AUTH", raising=False)
@@ -649,6 +650,31 @@ def test_explicit_development_flag_allows_configured_non_loopback_test_server(si
             profile = await client.get("/api/profile", headers={"X-Dev-User-Id": str(HOST_ID)})
             assert profile.status_code == 200
             assert profile.json()["user_id"] == str(HOST_ID)
+
+    asyncio.run(scenario())
+
+
+def test_discord_profile_and_cache_preserve_snowflake_string(api, monkeypatch):
+    discord_client = AsyncMock()
+    discord_client.__aenter__.return_value = discord_client
+    discord_client.get.return_value = httpx.Response(
+        200,
+        json={"id": str(HOST_ID), "username": "DiscordPlayer", "avatar": None},
+        request=httpx.Request("GET", "https://discord.com/api/users/@me"),
+    )
+    monkeypatch.setattr(api.module.httpx, "AsyncClient", lambda: discord_client)
+    token = SimpleNamespace(credentials="isolated-test-token")
+    request = Request({"type": "http", "headers": [], "client": ("127.0.0.1", 12345)})
+
+    async def scenario():
+        profile = await api.module.get_current_user_profile(request, token)
+        assert profile["user_id"] == str(HOST_ID)
+        assert profile["is_dev"] is False
+        profile["username"] = "修改返回副本"
+        cached = await api.module.get_current_user_profile(request, token)
+        assert cached["user_id"] == str(HOST_ID)
+        assert cached["username"] == "DiscordPlayer"
+        discord_client.get.assert_awaited_once()
 
     asyncio.run(scenario())
 

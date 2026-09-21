@@ -274,8 +274,12 @@ async def get_current_user_profile(
     """
     if token is None:
         local_host = request.client and request.client.host in ("127.0.0.1", "::1", "testclient")
-        allow_dev = os.getenv("BLACKJACK_ALLOW_DEV_AUTH", "").lower() == "true"
-        if not allow_dev and not (local_host and not _resolve_discord_client_id()):
+        dev_auth_setting = os.getenv("BLACKJACK_ALLOW_DEV_AUTH", "").strip().lower()
+        # 显式关闭时连回环请求也必须鉴权，避免反向代理误用开发身份。
+        allow_dev = dev_auth_setting == "true" or (
+            not dev_auth_setting and local_host and not _resolve_discord_client_id()
+        )
+        if not allow_dev:
             raise HTTPException(status_code=401, detail="请从 Discord 活动登录后再试")
         raw_dev_user_id = _strip_wrapping_quotes(request.headers.get("X-Dev-User-Id"))
         raw_dev_username = _strip_wrapping_quotes(request.headers.get("X-Dev-Username"))

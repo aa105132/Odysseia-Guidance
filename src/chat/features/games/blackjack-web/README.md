@@ -36,7 +36,7 @@ Pop-Location
 
 生产环境在仓库根 `.env` 配置 `DISCORD_CLIENT_ID`（兼容 `VITE_DISCORD_CLIENT_ID`）、`DISCORD_CLIENT_SECRET`，以及需要招募队友时的 `DISCORD_TOKEN`（兼容 `BOT_TOKEN`）。按现有 Discord 活动配置，将公开 HTTPS 地址映射至此服务，Bot 与 Web 服务使用同一持久化 `data/chat.db`。本次未修改或发布 Discord 应用配置。
 
-无 Bearer Token 时，只有未配置 Discord Client ID 的回环请求允许开发身份。生产部署必须正确配置 Client ID，并保持 `BLACKJACK_ALLOW_DEV_AUTH` 未设置或为 `false`。`BLACKJACK_ALLOW_DEV_AUTH=true` 仅供隔离测试，不能用于公开服务。开发页面可用 `?dev_user_id=123456789012345678&dev_username=PlayerA` 区分测试用户；不会因进入页面自动赠送灵石。
+无 Bearer Token 时，只有未配置 Discord Client ID 且未设置开发鉴权开关的回环请求允许开发身份。生产部署必须正确配置 Client ID，并显式设置 `BLACKJACK_ALLOW_DEV_AUTH=false`，此时回环及代理请求也必须认证。`BLACKJACK_ALLOW_DEV_AUTH=true` 仅供隔离测试，不能用于公开服务。开发页面可用 `?dev_user_id=123456789012345678&dev_username=PlayerA` 区分测试用户；不会因进入页面自动赠送灵石。
 
 ## 联机与资金恢复
 
@@ -101,3 +101,4 @@ Pop-Location
 - 修复麻将按钮内边距挤小花色、北侧头像被裁切；手牌、弃牌、副露与终局亮牌统一使用 34 张正面 SVG。
 - 定向 Python 合并回归 371 项通过；浏览器分批覆盖 14 项桌游/各座位逆时针、10 项新布局/快捷加注/四川流程、15 项动画、3 项 21 点窗口回归，另有 30 组 21 点舞台状态尺寸检查。生产构建通过，最终上线版本会在合并远端后再验证 ID 相关接口。
 - 四川规则参考：[腾讯川麻赛事规则](https://majiang.qq.com/webplat/info/news_version3/7207/25932/25933/25936/m16340/201611/523252.shtml)。该来源没有明确全部胡后接续细则，本房约定响应完成后从放炮／补杠者之后最近未胡玩家续摸，已在页面明示并有定点测试。
+- 合并主分支后，分批复验 495 项 Python 测试、7 项 21 点浏览器动画回归及生产构建，全部通过。补充显式关闭开发鉴权时的回环请求拒绝检查，以及 Discord 用户编号经资料缓存后仍保持字符串精度的检查。
