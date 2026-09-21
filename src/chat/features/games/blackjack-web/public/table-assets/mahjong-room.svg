@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" preserveAspectRatio="none">
+<defs><linearGradient id="wood" x2="1" y2="1"><stop stop-color="#101e29"/><stop offset=".5" stop-color="#33454f"/><stop offset="1" stop-color="#0c161e"/></linearGradient><radialGradient id="blue"><stop stop-color="#467b9d"/><stop offset="1" stop-color="#234b69"/></radialGradient><pattern id="weave" width="5" height="5" patternUnits="userSpaceOnUse"><path d="M0 0h5M0 0v5" stroke="#bad4df" stroke-opacity=".08"/></pattern></defs>
+<rect width="1600" height="900" fill="#09131c"/>
+<path d="M240 -20H1360L1620 920H-20Z" fill="url(#wood)"/>
+<path d="M278 -20H1322L1550 920H50Z" fill="url(#blue)" stroke="#b8a570" stroke-width="4"/>
+<path d="M278 -20H1322L1550 920H50Z" fill="url(#weave)"/>
+<g fill="none" stroke="#bdd7e1" stroke-opacity=".13" stroke-width="3"><path d="M395 140H1205L1330 710H270Z"/><path d="M420 165H1180L1295 685H305Z"/><path d="M800 270L1035 455L800 640L565 455Z"/><path d="M800 290L1010 455L800 620L590 455Z"/></g>
+<text x="800" y="468" text-anchor="middle" font-family="serif" font-size="34" fill="#a8c8d8" opacity=".1" letter-spacing="8">月月雀庄</text>
+</svg>

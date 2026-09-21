@@ -1,5 +1,6 @@
 import logging
 import random
+import sqlite3
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, List, Dict, Any
 
@@ -44,32 +45,9 @@ class CoinService:
         if amount <= 0:
             raise ValueError("增加的金额必须为正数")
 
-        # 插入或更新用户余额
-        upsert_query = """
-            INSERT INTO user_coins (user_id, balance) VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance;
-        """
-        await chat_db_manager._execute(
-            chat_db_manager._db_transaction,
-            upsert_query,
-            (user_id, amount),
-            commit=True,
+        new_balance = await chat_db_manager._execute(
+            self._change_balance, user_id, amount, reason
         )
-
-        # 记录交易
-        transaction_query = """
-            INSERT INTO coin_transactions (user_id, amount, reason)
-            VALUES (?, ?, ?);
-        """
-        await chat_db_manager._execute(
-            chat_db_manager._db_transaction,
-            transaction_query,
-            (user_id, amount, reason),
-            commit=True,
-        )
-
-        # 获取新余额
-        new_balance = await self.get_balance(user_id)
         log.info(
             f"用户 {user_id} 获得 {amount} 灵石，原因: {reason}。新余额: {new_balance}"
         )
@@ -85,40 +63,54 @@ class CoinService:
         if amount <= 0:
             raise ValueError("扣除的金额必须为正数")
 
-        current_balance = await self.get_balance(user_id)
-        if current_balance < amount:
+        new_balance = await chat_db_manager._execute(
+            self._change_balance, user_id, -amount, reason
+        )
+        if new_balance is None:
             log.warning(
-                f"用户 {user_id} 扣款失败，余额不足。需要 {amount}，拥有 {current_balance}"
+                f"用户 {user_id} 扣款失败，余额不足。需要 {amount}"
             )
             return None
-
-        # 更新余额
-        update_query = "UPDATE user_coins SET balance = balance - ? WHERE user_id = ?"
-        await chat_db_manager._execute(
-            chat_db_manager._db_transaction,
-            update_query,
-            (amount, user_id),
-            commit=True,
-        )
-
-        # 记录交易
-        transaction_query = """
-            INSERT INTO coin_transactions (user_id, amount, reason)
-            VALUES (?, ?, ?);
-        """
-        await chat_db_manager._execute(
-            chat_db_manager._db_transaction,
-            transaction_query,
-            (user_id, -amount, reason),
-            commit=True,
-        )
-
-        # 获取新余额
-        new_balance = await self.get_balance(user_id)
         log.info(
             f"用户 {user_id} 消费 {amount} 灵石，原因: {reason}。新余额: {new_balance}"
         )
         return new_balance
+
+    @staticmethod
+    def _change_balance(user_id: int, amount: int, reason: str) -> Optional[int]:
+        """余额与流水一起提交；条件扣款与桌游托管共享数据库写锁，避免透支。"""
+        connection = sqlite3.connect(chat_db_manager.db_path, timeout=15)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            if amount > 0:
+                connection.execute(
+                    "INSERT INTO user_coins (user_id, balance) VALUES (?, ?) "
+                    "ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance",
+                    (user_id, amount),
+                )
+            else:
+                updated = connection.execute(
+                    "UPDATE user_coins SET balance = balance + ? "
+                    "WHERE user_id = ? AND balance >= ?",
+                    (amount, user_id, -amount),
+                ).rowcount
+                if updated != 1:
+                    connection.rollback()
+                    return None
+            connection.execute(
+                "INSERT INTO coin_transactions (user_id, amount, reason) VALUES (?, ?, ?)",
+                (user_id, amount, reason),
+            )
+            balance = connection.execute(
+                "SELECT balance FROM user_coins WHERE user_id = ?", (user_id,)
+            ).fetchone()[0]
+            connection.commit()
+            return balance
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     async def grant_daily_message_reward(self, user_id: int) -> bool:
         """

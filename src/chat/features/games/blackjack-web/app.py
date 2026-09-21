@@ -2,13 +2,16 @@ import os
 import httpx
 import logging
 import asyncio
+import weakref
+import copy
+from contextlib import suppress
 import discord
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Literal
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from dotenv import load_dotenv
 
 # --- 灵石服务 ---
@@ -17,7 +20,52 @@ from src.chat.features.games.config import blackjack_config
 from src.chat.features.games.services.blackjack_service import blackjack_service
 from src.chat.utils.database import chat_db_manager
 from src.dashboard.service_registry import service_registry
-from multiplayer_service import multiplayer_blackjack_service
+try:
+    from .multiplayer_service import multiplayer_blackjack_service
+except ImportError:
+    from multiplayer_service import multiplayer_blackjack_service
+from importlib import import_module
+
+_table_module = import_module("src.chat.features.games.blackjack-web.table_service")
+table_service = _table_module.table_service
+StaleTableAction = _table_module.StaleTableAction
+_wallet_module = import_module("src.chat.features.games.blackjack-web.table_wallet")
+table_wallet = None
+table_tick_task = None
+
+
+def _get_table_wallet():
+    global table_wallet
+    if table_wallet is None:
+        table_wallet = _wallet_module.TableWallet(chat_db_manager.db_path)
+    return table_wallet
+
+
+async def _settle_table(room_id: str):
+    settlement = table_service.settlement(room_id)
+    if settlement is not None:
+        round_key, payouts = settlement
+        await _get_table_wallet().settle(round_key, payouts)
+        room = table_service._room(room_id)
+        room.settlement_status = "settled"
+        table_service._changed(room)
+
+
+async def _tick_tables():
+    """没有浏览器轮询时也推进超时/托管，退出不能逃避本局输赢。"""
+    while True:
+        await asyncio.sleep(1)
+        for room_id in list(table_service.rooms):
+            async with room_locks[f"table:{room_id}"]:
+                try:
+                    room = table_service.rooms.get(room_id)
+                    if room is None:
+                        continue
+                    table_service._advance_due_turn(room)
+                    await _settle_table(room_id)
+                except Exception:
+                    log.exception("桌游房间 %s 推进失败，将在下一次重试", room_id)
+        table_service._cleanup()
 
 def _strip_wrapping_quotes(value: Optional[str]) -> str:
     """去除环境变量值外层的一对引号，兼容被错误写成 '"xxx"' 的情况。"""
@@ -88,23 +136,27 @@ log = logging.getLogger(__name__)
 from cachetools import TTLCache
 
 
-class LockCache(TTLCache):
-    """一个在键缺失时创建 asyncio.Lock 的 TTLCache。"""
+class LockCache(weakref.WeakValueDictionary):
+    """使用中或仍有等待者的锁不能被缓存淘汰，否则同一房间会出现两把锁。"""
 
-    def __missing__(self, key):
-        lock = asyncio.Lock()
-        self[key] = lock
+    def __init__(self, **_):
+        super().__init__()
+
+    def __getitem__(self, key):
+        lock = self.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self[key] = lock
         return lock
 
-
-# 创建一个TTL缓存来存储用户锁，TTL设置为30分钟（1800秒）
-# 减少TTL时间以防止锁对象积累，maxsize设置为100以限制内存使用
-user_locks = LockCache(maxsize=100, ttl=1800)
-room_locks = LockCache(maxsize=200, ttl=1800)
+# 锁在最后一个使用者释放引用后自动回收。
+user_locks = LockCache()
+room_locks = LockCache()
 
 # Discord 活动会话(session_key) 与游戏房间(room_id)绑定（内存态，带TTL）
 activity_room_bindings = TTLCache(maxsize=1000, ttl=21600)
 room_activity_bindings = TTLCache(maxsize=1000, ttl=21600)
+discord_profile_cache = TTLCache(maxsize=2000, ttl=60)
 
 
 async def _record_game_result(bet_amount: int, payout_amount: int):
@@ -142,6 +194,10 @@ async def startup_event():
 
     await blackjack_service.initialize()
     log.info("Blackjack service initialized.")
+    recovered = await _get_table_wallet().recover()
+    log.info("桌游托管已恢复，退还 %s 笔中断牌局灵石", recovered)
+    global table_tick_task
+    table_tick_task = asyncio.create_task(_tick_tables())
 
 
 @app.on_event("shutdown")
@@ -150,6 +206,10 @@ async def shutdown_event():
     from src.chat.utils.database import chat_db_manager
 
     log.info("Application shutting down.")
+    if table_tick_task is not None:
+        table_tick_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await table_tick_task
 
 
 # --- 中间件：添加详细的请求日志 ---
@@ -192,43 +252,15 @@ def _build_discord_avatar_url(user_data: Dict[str, Any]) -> str:
 
 
 async def get_current_user_id(
+    request: Request,
     token: Optional[HTTPAuthorizationCredentials] = Depends(auth_scheme),
 ) -> int:
     """
     依赖项：从Bearer Token中获取用户信息并返回用户ID。
     在本地开发中，如果没有提供token，则返回一个固定的测试用户ID。
     """
-    # 如果没有token（例如在本地开发环境中），返回测试用户ID
-    if token is None:
-        log.warning(f"未找到认证Token。回退到测试用户ID: {TEST_USER_ID}")
-        return TEST_USER_ID
-
-    # 如果有token，则执行原有的Discord API验证流程
-    headers = {"Authorization": f"Bearer {token.credentials}"}
-    log.info("正在从Discord API获取用户信息...")
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                "https://discord.com/api/users/@me", headers=headers
-            )
-            response.raise_for_status()
-            user_data = response.json()
-            user_id = int(user_data["id"])
-            log.info(f"成功识别用户: {user_data['username']} ({user_id})")
-            return user_id
-        except httpx.HTTPStatusError as e:
-            log.error(
-                f"从Discord API获取用户信息失败。状态码: {e.response.status_code}，"
-                f"响应: {e.response.text}",
-                exc_info=True,
-            )
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-        except httpx.RequestError as e:
-            log.error(f"请求Discord API时发生网络错误: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=503,
-                detail="Service Unavailable: Cannot connect to Discord API",
-            )
+    profile = await get_current_user_profile(request, token)
+    return int(profile["user_id"])
 
 
 async def get_current_user_profile(
@@ -241,6 +273,10 @@ async def get_current_user_profile(
     - 本地开发模式：支持 X-Dev-User-Id / X-Dev-Username / X-Dev-Avatar-Url
     """
     if token is None:
+        local_host = request.client and request.client.host in ("127.0.0.1", "::1", "testclient")
+        allow_dev = os.getenv("BLACKJACK_ALLOW_DEV_AUTH", "").lower() == "true"
+        if not allow_dev and not (local_host and not _resolve_discord_client_id()):
+            raise HTTPException(status_code=401, detail="请从 Discord 活动登录后再试")
         raw_dev_user_id = _strip_wrapping_quotes(request.headers.get("X-Dev-User-Id"))
         raw_dev_username = _strip_wrapping_quotes(request.headers.get("X-Dev-Username"))
         raw_dev_avatar = _strip_wrapping_quotes(request.headers.get("X-Dev-Avatar-Url"))
@@ -248,6 +284,8 @@ async def get_current_user_profile(
         if raw_dev_user_id:
             try:
                 user_id = int(raw_dev_user_id)
+                if not 0 < user_id < 2**63:
+                    raise ValueError
             except ValueError:
                 raise HTTPException(
                     status_code=400, detail="X-Dev-User-Id 必须是整数"
@@ -264,6 +302,9 @@ async def get_current_user_profile(
             "is_dev": True,
         }
 
+    cached_profile = discord_profile_cache.get(token.credentials)
+    if cached_profile is not None:
+        return dict(cached_profile)
     headers = {"Authorization": f"Bearer {token.credentials}"}
     async with httpx.AsyncClient() as client:
         try:
@@ -278,12 +319,14 @@ async def get_current_user_profile(
             )
             avatar_url = _build_discord_avatar_url(user_data)
 
-            return {
+            profile = {
                 "user_id": user_id,
                 "username": username,
                 "avatar_url": avatar_url,
                 "is_dev": False,
             }
+            discord_profile_cache[token.credentials] = profile
+            return dict(profile)
         except httpx.HTTPStatusError as e:
             log.error(
                 f"从Discord API获取用户资料失败。状态码: {e.response.status_code}，"
@@ -319,6 +362,10 @@ class MultiplayerBetRequest(BaseModel):
 class MultiplayerReadyRequest(BaseModel):
     room_id: str
     ready: bool
+
+
+class BlackjackBotRequest(RoomRequest):
+    include_yueyue: bool
 
 
 class AutoJoinRoomRequest(BaseModel):
@@ -417,18 +464,7 @@ async def get_user_info(user_id: int = Depends(get_current_user_id)):
     """
     log.info(f"正在获取用户 {user_id} 的余额")
     try:
-        # --- 新增：在加载游戏时，自动清理该用户任何卡住的旧游戏 ---
-        balance = await coin_service.get_balance(user_id)
-
-        # --- 本地开发专属：为测试用户自动创建账户并补充余额 ---
-        if user_id == TEST_USER_ID and (balance is None or balance < 5000):
-            amount_to_add = 10000 - (balance or 0)
-            log.warning(
-                f"测试用户 {user_id} 余额不足或不存在。正在补充 {amount_to_add} 硬币至10000。"
-            )
-            balance = await coin_service.add_coins(
-                user_id, amount_to_add, "本地开发自动补充"
-            )
+        balance = await _ensure_user_balance(user_id)
 
         # --- 安全检查和日志记录 ---
         # 如果用户的余额记录因某种原因（例如数据异常）为空，这是一个严重问题
@@ -813,14 +849,19 @@ async def _send_recruit_message(
 
 
 def _bind_session_room(session_key: str, room_id: str) -> None:
+    previous_room = activity_room_bindings.get(session_key)
+    if previous_room and room_activity_bindings.get(previous_room) == session_key:
+        room_activity_bindings.pop(previous_room, None)
     activity_room_bindings[session_key] = room_id
     room_activity_bindings[room_id] = session_key
 
 
 def _unbind_session_by_room(room_id: str) -> None:
-    session_key = room_activity_bindings.pop(room_id, None)
-    if session_key:
-        activity_room_bindings.pop(session_key, None)
+    room_activity_bindings.pop(room_id, None)
+    # 一个房间可能同时绑定活动实例和频道，不能只清理最后一个键。
+    for session_key, bound_room in list(activity_room_bindings.items()):
+        if bound_room == room_id:
+            activity_room_bindings.pop(session_key, None)
 
 
 def _find_player_in_room_state(room_state: Dict[str, Any], user_id: int) -> Optional[Dict[str, Any]]:
@@ -835,15 +876,6 @@ def _find_player_in_room_state(room_state: Dict[str, Any], user_id: int) -> Opti
 
 async def _ensure_user_balance(user_id: int) -> int:
     balance = await coin_service.get_balance(user_id)
-
-    if user_id == TEST_USER_ID and (balance is None or balance < 5000):
-        amount_to_add = 10000 - (balance or 0)
-        log.warning(
-            f"测试用户 {user_id} 余额不足或不存在。正在补充 {amount_to_add} 硬币至10000。"
-        )
-        balance = await coin_service.add_coins(
-            user_id, amount_to_add, "本地开发自动补充"
-        )
 
     if balance is None:
         raise HTTPException(
@@ -876,10 +908,19 @@ async def _try_settle_multiplayer_round(room_id: str):
                 int(amount),
                 f"多人21点房间{room_id}结算派彩",
             )
+            multiplayer_blackjack_service.mark_payout_committed(room_id, int(uid))
 
     bet_total = int(settlement.get("bet_total", 0))
     payout_total = int(settlement.get("payout_total", 0))
     await _record_game_result(bet_total, payout_total)
+    multiplayer_blackjack_service.mark_round_committed(room_id)
+
+
+@app.get("/api/game/current")
+async def current_single_game(user_id: int = Depends(get_current_user_id)):
+    async with user_locks[user_id]:
+        game = await blackjack_service.get_active_game(user_id)
+        return {"success": True, "game": game.to_dict() if game else None, "new_balance": await _ensure_user_balance(user_id)}
 
 
 @app.post("/api/game/start")
@@ -895,12 +936,9 @@ async def start_game(
 
     log.info(f"用户 {user_id} 正在下注 {bet_amount} 开始新游戏")
     async with user_locks[user_id]:
-        # 检查并清理任何卡住的旧游戏
+        # 刷新或重复提交不能隐式没收已有的下注。
         if await blackjack_service.get_active_game(user_id):
-            log.warning(
-                f"用户 {user_id} 有一个正在进行的游戏。为了开始新游戏，旧游戏将被没收。"
-            )
-            await blackjack_service.delete_game(user_id)
+            raise HTTPException(status_code=409, detail="你还有未结束的单人牌局，请继续操作或明确放弃")
 
         # 扣除赌注
         new_balance = await coin_service.remove_coins(
@@ -1378,6 +1416,8 @@ async def multi_leave_room(
                     )
 
             leave_result = multiplayer_blackjack_service.leave_room(room_id, user_id)
+            # 离开者可能是最后一位尚未操作的玩家，此时引擎会立即结束本局。
+            await _try_settle_multiplayer_round(room_id)
             if isinstance(leave_result, dict) and leave_result.get("room_closed"):
                 _unbind_session_by_room(room_id)
 
@@ -1401,21 +1441,25 @@ async def multi_get_room(
     normalized_room_id = _normalize_room_id(room_id)
     user_id = int(user["user_id"])
 
-    try:
-        room_state = multiplayer_blackjack_service.get_room_state(normalized_room_id)
-        if not _find_player_in_room_state(room_state, user_id):
-            raise HTTPException(status_code=403, detail="你不在该房间中，请先加入房间")
+    async with room_locks[_room_lock_key(normalized_room_id)]:
+        try:
+            room_state = multiplayer_blackjack_service.get_room_state(normalized_room_id)
+            if not _find_player_in_room_state(room_state, user_id):
+                raise HTTPException(status_code=403, detail="你不在该房间中，请先加入房间")
 
-        balance = await _ensure_user_balance(user_id)
-        return JSONResponse(
-            content={
-                "success": True,
-                "room": room_state,
-                "viewer_balance": balance,
-            }
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+            # 轮询也负责重试未完成的派彩，并结算超时自动停牌产生的结果。
+            await _try_settle_multiplayer_round(normalized_room_id)
+            room_state = multiplayer_blackjack_service.get_room_state(normalized_room_id)
+            balance = await _ensure_user_balance(user_id)
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "room": room_state,
+                    "viewer_balance": balance,
+                }
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/multi/room/bet")
@@ -1430,15 +1474,24 @@ async def multi_set_bet(
     if new_amount <= 0:
         raise HTTPException(status_code=400, detail="下注金额必须大于0")
 
-    async with room_locks[_room_lock_key(room_id)]:
+    async with room_locks[_room_lock_key(room_id)], user_locks[user_id]:
         additional_deducted = 0
+        bet_committed = False
         try:
             room_before = multiplayer_blackjack_service.get_room_state(room_id)
             player_before = _find_player_in_room_state(room_before, user_id)
             if not player_before:
                 raise ValueError("你不在该房间中")
 
-            old_amount = int(player_before.get("bet_amount") or 0)
+            if room_before.get("state") not in ("waiting", "finished"):
+                raise ValueError("本局进行中，无法修改下注")
+            await _try_settle_multiplayer_round(room_id)
+            # 已结束局的下注已经消耗，新一局必须重新扣除全额。
+            old_amount = (
+                int(player_before.get("bet_amount") or 0)
+                if room_before.get("state") == "waiting"
+                else 0
+            )
             additional = max(0, new_amount - old_amount)
             refund = max(0, old_amount - new_amount)
 
@@ -1450,14 +1503,15 @@ async def multi_set_bet(
                     raise HTTPException(status_code=402, detail="余额不足，无法下注")
                 additional_deducted = additional
 
-            room_state = multiplayer_blackjack_service.set_bet(
-                room_id=room_id, user_id=user_id, amount=new_amount
-            )
-
             if refund > 0:
                 await coin_service.add_coins(
                     user_id, refund, f"多人21点房间{room_id}减少下注退还差额"
                 )
+
+            room_state = multiplayer_blackjack_service.set_bet(
+                room_id=room_id, user_id=user_id, amount=new_amount
+            )
+            bet_committed = True
 
             balance = await _ensure_user_balance(user_id)
             return JSONResponse(
@@ -1468,7 +1522,7 @@ async def multi_set_bet(
                 }
             )
         except HTTPException:
-            if additional_deducted > 0:
+            if additional_deducted > 0 and not bet_committed:
                 await coin_service.add_coins(
                     user_id,
                     additional_deducted,
@@ -1476,7 +1530,7 @@ async def multi_set_bet(
                 )
             raise
         except ValueError as e:
-            if additional_deducted > 0:
+            if additional_deducted > 0 and not bet_committed:
                 await coin_service.add_coins(
                     user_id,
                     additional_deducted,
@@ -1484,7 +1538,7 @@ async def multi_set_bet(
                 )
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            if additional_deducted > 0:
+            if additional_deducted > 0 and not bet_committed:
                 await coin_service.add_coins(
                     user_id,
                     additional_deducted,
@@ -1522,6 +1576,22 @@ async def multi_set_ready(
             raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/multi/room/bot")
+async def multi_configure_bot(request: BlackjackBotRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    room_id = _normalize_room_id(request.room_id)
+    user_id = int(user["user_id"])
+    async with room_locks[_room_lock_key(room_id)]:
+        try:
+            before = multiplayer_blackjack_service.get_room_state(room_id)
+            if not _find_player_in_room_state(before, user_id):
+                raise HTTPException(status_code=403, detail="请先加入房间")
+            await _try_settle_multiplayer_round(room_id)
+            room = multiplayer_blackjack_service.configure_bot(room_id, user_id, request.include_yueyue)
+            return {"success": True, "room": room, "viewer_balance": await _ensure_user_balance(user_id)}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.post("/api/multi/room/continue-ready")
 async def multi_continue_ready(
     request: RoomRequest,
@@ -1530,8 +1600,9 @@ async def multi_continue_ready(
     room_id = _normalize_room_id(request.room_id)
     user_id = int(user["user_id"])
 
-    async with room_locks[_room_lock_key(room_id)]:
+    async with room_locks[_room_lock_key(room_id)], user_locks[user_id]:
         deducted_amount = 0
+        bet_committed = False
         try:
             room_before = multiplayer_blackjack_service.get_room_state(room_id)
             player_before = _find_player_in_room_state(room_before, user_id)
@@ -1541,6 +1612,8 @@ async def multi_continue_ready(
             room_stage = str(room_before.get("state") or "")
             if room_stage in ("playing", "dealer_turn"):
                 raise ValueError("本局进行中，暂时无法继续准备")
+
+            await _try_settle_multiplayer_round(room_id)
 
             current_bet = int(player_before.get("bet_amount") or 0)
             if room_stage == "waiting" and current_bet > 0:
@@ -1586,6 +1659,7 @@ async def multi_continue_ready(
                 room_id=room_id,
                 user_id=user_id,
             )
+            bet_committed = True
             balance = await _ensure_user_balance(user_id)
             return JSONResponse(
                 content={
@@ -1595,7 +1669,7 @@ async def multi_continue_ready(
                 }
             )
         except HTTPException:
-            if deducted_amount > 0:
+            if deducted_amount > 0 and not bet_committed:
                 await coin_service.add_coins(
                     user_id,
                     deducted_amount,
@@ -1603,7 +1677,7 @@ async def multi_continue_ready(
                 )
             raise
         except ValueError as e:
-            if deducted_amount > 0:
+            if deducted_amount > 0 and not bet_committed:
                 await coin_service.add_coins(
                     user_id,
                     deducted_amount,
@@ -1611,7 +1685,7 @@ async def multi_continue_ready(
                 )
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            if deducted_amount > 0:
+            if deducted_amount > 0 and not bet_committed:
                 await coin_service.add_coins(
                     user_id,
                     deducted_amount,
@@ -1694,6 +1768,182 @@ async def multi_stand(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+
+class TableCreateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    game_type: str
+    mode: str = "multi"
+    include_yueyue: bool = True
+    room_tier: str = "beginner"
+    base_stake: Optional[int] = Field(default=None, ge=1, le=(2**53 - 1) // 80, strict=True)
+    loss_limit: Optional[int] = Field(default=None, ge=100, le=(2**53 - 1) // 8, strict=True)
+
+
+class TableSettingsRequest(RoomRequest):
+    model_config = {"extra": "forbid"}
+    base_stake: int = Field(ge=1, le=(2**53 - 1) // 80, strict=True)
+    loss_limit: int = Field(ge=100, le=(2**53 - 1) // 8, strict=True)
+
+
+class TableReadyRequest(RoomRequest):
+    ready: bool
+
+
+class TableBotsRequest(RoomRequest):
+    model_config = {"extra": "forbid"}
+    operation: str
+    count: Optional[int] = Field(default=None, ge=1, le=8, strict=True)
+    bot_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
+
+
+class TableActionRequest(RoomRequest):
+    action: str = Field(min_length=1, max_length=30)
+    expected_revision: Optional[int] = Field(default=None, ge=0)
+    amount: Optional[int] = Field(default=None, ge=0, le=2**53 - 1, strict=True)
+    bid: Optional[int] = Field(default=None, ge=0, le=3)
+    cards: Optional[List[str]] = Field(default=None, max_length=20)
+    tile: Optional[str] = Field(default=None, max_length=20)
+    tiles: Optional[List[str]] = Field(default=None, max_length=4)
+    target_id: Optional[str] = Field(default=None, max_length=80)
+    suit: Optional[Literal["m", "p", "s"]] = None
+
+    @model_validator(mode="after")
+    def validate_missing_suit(self):
+        if self.action == "dingque" and self.suit is None:
+            raise ValueError("定缺操作必须选择万、筒或条")
+        if self.suit is not None and self.action != "dingque":
+            raise ValueError("缺门参数只能用于定缺操作")
+        return self
+
+
+async def _table_operation(room_id: str, operation, *args, **kwargs):
+    """同房间读写串行；只有经过身份校验的服务视图可以返回到浏览器。"""
+    normalized = _normalize_room_id(room_id)
+    async with room_locks[f"table:{normalized}"]:
+        try:
+            existing = table_service._room(normalized)
+            viewer_id = str(args[0]["user_id"]) if isinstance(args[0], dict) else str(args[0])
+            if operation != table_service.join:
+                table_service._member(existing, viewer_id)
+            # 加入、离开或修改座位前完成原参与者的结算。
+            await _settle_table(normalized)
+            if operation == table_service.join and viewer_id not in existing.players:
+                await _check_table_entry([viewer_id], existing.entry_min)
+            elif operation == table_service.settings:
+                configured = table_service.validate_settings(normalized, *args, **kwargs)
+                await _check_table_entry(
+                    [uid for uid, player in configured.players.items() if not player.is_bot],
+                    args[2],
+                )
+            room = operation(normalized, *args, **kwargs)
+            if normalized in table_service.rooms:
+                await _settle_table(normalized)
+                if room is not None:
+                    room = table_service._snapshot(table_service._room(normalized), viewer_id)
+            balance = await _ensure_user_balance(int(viewer_id))
+            return {"success": True, "room": room, "viewer_balance": balance}
+        except StaleTableAction as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+
+async def _check_table_entry(user_ids: list[str], entry_min: int):
+    for user_id in user_ids:
+        if await _ensure_user_balance(int(user_id)) < entry_min:
+            raise HTTPException(status_code=402, detail=f"玩家 {user_id} 灵石不足，场次准入需要 {entry_min} 灵石")
+
+
+@app.post("/api/tables/create")
+async def create_table(request: TableCreateRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    async with room_locks["table:create"]:
+        try:
+            # 恢复已存在的牌局时，账户已冻结灵石，不能再次套用新入场门槛。
+            existing = next((room for room in table_service.rooms.values()
+                             if str(user["user_id"]) in room.players
+                             and room.players[str(user["user_id"])].connected), None)
+            if existing is None:
+                _, entry_min, _ = _table_module.room_settings(
+                    request.room_tier, request.base_stake, request.loss_limit,
+                )
+                await _check_table_entry([str(user["user_id"])], entry_min)
+            room = table_service.create(user, request.game_type, request.mode, request.include_yueyue,
+                                        request.room_tier, request.base_stake, request.loss_limit)
+            return {"success": True, "room": room, "viewer_balance": await _ensure_user_balance(int(user["user_id"]))}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tables/join")
+async def join_table(request: RoomRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    return await _table_operation(request.room_id, table_service.join, user)
+
+
+@app.get("/api/tables/{room_id}")
+async def get_table(room_id: str, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    return await _table_operation(room_id, table_service.get, str(user["user_id"]))
+
+
+@app.post("/api/tables/ready")
+async def ready_table(request: TableReadyRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    return await _table_operation(request.room_id, table_service.ready, str(user["user_id"]), request.ready)
+
+
+@app.post("/api/tables/bots")
+async def configure_table_bots(request: TableBotsRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    return await _table_operation(request.room_id, table_service.bots, str(user["user_id"]),
+                                  request.operation, request.count, request.bot_id)
+
+
+@app.post("/api/tables/settings")
+async def set_table_settings(request: TableSettingsRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    return await _table_operation(request.room_id, table_service.settings, str(user["user_id"]),
+                                  request.base_stake, request.loss_limit)
+
+
+@app.post("/api/tables/start")
+async def start_table(request: RoomRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    room_id = _normalize_room_id(request.room_id)
+    async with room_locks[f"table:{room_id}"]:
+        try:
+            room = table_service._room(room_id)
+            table_service._member(room, str(user["user_id"]))
+            await _settle_table(room_id)
+            previous = copy.deepcopy(room)
+            table_service.start(room_id, str(user["user_id"]))
+            # 所有玩家在一个数据库事务中扣款，任一人不足则整桌回滚。
+            try:
+                await _get_table_wallet().reserve(
+                    str(room.escrow_key),
+                    [uid for uid, player in room.players.items() if not player.is_bot],
+                    room.buy_in,
+                    room.entry_min,
+                )
+            except BaseException:
+                table_service.rooms[room_id] = previous
+                raise
+            await _settle_table(room_id)
+            return {"success": True, "room": table_service._snapshot(room, str(user["user_id"])), "viewer_balance": await _ensure_user_balance(int(user["user_id"]))}
+        except _wallet_module.InsufficientTableBalance as exc:
+            raise HTTPException(status_code=402, detail=str(exc))
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tables/action")
+async def act_table(request: TableActionRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    payload = request.model_dump(exclude_none=True, exclude={"room_id", "action", "expected_revision"})
+    return await _table_operation(request.room_id, table_service.action, str(user["user_id"]), request.action, expected_revision=request.expected_revision, **payload)
+
+
+@app.post("/api/tables/leave")
+async def leave_table(request: RoomRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    return await _table_operation(request.room_id, table_service.leave, str(user["user_id"]))
 
 
 # --- 静态文件服务 (仅在生产构建后生效) ---

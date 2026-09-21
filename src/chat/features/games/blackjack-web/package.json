@@ -5,16 +5,20 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test:ui": "playwright test",
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.4.0",
     "vue": "^3.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@vitejs/plugin-vue": "latest",
     "typescript": "~5.9.3",
-    "vite": "^7.1.7"
+    "vite": "^7.1.7",
+    "vue-tsc": "^3.3.11"
   }
 }

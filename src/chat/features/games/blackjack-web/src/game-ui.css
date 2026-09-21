@@ -1,0 +1,46 @@
+/* 国潮茶楼共用按钮：金边、亮面和厚底保持各玩法一致。 */
+:root {
+  --game-ink: #fff0ce;
+  --game-muted: #cfcae6;
+  --game-gold: #f1cf88;
+  --game-gold-deep: #ab753c;
+  --game-ocean: #404d85;
+  --game-line: #efd29d70;
+}
+.game-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid #efd89a;
+  border-radius: 24px;
+  background-color: #367fb5;
+  background-image: linear-gradient(180deg, #81c5eec4 0%, #419acf80 39%, #2368a41a 41%, #285787b3 100%);
+  background-size: 100% 100%;
+  color: #fff4d5;
+  box-shadow: inset 0 2px 0 #f0f5ee70, inset 0 -2px 0 #15366680, 0 3px 0 #38334b, 0 4px 6px #251f4440;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-shadow: 0 1px 1px #263d6b, 0 -1px 0 #35527c80;
+  line-height: 1.25;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background-color .15s, border-color .15s, filter .15s;
+}
+.game-button.gold { background-color: #ed9234; background-image: linear-gradient(180deg, #ffe577 0%, #ffc051 38%, #fca13c 40%, #e96c29 78%, #cd4725 100%); border-color: #fff0a9; color: #fff3ca; text-shadow: 0 1px 1px #96401a, 1px 0 1px #96401a, -1px 0 1px #96401a; box-shadow: inset 0 2px 0 #fff3b4ba, inset 0 -2px 0 #ab391b99, 0 3px 0 #7f3c32, 0 4px 7px #251f4440; }
+.game-button.quiet { background-color: #667cac; background-image: linear-gradient(180deg, #adc2e777, #788aba33 40%, #3e457655); border-color: #e8d69d; color: #fff1d4; }
+.game-button:hover:not(:disabled) { filter: brightness(1.1); border-color: #fff0b4; }
+.game-button:active:not(:disabled) { filter: brightness(.98); }
+.game-button:focus-visible { outline: 2px solid #f0d99c; outline-offset: 3px; }
+.game-button:disabled { opacity: .5; filter: saturate(.5); cursor: not-allowed; }
+.game-button .game-icon { width: 24px; height: 22px; flex: 0 0 24px; }
+@media (max-height: 600px), (max-width: 900px) {
+  .game-button { min-height: 36px; padding: 7px 12px; font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .game-button { transition: none; } }

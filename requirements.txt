@@ -27,6 +27,8 @@ soundfile
 
 # Web UI 依赖
 fastapi
+httpx
+cachetools
 uvicorn
 gunicorn
 eventlet

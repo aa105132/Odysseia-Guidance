@@ -2,7 +2,7 @@ import random
 import string
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 
 
 SUITS = ["Club", "Diamond", "Heart", "Spade"]
@@ -53,6 +53,7 @@ class MultiplayerPlayerState:
     result: Optional[str] = None  # win | loss | push | blackjack
     payout_amount: int = 0
     is_ready: bool = False
+    is_bot: bool = False
 
 
 @dataclass
@@ -65,12 +66,17 @@ class MultiplayerRoom:
     dealer_hand: List[str] = field(default_factory=list)
     turn_order: List[int] = field(default_factory=list)
     current_turn_index: int = 0
+    turn_deadline: Optional[float] = None
     payouts_committed: bool = False
+    committed_payout_user_ids: Set[int] = field(default_factory=set)
+    forfeited_bet_total: int = 0
     updated_at: float = field(default_factory=lambda: time.time())
 
 
 class MultiplayerBlackjackService:
     MAX_PLAYERS = 3
+    TURN_TIMEOUT_SECONDS = 60
+    YUEYUE_USER_ID = -1
 
     def __init__(self):
         self._rooms: Dict[str, MultiplayerRoom] = {}
@@ -106,6 +112,9 @@ class MultiplayerBlackjackService:
         room = self._rooms.get(room_id)
         if not room:
             raise ValueError("房间不存在或已关闭")
+        self._drive_bot_turns(room)
+        self._expire_turn_if_needed(room)
+        self._drive_bot_turns(room)
         return room
 
     def _to_player_dict(self, player: MultiplayerPlayerState, room: MultiplayerRoom) -> Dict[str, Any]:
@@ -114,22 +123,24 @@ class MultiplayerBlackjackService:
             current_turn_user_id = room.turn_order[room.current_turn_index]
 
         return {
-            "user_id": player.user_id,
+            "user_id": str(player.user_id),
             "username": player.username,
             "avatar_url": player.avatar_url,
             "seat_index": player.seat_index,
             "bet_amount": player.bet_amount,
             "last_bet_amount": player.last_bet_amount,
-            "hand": player.hand,
+            "hand": list(player.hand),
             "score": _calculate_hand_score(player.hand),
             "status": player.status,
             "result": player.result,
             "payout_amount": player.payout_amount,
             "is_ready": player.is_ready,
+            "is_bot": player.is_bot,
             "is_current_turn": current_turn_user_id == player.user_id,
         }
 
     def _to_room_state(self, room: MultiplayerRoom) -> Dict[str, Any]:
+        self._drive_bot_turns(room)
         players = sorted(room.players.values(), key=lambda p: p.seat_index)
 
         current_turn_user_id = None
@@ -140,7 +151,7 @@ class MultiplayerBlackjackService:
         show_all_dealer_cards = room.state in ("dealer_turn", "finished")
 
         if show_all_dealer_cards:
-            dealer_hand = room.dealer_hand
+            dealer_hand = list(room.dealer_hand)
             dealer_score = _calculate_hand_score(room.dealer_hand) if room.dealer_hand else 0
         else:
             if len(room.dealer_hand) >= 2:
@@ -162,10 +173,15 @@ class MultiplayerBlackjackService:
 
         return {
             "room_id": room.room_id,
-            "host_user_id": room.host_user_id,
+            "host_user_id": str(room.host_user_id),
             "max_players": self.MAX_PLAYERS,
+            "include_yueyue": self.YUEYUE_USER_ID in room.players,
             "state": room.state,
-            "current_turn_user_id": current_turn_user_id,
+            "current_turn_user_id": (
+                str(current_turn_user_id) if current_turn_user_id is not None else None
+            ),
+            "turn_deadline": room.turn_deadline,
+            "turn_timeout_seconds": self.TURN_TIMEOUT_SECONDS,
             "ready_player_count": ready_player_count,
             "all_players_ready": all_players_ready,
             "dealer": {
@@ -179,6 +195,8 @@ class MultiplayerBlackjackService:
         }
 
     def create_room(self, user_id: int, username: str, avatar_url: str) -> Dict[str, Any]:
+        if user_id == self.YUEYUE_USER_ID:
+            raise ValueError("该用户编号保留给月月陪玩")
         room_id = self._generate_room_id()
         room = MultiplayerRoom(room_id=room_id, host_user_id=user_id)
         room.players[user_id] = MultiplayerPlayerState(
@@ -192,6 +210,8 @@ class MultiplayerBlackjackService:
         return self._to_room_state(room)
 
     def join_room(self, room_id: str, user_id: int, username: str, avatar_url: str) -> Dict[str, Any]:
+        if user_id == self.YUEYUE_USER_ID:
+            raise ValueError("该用户编号保留给月月陪玩")
         room = self._get_room_or_raise(room_id)
 
         if user_id in room.players:
@@ -217,6 +237,44 @@ class MultiplayerBlackjackService:
         self._touch(room)
         return self._to_room_state(room)
 
+    def configure_bot(self, room_id: str, host_user_id: int, include_yueyue: bool) -> Dict[str, Any]:
+        room = self._get_room_or_raise(room_id)
+        if host_user_id != room.host_user_id:
+            raise ValueError("只有房主可以配置月月陪玩")
+        if type(include_yueyue) is not bool:
+            raise ValueError("是否加入月月必须为布尔值")
+        if room.state not in ("waiting", "finished"):
+            raise ValueError("本局进行中，不能增减月月陪玩")
+        if room.state == "finished" and not room.payouts_committed:
+            raise ValueError("本局仍在结算，请稍后配置月月陪玩")
+        if include_yueyue and self.YUEYUE_USER_ID not in room.players:
+            if len(room.players) >= self.MAX_PLAYERS:
+                raise ValueError("房间人数已满（最多3人），请先腾出一个座位")
+            used_seats = {player.seat_index for player in room.players.values()}
+            seat_index = next(index for index in range(self.MAX_PLAYERS) if index not in used_seats)
+            room.players[self.YUEYUE_USER_ID] = MultiplayerPlayerState(
+                user_id=self.YUEYUE_USER_ID,
+                username="月月（陪玩）",
+                avatar_url="/character/normal.webp",
+                seat_index=seat_index,
+                is_ready=True,
+                is_bot=True,
+            )
+        elif not include_yueyue:
+            room.players.pop(self.YUEYUE_USER_ID, None)
+        if room.state == "waiting":
+            self._sync_bot_bet(room)
+        self._touch(room)
+        return self._to_room_state(room)
+
+    def _sync_bot_bet(self, room: MultiplayerRoom) -> None:
+        bot = room.players.get(self.YUEYUE_USER_ID)
+        host = room.players.get(room.host_user_id)
+        if bot and host and room.state == "waiting":
+            bot.bet_amount = host.bet_amount
+            bot.last_bet_amount = host.bet_amount
+            bot.is_ready = True
+
     def get_room_state(self, room_id: str) -> Dict[str, Any]:
         room = self._get_room_or_raise(room_id)
         return self._to_room_state(room)
@@ -227,22 +285,37 @@ class MultiplayerBlackjackService:
         if user_id not in room.players:
             return self._to_room_state(room)
 
-        del room.players[user_id]
+        previous_turn_user_id = self._current_turn_user_id(room)
+        departing_player = room.players.pop(user_id)
+        if room.state in ("playing", "dealer_turn") and not departing_player.is_bot:
+            room.forfeited_bet_total += departing_player.bet_amount
 
-        # 若房间空了，直接销毁
-        if not room.players:
+        # 真人全部离开时关闭房间，不能留下机器人主持的孤立牌桌。
+        human_players = [player for player in room.players.values() if not player.is_bot]
+        if not human_players:
             del self._rooms[room_id]
             return {"room_closed": True, "room_id": room_id}
 
         # 主持人离开时转移主持权
         if room.host_user_id == user_id:
-            room.host_user_id = sorted(room.players.keys())[0]
+            room.host_user_id = min(
+                human_players, key=lambda player: player.seat_index
+            ).user_id
+            self._sync_bot_bet(room)
 
         # 若游戏中离开，移除其行动位；玩家已下注则默认判负（不退赌注）
         if room.state in ("playing", "dealer_turn"):
-            room.turn_order = [uid for uid in room.turn_order if uid in room.players]
-            if room.current_turn_index >= len(room.turn_order):
-                room.current_turn_index = max(0, len(room.turn_order) - 1)
+            # 已操作玩家不应因前方座位离开而再次获得回合，也不能跳过下一位。
+            room.turn_order = [
+                uid
+                for uid in room.turn_order
+                if uid in room.players and room.players[uid].status == "playing"
+            ]
+            room.current_turn_index = 0
+            if not room.turn_order:
+                self._resolve_dealer_and_settle(room)
+            elif self._current_turn_user_id(room) != previous_turn_user_id:
+                self._start_turn_timer(room)
 
         self._touch(room)
         return self._to_room_state(room)
@@ -252,6 +325,8 @@ class MultiplayerBlackjackService:
         player = room.players.get(user_id)
         if not player:
             raise ValueError("你不在该房间中")
+        if player.is_bot:
+            raise ValueError("月月陪玩的下注随房主自动调整")
 
         if amount <= 0:
             raise ValueError("下注金额必须大于0")
@@ -266,6 +341,7 @@ class MultiplayerBlackjackService:
         player.bet_amount = amount
         player.last_bet_amount = amount
         player.is_ready = False
+        self._sync_bot_bet(room)
         self._touch(room)
         return self._to_room_state(room)
 
@@ -274,9 +350,14 @@ class MultiplayerBlackjackService:
         player = room.players.get(user_id)
         if not player:
             raise ValueError("你不在该房间中")
+        if player.is_bot:
+            raise ValueError("月月陪玩自动准备")
 
         if room.state in ("playing", "dealer_turn"):
             raise ValueError("本局进行中，无法修改准备状态")
+
+        if room.state == "finished":
+            raise ValueError("请先下注或沿用上局下注，再准备新一局")
 
         if ready and player.bet_amount <= 0:
             raise ValueError("请先下注再准备")
@@ -290,19 +371,22 @@ class MultiplayerBlackjackService:
         player = room.players.get(user_id)
         if not player:
             raise ValueError("你不在该房间中")
+        if player.is_bot:
+            raise ValueError("月月陪玩的下注随房主自动调整")
 
         if room.state in ("playing", "dealer_turn"):
             raise ValueError("本局进行中，暂时无法继续准备")
-
-        if room.state == "finished":
-            self._reset_round(room)
 
         target_bet = int(player.last_bet_amount or 0)
         if target_bet <= 0:
             raise ValueError("你上一局没有有效下注，请先手动设置下注")
 
+        if room.state == "finished":
+            self._reset_round(room)
+
         player.bet_amount = target_bet
         player.is_ready = True
+        self._sync_bot_bet(room)
         self._touch(room)
         return self._to_room_state(room)
 
@@ -314,9 +398,8 @@ class MultiplayerBlackjackService:
         if room.state in ("playing", "dealer_turn"):
             raise ValueError("本局游戏已经开始")
 
-        # 支持 finished 后继续开新局
         if room.state == "finished":
-            self._reset_round(room)
+            raise ValueError("请先完成新一局下注并准备")
 
         if not room.players:
             raise ValueError("房间内没有玩家")
@@ -331,7 +414,10 @@ class MultiplayerBlackjackService:
                 "以下玩家尚未完成下注并准备: " + "、".join(not_ready_names)
             )
 
-        participants = [p for p in room.players.values() if p.bet_amount > 0]
+        participants = sorted(
+            (p for p in room.players.values() if p.bet_amount > 0),
+            key=lambda player: player.seat_index,
+        )
         if not participants:
             raise ValueError("至少需要一名已下注玩家才能开始")
 
@@ -340,14 +426,17 @@ class MultiplayerBlackjackService:
         room.dealer_hand = [room.deck.pop(), room.deck.pop()]
         room.turn_order = []
         room.current_turn_index = 0
+        room.turn_deadline = None
         room.payouts_committed = False
+        room.committed_payout_user_ids.clear()
+        room.forfeited_bet_total = 0
 
         for p in participants:
             p.hand = [room.deck.pop(), room.deck.pop()]
             score = _calculate_hand_score(p.hand)
             p.result = None
             p.payout_amount = 0
-            p.is_ready = False
+            p.is_ready = p.is_bot
             if score == 21:
                 p.status = "blackjack"
             else:
@@ -360,12 +449,14 @@ class MultiplayerBlackjackService:
                 p.result = None
                 p.payout_amount = 0
                 p.status = "waiting"
-                p.is_ready = False
+                p.is_ready = p.is_bot
 
         room.state = "playing"
 
-        if not room.turn_order:
+        if _calculate_hand_score(room.dealer_hand) == 21 or not room.turn_order:
             self._resolve_dealer_and_settle(room)
+        else:
+            self._start_turn_timer(room)
 
         self._touch(room)
         return self._to_room_state(room)
@@ -418,7 +509,7 @@ class MultiplayerBlackjackService:
 
     def settle_if_finished(self, room_id: str) -> Dict[str, Any]:
         """
-        仅在房间状态 finished 且尚未提交结算时返回一次性结算数据。
+        返回尚未派彩的玩家。调用方必须在实际入账后逐人确认，最终确认整局。
         返回:
             {
                 "committed": bool,
@@ -428,8 +519,10 @@ class MultiplayerBlackjackService:
             }
         """
         room = self._get_room_or_raise(room_id)
-        bet_total = sum(p.bet_amount for p in room.players.values() if p.bet_amount > 0)
-        payout_total = sum(p.payout_amount for p in room.players.values() if p.bet_amount > 0)
+        bet_total = room.forfeited_bet_total + sum(
+            p.bet_amount for p in room.players.values() if p.bet_amount > 0 and not p.is_bot
+        )
+        payout_total = sum(p.payout_amount for p in room.players.values() if p.bet_amount > 0 and not p.is_bot)
 
         if room.state != "finished" or room.payouts_committed:
             return {
@@ -439,12 +532,11 @@ class MultiplayerBlackjackService:
                 "payout_total": payout_total,
             }
 
-        room.payouts_committed = True
-        self._touch(room)
         payouts = {
             p.user_id: p.payout_amount
             for p in room.players.values()
-            if p.bet_amount > 0 and p.payout_amount > 0
+            if p.bet_amount > 0 and p.payout_amount > 0 and not p.is_bot
+            and p.user_id not in room.committed_payout_user_ids
         }
         return {
             "committed": True,
@@ -453,13 +545,54 @@ class MultiplayerBlackjackService:
             "payout_total": payout_total,
         }
 
+    def mark_payout_committed(self, room_id: str, user_id: int) -> None:
+        room = self._get_room_or_raise(room_id)
+        if room.state != "finished":
+            raise ValueError("本局尚未结束，无法确认派彩")
+        player = room.players.get(user_id)
+        if not player or player.is_bot or player.payout_amount <= 0:
+            raise ValueError("该玩家没有待确认的派彩")
+        room.committed_payout_user_ids.add(user_id)
+        self._touch(room)
+
+    def mark_round_committed(self, room_id: str) -> None:
+        room = self._get_room_or_raise(room_id)
+        if room.state != "finished":
+            raise ValueError("本局尚未结束，无法确认结算")
+        if any(
+            not player.is_bot and player.payout_amount > 0
+            and player.user_id not in room.committed_payout_user_ids
+            for player in room.players.values()
+        ):
+            raise ValueError("尚有玩家派彩未完成，无法确认结算")
+        room.payouts_committed = True
+        self._touch(room)
+
     def get_round_bet_total(self, room_id: str) -> int:
         room = self._get_room_or_raise(room_id)
-        return sum(p.bet_amount for p in room.players.values() if p.bet_amount > 0)
+        return room.forfeited_bet_total + sum(
+            p.bet_amount for p in room.players.values() if p.bet_amount > 0 and not p.is_bot
+        )
 
     def get_round_payout_total(self, room_id: str) -> int:
         room = self._get_room_or_raise(room_id)
-        return sum(p.payout_amount for p in room.players.values() if p.bet_amount > 0)
+        return sum(p.payout_amount for p in room.players.values() if p.bet_amount > 0 and not p.is_bot)
+
+    def _drive_bot_turns(self, room: MultiplayerRoom) -> None:
+        """月月只依据自己的手牌行动；到 17 点停牌，立即交回下一真人。"""
+        while room.state == "playing":
+            player = room.players.get(self._current_turn_user_id(room))
+            if not player or not player.is_bot:
+                return
+            while _calculate_hand_score(player.hand) < 17:
+                player.hand.append(room.deck.pop())
+            if _calculate_hand_score(player.hand) > 21:
+                player.status = "bust"
+                player.result = "loss"
+            else:
+                player.status = "stood"
+            self._advance_turn(room)
+            self._touch(room)
 
     def _current_turn_user_id(self, room: MultiplayerRoom) -> Optional[int]:
         if room.state != "playing" or not room.turn_order:
@@ -467,6 +600,23 @@ class MultiplayerBlackjackService:
         if room.current_turn_index >= len(room.turn_order):
             return None
         return room.turn_order[room.current_turn_index]
+
+    def _start_turn_timer(self, room: MultiplayerRoom) -> None:
+        room.turn_deadline = time.time() + self.TURN_TIMEOUT_SECONDS
+
+    def _expire_turn_if_needed(self, room: MultiplayerRoom) -> None:
+        if (
+            room.state != "playing"
+            or room.turn_deadline is None
+            or time.time() < room.turn_deadline
+        ):
+            return
+        player = room.players.get(self._current_turn_user_id(room))
+        if player and player.status == "playing":
+            # 断线或长时间不操作时自动停牌，其他玩家可以继续本局。
+            player.status = "stood"
+        self._advance_turn(room)
+        self._touch(room)
 
     def _advance_turn(self, room: MultiplayerRoom) -> None:
         if room.state != "playing":
@@ -478,6 +628,7 @@ class MultiplayerBlackjackService:
             player = room.players.get(uid)
             if player and player.status == "playing":
                 room.current_turn_index = next_index
+                self._start_turn_timer(room)
                 return
             next_index += 1
 
@@ -491,6 +642,7 @@ class MultiplayerBlackjackService:
 
         dealer_score = _calculate_hand_score(room.dealer_hand)
         dealer_bust = dealer_score > 21
+        dealer_blackjack = len(room.dealer_hand) == 2 and dealer_score == 21
 
         for player in room.players.values():
             if player.bet_amount <= 0:
@@ -498,9 +650,15 @@ class MultiplayerBlackjackService:
 
             player_score = _calculate_hand_score(player.hand)
 
-            if player.status == "blackjack":
+            if dealer_blackjack:
+                # 双方天然黑杰克为平局，补牌得到的 21 点不能与之打平。
+                player.result = "push" if player.status == "blackjack" else "loss"
+                player.payout_amount = (
+                    player.bet_amount if player.result == "push" else 0
+                )
+            elif player.status == "blackjack":
                 player.result = "blackjack"
-                player.payout_amount = int(player.bet_amount * 2.5)
+                player.payout_amount = player.bet_amount * 5 // 2
             elif player.status == "bust":
                 player.result = "loss"
                 player.payout_amount = 0
@@ -519,15 +677,21 @@ class MultiplayerBlackjackService:
 
         room.turn_order = []
         room.current_turn_index = 0
+        room.turn_deadline = None
         room.state = "finished"
 
     def _reset_round(self, room: MultiplayerRoom) -> None:
+        if room.state == "finished" and not room.payouts_committed:
+            raise ValueError("上一局仍在结算，请稍后再开始新一局")
         room.state = "waiting"
         room.deck = []
         room.dealer_hand = []
         room.turn_order = []
         room.current_turn_index = 0
+        room.turn_deadline = None
         room.payouts_committed = False
+        room.committed_payout_user_ids.clear()
+        room.forfeited_bet_total = 0
 
         for player in room.players.values():
             player.hand = []
@@ -535,7 +699,7 @@ class MultiplayerBlackjackService:
             player.result = None
             player.payout_amount = 0
             player.bet_amount = 0
-            player.is_ready = False
+            player.is_ready = player.is_bot
 
 
 multiplayer_blackjack_service = MultiplayerBlackjackService()
