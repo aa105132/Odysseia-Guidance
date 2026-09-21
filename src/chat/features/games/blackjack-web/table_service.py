@@ -181,6 +181,52 @@ class TableService:
             "server_time": self.clock(),
         }
 
+    def list_rooms(self, viewer_id: str, game_type: str | None = None) -> list[dict]:
+        """大厅只读取多人房间摘要，不读取手牌，也不推进回合或触发结算。"""
+        viewer_id = str(viewer_id)
+        rooms = []
+        other_memberships = {
+            room.room_id for room in self.rooms.values()
+            if viewer_id in room.players and room.players[viewer_id].connected
+        }
+        for room in self.rooms.values():
+            if room.mode != "multi" or (game_type and room.game_type != game_type):
+                continue
+            connected_human = any(p.connected and not p.is_bot for p in room.players.values())
+            if not connected_human and room.settlement_status != "reserved" and self.clock() - room.updated_at > self.EMPTY_ROOM_TTL:
+                continue
+            is_member = viewer_id in room.players and not room.players[viewer_id].is_bot
+            if not is_member and not any(p.connected and not p.is_bot for p in room.players.values()):
+                continue
+            host = room.players.get(room.host_user_id)
+            if host is None:
+                continue
+            maximum = GAME_SPECS[room.game_type][1]
+            # 与 join 保持一致：普通陪玩可让位，月月席位保留给房主手动调整。
+            has_seat = len(room.players) < maximum or any(
+                p.is_bot and p.user_id != "bot:yueyue" for p in room.players.values()
+            )
+            can_join = not (other_memberships - {room.room_id}) and (
+                is_member or (room.state != "playing" and has_seat)
+            )
+            rooms.append({
+                "room_id": room.room_id,
+                "game_type": room.game_type,
+                "host_username": host.username,
+                "host_avatar_url": host.avatar_url,
+                "state": room.state,
+                "player_count": len(room.players),
+                "max_players": maximum,
+                "room_tier": room.room_tier,
+                "base_stake": room.base_stake,
+                "entry_min": room.entry_min,
+                "loss_limit": room.buy_in,
+                "is_member": is_member,
+                "can_join": can_join,
+                "updated_at": room.updated_at,
+            })
+        return rooms
+
     def create(self, user: dict, game_type: str, mode: str, include_yueyue: bool,
                room_tier: str = "beginner", base_stake: int | None = None,
                loss_limit: int | None = None) -> dict:

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { captureFinalScreenshot } from './animation-helpers';
 
 for (const [gameType, playerCount] of [['texas', 2], ['texas', 8], ['golden_flower', 2], ['golden_flower', 5]] as const) {
-  test(`${gameType}${playerCount}人连续拉伸窗口时牌桌比例稳定且信息互不重叠`, async ({ page }) => {
+  test(`${gameType}${playerCount}人连续拉伸窗口时牌桌铺满且信息互不重叠`, async ({ page }) => {
     test.setTimeout(30_000);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     const uid = '123456789012345678';
@@ -29,7 +29,8 @@ for (const [gameType, playerCount] of [['texas', 2], ['texas', 8], ['golden_flow
     for (const viewport of [{ width: 1188, height: 1196 }, { width: 876, height: 1158 }, { width: 1440, height: 900 }, { width: 2560, height: 600 }, { width: 1024, height: 480 }, { width: 844, height: 390 }, { width: 667, height: 375 }, { width: 568, height: 320 }, { width: 700, height: 320 }, { width: 700, height: 800 }]) {
       await page.setViewportSize(viewport);
       const stage = (await page.locator('.game-viewport-stage').boundingBox())!;
-      expect(stage.width / stage.height, '拉伸窗口时牌桌始终保持16:9').toBeCloseTo(16 / 9, 2);
+      expect(stage.width, '牌桌铺满窗口宽度，不出现两侧留边').toBeCloseTo(viewport.width, 0);
+      expect(stage.height, '牌桌铺满窗口高度，不出现上下留边').toBeCloseTo(viewport.height, 0);
       expect(Math.abs(stage.x + stage.width / 2 - viewport.width / 2)).toBeLessThan(1);
       expect(Math.abs(stage.y + stage.height / 2 - viewport.height / 2)).toBeLessThan(1);
       const status = (await page.locator('.tg-poker-status').boundingBox())!;

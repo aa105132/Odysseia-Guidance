@@ -23,6 +23,13 @@ async function expectReachable(control: Locator) {
 
 async function expectControlsReachable(page: Page) {
   await waitForTableMotion(page);
+  const stage = (await page.locator('.game-viewport-stage').boundingBox())!;
+  const viewport = page.viewportSize()!;
+  const hasMessage = await page.locator('.table-fullscreen > .status-message, .table-fullscreen > .error-message').count();
+  expect(stage.x, '牌桌从窗口左边缘开始').toBeCloseTo(0, 0);
+  expect(stage.y, '牌桌从窗口顶部开始').toBeCloseTo(0, 0);
+  expect(stage.width, '超宽屏牌桌必须铺满宽度').toBeCloseTo(viewport.width, 0);
+  expect(stage.height, '仅有实际状态消息时才预留底栏').toBeCloseTo(viewport.height - (hasMessage ? 24 : 0), 0);
   const extreme = page.viewportSize()!.height <= 320;
   await expect(page.locator('.action-dock')).toBeInViewport();
   for (const control of await page.locator('.table-toolbar button, .action-dock button, .action-dock input').all()) {
@@ -83,6 +90,20 @@ async function expectAllBlackjackCardsVisible(page: Page, expectedCount: number)
     }
   }
   expect(longHandCount, '荷官及所有已有玩家都应测试长手牌').toBe(expectedHands);
+}
+
+async function expectActionsAboveOwnHand(page: Page) {
+  await expect(page.locator('.table-center-mark'), '操作时隐藏重复桌心装饰，避免遮挡回合提示').toHaveCount(0);
+  const hit = await page.getByRole('button', { name: '要牌', exact: true }).boundingBox();
+  const stand = await page.getByRole('button', { name: '停牌', exact: true }).boundingBox();
+  const cards = page.locator('.seat-bottom .playing-card');
+  const first = (await cards.first().boundingBox())!;
+  const last = (await cards.last().boundingBox())!;
+  const row = (await page.locator('.action-dock:not(.betting-dock) > .action-row').boundingBox())!;
+  expect(hit).toBeTruthy(); expect(stand).toBeTruthy();
+  expect(row.y + row.height, '要牌停牌必须在本人手牌上方').toBeLessThanOrEqual(first.y);
+  expect(Math.abs(row.x + row.width / 2 - (first.x + last.x + last.width) / 2), '操作按钮与本人手牌共用中央轴线').toBeLessThanOrEqual(2);
+  expect(first.y - row.y - row.height, '按钮紧靠手牌，不能飘到远处').toBeLessThanOrEqual(65);
 }
 
 async function expectBlackjackSeats(page: Page, multiplayer: boolean) {
@@ -219,10 +240,11 @@ test('黑杰克12张手牌在极小横屏与桌面一次全部显示', async ({ 
   await page.getByRole('button', { name: '21点 立即游玩' }).click();
   await page.getByRole('button', { name: '单人对战 你 vs 月月' }).click();
   await page.getByRole('button', { name: '开始对战', exact: true }).click();
-  for (const viewport of [{ width: 568, height: 320 }, { width: 667, height: 375 }, { width: 844, height: 390 }, { width: 1440, height: 900 }]) {
+  for (const viewport of [{ width: 568, height: 320 }, { width: 667, height: 375 }, { width: 844, height: 390 }, { width: 1440, height: 900 }, { width: 2400, height: 1080 }]) {
     await page.setViewportSize(viewport);
     await expectControlsReachable(page);
     await expectAllBlackjackCardsVisible(page, 12);
+    await expectActionsAboveOwnHand(page);
     await captureFinalScreenshot(page, `landscape-handfit-blackjack-single12-${viewport.width}x${viewport.height}.png`);
   }
   await page.getByRole('button', { name: '停牌', exact: true }).click();
@@ -233,10 +255,11 @@ test('黑杰克12张手牌在极小横屏与桌面一次全部显示', async ({ 
   await page.getByRole('button', { name: '下注', exact: true }).click();
   await page.getByRole('button', { name: '准备', exact: true }).click();
   await page.getByRole('button', { name: '开始本局', exact: true }).click();
-  for (const viewport of [{ width: 568, height: 320 }, { width: 667, height: 375 }, { width: 844, height: 390 }, { width: 1440, height: 900 }]) {
+  for (const viewport of [{ width: 568, height: 320 }, { width: 667, height: 375 }, { width: 844, height: 390 }, { width: 1440, height: 900 }, { width: 2400, height: 1080 }]) {
     await page.setViewportSize(viewport);
     await expectControlsReachable(page);
     await expectAllBlackjackCardsVisible(page, 12);
+    await expectActionsAboveOwnHand(page);
     await captureFinalScreenshot(page, `landscape-handfit-blackjack-multi12-${viewport.width}x${viewport.height}.png`);
   }
 });

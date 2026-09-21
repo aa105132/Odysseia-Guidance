@@ -7,7 +7,7 @@ import copy
 from contextlib import suppress
 import discord
 from typing import List, Optional, Dict, Any, Tuple, Literal
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends, Query
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -1206,6 +1206,26 @@ async def get_profile(user: Dict[str, Any] = Depends(get_current_user_profile)):
             "balance": balance,
         }
     )
+
+
+@app.get("/api/rooms")
+async def list_game_rooms(
+    game_type: Optional[str] = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=200),
+    user: Dict[str, Any] = Depends(get_current_user_profile),
+):
+    """统一大厅列表使用现有身份校验，只返回公开摘要，不读取钱包或牌局快照。"""
+    if game_type is not None and game_type not in {"blackjack", *_table_module.GAME_SPECS}:
+        raise HTTPException(status_code=400, detail="不支持的游戏类型")
+    rooms = []
+    if game_type in (None, "blackjack"):
+        rooms.extend(multiplayer_blackjack_service.list_rooms(int(user["user_id"])))
+    if game_type != "blackjack":
+        rooms.extend(table_service.list_rooms(str(user["user_id"]), game_type))
+    # 自己的房间和可加入的空位排在前面，同组按最近操作时间排序。
+    rooms.sort(key=lambda room: (not room["is_member"], not room["can_join"], -room["updated_at"], room["room_id"]))
+    return {"success": True, "rooms": rooms[offset:offset + limit], "total": len(rooms)}
 
 
 @app.post("/api/multi/room/auto-join")

@@ -34,7 +34,7 @@ Pop-Location
 
 **游戏 Web 服务必须单进程、单实例运行。** 房间及回合锁仍存内存，不能使用多个 Uvicorn worker 或多个副本连接同一钱包。开发 `--reload` 会重建房间，不适用于正在进行的真实牌局。现有机器人入口仍由主程序扫描 `features/*/cogs` 加载，但该扫描不会代替启动 Web 服务。
 
-生产环境在仓库根 `.env` 配置 `DISCORD_CLIENT_ID`（兼容 `VITE_DISCORD_CLIENT_ID`）、`DISCORD_CLIENT_SECRET`，以及需要招募队友时的 `DISCORD_TOKEN`（兼容 `BOT_TOKEN`）。按现有 Discord 活动配置，将公开 HTTPS 地址映射至此服务，Bot 与 Web 服务使用同一持久化 `data/chat.db`。本次未修改或发布 Discord 应用配置。
+生产环境在仓库根 `.env` 配置 `DISCORD_CLIENT_ID`（兼容 `VITE_DISCORD_CLIENT_ID`）、`DISCORD_CLIENT_SECRET`。按现有 Discord 活动配置，将公开 HTTPS 地址映射至此服务，Bot 与 Web 服务使用同一持久化 `data/chat.db`。招募界面使用 Discord SDK 原生分享，不需要额外的 Bot Token；旧版服务端招募接口仍需 `DISCORD_TOKEN`（兼容 `BOT_TOKEN`）。本次未修改或发布 Discord 应用配置。
 
 无 Bearer Token 时，只有未配置 Discord Client ID 且未设置开发鉴权开关的回环请求允许开发身份。生产部署必须正确配置 Client ID，并显式设置 `BLACKJACK_ALLOW_DEV_AUTH=false`，此时回环及代理请求也必须认证。`BLACKJACK_ALLOW_DEV_AUTH=true` 仅供隔离测试，不能用于公开服务。开发页面可用 `?dev_user_id=123456789012345678&dev_username=PlayerA` 区分测试用户；不会因进入页面自动赠送灵石。
 
@@ -95,7 +95,17 @@ Pop-Location
 
 ## 2026-09-22 更新
 
-- 共用 16:9 舞台按窗口宽高居中容纳，背景填充多余空间；控件按实际舞台尺寸调整，触控区不整体压缩，完整手牌无横滑。21 点操作位于手牌上方居中。
+### 房间大厅与队友邀请（本轮未部署）
+
+- 新增统一多人房间列表，展示玩法、房主、人数、场次、底分和准入要求；支持玩法筛选、只看可加入、分页、刷新及每 5 秒更新。满员、进行中、余额不足均有状态提示，本人成员可返回牌桌。列表只读取摘要，不触发下注或结算，单人房不公开。
+- 各多人牌桌提供复制房间号与招募队友。复制权限不可用时提供可选中的文本；Discord 内可选择好友或频道分享，亦可复制官方活动链接。
+- 链接通过 `custom_id` 携带玩法和房间号；活动取得身份后优先尝试加入目标房间，失败时显示原因，不自动进入旧房间、不自动下注。依据 [Discord 活动增长与邀请文档](https://docs.discord.com/developers/activities/development-guides/growth-and-referrals) 和 [Embedded App SDK 的 shareLink](https://docs.discord.com/developers/developer-tools/embedded-app-sdk#sharelink)。
+- 21 点的要牌、停牌与双倍下注居中显示在本人手牌上方；进行中隐藏重复桌心装饰，避免小窗口回合提示叠字。舞台铺满实际窗口，保留手牌一次显示。
+- 本轮最终复验：99 项房间目录及多人 API 测试、20 项房间列表与邀请浏览器测试、3 项 21 点窗口回归和生产构建通过；另已通过 3 项大厅／斗地主／陪玩管理回归。浏览器使用模拟 API 和 SDK，未发送真实 Discord 消息，真实客户端分享及跨客户端点击仍待验收。本轮不更新服务器。
+
+### 此前改动
+
+- 共用牌桌舞台铺满活动可用窗口，超宽屏不留两侧背景边栏；控件按实际舞台尺寸调整，偏窄高窗口以宽度约束牌列，触控区不整体压缩，完整手牌无横滑。21 点操作位于手牌上方居中；只有实际状态消息出现时才预留底栏。
 - 修复桌心提示、底池、公共牌与操作区域碰撞；德州新增 2× / 4× 快捷填入当前桌注（无人下注时按大盲），受合法上下限约束，仍需点击加注才提交。
 - 斗地主、基础麻将和四川血战的下家显示在右侧，按屏幕逆时针轮转；已胡者退出后续行动。基础麻将与四川血战在麻将场次页切换。
 - 修复麻将按钮内边距挤小花色、北侧头像被裁切；手牌、弃牌、副露与终局亮牌统一使用 34 张正面 SVG。

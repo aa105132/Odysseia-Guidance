@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { tableGameRules, type TableGameType, type TableRoomGameType } from './tableGameRules';
 import GameIcon from './GameIcon.vue';
 import RoundFeedback from './RoundFeedback.vue';
+import RoomDirectory from './RoomDirectory.vue';
+import CopyRoomCode from './CopyRoomCode.vue';
 
 type Profile = { user_id: string; username: string; avatar_url: string; balance: number };
 type Member = { user_id: string; username: string; avatar_url: string; is_bot: boolean; is_ready: boolean; connected: boolean };
@@ -45,12 +47,13 @@ type RoomTier = PublicTier | 'custom';
 type RoomEnvelope = { success: boolean; room: RoomState | null; viewer_balance?: number };
 type ApiCall = <T>(endpoint: string, method: 'GET' | 'POST', body?: unknown, retries?: number) => Promise<T>;
 
-const props = defineProps<{ gameType: TableGameType; profile: Profile; apiCall: ApiCall }>();
-const emit = defineEmits<{ back: []; balance: [number] }>();
+const props = defineProps<{ gameType: TableGameType; profile: Profile; apiCall: ApiCall; initialRoomId?: string }>();
+const emit = defineEmits<{ back: []; balance: [number]; invite: [{ room_id: string; game_type: string }]; joinFailed: [string] }>();
 const room = ref<RoomState | null>(null);
 const roomInput = ref('');
 const busy = ref(false);
 const recovering = ref(true);
+const showRoomDirectory = ref(false);
 const error = ref('');
 const includeYueyue = ref(true);
 const selectedTier = ref<PublicTier>('beginner');
@@ -606,6 +609,13 @@ function quickRaise(multiplier: 2 | 4) {
   amount.value = Math.min(maximum, Math.max(minimum, basis * multiplier));
 }
 
+async function joinListedRoom(listed: { room_id: string; game_type: string }): Promise<boolean> {
+  if (listed.game_type === 'blackjack') throw new Error('请从大厅的房间列表加入21点房间');
+  const data = await props.apiCall<RoomEnvelope>('/api/tables/join', 'POST', { room_id: listed.room_id }, 0);
+  applyRoom(data, false);
+  return true;
+}
+
 async function act(action: string, extra: Record<string, unknown> = {}) {
   if (!room.value) return;
   const payload: Record<string, unknown> = { room_id: room.value.room_id, expected_revision: room.value.revision, action, ...extra };
@@ -626,11 +636,16 @@ onMounted(async () => {
   }
   let savedRoom = '';
   try { savedRoom = localStorage.getItem(storageKey.value) ?? ''; } catch { /* 存储不可用时从大厅进入。 */ }
+  savedRoom = props.initialRoomId || savedRoom;
   if (savedRoom) {
     try {
       const data = await props.apiCall<RoomEnvelope>('/api/tables/join', 'POST', { room_id: savedRoom }, 0);
       if (!disposed) applyRoom(data, false);
     } catch (reason) {
+      if (props.initialRoomId) {
+        emit('joinFailed', reason instanceof Error ? `入座失败：${reason.message}` : '房间暂时无法加入');
+        return;
+      }
       roomInput.value = savedRoom;
       error.value = reason instanceof Error ? `房间恢复失败：${reason.message}，可用房间号重新加入` : '房间恢复失败，可用房间号重新加入';
     }
@@ -659,12 +674,15 @@ onBeforeUnmount(() => {
       <div class="tg-title"><h2>{{ rules.title }}<span v-if="room" class="tg-tier-tag">{{ tierNames[room.room_tier] }}</span></h2><p v-if="room" :title="game?.message">房间 {{ room.room_id }} · {{ room.state === 'waiting' ? '等待准备' : room.state === 'finished' ? '本局结束' : phaseLabel }}<span v-if="game && !game.finished && ['texas', 'golden_flower'].includes(currentGameType)" class="tg-compact-notice"> · {{ game.message }}</span></p><p v-else>{{ rules.summary }}</p></div>
       <div class="tg-actions">
         <button class="game-button quiet" @click="rulesDialog?.showModal()">玩法规则</button>
+        <CopyRoomCode v-if="room" :room-id="room.room_id" />
         <button v-if="room" class="game-button quiet" :disabled="busy" @click="refresh">同步</button>
+        <button v-if="room?.mode === 'multi'" class="game-button quiet" :disabled="busy" @click="emit('invite', { room_id: room.room_id, game_type: room.game_type })">招募队友</button>
         <button v-if="room" class="game-button quiet" :disabled="busy" @click="leave">离开房间</button>
         <button v-else class="game-button quiet" :disabled="busy || recovering" @click="emit('back')">返回大厅</button>
       </div>
     </header>
 
+    <RoomDirectory v-if="showRoomDirectory" :api-call="apiCall" :balance="profile.balance" :game-type="lobbyGameType" restrict-game :join-room="joinListedRoom" @close="showRoomDirectory = false" />
     <div v-if="recovering" class="tg-lobby" role="status">正在恢复房间…</div>
     <div v-else-if="!room" class="tg-lobby">
       <div class="tg-lobby-inner">
@@ -682,7 +700,7 @@ onBeforeUnmount(() => {
           <button class="tg-mode-card tg-solo-entry" aria-label="月月陪玩" :disabled="busy || !canEnterTier" @click="create('solo')"><GameIcon name="solo" /><span><strong>月月陪玩</strong><small>自动配齐，随时开局</small></span><span class="tg-entry-arrow" aria-hidden="true">›</span></button>
           <div class="tg-friends-entry"><button class="tg-mode-card" aria-label="好友同桌" :disabled="busy || !canEnterTier" @click="create('multi')"><GameIcon name="friends" /><span><strong>好友同桌</strong><small>创建{{ tier.title }}，邀请朋友</small></span><span class="tg-entry-arrow" aria-hidden="true">›</span></button><label class="tg-check"><input v-model="includeYueyue" type="checkbox" :disabled="busy">邀请月月一起玩</label></div>
         </div>
-        <div class="tg-lobby-footer"><p :class="{ 'tg-entry-insufficient': !canEnterTier }">{{ canEnterTier ? `${tier.title} · 底分 ${tier.base} · 准入 ${tier.entry} 灵石` : `进入${tier.title}还需 ${tier.entry - profile.balance} 灵石` }}</p><div class="tg-actions"><button class="game-button quiet" :disabled="busy" @click="error = ''; customDialog?.showModal()"><GameIcon name="room" />自定义房间</button><button class="game-button gold" :disabled="busy" @click="error = ''; joinDialog?.showModal()">加入房间</button></div></div>
+        <div class="tg-lobby-footer"><p :class="{ 'tg-entry-insufficient': !canEnterTier }">{{ canEnterTier ? `${tier.title} · 底分 ${tier.base} · 准入 ${tier.entry} 灵石` : `进入${tier.title}还需 ${tier.entry - profile.balance} 灵石` }}</p><div class="tg-actions"><button class="game-button" :disabled="busy" @click="showRoomDirectory = true">房间列表</button><button class="game-button quiet" :disabled="busy" @click="error = ''; customDialog?.showModal()"><GameIcon name="room" />自定义房间</button><button class="game-button gold" :disabled="busy" @click="error = ''; joinDialog?.showModal()">加入房间</button></div></div>
       </div>
     </div>
 
@@ -1291,5 +1309,11 @@ onBeforeUnmount(() => {
   .tg-toolbar button { padding-inline: 7px; }
   .tg-seat { width: 76px; }
   .tg-waiting .tg-control-panel { left: 10%; right: 10%; }
+}
+/* 偏窄高窗口以桌宽约束横向牌列，避免按高度放大的牌背侵占中心信息区。 */
+@container game-viewport (max-aspect-ratio: 4 / 3) {
+  .game-texas .tg-hidden-hand i,
+  .game-golden_flower .tg-hidden-hand i { width: clamp(15px, 4cqw, 36px); height: clamp(21px, 5.5cqw, 50px); }
+  .game-texas:not(.tg-finished):not(.tg-waiting) .tg-center .tg-board-card { width: clamp(25px, 6cqw, 65px); }
 }
 </style>

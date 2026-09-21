@@ -194,6 +194,34 @@ class MultiplayerBlackjackService:
             "players": [self._to_player_dict(p, room) for p in players],
         }
 
+    def list_rooms(self, viewer_id: int) -> List[Dict[str, Any]]:
+        """房间列表仅暴露大厅信息，不能因浏览列表自动发牌或派彩。"""
+        rooms = []
+        for room in self._rooms.values():
+            host = room.players.get(room.host_user_id)
+            if host is None or not any(not p.is_bot for p in room.players.values()):
+                continue
+            is_member = viewer_id in room.players and not room.players[viewer_id].is_bot
+            rooms.append({
+                "room_id": room.room_id,
+                "game_type": "blackjack",
+                "host_username": host.username,
+                "host_avatar_url": host.avatar_url,
+                "state": room.state,
+                "player_count": len(room.players),
+                "max_players": self.MAX_PLAYERS,
+                "room_tier": "custom",
+                "base_stake": None,
+                "entry_min": 0,
+                "loss_limit": None,
+                "is_member": is_member,
+                "can_join": is_member or (
+                    room.state in ("waiting", "finished") and len(room.players) < self.MAX_PLAYERS
+                ),
+                "updated_at": room.updated_at,
+            })
+        return rooms
+
     def create_room(self, user_id: int, username: str, avatar_url: str) -> Dict[str, Any]:
         if user_id == self.YUEYUE_USER_ID:
             raise ValueError("该用户编号保留给月月陪玩")

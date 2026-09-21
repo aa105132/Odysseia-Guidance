@@ -126,9 +126,10 @@ async function stageBounds(page: Page) {
     const box = stage.getBoundingClientRect();
     return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height };
   });
-  expect(bounds, '桌游必须位于固定比例的game-viewport舞台内').not.toBeNull();
-  expect(bounds!.width / bounds!.height, '舞台保持16:9，窗口余量用于居中留白').toBeCloseTo(16 / 9, 2);
+  expect(bounds, '桌游必须位于自适应的game-viewport舞台内').not.toBeNull();
   const viewport = page.viewportSize()!;
+  expect(bounds!.width, '牌桌铺满窗口宽度').toBeCloseTo(viewport.width, 0);
+  expect(bounds!.height, '牌桌铺满窗口高度').toBeCloseTo(viewport.height, 0);
   expect(bounds!.left).toBeGreaterThanOrEqual(-1);
   expect(bounds!.top).toBeGreaterThanOrEqual(-1);
   expect(bounds!.right).toBeLessThanOrEqual(viewport.width + 1);

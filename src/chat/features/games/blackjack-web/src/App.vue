@@ -2,6 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import dialogueConfig from "./dialogue.json";
 import TableGames from "./TableGames.vue";
+import RoomDirectory from "./RoomDirectory.vue";
+import RoomInvite from "./RoomInvite.vue";
+import CopyRoomCode from "./CopyRoomCode.vue";
+import { parseRoomInvite, roomInviteCode, type RoomInvite as RoomInviteTarget } from "./roomInvites";
+import type { DiscordSDK } from "@discord/embedded-app-sdk";
 import GameViewport from "./GameViewport.vue";
 import LandscapeNotice from "./LandscapeNotice.vue";
 import GameIcon from "./GameIcon.vue";
@@ -79,15 +84,6 @@ type AutoJoinRoomResponse = RoomEnvelope & {
   session_key?: string;
 };
 
-type RecruitRoomResponse = RoomEnvelope & {
-  room_id: string;
-  channel_id: string;
-  guild_id: string;
-  invite_url: string;
-  message_id: string;
-  bound_session_key: string;
-};
-
 type SingleGameState =
   | "player_turn"
   | "dealer_turn"
@@ -119,6 +115,12 @@ const loadingText = ref("初始化中...");
 const statusMessage = ref("");
 const errorMessage = ref("");
 const roomInput = ref("");
+const showRoomDirectory = ref(false);
+const directoryGameType = ref('');
+const pendingTableRoom = ref('');
+const inviteTarget = ref<RoomInviteTarget | null>(null);
+let discordSdkInstance: DiscordSDK | null = null;
+let launchRoomTarget: RoomInviteTarget | null = null;
 const betInput = ref<number | null>(100);
 const singleBetInput = ref<number | null>(100);
 const roomState = ref<RoomState | null>(null);
@@ -692,6 +694,8 @@ async function setupDiscordSdk(resolvedClientId: string): Promise<string> {
   const discordSdk = new DiscordSDKCtor(resolvedClientId);
 
   await discordSdk.ready();
+  discordSdkInstance = discordSdk;
+  launchRoomTarget = parseRoomInvite(discordSdk.customId);
   const { code } = await discordSdk.commands.authorize({
     client_id: discordSdk.clientId,
     response_type: "code",
@@ -846,6 +850,7 @@ function clearNotices() {
 }
 
 function enterGameHub() {
+  pendingTableRoom.value = '';
   resetPresentation();
   stopRoomPolling();
   viewMode.value = "game_hub";
@@ -858,11 +863,30 @@ function enterBlackjackModeSelect() {
 }
 
 function openTableGame(gameType: TableGameType) {
+  pendingTableRoom.value = '';
   resetPresentation();
   clearNotices();
   stopRoomPolling();
   selectedTableGame.value = gameType;
   viewMode.value = 'table_games';
+}
+
+function openRoomDirectory(gameType = '') {
+  directoryGameType.value = gameType;
+  showRoomDirectory.value = true;
+}
+
+async function joinListedRoom(room: { room_id: string; game_type: string }): Promise<boolean> {
+  clearNotices();
+  if (room.game_type === 'blackjack') {
+    const data = await apiCall<RoomEnvelope>('/api/multi/room/join', 'POST', { room_id: room.room_id }, 0);
+    applyRoomEnvelope(data, true);
+  } else {
+    pendingTableRoom.value = room.room_id;
+    selectedTableGame.value = (room.game_type === 'sichuan_mahjong' ? 'mahjong' : room.game_type) as TableGameType;
+    viewMode.value = 'table_games';
+  }
+  return true;
 }
 
 function applySingleBetOption(amount: number) {
@@ -1022,41 +1046,25 @@ async function createRoom() {
   }
 }
 
-async function recruitTeammates() {
-  if (requestInFlight.value || !roomState.value) return;
+function recruitTeammates() {
+  if (roomState.value) void openRoomInvite({ game_type: 'blackjack', room_id: roomState.value.room_id });
+}
 
-  if (!isDiscordMode.value) {
-    errorMessage.value = "仅在 Discord 活动中可使用招募功能";
-    return;
-  }
+async function shareRoom(room: RoomInviteTarget): Promise<string> {
+  if (!discordSdkInstance) throw new Error('请在 Discord 小活动内分享');
+  const result = await discordSdkInstance.commands.shareLink({
+    message: `来月月茶楼一起玩！房间号 ${room.room_id}`,
+    custom_id: roomInviteCode(room),
+  });
+  if (result.didSendMessage) return '已通过 Discord 分享邀请';
+  if (result.didCopyLink) return '已复制 Discord 邀请链接';
+  return result.success ? '邀请分享完成' : '已取消分享';
+}
 
-  requestInFlight.value = true;
-  clearNotices();
-
-  try {
-    const data = await apiCall<RecruitRoomResponse>("/api/multi/room/recruit", "POST", {
-      room_id: roomState.value.room_id,
-      session_key: discordSessionKey.value || undefined,
-      channel_id: discordChannelId.value || undefined,
-      guild_id: discordGuildId.value || undefined,
-    });
-
-    if (data.bound_session_key) {
-      discordSessionKey.value = data.bound_session_key;
-    }
-    if (data.channel_id) {
-      discordChannelId.value = data.channel_id;
-    }
-    if (data.guild_id) {
-      discordGuildId.value = data.guild_id === "dm" ? "" : data.guild_id;
-    }
-
-    applyRoomEnvelope(data);
-    statusMessage.value = `已发送招募消息（房间号 ${data.room_id}）`;
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "发送招募消息失败";
-  } finally {
-    requestInFlight.value = false;
+async function openRoomInvite(room: RoomInviteTarget) {
+  inviteTarget.value = room;
+  if (!runtimeDiscordClientId.value) {
+    try { await fetchPublicConfig(); } catch { /* 仍可复制房间号。 */ }
   }
 }
 
@@ -1325,6 +1333,11 @@ async function bootstrap() {
     await loadProfile();
     viewMode.value = "game_hub";
     loadingText.value = "初始化完成";
+    // 邀请房间优先于本地恢复和频道默认房，不存在时留在大厅。
+    if (launchRoomTarget) {
+      try { await joinListedRoom(launchRoomTarget); }
+      catch (reason) { errorMessage.value = reason instanceof Error ? `邀请入座失败：${reason.message}` : '邀请房间暂时无法加入'; }
+    }
   } catch (error) {
     loadingText.value = "初始化失败";
     errorMessage.value = error instanceof Error ? error.message : "初始化异常";
@@ -1388,7 +1401,7 @@ onBeforeUnmount(() => {
       </header>
 
       <section v-if="viewMode === 'game_hub'" class="lobby-panel game-hub-panel">
-        <div class="lobby-section-heading"><h3>今晚，玩点什么？</h3><span>经典牌局 · 好友同桌</span></div>
+        <div class="lobby-section-heading"><h3>今晚，玩点什么？</h3><button class="game-button" @click="openRoomDirectory()">房间列表</button></div>
         <div class="game-grid hub-game-grid">
           <button class="game-card blackjack-card" :disabled="requestInFlight" @click="enterBlackjackModeSelect">
             <span class="game-card-art"><GameIcon name="blackjack" /></span>
@@ -1405,11 +1418,11 @@ onBeforeUnmount(() => {
       </section>
 
       <GameViewport v-else-if="viewMode === 'table_games' && profile">
-        <TableGames :key="selectedTableGame" :game-type="selectedTableGame" :profile="profile" :api-call="apiCall" @back="enterGameHub" @balance="profile.balance = $event" />
+        <TableGames :key="selectedTableGame" :game-type="selectedTableGame" :initial-room-id="pendingTableRoom" :profile="profile" :api-call="apiCall" @back="enterGameHub" @balance="profile.balance = $event" @invite="openRoomInvite" @join-failed="enterGameHub(); errorMessage = $event" />
       </GameViewport>
 
       <section v-else-if="viewMode === 'blackjack_mode_select'" class="lobby-panel mode-panel">
-        <div class="lobby-section-heading"><h3>21点 · 选个座位</h3><span>凑近21点，等一手好运</span></div>
+        <div class="lobby-section-heading"><h3>21点 · 选个座位</h3><button class="game-button" @click="openRoomDirectory('blackjack')">房间列表</button></div>
         <div class="game-grid mode-game-grid">
           <button class="game-card mode-card solo-card" :disabled="requestInFlight" @click="enterSingleMode">
             <span class="game-card-art"><GameIcon name="solo" /></span>
@@ -1456,7 +1469,7 @@ onBeforeUnmount(() => {
                 <span v-if="!singleGame?.dealer_hand.length" key="dealer-placeholder" class="card-placeholder">待发牌</span>
               </TransitionGroup>
             </section>
-            <div v-if="!blackjackResult" class="table-center-mark">
+            <div v-if="!blackjackResult && !canSingleOperate" class="table-center-mark">
               <span class="table-brand">月月茶楼 · 以牌会友</span>
               <strong class="table-game-name">21 点</strong>
               <div class="table-chip-stack" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -1505,6 +1518,7 @@ onBeforeUnmount(() => {
         <div class="room-lobby-art"><GameIcon name="room" /><span>好友相聚，好牌开场</span></div>
         <div class="room-lobby-content">
         <div class="lobby-section-heading"><h3>多人房间大厅</h3><span>21点 · 最多3人</span></div>
+        <button class="game-button" @click="openRoomDirectory('blackjack')">房间列表</button>
 
         <template v-if="isDiscordMode">
           <p class="hint-text">已连接 Discord 活动，可重连当前会话房间，或直接输入房间号加入。</p>
@@ -1565,8 +1579,9 @@ onBeforeUnmount(() => {
           </div>
           <div class="toolbar-actions">
             <button class="game-button" @click="blackjackRulesDialog?.showModal()">玩法规则</button>
+            <CopyRoomCode :room-id="roomState.room_id" />
             <button class="game-button" :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
-            <button class="game-button" :disabled="requestInFlight || !isDiscordMode" @click="recruitTeammates">招募队友</button>
+            <button class="game-button" :disabled="requestInFlight" @click="recruitTeammates">招募队友</button>
             <button class="game-button" :disabled="requestInFlight" @click="leaveRoom">离开房间</button>
           </div>
         </div>
@@ -1585,7 +1600,7 @@ onBeforeUnmount(() => {
                 <span v-if="!dealer?.hand.length" key="dealer-placeholder" class="card-placeholder">待发牌</span>
               </TransitionGroup>
             </section>
-            <div v-if="!blackjackResult" class="table-center-mark">
+            <div v-if="!blackjackResult && roomState.state !== 'playing'" class="table-center-mark">
               <span class="table-brand">月月茶楼 · 以牌会友</span>
               <strong class="table-game-name">21 点</strong>
               <div class="table-chip-stack" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -1673,6 +1688,8 @@ onBeforeUnmount(() => {
         <p>房主可在等待或结算完成后添加月月陪玩，占用一个普通玩家座位。陪玩下注跟随房主、自动准备，低于 17 要牌，否则停牌；荷官仍独立结算。等待开局时离桌退回已下注灵石；对局进行中离桌视为放弃，没收本局下注。结算完成后退出不会再次扣款。</p>
       </dialog>
     </template>
+    <RoomDirectory v-if="showRoomDirectory && profile" :api-call="apiCall" :balance="profile.balance" :game-type="directoryGameType" :join-room="joinListedRoom" @close="showRoomDirectory = false" />
+    <RoomInvite v-if="inviteTarget" :room="inviteTarget" :client-id="runtimeDiscordClientId" :share="isDiscordMode ? shareRoom : undefined" @close="inviteTarget = null" />
     <LandscapeNotice />
   </div>
 </template>
@@ -1699,7 +1716,7 @@ onBeforeUnmount(() => {
   gap: 0;
   overflow: hidden;
 }
-.multi-root.table-fullscreen:has(.blackjack-table) { padding-bottom: 24px; }
+.multi-root.table-fullscreen:has(.blackjack-table):has(> .status-message, > .error-message) { padding-bottom: 24px; }
 
 .blackjack-table {
   position: relative;
@@ -1968,11 +1985,12 @@ onBeforeUnmount(() => {
 .empty-seat-icon { display: inline-flex; align-items: center; justify-content: center; width: 35px; height: 35px; border: 1px dashed #f4d492; border-radius: 10px; color: #ffe7b2; background: linear-gradient(160deg, #778dbecc, #49457bcc); font-size: 20px; box-shadow: 0 2px 0 #80554180; }
 .table-dealer-speech { position: absolute; left: 36%; top: 29%; width: 28%; margin: 0; color: #ffeac4; font-size: 11px; line-height: 1.5; text-align: left; text-shadow: 0 1px 3px #392455; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
-/* 操作直接浮在桌面中下方，底部留给自己的手牌和身份卡。 */
+/* 操作区与本人手牌共用中央轴线。 */
 .action-dock {
   position: absolute;
   z-index: 5;
-  right: max(12px, env(safe-area-inset-right));
+  left: 50%;
+  transform: translateX(-50%);
   bottom: 26%;
   width: min(950px, calc(100% - 24px));
   display: grid;
@@ -1996,10 +2014,9 @@ onBeforeUnmount(() => {
 .action-dock > .action-row { grid-column: 2; }
 /* 单人出牌操作与居中的手牌对齐，两侧等宽留给余额信息。 */
 .single-action-zone:not(.betting-dock) {
-  left: max(12px, env(safe-area-inset-left));
-  right: max(12px, env(safe-area-inset-right));
+  left: 50%;
   bottom: 26%;
-  width: auto;
+  width: min(950px, calc(100% - 24px));
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
 }
 .action-dock > .multi-waiting-controls { grid-column: 1 / -1; grid-row: 1; }
@@ -2205,6 +2222,24 @@ onBeforeUnmount(() => {
   .multi-waiting-controls input { width: 60px; }
   .multi-waiting-controls button { padding-inline: 7px; font-size: 11px; }
   .balance-text { font-size: 9px; }
+}
+
+/* 放在尺寸规则之后，保证所有窗口的要牌、停牌都位于手牌正上方。 */
+.action-dock:not(.betting-dock) {
+  bottom: calc(clamp(32px, 19cqh, 120px) * 1.38 + 22px);
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  overflow: visible;
+}
+.action-dock:not(.betting-dock) > .action-row { grid-column: 1; grid-row: 1; justify-content: center; }
+.action-dock:not(.betting-dock) > .balance-text { grid-column: 1; grid-row: 2; text-align: center; }
+.multi-playing-controls { position: relative; }
+.multi-playing-controls > .turn-hint { position: absolute; bottom: calc(100% + 5px); left: 50%; transform: translateX(-50%); white-space: nowrap; text-align: center; }
+.single-action-zone.betting-dock { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.single-action-zone.betting-dock > .action-row { grid-column: 1; justify-content: center; }
+.single-action-zone.betting-dock > .balance-text { grid-column: 1; grid-row: 3; text-align: center; }
+@container game-viewport (max-height: 334px) {
+  .action-dock:not(.betting-dock) { bottom: calc(clamp(30px, 18cqh, 50px) * 1.38 + 18px); }
 }
 
 @media (max-height: 600px) and (orientation: landscape) {

@@ -5,7 +5,7 @@
 </template>
 
 <style scoped>
-/* 固定牌桌舞台比例，剩余窗口露出背景；控件使用真实尺寸，不做整体缩放。 */
+/* 牌桌占满活动可用区域；控件按容器尺寸适配，保留真实触控尺寸。 */
 .game-viewport-shell {
   position: relative;
   display: grid;
@@ -22,13 +22,12 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(100cqw, calc(100cqh * 16 / 9));
-  height: min(100cqh, calc(100cqw * 9 / 16));
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   container-type: size;
   container-name: game-viewport;
-  box-shadow: 0 0 32px #20163570;
 }
 </style>
