@@ -296,7 +296,7 @@ async def get_current_user_profile(
         username = raw_dev_username or f"测试玩家{str(user_id)[-4:]}"
         avatar_url = raw_dev_avatar or "/character/normal.webp"
         return {
-            "user_id": user_id,
+            "user_id": str(user_id),
             "username": username,
             "avatar_url": avatar_url,
             "is_dev": True,
@@ -320,7 +320,7 @@ async def get_current_user_profile(
             avatar_url = _build_discord_avatar_url(user_data)
 
             profile = {
-                "user_id": user_id,
+                "user_id": str(user_id),
                 "username": username,
                 "avatar_url": avatar_url,
                 "is_dev": False,

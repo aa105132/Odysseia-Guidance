@@ -5076,6 +5076,14 @@ class GeminiService:
                 log.info(f"OpenAI API 消息数量: {len(messages)}, 迭代: {iteration + 1}")
                 if openai_tools:
                     log.info(f"OpenAI API 工具数量: {len(openai_tools)}")
+
+                try:
+                    import json as _json
+                    with open("/app/data/last_payload.json", "w", encoding="utf-8") as _f:
+                        _json.dump(payload, _f, ensure_ascii=False, indent=1)
+                    log.info("已 dump 完整 payload 到 /app/data/last_payload.json")
+                except Exception as _e:
+                    log.warning(f"dump payload 失败: {_e}")
             
 
             

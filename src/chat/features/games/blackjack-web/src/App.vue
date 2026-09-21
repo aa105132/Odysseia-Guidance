@@ -97,7 +97,7 @@ type SingleGameState =
   | "finished_blackjack";
 
 type SingleGameStatePayload = {
-  user_id: number;
+  user_id: string;
   bet_amount: number;
   game_state: SingleGameState;
   player_hand: string[];
