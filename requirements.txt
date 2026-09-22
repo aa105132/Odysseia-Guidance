@@ -30,6 +30,7 @@ fastapi
 httpx
 cachetools
 uvicorn
+websockets>=14,<16
 gunicorn
 eventlet
 docker

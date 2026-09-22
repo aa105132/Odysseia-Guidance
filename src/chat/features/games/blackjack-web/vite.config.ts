@@ -22,6 +22,8 @@ export default defineConfig(() => {
             hmr: false, // 禁用HMR以解决Discord CSP问题
             allowedHosts: ['bring-optional-models-interviews.trycloudflare.com', '.trycloudflare.com'], // 允许Cloudflare隧道主机
             proxy: {
+                '/noname-ws': { target: apiProxyTarget, ws: true, changeOrigin: false },
+                '/noname': { target: apiProxyTarget, changeOrigin: true },
                 // 将所有/api开头的请求代理到Python后端
                 '/api': {
                     target: apiProxyTarget, // 本地默认走 8484，可通过 VITE_API_PROXY_TARGET 覆盖

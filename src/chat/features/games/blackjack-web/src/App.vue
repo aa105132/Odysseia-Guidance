@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import dialogueConfig from "./dialogue.json";
 import TableGames from "./TableGames.vue";
+import NonameGame from "./NonameGame.vue";
 import RoomDirectory from "./RoomDirectory.vue";
 import RoomInvite from "./RoomInvite.vue";
 import CopyRoomCode from "./CopyRoomCode.vue";
@@ -22,6 +23,7 @@ type ViewMode =
   | "single"
   | "lobby"
   | "table_games"
+  | "noname"
   | "table";
 type RoomStage = "waiting" | "playing" | "dealer_turn" | "finished";
 
@@ -1364,14 +1366,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div :class="['multi-root', { 'table-fullscreen': viewMode === 'single' || viewMode === 'table' || viewMode === 'table_games' }]">
+  <div :class="['multi-root', { 'table-fullscreen': viewMode === 'single' || viewMode === 'table' || viewMode === 'table_games' || viewMode === 'noname' }]">
     <div v-if="viewMode === 'loading'" class="panel loading-panel">
       <h2>月月游戏中心</h2>
       <p>{{ loadingText }}</p>
     </div>
 
     <template v-else>
-      <header v-if="viewMode !== 'single' && viewMode !== 'table' && viewMode !== 'table_games'" class="top-bar">
+      <header v-if="viewMode !== 'single' && viewMode !== 'table' && viewMode !== 'table_games' && viewMode !== 'noname'" class="top-bar">
         <div class="title-group">
           <span class="lobby-eyebrow">茶香一盏 · 好牌一局</span>
           <h1>月月游戏中心</h1>
@@ -1403,6 +1405,10 @@ onBeforeUnmount(() => {
       <section v-if="viewMode === 'game_hub'" class="lobby-panel game-hub-panel">
         <div class="lobby-section-heading"><h3>今晚，玩点什么？</h3><button class="game-button" @click="openRoomDirectory()">房间列表</button></div>
         <div class="game-grid hub-game-grid">
+          <button class="game-card" @click="viewMode = 'noname'">
+            <span class="game-card-art"><svg viewBox="0 0 160 140" aria-hidden="true"><path d="M20 30 80 10l60 20v55l-60 45-60-45z" fill="#684877" stroke="#edc278" stroke-width="5"/><path d="m45 35 72 66m-2-67-70 69" stroke="#ffe5a3" stroke-width="8"/><text x="80" y="85" text-anchor="middle" fill="#fff1ca" font-size="42">杀</text></svg></span>
+            <span class="game-card-copy"><span class="game-name">三国杀</span><span class="game-desc">无名杀 · 娱乐试玩</span></span>
+          </button>
           <button class="game-card blackjack-card" :disabled="requestInFlight" @click="enterBlackjackModeSelect">
             <span class="game-card-art"><GameIcon name="blackjack" /></span>
             <span class="game-card-copy"><span class="game-name">21点</span><span class="game-desc">立即游玩</span></span>
@@ -1414,9 +1420,12 @@ onBeforeUnmount(() => {
             <span class="card-arrow" aria-hidden="true">◆</span>
           </button>
         </div>
-        <p class="lobby-footnote"><span aria-hidden="true">◆</span> 使用账户灵石参与 · 开局前可查看玩法规则</p>
+        <p class="lobby-footnote"><span aria-hidden="true">◆</span> 棋牌游戏使用账户灵石 · 三国杀为免费娱乐模式</p>
       </section>
 
+      <GameViewport v-else-if="viewMode === 'noname' && profile">
+        <NonameGame :username="profile.username" :api-call="apiCall" @back="enterGameHub" />
+      </GameViewport>
       <GameViewport v-else-if="viewMode === 'table_games' && profile">
         <TableGames :key="selectedTableGame" :game-type="selectedTableGame" :initial-room-id="pendingTableRoom" :profile="profile" :api-call="apiCall" @back="enterGameHub" @balance="profile.balance = $event" @invite="openRoomInvite" @join-failed="enterGameHub(); errorMessage = $event" />
       </GameViewport>
@@ -2066,7 +2075,7 @@ onBeforeUnmount(() => {
 .lobby-panel .toolbar-actions { margin-top: 18px; }
 .lobby-actions { display: flex; flex-direction: column; gap: 11px; }
 .game-grid { display: grid; gap: 14px; }
-.hub-game-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.hub-game-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .multi-root .game-card {
   --card-accent: #ffde93;
   --card-shade: #ac4e4b;

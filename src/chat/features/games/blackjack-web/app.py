@@ -1971,6 +1971,11 @@ async def leave_table(request: RoomRequest, user: Dict[str, Any] = Depends(get_c
 
 
 # --- 静态文件服务 (仅在生产构建后生效) ---
+_noname_bridge = import_module("src.chat.features.games.blackjack-web.noname_bridge")
+_noname_host = import_module("src.chat.features.games.blackjack-web.noname_host")
+app.include_router(_noname_bridge.create_noname_router(get_current_user_profile))
+app.mount("/noname", _noname_host.create_noname_app(_noname_bridge.NONAME_DIST_DIR), name="noname")
+
 static_files_path = os.path.join(
     os.path.dirname(__file__),
     "dist",
