@@ -17,6 +17,7 @@ RULES = {
     "texas": "无限注德州扑克。用自己的两张底牌和五张公共牌组成最佳五张牌；结合多人胜率、底池赔率和筹码决策。raise.amount 是本轮加注到的总额，遵守 min_raise_to/max_raise_to；河牌仍有最后一轮下注。",
     "golden_flower": "炸金花。未看牌不能获知自己的手牌；look 看牌，call 跟注，raise.amount 为基础注总额，看牌者实际付双倍；compare.target_id 必须来自 compare_targets。考虑轮次、成本和适度诈唬。",
     "landlord": "斗地主，地主对两名农民。bid 为 0 至 3 的叫分，play.cards 是要出的手牌；同类牌型比大小，炸弹和王炸例外。农民应配合队友，考虑剩余张数、保留炸弹和拆牌成本。",
+    "guandan": "掼蛋，四人对家组队，双副108张。level是全桌当前级牌，红桃级牌可配非王；单对三、三带二、五张顺子、三连对、两连三、同点炸弹、同花顺和四王。同花顺大于五炸小于六炸。出完后若无人压，队友接风。优先从play_options选合法cards，保留#0/#1区分两副，必要时手动组合；配合队友，不压队友无必要的小牌，注意对手剩余张数。只输出action和cards，规则引擎会选最弱可压的通配解释。",
     "mahjong": "四人麻将。discard.tile 打牌，chow.tiles 选择 chow_options 中的顺子，kong.tile 来自 kong_options，pung 碰，win 胡，pass 跳过响应。只依据自身手牌、公开副露和弃牌。",
     "sichuan_mahjong": "四川血战麻将。dingque.suit 定缺，有缺门先打缺门；不能吃，允许碰杠胡，胡后其他玩家继续至三家胡牌。优先使用 missing_suit_options/kong_options 和合法动作。",
     "blackjack": "21点。仅 hit 要牌或 stand 停牌，超过21爆牌；A可算1或11，荷官按固定17点规则行动。只知道荷官明牌，结合自己点数作决策。",
@@ -32,6 +33,7 @@ GAME_ACTIONS = {
     "texas": {"fold", "check", "call", "raise", "all_in"},
     "golden_flower": {"fold", "look", "call", "raise", "compare"},
     "landlord": {"bid", "play", "pass"},
+    "guandan": {"play", "pass"},
     "mahjong": {"discard", "chow", "kong", "pung", "win", "pass"},
     "sichuan_mahjong": {"dingque", "discard", "kong", "pung", "win", "pass"},
     "blackjack": {"hit", "stand"},
@@ -47,7 +49,9 @@ cards kind rank size chain seat_actions action multiplier deal_count score_unit 
 melds tiles type concealed tile_count discards seat_wind wall_count last_discard tile chow_options
 kong_options drawn_tile mahjong_variant missing_suit has_won win_order win_fan win_label
 winning_tile max_fan missing_suit_options reaction_kind after_kong source_id from_user_id bet_amount status
-is_current_turn dealer""".split())
+is_current_turn dealer level team_levels team finished_rank finish_order tribute_events
+match_finished match_winner_team level_gain play_options combo to_user_id target_id
+user_ids card automatic fallback""".split())
 
 
 def _context(game_type: str, public_state: dict, user_id: str) -> dict:
@@ -59,7 +63,7 @@ def _context(game_type: str, public_state: dict, user_id: str) -> dict:
     seats = {uid: f"seat_{index + 1}" for index, uid in enumerate(identities)}
 
     identity_fields = {"user_id", "current_player_id", "current_turn_user_id", "landlord_id",
-                       "source_id", "from_user_id", "target_id", "winners", "compare_targets"}
+                       "source_id", "from_user_id", "to_user_id", "target_id", "user_ids", "winners", "compare_targets", "finish_order"}
 
     def clean(value, field=""):
         if isinstance(value, dict):

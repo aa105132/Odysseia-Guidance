@@ -49,7 +49,7 @@ for (const dm of [true, false]) {
     await page.getByRole('button', { name: '招募队友', exact: true }).click();
     await page.getByRole('button', { name: '选择好友或频道', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('已通过 Discord 分享邀请');
-    expect(await page.evaluate(() => (window as any).__shared)).toEqual({ message: '来月月茶楼一起玩！房间号 ROOM01', custom_id: 'room:blackjack:ROOM01' });
+    expect(await page.evaluate(() => (window as any).__shared)).toEqual({ message: '月月茶楼 · 多人 21 点\n与月月荷官比点数，接近 21 点且不能爆牌\n房间号：ROOM01\n当前 1/3 人\n等待开局，欢迎入座', custom_id: 'room:blackjack:ROOM01' });
     expect(calls.some(call => call.path.endsWith('/recruit'))).toBe(false);
   });
 }

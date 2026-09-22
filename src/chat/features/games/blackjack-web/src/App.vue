@@ -4,15 +4,16 @@ import dialogueConfig from "./dialogue.json";
 import TableGames from "./TableGames.vue";
 import GameTools from "./GameTools.vue";
 import GameStatsPanel from "./GameStatsPanel.vue";
-import { mountGameAudio, unmountGameAudio, playGameSound } from "./gameAudio";
+import { mountGameAudio, unmountGameAudio, playGameSound, setGameAudioScene, playRoundMusic, playGameVoice, stopGameVoice } from "./gameAudio";
+import { welcomeVoiceByText } from './gameVoiceLines';
+import GameSocial from './GameSocial.vue';
 import NonameGame from "./NonameGame.vue";
 import RoomDirectory from "./RoomDirectory.vue";
 import RoomInvite from "./RoomInvite.vue";
 import CopyRoomCode from "./CopyRoomCode.vue";
-import { parseRoomInvite, roomInviteCode, type RoomInvite as RoomInviteTarget } from "./roomInvites";
+import { parseRoomInvite, roomInviteCode, roomInviteDescription, type RoomInvite as RoomInviteTarget } from "./roomInvites";
 import type { DiscordSDK } from "@discord/embedded-app-sdk";
 import GameViewport from "./GameViewport.vue";
-import LandscapeNotice from "./LandscapeNotice.vue";
 import GameIcon from "./GameIcon.vue";
 import RoundFeedback from "./RoundFeedback.vue";
 import BustBurst from "./BustBurst.vue";
@@ -78,6 +79,7 @@ type RoomState = {
   dealer: DealerState;
   players: PlayerState[];
   turn_deadline?: number | null;
+  turn_timeout_seconds?: number;
 };
 
 type RoomEnvelope = {
@@ -118,7 +120,7 @@ const viewMode = ref<ViewMode>("loading");
 const lobbyStatsPanel = ref<'stats' | 'leaderboard' | null>(null);
 const nonameAvailable = ref(false);
 const selectedTableGame = ref<TableGameType>('texas');
-const availableTableGames: TableGameType[] = ['texas', 'landlord', 'mahjong', 'golden_flower'];
+const availableTableGames: TableGameType[] = ['texas', 'landlord', 'mahjong', 'golden_flower', 'guandan'];
 const loadingText = ref("初始化中...");
 const statusMessage = ref("");
 const errorMessage = ref("");
@@ -136,6 +138,12 @@ const singleGame = ref<SingleGameStatePayload | null>(null);
 const profile = ref<ProfileResponse | null>(null);
 const requestInFlight = ref(false);
 const blackjackRulesDialog = ref<HTMLDialogElement | null>(null);
+const blackjackSocial = ref<InstanceType<typeof GameSocial> | null>(null);
+const singleSocial = ref<InstanceType<typeof GameSocial> | null>(null);
+const singleSocialMembers = computed(() => profile.value ? [{ user_id: profile.value.user_id, username: profile.value.username, avatar_url: profile.value.avatar_url, is_bot: false }, { user_id: 'dealer', username: '月月荷官', avatar_url: '/character/normal.webp', is_bot: true }] : []);
+const blackjackSettingsDialog = ref<HTMLDialogElement | null>(null);
+const blackjackTurnSeconds = ref(60);
+const validBlackjackTurnSeconds = computed(() => Number.isInteger(blackjackTurnSeconds.value) && blackjackTurnSeconds.value >= 15 && blackjackTurnSeconds.value <= 300);
 type CardMotion = { kind: "deal" | "flip"; delay: number; token: number };
 type HandSnapshot = Record<string, string[]>;
 const cardMotions = ref<Record<string, CardMotion>>({});
@@ -143,6 +151,7 @@ const bustBursts = ref<Record<string, number>>({});
 const cardRoundKey = ref(0);
 const resultVisible = ref(false);
 const resultAnimated = ref(false);
+const resultSoundPending = ref(false);
 const resultKey = ref(0);
 const presentationTimers = new Set<number>();
 let motionToken = 0;
@@ -414,6 +423,7 @@ function resetPresentation() {
   lastCardMotionEnd = 0;
   resultVisible.value = false;
   resultAnimated.value = false;
+  resultSoundPending.value = false;
   resultKey.value += 1;
 }
 
@@ -458,6 +468,7 @@ function presentSnapshot(previous: HandSnapshot, next: HandSnapshot, options: { 
     resultAnimated.value = false;
   } else if (!options.wasFinished || options.newRound) {
     resultVisible.value = false;
+    resultSoundPending.value = true;
     resultAnimated.value = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     resultKey.value += 1;
     // 天然21点也先完成初始发牌，再展示结算；操作按钮始终可以使用。
@@ -603,6 +614,7 @@ function refreshDealerSpeech() {
   const betAmount = Number(singleGame.value?.bet_amount ?? viewerPlayer.value?.bet_amount ?? 0);
   const line = pickRandomLine(lines, fallback).replace(/\$\{amount\}/g, String(betAmount || 0));
   dealerSpeech.value = line;
+  if (['game_hub', 'blackjack_mode_select'].includes(viewMode.value) && welcomeVoiceByText[line]) playGameVoice(welcomeVoiceByText[line]!);
 }
 
 function stopDealerSpeechLoop() {
@@ -617,7 +629,7 @@ function startDealerSpeechLoop() {
   refreshDealerSpeech();
   dealerSpeechTimer = window.setInterval(() => {
     refreshDealerSpeech();
-  }, 3800);
+  }, 16000);
 }
 
 function buildRequestHeaders(includeJson: boolean): HeadersInit {
@@ -785,6 +797,16 @@ function applyRoomEnvelope(data: RoomEnvelope | { room_closed?: boolean; room_id
     const previous = roomState.value;
     const next = envelope.room;
     const isRestore = restore || !previous || previous.room_id !== next.room_id;
+    if (!isRestore && previous.state === 'playing') {
+      const changedBot = next.players.find(player => {
+        const old = previous.players.find(other => other.user_id === player.user_id);
+        return player.is_bot && old?.status === 'playing' && (player.hand.length > old.hand.length || player.status !== 'playing');
+      });
+      if (changedBot) {
+        const old = previous.players.find(player => player.user_id === changedBot.user_id)!;
+        playGameVoice(changedBot.hand.length > old.hand.length ? 'hit' : 'stand');
+      }
+    }
     const newRound = startedRound || (!isRestore && (previous.state === "waiting" || previous.state === "finished")
       && next.state !== "waiting" && (previous.state !== next.state
         || JSON.stringify(multiplayerHands(previous)) !== JSON.stringify(multiplayerHands(next))));
@@ -838,6 +860,7 @@ async function autoJoinCurrentSession(showNotice = false) {
   try {
     const data = await apiCall<AutoJoinRoomResponse>("/api/multi/room/auto-join", "POST", {
       session_key: sessionKey,
+      turn_timeout_seconds: blackjackTurnSeconds.value,
     });
     applyRoomEnvelope(data, true);
 
@@ -975,6 +998,7 @@ async function singleHit() {
   try {
     const data = await apiCall<SingleGameEnvelope>("/api/game/hit", "POST", {});
     applySingleEnvelope(data);
+    playGameVoice('hit');
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "要牌失败";
   } finally {
@@ -991,6 +1015,7 @@ async function singleStand() {
   try {
     const data = await apiCall<SingleGameEnvelope>("/api/game/stand", "POST", {});
     applySingleEnvelope(data);
+    playGameVoice('stand');
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "停牌失败";
   } finally {
@@ -1050,7 +1075,7 @@ async function createRoom() {
   clearNotices();
 
   try {
-    const data = await apiCall<RoomEnvelope>("/api/multi/room/create", "POST");
+    const data = await apiCall<RoomEnvelope>("/api/multi/room/create", "POST", { turn_timeout_seconds: blackjackTurnSeconds.value });
     applyRoomEnvelope(data, true);
     statusMessage.value = "房间已创建";
   } catch (error) {
@@ -1060,14 +1085,39 @@ async function createRoom() {
   }
 }
 
+function openBlackjackSettings() {
+  blackjackTurnSeconds.value = roomState.value?.turn_timeout_seconds ?? 60;
+  blackjackSettingsDialog.value?.showModal();
+}
+
+async function saveBlackjackSettings() {
+  if (!roomState.value || requestInFlight.value || !isHost.value || !validBlackjackTurnSeconds.value) return;
+  requestInFlight.value = true;
+  clearNotices();
+  try {
+    const data = await apiCall<RoomEnvelope>('/api/multi/room/settings', 'POST', { room_id: roomState.value.room_id, turn_timeout_seconds: blackjackTurnSeconds.value });
+    applyRoomEnvelope(data);
+    blackjackSettingsDialog.value?.close();
+    statusMessage.value = '等待时长已更新，请重新准备';
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '修改设置失败';
+  } finally { requestInFlight.value = false; }
+}
+
 function recruitTeammates() {
-  if (roomState.value) void openRoomInvite({ game_type: 'blackjack', room_id: roomState.value.room_id });
+  if (roomState.value) void openRoomInvite({ game_type: 'blackjack', room_id: roomState.value.room_id, player_count: roomState.value.players.length, max_players: roomState.value.max_players, bot_count: roomState.value.players.filter(player => player.is_bot).length, state: roomState.value.state });
 }
 
 async function shareRoom(room: RoomInviteTarget): Promise<string> {
   if (!discordSdkInstance) throw new Error('请在 Discord 小活动内分享');
+  // 分享前取最新成员数，避免弹窗打开后有人进出导致招募信息过期。
+  const endpoint = room.game_type === 'blackjack' ? '/api/multi/room/' : '/api/tables/';
+  const current = await apiCall<{ room: { players: { is_bot?: boolean }[]; max_players: number; state: string } | null }>(`${endpoint}${encodeURIComponent(room.room_id)}`, 'GET');
+  if (!current.room) throw new Error('你已离开该房间，请重新进入后招募');
+  const target = { ...room, player_count: current.room.players.length, max_players: current.room.max_players, bot_count: current.room.players.filter(player => player.is_bot).length, state: current.room.state };
+  inviteTarget.value = target;
   const result = await discordSdkInstance.commands.shareLink({
-    message: `来月月茶楼一起玩！房间号 ${room.room_id}`,
+    message: roomInviteDescription(target),
     custom_id: roomInviteCode(room),
   });
   if (result.didSendMessage) return '已通过 Discord 分享邀请';
@@ -1283,6 +1333,7 @@ async function hit() {
       room_id: roomState.value.room_id,
     });
     applyRoomEnvelope(data);
+    playGameVoice('hit');
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "要牌失败";
   } finally {
@@ -1301,6 +1352,7 @@ async function stand() {
       room_id: roomState.value.room_id,
     });
     applyRoomEnvelope(data);
+    playGameVoice('stand');
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "停牌失败";
   } finally {
@@ -1361,10 +1413,20 @@ async function bootstrap() {
 watch(
   () => [viewMode.value, roomState.value?.state ?? "", singleGame.value?.game_state ?? ""],
   () => {
+    if (viewMode.value !== 'table_games') setGameAudioScene(['single', 'table'].includes(viewMode.value) ? 'playing' : 'lobby');
     startDealerSpeechLoop();
   },
-  { immediate: true },
+  { immediate: true, flush: 'sync' },
 );
+
+watch(viewMode, () => stopGameVoice());
+
+watch(resultVisible, visible => {
+  if (visible && resultSoundPending.value && blackjackResult.value) {
+    resultSoundPending.value = false;
+    playRoundMusic(blackjackResult.value.tone);
+  }
+});
 
 onMounted(() => {
   mountGameAudio();
@@ -1421,7 +1483,7 @@ onBeforeUnmount(() => {
 
       <section v-if="viewMode === 'game_hub'" class="lobby-panel game-hub-panel">
         <div class="lobby-section-heading"><h3>今晚，玩点什么？</h3><button class="game-button" @click="openRoomDirectory()">房间列表</button></div>
-        <div class="game-grid hub-game-grid" :style="{ '--hub-columns': nonameAvailable ? 7 : 6 }">
+        <div class="game-grid hub-game-grid" :style="{ '--hub-columns': nonameAvailable ? 8 : 7 }">
           <button v-if="nonameAvailable" class="game-card" @click="viewMode = 'noname'">
             <span class="game-card-art"><svg viewBox="0 0 160 140" aria-hidden="true"><path d="M20 30 80 10l60 20v55l-60 45-60-45z" fill="#684877" stroke="#edc278" stroke-width="5"/><path d="m45 35 72 66m-2-67-70 69" stroke="#ffe5a3" stroke-width="8"/><text x="80" y="85" text-anchor="middle" fill="#fff1ca" font-size="42">杀</text></svg></span>
             <span class="game-card-copy"><span class="game-name">三国杀</span><span class="game-desc">无名杀 · 娱乐试玩</span></span>
@@ -1493,7 +1555,7 @@ onBeforeUnmount(() => {
             <section class="hand-area dealer-seat">
               <BustBurst v-if="bustBursts['single:dealer']" :key="bustBursts['single:dealer']" />
               <div class="dealer-identity">
-                <img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" alt="荷官月月" class="table-dealer-image">
+                <button class="social-avatar-button" data-game-avatar="dealer" aria-label="与月月荷官互动" @click="singleSocial?.openInteraction('dealer')"><img :src="withAssetVersion(`/character/${singleResultText === '胜利' ? 'lose' : singleResultText === '失败' ? 'win' : 'normal'}.webp`)" alt="荷官月月" class="table-dealer-image"></button>
                 <div><span class="seat-role">荷官</span><h2>月月 <span class="score-badge">{{ singleGame?.dealer_score ?? 0 }}</span></h2></div>
               </div>
               <TransitionGroup name="card" tag="div" class="card-hand dealer-hand" :style="cardHandStyle(singleGame?.dealer_hand)" :data-dealing="hasDealingCards('single:dealer')">
@@ -1551,6 +1613,7 @@ onBeforeUnmount(() => {
         <div class="room-lobby-content">
         <div class="lobby-section-heading"><h3>多人房间大厅</h3><span>21点 · 最多3人</span></div>
         <button class="game-button" @click="openRoomDirectory('blackjack')">房间列表</button>
+        <label class="blackjack-time-setting">操作等待时长（秒）<input v-model.number="blackjackTurnSeconds" aria-label="21点建房等待时长" type="number" min="15" max="300" step="1" :disabled="requestInFlight"></label>
 
         <template v-if="isDiscordMode">
           <p class="hint-text">已连接 Discord 活动，可重连当前会话房间，或直接输入房间号加入。</p>
@@ -1577,7 +1640,7 @@ onBeforeUnmount(() => {
 
         <template v-else>
           <div class="lobby-actions">
-            <button class="game-button gold" :disabled="requestInFlight" @click="createRoom">
+            <button class="game-button gold" :disabled="requestInFlight || !validBlackjackTurnSeconds" @click="createRoom">
               创建房间
             </button>
             <div class="join-group">
@@ -1612,6 +1675,7 @@ onBeforeUnmount(() => {
           <div class="toolbar-actions">
             <button class="game-button" @click="blackjackRulesDialog?.showModal()">玩法规则</button>
             <CopyRoomCode :room-id="roomState.room_id" />
+            <button class="game-button" @click="openBlackjackSettings">房间设置</button>
             <GameTools v-if="profile" :profile="profile" :api-call="apiCall" game-type="blackjack" />
             <button class="game-button" :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
             <button class="game-button" :disabled="requestInFlight" @click="recruitTeammates">招募队友</button>
@@ -1639,7 +1703,7 @@ onBeforeUnmount(() => {
                   <div v-if="String(seatPlayerMap[seatIndex]?.user_id) === viewerUserId" class="own-score" aria-label="你的点数" :data-score="ownScore" :data-bust="ownScore > 21" :data-twenty-one="ownScore === 21"><span>{{ ownScoreLabel }}</span><strong>{{ ownHandCount ? ownScore : '—' }}</strong></div>
                   <BustBurst v-if="bustBursts[`multi:${seatPlayerMap[seatIndex]?.user_id}`]" :key="bustBursts[`multi:${seatPlayerMap[seatIndex]?.user_id}`]" class="player-bust-burst" />
                   <div class="player-info-tag">
-                    <img class="seat-player-avatar" :src="playerAvatarSrc(seatPlayerMap[seatIndex]!)" :alt="`${seatPlayerMap[seatIndex]?.username}头像`">
+                    <button class="social-avatar-button" :data-game-avatar="seatPlayerMap[seatIndex]?.user_id" :aria-label="`与${seatPlayerMap[seatIndex]?.username}互动`" :disabled="String(seatPlayerMap[seatIndex]?.user_id) === viewerUserId" @click="blackjackSocial?.openInteraction(String(seatPlayerMap[seatIndex]?.user_id))"><img class="seat-player-avatar" :src="playerAvatarSrc(seatPlayerMap[seatIndex]!)" :alt="`${seatPlayerMap[seatIndex]?.username}头像`"></button>
                     <div class="seat-player-info">
                       <h2>{{ seatPlayerMap[seatIndex]?.username }} <span v-if="String(seatPlayerMap[seatIndex]?.user_id) === String(viewerUserId)" class="viewer-label">你</span><span v-if="seatPlayerMap[seatIndex]?.is_bot" class="viewer-label">AI</span></h2>
                       <p class="player-status"><span class="score-badge">{{ seatPlayerMap[seatIndex]?.score ?? 0 }}</span> {{ getPlayerStatusText(seatPlayerMap[seatIndex]!) }}<span v-if="seatPlayerMap[seatIndex]?.result"> · {{ getPlayerResultText(seatPlayerMap[seatIndex]!) }}</span></p>
@@ -1702,6 +1766,12 @@ onBeforeUnmount(() => {
       <GameStatsPanel v-if="lobbyStatsPanel && profile" :profile="profile" :api-call="apiCall" :initial-tab="lobbyStatsPanel" @close="lobbyStatsPanel = null" />
       <div v-if="statusMessage" class="status-message" role="status">{{ statusMessage }}</div>
       <div v-if="errorMessage" class="error-message" role="alert">{{ errorMessage }}</div>
+      <GameSocial v-if="viewMode === 'single' && profile" ref="singleSocial" scope-type="single" :room-id="`single-${viewerUserId}`" :viewer-id="viewerUserId" :members="singleSocialMembers" :api-call="apiCall" />
+      <GameSocial v-if="viewMode === 'table' && roomState && profile" ref="blackjackSocial" scope-type="blackjack" :room-id="roomState.room_id" :viewer-id="viewerUserId" :members="roomState.players" :api-call="apiCall" />
+      <dialog ref="blackjackSettingsDialog" class="blackjack-rules" aria-labelledby="blackjack-settings-title">
+        <div class="rules-heading"><h2 id="blackjack-settings-title">21点房间设置</h2><button class="game-button" @click="blackjackSettingsDialog?.close()">关闭</button></div>
+        <form @submit.prevent="saveBlackjackSettings"><label class="blackjack-time-setting">操作等待时长（秒）<input v-model.number="blackjackTurnSeconds" aria-label="21点操作等待时长" type="number" min="15" max="300" step="1" :disabled="!isHost || !isRoomBettingStage || requestInFlight"></label><p>可设 15–300 秒。房主可在等待或结算完成后修改，修改后真人需重新准备。</p><p v-if="errorMessage" role="alert">{{ errorMessage }}</p><button v-if="isHost" class="game-button gold" :disabled="!isRoomBettingStage || requestInFlight || !validBlackjackTurnSeconds">保存设置</button></form>
+      </dialog>
       <dialog ref="blackjackRulesDialog" class="blackjack-rules" aria-labelledby="blackjack-rules-title">
         <div class="rules-heading"><h2 id="blackjack-rules-title">21点玩法规则</h2><button class="game-button" aria-label="关闭21点规则" @click="blackjackRulesDialog?.close()">关闭</button></div>
         <h3>点数与目标</h3>
@@ -1718,14 +1788,17 @@ onBeforeUnmount(() => {
     </template>
     <RoomDirectory v-if="showRoomDirectory && profile" :api-call="apiCall" :balance="profile.balance" :game-type="directoryGameType" :join-room="joinListedRoom" @close="showRoomDirectory = false" />
     <RoomInvite v-if="inviteTarget" :room="inviteTarget" :client-id="runtimeDiscordClientId" :share="isDiscordMode ? shareRoom : undefined" @close="inviteTarget = null" />
-    <LandscapeNotice />
   </div>
 </template>
 
 <style scoped>
+.social-avatar-button { display: inline-flex; padding: 0; border: 0; background: none; cursor: pointer; flex-shrink: 0; }
+.social-avatar-button:disabled { opacity: 1; cursor: default; }
+.blackjack-time-setting { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+.blackjack-time-setting input { width: 100px; min-height: 36px; box-sizing: border-box; padding: 7px; color: #493d67; background: #fff6e4; border: 1px solid #d9b16b; border-radius: 8px; }
 .multi-root {
-  min-height: 100vh;
-  min-height: 100dvh;
+  min-height: var(--activity-height, 100vh);
+  min-height: var(--activity-height, 100dvh);
   padding: 18px;
   display: flex;
   flex-direction: column;
@@ -1737,8 +1810,8 @@ onBeforeUnmount(() => {
 /* 横屏桌面按剩余高度分配牌桌空间，操作区不随牌桌滚动。 */
 .multi-root.table-fullscreen {
   position: relative;
-  height: 100vh;
-  height: 100dvh;
+  height: var(--activity-height, 100vh);
+  height: var(--activity-height, 100dvh);
   min-height: 0;
   padding: 0;
   gap: 0;
@@ -2169,14 +2242,14 @@ onBeforeUnmount(() => {
 .home-dealer-section .dialogue-box { max-width: 330px; padding: 10px 14px; color: #74516a; background: linear-gradient(135deg, #fff4dbee, #f1d6b2ee); border: 2px solid #e7b77d; border-radius: 14px 14px 4px 14px; box-shadow: 0 3px 0 #955b4366; font-size: 12px; line-height: 1.6; }
 .home-dealer-section .dialogue-box p { margin: 0; }
 .status-message,
-.error-message { flex-shrink: 0; border: 1px solid #f1cb89; border-radius: 8px; padding: 6px 12px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; max-height: 16dvh; overflow: auto; }
+.error-message { flex-shrink: 0; border: 1px solid #f1cb89; border-radius: 8px; padding: 6px 12px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; max-height: calc(var(--activity-height, 100dvh) * .16); overflow: auto; }
 .status-message { color: #fff0d4; background: linear-gradient(180deg, #607dad, #464580); }
 .error-message { color: #fff1d5; background: linear-gradient(180deg, #c26550, #934047); border-color: #ffd9a3; }
 .table-fullscreen > .status-message,
 .table-fullscreen > .error-message { position: absolute; bottom: 0; left: 0; right: 0; z-index: 8; height: 24px; margin: 0; padding: 3px 12px; border-radius: 0; font-size: 11px; }
 .table-fullscreen:has(> .error-message) > .status-message { visibility: hidden; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-.blackjack-rules { width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); margin: auto; padding: 18px; overflow: auto; border: 3px solid #e7bb75; border-radius: 18px; background: #fff0d4; color: #574967; text-align: left; box-shadow: inset 0 0 0 2px #fff8df, 0 7px 0 #8c573f, 0 16px 45px #341f4773; }
+.blackjack-rules { width: min(680px, calc(var(--activity-width, 100vw) - 24px)); max-height: calc(var(--activity-height, 100dvh) - 24px); margin: auto; padding: 18px; overflow: auto; border: 3px solid #e7bb75; border-radius: 18px; background: #fff0d4; color: #574967; text-align: left; box-shadow: inset 0 0 0 2px #fff8df, 0 7px 0 #8c573f, 0 16px 45px #341f4773; }
 .blackjack-rules::backdrop { background: #35213eaf; backdrop-filter: blur(3px); }
 .rules-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; position: sticky; top: -18px; padding: 6px 0; background: #fff0d4; }
 .rules-heading h2 { margin: 0; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-size: 20px; color: #51447a; }
@@ -2285,8 +2358,8 @@ onBeforeUnmount(() => {
   .action-dock:not(.betting-dock) { bottom: calc(clamp(30px, 18cqh, 50px) * 1.38 + 18px); }
 }
 
-@media (max-height: 600px) and (orientation: landscape) {
-  .multi-root:not(.table-fullscreen) { height: 100dvh; min-height: 0; padding: 12px 20px 8px; gap: 10px; overflow: auto; }
+@container activity-viewport (max-height: 600px) {
+  .multi-root:not(.table-fullscreen) { height: var(--activity-height, 100dvh); min-height: 0; padding: 12px 20px 8px; gap: 10px; overflow: auto; }
   .top-bar { align-items: center; }
   .lobby-eyebrow { font-size: 7px; letter-spacing: 3px; margin-bottom: 3px; }
   .title-group h1 { font-size: 21px; }
@@ -2309,7 +2382,7 @@ onBeforeUnmount(() => {
   .card-arrow { right: 8px; top: 5px; font-size: 12px; }
   .lobby-footnote { margin-top: 10px; font-size: 9px; }
   .home-dealer-section { min-height: 0; flex: 1; gap: 8px; }
-  .home-dealer-section .dealer-image { width: auto; height: min(15dvh, 80px); object-fit: contain; }
+  .home-dealer-section .dealer-image { width: auto; height: min(calc(var(--activity-height, 100dvh) * .15), 80px); object-fit: contain; }
   .home-dealer-section .dialogue-box { font-size: 10px; padding: 6px 10px; max-width: 280px; }
   .multi-root .mode-card { min-height: 116px; padding: 8px 18px 8px 8px; }
   .mode-card .game-card-art { max-width: 135px; }
@@ -2323,7 +2396,7 @@ onBeforeUnmount(() => {
   .dealer-dialogue { font-size: 10px; margin-top: 8px; }
 }
 
-@media (max-width: 680px) and (orientation: landscape) {
+@container activity-viewport (max-width: 680px) {
   .multi-root:not(.table-fullscreen) { padding-inline: 12px; gap: 8px; }
   .hub-game-grid { gap: 7px; }
   .game-name { font-size: 15px; }

@@ -9,8 +9,36 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html, body, #app { margin: 0; width: 100%; min-height: 100%; }
-body { min-width: 280px; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+body { min-width: 0; }
+#app {
+  position: fixed;
+  top: var(--activity-offset-top, 0px);
+  left: var(--activity-offset-left, 0px);
+  margin: 0;
+  width: var(--activity-width, 100vw);
+  height: var(--activity-height, 100dvh);
+  min-height: 0;
+  overflow: hidden;
+  transform-origin: top left;
+  transform: translateZ(0);
+  container-name: activity-viewport;
+  container-type: size;
+}
+:root[data-activity-rotated='true'] #app { transform: translateX(var(--activity-physical-width)) rotate(90deg); }
+/* 原生弹窗在top layer，需独立放入扣除Discord侧栏的物理中心。 */
+dialog[open] {
+  position: fixed !important;
+  inset: auto !important;
+  top: calc(var(--activity-offset-top, 0px) + var(--activity-physical-height, 100dvh) / 2) !important;
+  left: calc(var(--activity-offset-left, 0px) + var(--activity-physical-width, 100vw) / 2) !important;
+  margin: 0 !important;
+  transform: translate(-50%, -50%) rotate(var(--activity-rotation, 0deg)) !important;
+  transform-origin: center !important;
+  max-width: calc(var(--activity-width, 100vw) - 24px) !important;
+  max-height: calc(var(--activity-height, 100dvh) - 24px) !important;
+}
+dialog::backdrop { right: var(--activity-rail, 0px); }
 button, input, select { font: inherit; }
 button { cursor: pointer; touch-action: manipulation; }
 button:disabled { cursor: not-allowed; }

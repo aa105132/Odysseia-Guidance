@@ -129,13 +129,18 @@ async function expectAroundTable(page: Page, count: number) {
   }
 }
 
-async function expectPortraitNotice(page: Page) {
-  const notice = page.locator('.landscape-notice');
-  await expect(notice).toBeVisible();
-  await expect(notice).toHaveAttribute('aria-label', '横屏游玩提示');
-  await expect(notice).toContainText('旋转手机');
-  await expect(notice).toBeInViewport({ ratio: 1 });
-  expect(await notice.evaluate(element => element.contains(document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2))), '竖屏提示应覆盖牌桌中央').toBe(true);
+async function expectAutoRotated(page: Page) {
+  await expect(page.locator('.landscape-notice')).toHaveCount(0);
+  await expect.poll(() => page.locator('#app').evaluate(element => {
+    const style = getComputedStyle(element);
+    const matrix = new DOMMatrixReadOnly(style.transform);
+    return Math.round(matrix.b);
+  })).toBe(1);
+  const box = await page.locator('#app').boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(-1);
+  expect(box!.y).toBeGreaterThanOrEqual(-1);
+  expect(box!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+  expect(box!.height).toBeLessThanOrEqual(page.viewportSize()!.height + 1);
 }
 
 async function expectSeatPlaysUnobstructed(page: Page) {
@@ -180,7 +185,7 @@ for (const spec of games) {
       if (path === '/api/tables/leave') return route.fulfill({ json: { success: true, room: null, viewer_balance: 2000 } });
       if (!path.startsWith('/api/tables/')) return route.fulfill({ status: 404, json: { detail: '未模拟接口' } });
       if (path.endsWith('/create')) {
-        expect(route.request().postDataJSON()).toEqual({ game_type: spec.type, mode: 'solo', include_yueyue: true, room_tier: 'beginner' });
+        expect(route.request().postDataJSON()).toEqual({ game_type: spec.type, mode: 'solo', include_yueyue: true, room_tier: 'beginner', turn_timeout_seconds: 60 });
       }
       if (path.endsWith('/join')) rejoined++;
       if (path.endsWith('/ready')) { room.players[0]!.is_ready = true; room.revision++; }
@@ -266,7 +271,7 @@ for (const spec of games) {
 
     const handBeforeRotation = await page.locator('.tg-my-hand button').evaluateAll(cards => cards.map(card => card.getAttribute('aria-label')));
     await page.setViewportSize({ width: 375, height: 667 });
-    await expectPortraitNotice(page);
+    await expectAutoRotated(page);
     await expect(page.locator('.tg-seat')).toHaveCount(spec.count);
     await expect(page.locator('.tg-title')).toContainText('TABLE1');
     expect(await page.locator('.tg-my-hand button').evaluateAll(cards => cards.map(card => card.getAttribute('aria-label')))).toEqual(handBeforeRotation);
@@ -300,7 +305,7 @@ test('德州8人窗口可达，自定义底分上限与实际结算正确显示'
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/profile') return route.fulfill({ json: { success: true, user_id: uid, username: '玩家1', avatar_url: '/character/normal.webp', balance: 2000 } });
-    if (path.endsWith('/create')) expect(route.request().postDataJSON()).toEqual({ game_type: 'texas', room_tier: 'custom', base_stake: 5, loss_limit: 500, mode: 'multi', include_yueyue: false });
+    if (path.endsWith('/create')) expect(route.request().postDataJSON()).toEqual({ game_type: 'texas', room_tier: 'custom', base_stake: 5, loss_limit: 500, mode: 'multi', include_yueyue: false, turn_timeout_seconds: 60 });
     if (path.endsWith('/settings')) {
       expect(route.request().postDataJSON()).toEqual({ room_id: 'EIGHT8', base_stake: 10, loss_limit: 800 });
       room.buy_in = room.stake = 800;
@@ -362,7 +367,7 @@ test('插画大厅与场次入口适配横屏，准入限制和创建参数一�
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/profile') return route.fulfill({ json: { success: true, user_id: uid, username: '场次玩家', avatar_url: '/character/normal.webp', balance: 2000 } });
     if (path.endsWith('/create')) {
-      expect(route.request().postDataJSON()).toEqual({ game_type: 'landlord', mode: 'multi', include_yueyue: true, room_tier: 'intermediate' });
+      expect(route.request().postDataJSON()).toEqual({ game_type: 'landlord', mode: 'multi', include_yueyue: true, room_tier: 'intermediate', turn_timeout_seconds: 60 });
       created = true;
     }
     return route.fulfill({ json: { success: true, viewer_balance: 2000, room: {

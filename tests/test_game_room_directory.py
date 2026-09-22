@@ -65,7 +65,7 @@ def test_directory_combines_games_excludes_solo_and_exposes_only_summary(api):
             allowed = {
                 "room_id", "game_type", "host_username", "host_avatar_url", "state",
                 "player_count", "max_players", "room_tier", "base_stake", "entry_min",
-                "loss_limit", "is_member", "can_join", "updated_at",
+                    "loss_limit", "turn_timeout_seconds", "is_member", "can_join", "updated_at",
             }
             assert all(set(room) == allowed and room["can_join"] for room in payload["rooms"])
             filtered = await client.get("/api/rooms", params={"game_type": "blackjack"})

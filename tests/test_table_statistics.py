@@ -26,7 +26,8 @@ async def test_statistics_record_actual_profits_once_and_ignore_refunds(wallet):
     stats = (await wallet.statistics("1", "texas"))["stats"]
     assert stats == {"rounds": 1, "wins": 1, "losses": 0,
                      "draws": 0, "win_rate": 100, "net_profit": 50, "today_profit": 50,
-                     "legacy_rounds": 0}
+                     "legacy_rounds": 0, "max_win": 50, "max_loss": 0,
+                     "total_won": 50, "total_lost": 0, "average_profit": 50}
     loser = (await wallet.statistics("2", "texas"))["stats"]
     assert (loser["rounds"], loser["losses"], loser["net_profit"]) == (1, 1, -50)
     board = await wallet.leaderboard("2", "today", "texas")

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-type IconName = 'blackjack' | 'landlord' | 'mahjong' | 'texas' | 'golden_flower' | 'beginner' | 'intermediate' | 'advanced' | 'solo' | 'friends' | 'room' | 'robot' | 'leaderboard';
+type IconName = 'blackjack' | 'landlord' | 'mahjong' | 'texas' | 'golden_flower' | 'guandan' | 'beginner' | 'intermediate' | 'advanced' | 'solo' | 'friends' | 'room' | 'robot' | 'leaderboard';
 const props = defineProps<{ name: IconName }>();
 const paintedGames = ['blackjack', 'landlord', 'mahjong', 'texas', 'golden_flower'];
 </script>
@@ -8,7 +8,13 @@ const paintedGames = ['blackjack', 'landlord', 'mahjong', 'texas', 'golden_flowe
   <img v-if="paintedGames.includes(props.name)" class="game-icon painted-game-icon" :src="`/ui/guochao/game-${name}.webp`" alt="" aria-hidden="true" draggable="false">
   <svg v-else class="game-icon" viewBox="0 0 160 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
     <ellipse cx="80" cy="104" rx="55" ry="8" fill="#041819" opacity=".24" />
-    <g v-if="name === 'leaderboard'">
+    <g v-if="name === 'guandan'">
+      <circle cx="80" cy="58" r="47" fill="#8c5e70" opacity=".18"/>
+      <g transform="rotate(-18 54 66)"><rect x="24" y="22" width="56" height="81" rx="8" fill="#fff3d5" stroke="#ad7651" stroke-width="3"/><text x="32" y="44" fill="#9f354b" font-size="20" font-weight="bold">2</text><path d="M51 60c-13-16-26 8 0 24 26-16 13-40 0-24" fill="#b7515c"/></g>
+      <g transform="rotate(16 105 65)"><rect x="77" y="17" width="56" height="81" rx="8" fill="#fff5dc" stroke="#ad7651" stroke-width="3"/><text x="85" y="40" fill="#514369" font-size="20" font-weight="bold">A</text><path d="M105 48c-29 27-14 33-3 25l-4 13h14l-4-13c11 8 26 2-3-25" fill="#514369"/></g>
+      <path d="M27 98q52 22 107-1" fill="none" stroke="#dcb165" stroke-width="5" stroke-linecap="round"/>
+    </g>
+    <g v-else-if="name === 'leaderboard'">
       <defs><linearGradient id="rank-gold" x1="40" y1="20" x2="113" y2="99" gradientUnits="userSpaceOnUse"><stop stop-color="#fff2ad"/><stop offset=".48" stop-color="#eab951"/><stop offset="1" stop-color="#a96428"/></linearGradient></defs>
       <circle cx="80" cy="53" r="46" fill="#fff3b4" opacity=".15"/>
       <path d="M53 30H32v16c0 17 15 25 29 25m46-41h21v16c0 17-15 25-29 25" stroke="#a46430" stroke-width="12" stroke-linejoin="round"/>

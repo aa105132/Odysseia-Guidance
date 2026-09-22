@@ -22,10 +22,10 @@ const total = ref(0);
 let disposed = false;
 let sequence = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
-const names: Record<string, string> = { blackjack: '21点', texas: '德州扑克', golden_flower: '炸金花', landlord: '斗地主', mahjong: '基础麻将', sichuan_mahjong: '四川血战' };
+const names: Record<string, string> = { blackjack: '21点', texas: '德州扑克', golden_flower: '炸金花', landlord: '斗地主', mahjong: '基础麻将', sichuan_mahjong: '四川血战', guandan: '掼蛋' };
 const tiers: Record<string, string> = { beginner: '初级场', intermediate: '中级场', advanced: '高级场', custom: '自定义' };
 const visibleRooms = computed(() => rooms.value.filter(room => (!filter.value || room.game_type === filter.value) && (!onlyOpen.value || canJoin(room))));
-function icon(game: string) { return (game === 'sichuan_mahjong' ? 'mahjong' : game) as 'blackjack' | 'texas' | 'golden_flower' | 'landlord' | 'mahjong'; }
+function icon(game: string) { return (game === 'sichuan_mahjong' ? 'mahjong' : game) as 'blackjack' | 'texas' | 'golden_flower' | 'landlord' | 'mahjong' | 'guandan'; }
 function canJoin(room: ListedRoom) { return room.can_join && (room.is_member || props.balance >= room.entry_min); }
 function buttonLabel(room: ListedRoom) {
   if (joining.value === room.room_id) return '入座中…';
@@ -85,7 +85,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; clearInterval(timer); panel
 </template>
 
 <style scoped>
-.room-directory { box-sizing: border-box; width: min(850px, calc(100vw - 28px)); max-width: none; height: min(660px, calc(100dvh - 24px)); max-height: none; margin: auto; padding: 18px; border: 3px solid #efc882; border-radius: 20px; color: #463e69; background: url('/ui/guochao/cloud-pattern.svg') center / 190px, linear-gradient(125deg, #fff3d9, #eed3ac); box-shadow: inset 0 0 0 2px #b98557, 0 14px 65px #17152bb0; }
+.room-directory { box-sizing: border-box; width: min(850px, calc(var(--activity-width, 100vw) - 28px)); max-width: none; height: min(660px, calc(var(--activity-height, 100dvh) - 24px)); max-height: none; margin: auto; padding: 18px; border: 3px solid #efc882; border-radius: 20px; color: #463e69; background: url('/ui/guochao/cloud-pattern.svg') center / 190px, linear-gradient(125deg, #fff3d9, #eed3ac); box-shadow: inset 0 0 0 2px #b98557, 0 14px 65px #17152bb0; }
 .room-directory[open] { display: flex; flex-direction: column; gap: 12px; }
 .room-directory::backdrop { background: #151125b5; }
 .directory-heading { display: flex; align-items: center; gap: 12px; flex: none; }
@@ -112,6 +112,6 @@ onBeforeUnmount(() => { disposed = true; sequence++; clearInterval(timer); panel
 .directory-empty p, .room-directory footer { margin: 0; color: #846546; font-size: 11px; }
 .directory-error { color: #a12a31; margin: 0; font-size: 12px; }
 .directory-pages { display: flex; justify-content: center; align-items: center; gap: 12px; font-size: 12px; }
-@media (max-height: 450px) { .room-directory { padding: 10px 14px; border-radius: 14px; } .room-directory[open] { gap: 6px; } .directory-heading h2 { font-size: 18px; } .directory-heading > .game-icon { height: 36px; width: 43px; } .directory-heading small { font-size: 9px; } .directory-room { padding: 8px; gap: 9px; } .directory-room > .game-icon { width: 45px; height: 44px; } .directory-room h3 { font-size: 14px; } }
-@media (max-width: 620px) { .directory-filters { gap: 8px; font-size: 11px; } .directory-filters select { max-width: 120px; } .directory-room > .game-icon { width: 40px; } .directory-room > button { min-width: 66px; } }
+@container activity-viewport (max-height: 450px) { .room-directory { padding: 10px 14px; border-radius: 14px; } .room-directory[open] { gap: 6px; } .directory-heading h2 { font-size: 18px; } .directory-heading > .game-icon { height: 36px; width: 43px; } .directory-heading small { font-size: 9px; } .directory-room { padding: 8px; gap: 9px; } .directory-room > .game-icon { width: 45px; height: 44px; } .directory-room h3 { font-size: 14px; } }
+@container activity-viewport (max-width: 620px) { .directory-filters { gap: 8px; font-size: 11px; } .directory-filters select { max-width: 120px; } .directory-room > .game-icon { width: 40px; } .directory-room > button { min-width: 66px; } }
 </style>

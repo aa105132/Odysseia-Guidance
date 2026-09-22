@@ -149,13 +149,18 @@ async function expectBlackjackSeats(page: Page, multiplayer: boolean) {
   }
 }
 
-async function expectPortraitNotice(page: Page) {
-  const notice = page.locator('.landscape-notice');
-  await expect(notice).toBeVisible();
-  await expect(notice).toHaveAttribute('aria-label', '横屏游玩提示');
-  await expect(notice).toContainText('旋转手机');
-  await expect(notice).toBeInViewport({ ratio: 1 });
-  expect(await notice.evaluate(element => element.contains(document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2))), '竖屏提示应覆盖牌桌中央').toBe(true);
+async function expectAutoRotated(page: Page) {
+  await expect(page.locator('.landscape-notice')).toHaveCount(0);
+  await expect.poll(() => page.locator('#app').evaluate(element => {
+    const style = getComputedStyle(element);
+    const matrix = new DOMMatrixReadOnly(style.transform);
+    return Math.round(matrix.b);
+  })).toBe(1);
+  const box = await page.locator('#app').boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(-1);
+  expect(box!.y).toBeGreaterThanOrEqual(-1);
+  expect(box!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+  expect(box!.height).toBeLessThanOrEqual(page.viewportSize()!.height + 1);
 }
 
 async function mockApi(page: Page, withOpenSeat = false, withLongHands = false) {
@@ -354,9 +359,9 @@ for (const viewport of viewports) {
     await expectControlsReachable(page);
     await expectBettingAwayFromDiscordRail(page);
 
-    // 竖屏仅提示旋转，不能卸载牌局或清空操作状态。
+    // 竖屏自动旋转布局，不能卸载牌局或清空操作状态。
     await page.setViewportSize({ width: 375, height: 667 });
-    await expectPortraitNotice(page);
+    await expectAutoRotated(page);
     await expect(page.locator('.seat-area')).toHaveCount(3);
     await expect(page.locator('.table-heading')).toContainText('ABC123');
     await captureFinalScreenshot(page, `landscape-blackjack-portrait-notice-${viewport.width}.png`);

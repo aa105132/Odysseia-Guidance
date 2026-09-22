@@ -4,6 +4,7 @@ import logging
 import asyncio
 import weakref
 import copy
+from uuid import uuid4
 from contextlib import suppress
 import discord
 from typing import List, Optional, Dict, Any, Tuple, Literal
@@ -33,6 +34,8 @@ _wallet_module = import_module("src.chat.features.games.blackjack-web.table_wall
 table_wallet = None
 table_tick_task = None
 game_bot_runner = None
+_social_module = import_module("src.chat.features.games.blackjack-web.game_social")
+game_social = _social_module.GameSocialService()
 
 
 def _get_table_wallet():
@@ -51,6 +54,15 @@ async def _settle_table(room_id: str):
             round_key, payouts, game_type=room.game_type,
             profiles={uid: {"username": player.username, "avatar_url": player.avatar_url}
                       for uid, player in room.players.items() if not player.is_bot},
+            round_details={uid: {
+                "room_id": room.room_id, "started_at": room.started_at,
+                "players": [{"user_id": player.user_id, "username": player.username, "is_bot": player.is_bot}
+                            for player in room.players.values()],
+                "actions": copy.deepcopy(room.public_action_history),
+                "history_truncated": room.history_truncated,
+                "deal_count": getattr(room.engine, "deal_count", 1),
+                "final_state": room.engine.public_state(uid),
+            } for uid, player in room.players.items() if not player.is_bot},
         )
         room.settlement_status = "settled"
         table_service._changed(room)
@@ -401,6 +413,16 @@ class RoomRequest(BaseModel):
     room_id: str
 
 
+class BlackjackCreateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    turn_timeout_seconds: int = Field(default=60, ge=15, le=300, strict=True)
+
+
+class BlackjackSettingsRequest(RoomRequest):
+    model_config = {"extra": "forbid"}
+    turn_timeout_seconds: int = Field(ge=15, le=300, strict=True)
+
+
 class MultiplayerBetRequest(BaseModel):
     room_id: str
     amount: int
@@ -417,6 +439,7 @@ class BlackjackBotRequest(RoomRequest):
 
 class AutoJoinRoomRequest(BaseModel):
     session_key: str
+    turn_timeout_seconds: int = Field(default=60, ge=15, le=300, strict=True)
 
 
 class RecruitRoomRequest(BaseModel):
@@ -623,6 +646,18 @@ async def _run_coro_in_bot_loop(
         raise RuntimeError("等待 Discord Bot 响应超时，请稍后重试") from exc
 
 
+def _recruit_description(room_id: str, user_id: int, username: str, room_state: dict) -> str:
+    players = room_state.get("players", [])
+    bots = sum(bool(player.get("is_bot")) for player in players)
+    state = {"waiting": "等待准备", "playing": "对局中", "dealer_turn": "荷官回合", "finished": "本局已结束"}.get(room_state.get("state"), "等待入座")
+    return (
+        f"<@{user_id}> 正在招募队友参与多人 21 点：与月月荷官比点数，接近 21 点且不能爆牌。\n"
+        f"房间号：`{room_id}` · 当前 {len(players)}/{room_state.get('max_players', 8)} 人"
+        f"（真人 {len(players) - bots}、月月 AI {bots}）· {state}\n"
+        f"发起人：{username}\n点击下方按钮启动活动后可自动进入该房间。"
+    )
+
+
 async def _send_recruit_message_via_bot(
     bot: discord.Client,
     *,
@@ -633,6 +668,7 @@ async def _send_recruit_message_via_bot(
     channel_id: int,
     guild_id: Optional[int],
     bot_token: str,
+    room_state: dict,
 ) -> Dict[str, str]:
     async def _task() -> Dict[str, str]:
         channel = bot.get_channel(channel_id)
@@ -682,12 +718,7 @@ async def _send_recruit_message_via_bot(
             )
         )
 
-        recruit_text = (
-            f"<@{user_id}> 正在招募队友参与多人 21 点对战。\n"
-            f"房间号：`{room_id}`\n"
-            f"发起人：{username}\n"
-            "点击下方按钮启动活动后可自动进入该房间。"
-        )
+        recruit_text = _recruit_description(room_id, user_id, username, room_state)
 
         message = await channel.send(recruit_text, view=recruit_view)
         return {
@@ -762,6 +793,7 @@ async def _send_recruit_message_via_http(
     channel_id: int,
     guild_id: Optional[int],
     bot_token: str,
+    room_state: dict,
 ) -> Dict[str, str]:
     launch_url = await _create_activity_invite_via_http(
         channel_id=channel_id,
@@ -771,12 +803,7 @@ async def _send_recruit_message_via_http(
         user_id=user_id,
     )
 
-    recruit_text = (
-        f"<@{user_id}> 正在招募队友参与多人 21 点对战。\n"
-        f"房间号：`{room_id}`\n"
-        f"发起人：{username}\n"
-        "点击下方按钮启动活动后可自动进入该房间。"
-    )
+    recruit_text = _recruit_description(room_id, user_id, username, room_state)
 
     payload = {
         "content": recruit_text,
@@ -847,6 +874,7 @@ async def _send_recruit_message(
     discord_client_id: str,
     channel_id: int,
     guild_id: Optional[int],
+    room_state: dict,
 ) -> Dict[str, str]:
     bot = service_registry.bot
     bot_ready = bool(bot is not None and bot.is_ready())
@@ -863,6 +891,7 @@ async def _send_recruit_message(
                 channel_id=channel_id,
                 guild_id=guild_id,
                 bot_token=bot_token,
+                room_state=room_state,
             )
         except Exception as e:
             if not bot_token:
@@ -895,6 +924,7 @@ async def _send_recruit_message(
         channel_id=channel_id,
         guild_id=guild_id,
         bot_token=bot_token,
+        room_state=room_state,
     )
 
 
@@ -957,6 +987,10 @@ async def _try_settle_multiplayer_round(room_id: str):
         await _get_table_wallet().settle_blackjack(
             room.round_key, str(player.user_id), player.bet_amount, player.payout_amount,
             {"username": player.username, "avatar_url": player.avatar_url},
+            details={"room_id": room.room_id, "mode": "multi", "actions": [],
+                     "players": [{"user_id": str(member.user_id), "username": member.username,
+                                  "is_bot": member.is_bot} for member in room.players.values()],
+                     "final_state": multiplayer_blackjack_service._to_room_state(room)},
         )
         if player.payout_amount > 0:
             multiplayer_blackjack_service.mark_payout_committed(room_id, player.user_id)
@@ -982,6 +1016,11 @@ async def _settle_single_game(game):
     balance = await _get_table_wallet().settle_blackjack(
         game.round_key, str(game.user_id), game.bet_amount, payout,
         player_profile_cache.get(game.user_id),
+        details={"mode": "solo", "actions": [], "final_state": {
+            "players": [{"user_id": str(game.user_id), "hand": list(game.player_hand)},
+                        {"user_id": "dealer", "hand": list(game.dealer_hand)}],
+        }, "players": [{"user_id": str(game.user_id), "username": "你"},
+                       {"user_id": "dealer", "username": "月月荷官", "is_bot": True}]},
     )
     await blackjack_service.delete_game(game.user_id)
     await _record_game_result(game.bet_amount, payout)
@@ -1155,6 +1194,7 @@ async def multi_auto_join_room(
                     user_id=user_id,
                     username=username,
                     avatar_url=avatar_url,
+                    turn_timeout_seconds=request.turn_timeout_seconds,
                 )
                 room_id = str(room_state["room_id"])
                 _bind_session_room(session_key, room_id)
@@ -1171,13 +1211,14 @@ async def multi_auto_join_room(
 
 
 @app.post("/api/multi/room/create")
-async def multi_create_room(user: Dict[str, Any] = Depends(get_current_user_profile)):
+async def multi_create_room(request: Optional[BlackjackCreateRequest] = None, user: Dict[str, Any] = Depends(get_current_user_profile)):
     async with room_locks["multi:create"]:
         try:
             room_state = multiplayer_blackjack_service.create_room(
                 user_id=int(user["user_id"]),
                 username=str(user["username"]),
                 avatar_url=str(user["avatar_url"]),
+                turn_timeout_seconds=request.turn_timeout_seconds if request else 60,
             )
             balance = await _ensure_user_balance(int(user["user_id"]))
             return JSONResponse(
@@ -1215,6 +1256,19 @@ async def multi_join_room(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/multi/room/settings")
+async def multi_room_settings(request: BlackjackSettingsRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    room_id = _normalize_room_id(request.room_id)
+    async with room_locks[_room_lock_key(room_id)]:
+        try:
+            room = multiplayer_blackjack_service.settings(room_id, int(user["user_id"]), request.turn_timeout_seconds)
+            return {"success": True, "room": room, "viewer_balance": await _ensure_user_balance(int(user["user_id"]))}
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/api/multi/room/recruit")
@@ -1270,6 +1324,7 @@ async def multi_recruit_room(
             discord_client_id=discord_client_id,
             channel_id=channel_id,
             guild_id=guild_id,
+            room_state=room_state,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1690,6 +1745,64 @@ async def multi_stand(
             raise HTTPException(status_code=400, detail=str(e))
 
 
+class GameSocialRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    kind: Literal["chat", "interaction"]
+    item_id: str = Field(min_length=1, max_length=32)
+    target_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
+
+
+def _social_room(scope_type: str, room_id: str, user_id: str):
+    if scope_type == "table":
+        room = table_service._room(room_id)
+        member = table_service._member(room, user_id)
+        if not member.connected:
+            raise PermissionError("你已离桌，请重新加入后使用聊天")
+    elif scope_type == "blackjack":
+        # 聊天读取不会推进牌局，也不接触手牌。
+        room = multiplayer_blackjack_service._rooms.get(room_id)
+        if room is None:
+            raise ValueError("房间不存在或已关闭")
+        if int(user_id) not in room.players:
+            raise PermissionError("请先加入房间")
+    else:
+        raise ValueError("不支持的聊天房间类型")
+    if not getattr(room, "social_scope", None):
+        room.social_scope = uuid4().hex
+    members = [{"user_id": str(player.user_id), "username": player.username, "is_bot": player.is_bot}
+               for player in room.players.values() if player.is_bot or getattr(player, "connected", True)]
+    return (scope_type, room.social_scope), members
+
+
+async def _game_social_operation(scope_type: str, room_id: str, user: Dict[str, Any], after=None, message=None):
+    normalized = _normalize_room_id(room_id)
+    lock_key = f"table:{normalized}" if scope_type == "table" else _room_lock_key(normalized)
+    async with room_locks[lock_key]:
+        try:
+            uid = str(user["user_id"])
+            scope, members = _social_room(scope_type, normalized, uid)
+            if message is not None:
+                event = game_social.send(scope, uid, members, message.kind, message.item_id, message.target_id)
+                return {"success": True, "event": event}
+            return {"success": True, **game_social.recent(scope, uid, members, after), "catalog": game_social.catalog()}
+        except _social_module.SocialRateLimitError as exc:
+            raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": str(max(1, int(exc.retry_after + 0.999)))})
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/game-social/{scope_type}/{room_id}")
+async def game_social_recent(scope_type: str, room_id: str, after: Optional[int] = Query(default=None, ge=0), user: Dict[str, Any] = Depends(get_current_user_profile)):
+    return await _game_social_operation(scope_type, room_id, user, after=after)
+
+
+@app.post("/api/game-social/{scope_type}/{room_id}")
+async def game_social_send(scope_type: str, room_id: str, request: GameSocialRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    return await _game_social_operation(scope_type, room_id, user, message=request)
+
+
 @app.get("/api/tables/stats")
 async def table_personal_statistics(
     game_type: str = Query(default="all"),
@@ -1698,6 +1811,39 @@ async def table_personal_statistics(
     if game_type not in {"all", "blackjack", *_table_module.GAME_SPECS}:
         raise HTTPException(status_code=400, detail="不支持的游戏类型")
     return {"success": True, **await _get_table_wallet().statistics(str(user["user_id"]), None if game_type == "all" else game_type)}
+
+
+@app.get("/api/tables/history")
+async def table_personal_history(
+    game_type: str = Query(default="all"),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=100000),
+    user: Dict[str, Any] = Depends(get_current_user_profile),
+):
+    if game_type not in {"all", "blackjack", *_table_module.GAME_SPECS}:
+        raise HTTPException(status_code=400, detail="不支持的游戏类型")
+    return {"success": True, **await _get_table_wallet().history(
+        str(user["user_id"]), None if game_type == "all" else game_type, limit, offset,
+    )}
+
+
+@app.get("/api/tables/history/{round_key}")
+async def table_personal_round(round_key: str, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    if len(round_key) > 100:
+        raise HTTPException(status_code=400, detail="牌局编号过长")
+    result = await _get_table_wallet().round_detail(str(user["user_id"]), round_key)
+    if result is None:
+        raise HTTPException(status_code=404, detail="未找到你的该局记录")
+    return {"success": True, "round": result}
+
+
+@app.get("/api/tables/transactions")
+async def table_personal_transactions(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=100000),
+    user: Dict[str, Any] = Depends(get_current_user_profile),
+):
+    return {"success": True, **await _get_table_wallet().transactions(str(user["user_id"]), limit, offset)}
 
 
 async def _load_leaderboard_profiles(user_ids: set[str]):
@@ -1753,7 +1899,7 @@ async def _load_leaderboard_profiles(user_ids: set[str]):
 async def table_profit_leaderboard(
     period: Literal["today", "all"] = Query(default="today"),
     game_type: str = Query(default="all"),
-    limit: int = Query(default=20, ge=1, le=20),
+    limit: int = Query(default=100, ge=1, le=100),
     user: Dict[str, Any] = Depends(get_current_user_profile),
 ):
     if game_type not in {"all", "blackjack", *_table_module.GAME_SPECS}:
@@ -1791,6 +1937,7 @@ class TableCreateRequest(BaseModel):
     base_stake: Optional[int] = Field(default=None, ge=1, le=(2**53 - 1) // 80, strict=True)
     loss_limit: Optional[int] = Field(default=None, ge=100, le=(2**53 - 1) // 8, strict=True)
     auto_start_when_ready: bool = Field(default=False, strict=True)
+    turn_timeout_seconds: int = Field(default=60, ge=15, le=300, strict=True)
 
 
 class TableSettingsRequest(RoomRequest):
@@ -1798,6 +1945,7 @@ class TableSettingsRequest(RoomRequest):
     base_stake: Optional[int] = Field(default=None, ge=1, le=(2**53 - 1) // 80, strict=True)
     loss_limit: Optional[int] = Field(default=None, ge=100, le=(2**53 - 1) // 8, strict=True)
     auto_start_when_ready: Optional[bool] = Field(default=None, strict=True)
+    turn_timeout_seconds: Optional[int] = Field(default=None, ge=15, le=300, strict=True)
 
 
 class TableKickRequest(RoomRequest):
@@ -1822,6 +1970,7 @@ class TableActionRequest(RoomRequest):
     amount: Optional[int] = Field(default=None, ge=0, le=2**53 - 1, strict=True)
     bid: Optional[int] = Field(default=None, ge=0, le=3)
     cards: Optional[List[str]] = Field(default=None, max_length=20)
+    combo: Optional[str] = Field(default=None, min_length=1, max_length=80)
     tile: Optional[str] = Field(default=None, max_length=20)
     tiles: Optional[List[str]] = Field(default=None, max_length=4)
     target_id: Optional[str] = Field(default=None, max_length=80)
@@ -1910,7 +2059,7 @@ async def create_table(request: TableCreateRequest, user: Dict[str, Any] = Depen
                 await _check_table_entry([str(user["user_id"])], entry_min)
             room = table_service.create(user, request.game_type, request.mode, request.include_yueyue,
                                         request.room_tier, request.base_stake, request.loss_limit,
-                                        request.auto_start_when_ready)
+                                        request.auto_start_when_ready, request.turn_timeout_seconds)
             return {"success": True, "room": room, "viewer_balance": await _ensure_user_balance(int(user["user_id"]))}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -1940,7 +2089,8 @@ async def configure_table_bots(request: TableBotsRequest, user: Dict[str, Any] =
 @app.post("/api/tables/settings")
 async def set_table_settings(request: TableSettingsRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
     return await _table_operation(request.room_id, table_service.settings, str(user["user_id"]),
-                                  request.base_stake, request.loss_limit, request.auto_start_when_ready)
+                                  request.base_stake, request.loss_limit, request.auto_start_when_ready,
+                                  request.turn_timeout_seconds)
 
 
 @app.post("/api/tables/kick")

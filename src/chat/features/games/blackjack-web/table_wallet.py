@@ -4,6 +4,7 @@ import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import json
 import sqlite3
 
 
@@ -49,6 +50,16 @@ class TableWallet:
             """)
             connection.execute("CREATE INDEX IF NOT EXISTS table_results_user_game ON table_game_results(user_id, game_type)")
             connection.execute("CREATE INDEX IF NOT EXISTS table_results_game_day ON table_game_results(game_type, settled_day)")
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS table_round_details (
+                    round_key TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    stake INTEGER NOT NULL,
+                    payout INTEGER NOT NULL,
+                    details TEXT NOT NULL,
+                    PRIMARY KEY(round_key, user_id)
+                )
+            """)
             yield connection
             connection.commit()
         except BaseException:
@@ -86,7 +97,7 @@ class TableWallet:
         await asyncio.to_thread(self._reserve, round_key, user_ids, stake, entry_min)
 
     def _settle(self, round_key: str, payouts: dict[str, int], game_type: str | None = None,
-                profiles: dict[str, dict] | None = None):
+                profiles: dict[str, dict] | None = None, round_details: dict[str, dict] | None = None):
         now = datetime.now(timezone(timedelta(hours=8)))
         with self._transaction() as connection:
             rows = connection.execute("SELECT user_id, status, payout, stake FROM table_game_escrow WHERE round_key = ?", (round_key,)).fetchall()
@@ -104,6 +115,8 @@ class TableWallet:
                     raise ValueError("该牌局已退款，不能再次结算")
                 self._credit(connection, user_id, amount, f"桌游{round_key}结算返还")
                 connection.execute("UPDATE table_game_escrow SET payout = ?, status = 'settled' WHERE round_key = ? AND user_id = ?", (amount, round_key, user_id))
+                self._record_round_details(connection, round_key, user_id, stake, amount,
+                                           (round_details or {}).get(str(user_id)))
                 if game_type:
                     profile = (profiles or {}).get(str(user_id), {})
                     # 和真实返还金额同事务写入，重试、退款和机器人不会重复计入战绩。
@@ -116,11 +129,21 @@ class TableWallet:
                           now.isoformat(), now.date().isoformat()))
 
     async def settle(self, round_key: str, payouts: dict[str, int], *,
-                     game_type: str | None = None, profiles: dict[str, dict] | None = None):
-        await asyncio.to_thread(self._settle, round_key, payouts, game_type, profiles)
+                     game_type: str | None = None, profiles: dict[str, dict] | None = None,
+                     round_details: dict[str, dict] | None = None):
+        await asyncio.to_thread(self._settle, round_key, payouts, game_type, profiles, round_details)
+
+    @staticmethod
+    def _record_round_details(connection, round_key: str, user_id: int, stake: int, payout: int,
+                              details: dict | None):
+        if details is not None and not isinstance(details, dict):
+            raise ValueError("牌局详情必须是对象")
+        connection.execute("""INSERT INTO table_round_details
+            (round_key, user_id, stake, payout, details) VALUES (?, ?, ?, ?, ?)""",
+            (round_key, user_id, stake, payout, json.dumps(details or {}, ensure_ascii=False, allow_nan=False)))
 
     def _settle_blackjack(self, round_key: str, user_id: str, stake: int,
-                          payout: int, profile: dict | None):
+                          payout: int, profile: dict | None, details: dict | None = None):
         if not round_key or stake <= 0 or payout < 0:
             raise ValueError("21 点结算参数不合法")
         now = datetime.now(timezone(timedelta(hours=8)))
@@ -136,6 +159,7 @@ class TableWallet:
                 profile = profile or {}
                 # 21 点下注已经扣除；派彩与战绩同事务提交，失败可安全重试。
                 self._credit(connection, int(user_id), payout, "21点游戏结算派彩")
+                self._record_round_details(connection, round_key, int(user_id), stake, payout, details)
                 connection.execute("""
                     INSERT INTO table_game_results
                     (round_key, user_id, game_type, username, avatar_url, profit, settled_at, settled_day)
@@ -149,8 +173,8 @@ class TableWallet:
             return row[0]
 
     async def settle_blackjack(self, round_key: str, user_id: str, stake: int,
-                               payout: int, profile: dict | None = None):
-        return await asyncio.to_thread(self._settle_blackjack, round_key, user_id, stake, payout, profile)
+                               payout: int, profile: dict | None = None, details: dict | None = None):
+        return await asyncio.to_thread(self._settle_blackjack, round_key, user_id, stake, payout, profile, details)
 
     @staticmethod
     def _today() -> str:
@@ -178,15 +202,20 @@ class TableWallet:
                        COALESCE(SUM(profit < 0), 0), COALESCE(SUM(profit = 0), 0),
                        COALESCE(SUM(profit), 0),
                        COALESCE(SUM(CASE WHEN settled_day = ? THEN profit ELSE 0 END), 0),
-                       COALESCE(SUM(legacy), 0)
+                       COALESCE(SUM(legacy), 0),
+                       MAX(0, COALESCE(MAX(profit), 0)), MAX(0, -COALESCE(MIN(profit), 0)),
+                       COALESCE(SUM(CASE WHEN profit > 0 THEN profit ELSE 0 END), 0),
+                       COALESCE(SUM(CASE WHEN profit < 0 THEN -profit ELSE 0 END), 0)
                 FROM results WHERE user_id = ?
             """ + (" AND game_type = ?" if game_type else ""),
                 (day, int(user_id), game_type) if game_type else (day, int(user_id))).fetchone()
-        rounds, wins, losses, draws, total, daily, legacy = row
+        rounds, wins, losses, draws, total, daily, legacy, max_win, max_loss, total_won, total_lost = row
         return {"day": day, "timezone": "Asia/Shanghai", "stats": {
             "rounds": rounds, "wins": wins, "losses": losses, "draws": draws,
             "win_rate": 100 * wins / rounds if rounds else 0,
             "net_profit": total, "today_profit": daily, "legacy_rounds": legacy,
+            "max_win": max_win, "max_loss": max_loss, "total_won": total_won,
+            "total_lost": total_lost, "average_profit": total / rounds if rounds else 0,
         }}
 
     async def statistics(self, user_id: str, game_type: str | None = None):
@@ -196,6 +225,7 @@ class TableWallet:
                      excluded_user_ids: tuple[int, ...] = ()):
         if period not in ("today", "all"):
             raise ValueError("排行榜周期必须为 today 或 all")
+        self._validate_paging(limit, 0)
         day = self._today()
         # 游戏陪玩没有 Discord 正整数账号；已核实的 Discord 机器人也不参与排名。
         conditions, parameters = ["typeof(user_id) = 'integer'", "user_id > 0"], []
@@ -239,10 +269,93 @@ class TableWallet:
                 "legacy_rounds": rows[0][7] if rows else 0}
 
     async def leaderboard(self, user_id: str, period: str = "today",
-                          game_type: str | None = None, limit: int = 20,
+                          game_type: str | None = None, limit: int = 100,
                           excluded_user_ids: tuple[int, ...] = ()):
         return await asyncio.to_thread(self._leaderboard, user_id, period, game_type, limit,
                                        excluded_user_ids)
+
+    @staticmethod
+    def _validate_paging(limit: int, offset: int):
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("每页数量须为 1 至 100 的整数")
+        if type(offset) is not int or not 0 <= offset <= 100000:
+            raise ValueError("分页位置须为 0 至 100000 的整数")
+
+    @staticmethod
+    def _history_entry(row):
+        return {"round_key": row[0], "game_type": row[1], "profit": row[2],
+                "settled_at": row[3] or None, "legacy": bool(row[4]), "stake": row[5],
+                "payout": row[6], "has_details": bool(row[7] and row[7] != "{}")}
+
+    @staticmethod
+    def _history_select():
+        return """SELECT r.round_key, r.game_type, r.profit, r.settled_at, r.legacy,
+                   COALESCE(d.stake, e.stake), COALESCE(d.payout, e.payout), d.details
+            FROM results r
+            LEFT JOIN table_round_details d ON d.round_key = r.round_key AND d.user_id = r.user_id
+            LEFT JOIN table_game_escrow e ON e.round_key = r.round_key AND e.user_id = r.user_id
+            WHERE r.user_id = ?"""
+
+    def _history(self, user_id: str, game_type: str | None, limit: int, offset: int):
+        self._validate_paging(limit, offset)
+        parameters = [int(user_id)]
+        condition = ""
+        if game_type:
+            condition = " AND r.game_type = ?"
+            parameters.append(game_type)
+        with self._transaction() as connection:
+            total = connection.execute(self._results_cte() +
+                "SELECT COUNT(*) FROM results r WHERE r.user_id = ?" + condition, parameters).fetchone()[0]
+            rows = connection.execute(self._results_cte() + self._history_select() + condition +
+                " ORDER BY r.settled_at DESC, r.round_key DESC LIMIT ? OFFSET ?", [*parameters, limit, offset]).fetchall()
+        return {"entries": [self._history_entry(row) for row in rows], "total": total,
+                "has_more": offset + len(rows) < total, "timezone": "Asia/Shanghai"}
+
+    async def history(self, user_id: str, game_type: str | None = None, limit: int = 20, offset: int = 0):
+        return await asyncio.to_thread(self._history, user_id, game_type, limit, offset)
+
+    def _round_detail(self, user_id: str, round_key: str):
+        with self._transaction() as connection:
+            row = connection.execute(self._results_cte() + self._history_select() +
+                " AND r.round_key = ?", (int(user_id), round_key)).fetchone()
+        if row is None:
+            return None
+        entry = self._history_entry(row)
+        entry["details"] = json.loads(row[7]) if row[7] else {}
+        return entry
+
+    async def round_detail(self, user_id: str, round_key: str):
+        return await asyncio.to_thread(self._round_detail, user_id, round_key)
+
+    @staticmethod
+    def _transaction_timestamp(value):
+        if not value:
+            return None
+        try:
+            moment = datetime.fromisoformat(str(value))
+        except ValueError:
+            return value
+        # SQLite CURRENT_TIMESTAMP 写入 UTC，无时区后缀时补齐，避免浏览器当成本地时间。
+        return (moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)).isoformat()
+
+    def _transactions(self, user_id: str, limit: int, offset: int):
+        self._validate_paging(limit, offset)
+        with self._transaction() as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(coin_transactions)")}
+            # 标识符只在固定白名单中选取，兼容正式表和旧测试表。
+            identifier = "transaction_id" if "transaction_id" in columns else "id" if "id" in columns else "rowid"
+            timestamp = "timestamp" if "timestamp" in columns else "NULL"
+            total = connection.execute("SELECT COUNT(*) FROM coin_transactions WHERE user_id = ?", (int(user_id),)).fetchone()[0]
+            rows = connection.execute(f"SELECT {identifier}, amount, reason, {timestamp} FROM coin_transactions "
+                f"WHERE user_id = ? ORDER BY {identifier} DESC LIMIT ? OFFSET ?", (int(user_id), limit, offset)).fetchall()
+            balance = connection.execute("SELECT balance FROM user_coins WHERE user_id = ?", (int(user_id),)).fetchone()
+        return {"entries": [{"id": row[0], "amount": row[1], "reason": row[2],
+                             "timestamp": self._transaction_timestamp(row[3])} for row in rows],
+                "total": total, "has_more": offset + len(rows) < total,
+                "balance": balance[0] if balance else None, "timezone": "Asia/Shanghai"}
+
+    async def transactions(self, user_id: str, limit: int = 20, offset: int = 0):
+        return await asyncio.to_thread(self._transactions, user_id, limit, offset)
 
     def _refund(self, round_key: str | None):
         with self._transaction() as connection:

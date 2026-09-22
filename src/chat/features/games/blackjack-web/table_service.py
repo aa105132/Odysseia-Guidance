@@ -1,6 +1,7 @@
 """桌游房间管理：隔离手牌、月月陪玩、回合超时和重连。"""
 
 from dataclasses import dataclass, field
+from copy import deepcopy
 from importlib import import_module
 import logging
 import random
@@ -17,6 +18,7 @@ GAME_SPECS = {
     "texas": (2, 8, "poker_games", "TexasHoldemGame"),
     "golden_flower": (2, 5, "poker_games", "GoldenFlowerGame"),
     "landlord": (3, 3, "traditional_games", "LandlordGame"),
+    "guandan": (4, 4, "guandan_game", "GuandanGame"),
     "mahjong": (4, 4, "traditional_games", "MahjongGame"),
     "sichuan_mahjong": (4, 4, "sichuan_mahjong", "SichuanMahjongGame"),
 }
@@ -91,6 +93,11 @@ class GameTable:
     next_bot_number: int = 1
     auto_start_when_ready: bool = False
     removed_user_ids: set[str] = field(default_factory=set)
+    turn_timeout_seconds: int = 60
+    started_at: float | None = None
+    public_action_history: list[dict] = field(default_factory=list)
+    history_deal_count: int = 0
+    history_truncated: bool = False
 
 
 class TableService:
@@ -108,6 +115,34 @@ class TableService:
 
     def _observe_action(self, room: GameTable, user_id: str, action: str, payload: dict):
         """成功执行后记录公开动作；记忆失败不能中断牌局和资金流程。"""
+        try:
+            state = room.engine.public_state(str(user_id))
+            deal_count = int(state.get("deal_count", 0))
+            redealt = room.game_type == "landlord" and deal_count != room.history_deal_count
+            if redealt:
+                room.public_action_history.clear()
+                room.history_truncated = False
+            room.history_deal_count = deal_count
+            if not (redealt and action == "bid" and not state.get("bids")):
+                event = {"user_id": str(user_id), "action": action, "time": self.clock()}
+                public_fields = {"raise": ("amount",), "bid": ("bid",), "play": ("cards",),
+                                 "discard": ("tile",), "chow": ("tiles",), "compare": ("target_id",)}
+                for key in public_fields.get(action, ()):
+                    if key in payload:
+                        event[key] = deepcopy(payload[key])
+                if room.game_type == "guandan" and action == "play":
+                    played = state.get("last_play") or {}
+                    event.update({key: played[key] for key in ("combo", "kind", "name") if key in played})
+                if room.game_type in {"texas", "golden_flower"}:
+                    actor = next(player for player in state["players"] if str(player["user_id"]) == str(user_id))
+                    event.update({key: state[key] for key in ("phase", "pot") if key in state})
+                    event.update({key: actor[key] for key in ("stack", "total_bet", "round_bet") if key in actor})
+                if len(room.public_action_history) < 1000:
+                    room.public_action_history.append(event)
+                else:
+                    room.history_truncated = True
+        except Exception as exc:
+            log.warning("桌游公开记录更新失败，原因类型=%s", type(exc).__name__)
         if self.action_observer is None:
             return
         try:
@@ -145,7 +180,7 @@ class TableService:
         player = room.players.get(current)
         is_automatic = player is not None and (player.is_bot or not player.connected)
         room.turn_deadline = self.clock() + (
-            self.BOT_DELAY_SECONDS if is_automatic else self.TURN_SECONDS
+            self.BOT_DELAY_SECONDS if is_automatic else room.turn_timeout_seconds
         )
 
     def _advance_due_turn(self, room: GameTable):
@@ -196,6 +231,10 @@ class TableService:
             "entry_min": room.entry_min,
             "loss_limit": room.buy_in,
             "auto_start_when_ready": room.auto_start_when_ready,
+            "turn_timeout_seconds": room.turn_timeout_seconds,
+            "last_public_action": ({**deepcopy(room.public_action_history[-1]),
+                                    "id": f"{room.round_number}:{room.history_deal_count}:{len(room.public_action_history)}"}
+                                   if room.public_action_history else None),
             "settlement_status": room.settlement_status,
             "actual_settlement": dict(room.actual_settlement),
             "include_yueyue": "bot:yueyue" in room.players,
@@ -247,6 +286,7 @@ class TableService:
                 "base_stake": room.base_stake,
                 "entry_min": room.entry_min,
                 "loss_limit": room.buy_in,
+                "turn_timeout_seconds": room.turn_timeout_seconds,
                 "is_member": is_member,
                 "can_join": can_join,
                 "updated_at": room.updated_at,
@@ -255,13 +295,16 @@ class TableService:
 
     def create(self, user: dict, game_type: str, mode: str, include_yueyue: bool,
                room_tier: str = "beginner", base_stake: int | None = None,
-               loss_limit: int | None = None, auto_start_when_ready: bool = False) -> dict:
+               loss_limit: int | None = None, auto_start_when_ready: bool = False,
+               turn_timeout_seconds: int = 60) -> dict:
         if game_type not in GAME_SPECS:
             raise ValueError("不支持的游戏类型")
         if mode not in ("solo", "multi"):
             raise ValueError("不支持的游戏模式")
         if type(auto_start_when_ready) is not bool:
             raise ValueError("自动开局设置必须为布尔值")
+        if type(turn_timeout_seconds) is not int or not 15 <= turn_timeout_seconds <= 300:
+            raise ValueError("操作等待时长须为 15 至 300 秒的整数")
         base_stake, entry_min, loss_limit = room_settings(room_tier, base_stake, loss_limit)
         validate_game_stake(game_type, base_stake)
         user_id = str(user["user_id"])
@@ -279,7 +322,7 @@ class TableService:
             room_id = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
         room = GameTable(room_id, game_type, user_id, mode, loss_limit,
                          room_tier=room_tier, base_stake=base_stake, entry_min=entry_min,
-                         auto_start_when_ready=auto_start_when_ready)
+                         auto_start_when_ready=auto_start_when_ready, turn_timeout_seconds=turn_timeout_seconds)
         room.players[user_id] = TablePlayer(user_id, str(user["username"]), str(user["avatar_url"]))
         self.rooms[room_id] = room
         bot_count = GAME_SPECS[game_type][0] - 1 if mode == "solo" else int(include_yueyue)
@@ -342,7 +385,8 @@ class TableService:
         return self._snapshot(room, user_id)
 
     def validate_settings(self, room_id: str, user_id: str, base_stake: int | None = None,
-                          loss_limit: int | None = None, auto_start_when_ready: bool | None = None) -> GameTable:
+                          loss_limit: int | None = None, auto_start_when_ready: bool | None = None,
+                          turn_timeout_seconds: int | None = None) -> GameTable:
         room = self._room(room_id)
         self._member(room, user_id)
         if room.host_user_id != str(user_id):
@@ -351,9 +395,11 @@ class TableService:
             raise ValueError("牌局中不能调整设置，请本局结束后再设置")
         if auto_start_when_ready is not None and type(auto_start_when_ready) is not bool:
             raise ValueError("自动开局设置必须为布尔值")
+        if turn_timeout_seconds is not None and (type(turn_timeout_seconds) is not int or not 15 <= turn_timeout_seconds <= 300):
+            raise ValueError("操作等待时长须为 15 至 300 秒的整数")
         if (base_stake is None) != (loss_limit is None):
             raise ValueError("底分和单局上限必须一起设置")
-        if base_stake is None and auto_start_when_ready is None:
+        if base_stake is None and auto_start_when_ready is None and turn_timeout_seconds is None:
             raise ValueError("请提供需要修改的房间设置")
         if base_stake is not None:
             if room.room_tier != "custom":
@@ -363,14 +409,19 @@ class TableService:
         return room
 
     def settings(self, room_id: str, user_id: str, base_stake: int | None = None,
-                 loss_limit: int | None = None, auto_start_when_ready: bool | None = None) -> dict:
-        room = self.validate_settings(room_id, user_id, base_stake, loss_limit, auto_start_when_ready)
+                 loss_limit: int | None = None, auto_start_when_ready: bool | None = None,
+                 turn_timeout_seconds: int | None = None) -> dict:
+        room = self.validate_settings(room_id, user_id, base_stake, loss_limit, auto_start_when_ready, turn_timeout_seconds)
         if base_stake is not None and (base_stake, loss_limit) != (room.base_stake, room.buy_in):
             room.base_stake, room.entry_min, room.buy_in = room_settings("custom", base_stake, loss_limit)
             for player in room.players.values():
                 player.is_ready = player.is_bot
         if auto_start_when_ready is not None:
             room.auto_start_when_ready = auto_start_when_ready
+        if turn_timeout_seconds is not None and turn_timeout_seconds != room.turn_timeout_seconds:
+            room.turn_timeout_seconds = turn_timeout_seconds
+            for player in room.players.values():
+                player.is_ready = player.is_bot
         self._changed(room)
         return self._snapshot(room, user_id)
 
@@ -453,14 +504,21 @@ class TableService:
         engine_class = getattr(import_module(f"src.chat.features.games.blackjack-web.{module_name}"), class_name)
         # 轮换首家，避免连续多局由同一玩家固定坐庄。
         ids = list(active)
-        rotation = room.round_number % len(ids)
+        previous_guandan = (room.engine if room.game_type == "guandan" and room.engine is not None
+                            and room.engine.finished and room.engine.player_ids == ids else None)
+        rotation = 0 if room.game_type == "guandan" else room.round_number % len(ids)
         ids = ids[rotation:] + ids[:rotation]
+        options = {"match_state": previous_guandan.next_match_state()} if previous_guandan else {}
         engine = engine_class(ids, seed=random.SystemRandom().randrange(2**63),
-                              buy_in=room.buy_in, base_stake=room.base_stake)
+                              buy_in=room.buy_in, base_stake=room.base_stake, **options)
         room.players = active
         room.engine = engine
         room.state = "playing"
         room.round_number += 1
+        room.started_at = self.clock()
+        room.public_action_history.clear()
+        room.history_deal_count = int(getattr(engine, "deal_count", 0))
+        room.history_truncated = False
         room.escrow_key = uuid.uuid4().hex
         room.settlement_status = "reserved"
         room.actual_settlement = {}

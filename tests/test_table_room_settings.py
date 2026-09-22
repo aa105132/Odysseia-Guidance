@@ -109,6 +109,108 @@ def test_unconfigured_bot_provider_keeps_algorithmic_play():
     assert observed == [(uid, expected["action"], {key: value for key, value in expected.items() if key != "action"})]
 
 
+@pytest.mark.parametrize("seconds", [15, 60, 137, 300])
+def test_room_turn_timeout_controls_human_deadline_but_not_bot_delay(seconds):
+    now = [1000.0]
+    service = tables.TableService(clock=lambda: now[0])
+    rid = service.create(HOST, "landlord", "multi", True, turn_timeout_seconds=seconds)["room_id"]
+    service.bots(rid, "1", "add", count=1)
+    service.ready(rid, "1", True)
+    state = service.start(rid, "1")
+    assert state["turn_timeout_seconds"] == seconds
+    assert state["turn_deadline"] == now[0] + seconds
+    assert service.list_rooms("1")[0]["turn_timeout_seconds"] == seconds
+    room = service._room(rid)
+    before = room.turn_deadline
+    now[0] += 1
+    service.join(rid, HOST)
+    assert room.turn_deadline == before
+    service.action(rid, "1", "bid", bid=0)
+    assert room.turn_deadline == now[0] + service.BOT_DELAY_SECONDS
+
+
+@pytest.mark.parametrize("seconds", [True, False, 14, 301, 60.0, "60", None])
+def test_invalid_turn_timeout_is_rejected_without_creating_room(seconds):
+    service = tables.TableService()
+    with pytest.raises(ValueError, match="等待时长"):
+        service.create(HOST, "texas", "multi", False, turn_timeout_seconds=seconds)
+    assert not service.rooms
+
+
+def test_timeout_setting_requires_host_and_resets_only_human_ready():
+    service = tables.TableService(clock=lambda: 1000)
+    rid = service.create(HOST, "texas", "multi", True)["room_id"]
+    service.join(rid, GUEST)
+    for uid in ("1", "2"):
+        service.ready(rid, uid, True)
+    with pytest.raises(PermissionError):
+        service.settings(rid, "2", turn_timeout_seconds=90)
+    for invalid in (True, 14, 301, 90.0, "90"):
+        with pytest.raises(ValueError):
+            service.settings(rid, "1", turn_timeout_seconds=invalid)
+    changed = service.settings(rid, "1", turn_timeout_seconds=90)
+    assert changed["turn_timeout_seconds"] == 90
+    assert all(player["is_ready"] == player["is_bot"] for player in changed["players"])
+    for uid in ("1", "2"):
+        service.ready(rid, uid, True)
+    unchanged = service.settings(rid, "1", turn_timeout_seconds=90)
+    assert all(player["is_ready"] for player in unchanged["players"])
+    service.start(rid, "1")
+    with pytest.raises(ValueError, match="牌局中"):
+        service.settings(rid, "1", turn_timeout_seconds=120)
+
+
+def test_public_history_records_without_llm_and_resets_on_redeal():
+    service, room, now = started_landlord_room()
+    assert service.action_observer is None
+    assert room.started_at == now[0]
+    escrow_key = room.escrow_key
+    for _ in range(3):
+        uid = room.engine.current_player_id
+        room.engine.act(uid, "bid", bid=0)
+        service._observe_action(room, uid, "bid", {"bid": 0})
+    assert room.engine.deal_count == 2
+    assert room.history_deal_count == 2
+    assert room.public_action_history == []
+    assert room.escrow_key == escrow_key
+    uid = room.engine.current_player_id
+    room.engine.act(uid, "bid", bid=3)
+    service._observe_action(room, uid, "bid", {"bid": 3})
+    assert room.public_action_history == [{"user_id": uid, "action": "bid", "time": now[0], "bid": 3}]
+
+
+def test_public_history_omits_private_payload_and_caps_size():
+    service, room, _ = started_landlord_room()
+    for action, private in (("look", {"cards": ["Secret"]}), ("kong", {"tile": "Secret"}), ("dingque", {"suit": "Secret"})):
+        service._observe_action(room, "1", action, private)
+    assert "Secret" not in str(room.public_action_history)
+    assert len(room.public_action_history) == 3
+    payload = {"cards": ["Club3"]}
+    service._observe_action(room, "1", "play", payload)
+    payload["cards"].clear()
+    assert room.public_action_history[-1]["cards"] == ["Club3"]
+    for _ in range(1000):
+        service._observe_action(room, "1", "pass", {})
+    assert len(room.public_action_history) == 1000
+    assert room.history_truncated is True
+
+
+def test_poker_public_history_includes_financial_state_without_hands():
+    service = tables.TableService(clock=lambda: 1000)
+    rid = service.create(HOST, "texas", "solo", True)["room_id"]
+    service.ready(rid, "1", True)
+    service.start(rid, "1")
+    room = service._room(rid)
+    uid = room.engine.current_player_id
+    suggestion = room.engine.suggest_action(uid)
+    action = suggestion.pop("action")
+    room.engine.act(uid, action, **suggestion)
+    service._observe_action(room, uid, action, suggestion)
+    event = room.public_action_history[-1]
+    assert {"phase", "pot", "stack", "total_bet", "round_bet"} <= event.keys()
+    assert not {"hand", "deck", "community_cards"} & event.keys()
+
+
 @pytest.mark.parametrize("tier,base,entry,limit", [
     ("beginner", 1, 100, 100),
     ("intermediate", 5, 1000, 500),

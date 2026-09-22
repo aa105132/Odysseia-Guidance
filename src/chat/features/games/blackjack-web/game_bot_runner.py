@@ -119,6 +119,9 @@ class GameBotRunner:
                     event[key] = copy.deepcopy(payload[key])
         if action == "compare" and str(payload.get("target_id")) in seats:
             event["target_seat"] = seats[str(payload["target_id"])]
+        if room.game_type == "guandan" and action == "play":
+            played = state.get("last_play") or {}
+            event.update({key: played[key] for key in ("combo", "kind", "name") if key in played})
         if room.game_type in {"texas", "golden_flower"}:
             actor = next(player for player in state["players"] if str(player["user_id"]) == str(user_id))
             event.update({key: state[key] for key in ("phase", "pot") if key in state})

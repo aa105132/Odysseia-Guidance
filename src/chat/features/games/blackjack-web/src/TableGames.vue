@@ -1,30 +1,38 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { tableGameRules, type TableGameType, type TableRoomGameType } from './tableGameRules';
 import GameIcon from './GameIcon.vue';
 import RoundFeedback from './RoundFeedback.vue';
 import RoomDirectory from './RoomDirectory.vue';
 import CopyRoomCode from './CopyRoomCode.vue';
 import GameTools from './GameTools.vue';
-import { playGameSound } from './gameAudio';
+import { playGameSound, setGameAudioScene, playRoundMusic, playGameVoice, stopGameVoice } from './gameAudio';
+import GameSocial from './GameSocial.vue';
+import type { RoomInvite } from './roomInvites';
 
 type Profile = { user_id: string; username: string; avatar_url: string; balance: number };
 type Member = { user_id: string; username: string; avatar_url: string; is_bot: boolean; is_ready: boolean; connected: boolean };
 type SeatAction = { action: 'play' | 'pass' | 'bid'; cards: string[]; label: string; bid?: number };
 type MissingSuit = 'm' | 'p' | 's';
 type MahjongWinEvent = { id: number | string; user_id: string; source_id: string | null; kind: string; fan: number; label: string; amount: number; tile?: string };
+type GuandanPlayOption = { cards: string[]; combo: string; kind: string; name: string; rank: number; size: number };
+type GuandanTributeEvent =
+  | { kind: 'tribute' | 'return'; user_id: string; target_id: string; card: string; automatic: boolean; fallback?: boolean }
+  | { kind: 'resist'; user_ids: string[]; automatic: boolean };
+type PublicAction = { id: string; user_id: string; action: string; bid?: number; cards?: string[] };
 type GamePlayer = {
   user_id: string; hand: string[]; hand_count: number; chips?: number; stack?: number;
   folded?: boolean; role?: string; bet?: number; score?: number; looked?: boolean;
   melds?: unknown[]; discards?: string[]; score_delta?: number; hand_name?: string;
   missing_suit?: MissingSuit | null; has_won?: boolean; win_order?: number | null;
   win_fan?: number | null; win_label?: string | null; winning_tile?: string | null;
+  team?: number; finished_rank?: number | null;
 };
 type GameState = {
   phase: string; finished: boolean; current_player_id: string | null;
   players: GamePlayer[]; legal_actions: string[]; message: string; winners: string[];
   community_cards?: string[]; pot?: number; current_bet?: number;
-  last_play?: { user_id?: string; cards?: string[] } | string[] | null;
+  last_play?: { user_id?: string; cards?: string[]; kind?: string; name?: string } | string[] | null;
   seat_actions?: Record<string, SeatAction>;
   discards?: Record<string, string[]> | string[];
   melds?: Record<string, unknown[]>;
@@ -33,6 +41,8 @@ type GameState = {
   chow_options?: string[][]; kong_options?: string[]; last_discard?: { user_id: string; tile: string };
   deal_count?: number;
   mahjong_variant?: string; missing_suit_options?: MissingSuit[]; win_events?: MahjongWinEvent[];
+  level?: string; team_levels?: string[]; finish_order?: string[]; tribute_events?: GuandanTributeEvent[];
+  match_finished?: boolean; match_winner_team?: number | null; level_gain?: number; play_options?: GuandanPlayOption[];
   [key: string]: unknown;
 };
 type RoomState = {
@@ -42,7 +52,7 @@ type RoomState = {
   players: Member[]; game: GameState | null; turn_deadline?: number | null;
   stake?: number; buy_in?: number; settlement_status?: string; actual_settlement?: Record<string, number>;
   room_tier: RoomTier; base_stake: number; entry_min: number; loss_limit: number;
-  round_number?: number;
+  round_number?: number; turn_timeout_seconds?: number; last_public_action?: PublicAction | null;
 };
 type PublicTier = 'beginner' | 'intermediate' | 'advanced';
 type RoomTier = PublicTier | 'custom';
@@ -50,8 +60,10 @@ type RoomEnvelope = { success: boolean; room: RoomState | null; viewer_balance?:
 type ApiCall = <T>(endpoint: string, method: 'GET' | 'POST', body?: unknown, retries?: number) => Promise<T>;
 
 const props = defineProps<{ gameType: TableGameType; profile: Profile; apiCall: ApiCall; initialRoomId?: string }>();
-const emit = defineEmits<{ back: []; balance: [number]; invite: [{ room_id: string; game_type: string }]; joinFailed: [string] }>();
+const emit = defineEmits<{ back: []; balance: [number]; invite: [RoomInvite]; joinFailed: [string] }>();
 const room = ref<RoomState | null>(null);
+const socialPanel = ref<InstanceType<typeof GameSocial> | null>(null);
+watch(() => room.value?.state, state => setGameAudioScene(state === 'playing' || state === 'finished' ? 'playing' : 'lobby'), { immediate: true, flush: 'sync' });
 const roomInput = ref('');
 const busy = ref(false);
 const recovering = ref(true);
@@ -66,6 +78,10 @@ const customLimit = ref<number>(100);
 const settingsBase = ref<number>(1);
 const settingsLimit = ref<number>(100);
 const settingsAutoStart = ref(false);
+const createTurnSeconds = ref(60);
+const settingsTurnSeconds = ref(60);
+const turnTimeOptions = [15, 30, 60, 90, 120, 180, 300];
+const validTurnSeconds = (value: number) => Number.isInteger(value) && value >= 15 && value <= 300;
 const botCount = ref<number>(1);
 const tiers: { id: PublicTier; title: string; subtitle: string; base: number; entry: number; limit: number }[] = [
   { id: 'beginner', title: '初级场', subtitle: '轻松入席', base: 1, entry: 100, limit: 100 },
@@ -77,6 +93,8 @@ const maxLossLimit = Math.floor((2 ** 53 - 1) / 8);
 const amount = ref<number | null>(null);
 const targetId = ref('');
 const selectedIndices = ref<number[]>([]);
+const guandanHintIndex = ref(-1);
+const guandanHint = ref<GuandanPlayOption | null>(null);
 const rulesDialog = ref<HTMLDialogElement | null>(null);
 const customDialog = ref<HTMLDialogElement | null>(null);
 const joinDialog = ref<HTMLDialogElement | null>(null);
@@ -111,6 +129,7 @@ const lobbyGameType = computed<TableRoomGameType>(() => props.gameType === 'mahj
 const currentGameType = computed(() => room.value?.game_type ?? lobbyGameType.value);
 const isSichuan = computed(() => currentGameType.value === 'sichuan_mahjong');
 const isMahjong = computed(() => currentGameType.value === 'mahjong' || isSichuan.value);
+const isGuandan = computed(() => currentGameType.value === 'guandan');
 const maxBaseStake = computed(() => Math.floor((2 ** 53 - 1) / (isSichuan.value ? 512 : 80)));
 const rules = computed(() => tableGameRules[currentGameType.value]);
 const viewerId = computed(() => String(props.profile.user_id));
@@ -121,6 +140,20 @@ const viewer = computed(() => room.value?.players.find(player => String(player.u
 const myGame = computed(() => game.value?.players.find(player => String(player.user_id) === viewerId.value));
 const myHand = computed(() => myGame.value?.hand ?? []);
 const selectedCards = computed(() => selectedIndices.value.map(index => myHand.value[index]).filter((card): card is string => Boolean(card)));
+const guandanHandRows = computed(() => {
+  const indexed = renderedHand.value.map((item, index) => ({ ...item, index }));
+  return indexed.length > 14 ? [indexed.slice(0, 14), indexed.slice(14)] : [indexed];
+});
+const guandanOptions = computed(() => game.value?.play_options ?? []);
+watch(() => `${room.value?.revision}:${myHand.value.join('|')}`, () => {
+  guandanHintIndex.value = -1;
+  guandanHint.value = null;
+});
+const guandanMatchText = computed(() => {
+  if (!isGuandan.value || !game.value?.finished) return '';
+  if (game.value.match_finished) return `第 ${Number(game.value.match_winner_team) + 1} 队过 A · 准备下一场从 2 开始`;
+  return `胜方升 ${game.value.level_gain ?? 0} 级 · 同四座准备后继续，系统自动贡还贡`;
+});
 const host = computed(() => String(room.value?.host_user_id) === viewerId.value);
 const legalActions = computed(() => game.value?.legal_actions ?? []);
 const genericActions = computed(() => legalActions.value.filter(value => !['bid', 'dingque'].includes(value) && !(value === 'chow' && game.value?.chow_options?.length) && !(value === 'kong' && game.value?.kong_options?.length)));
@@ -131,10 +164,10 @@ const currentName = computed(() => nameFor(game.value?.current_player_id));
 const startReady = computed(() => Boolean(room.value && room.value.players.length >= room.value.min_players && room.value.players.every(player => player.is_ready)));
 const tier = computed(() => tiers.find(item => item.id === selectedTier.value)!);
 const canEnterTier = computed(() => props.profile.balance >= tier.value.entry);
-const customValid = computed(() => validTerms(customBase.value, customLimit.value));
+const customValid = computed(() => validTerms(customBase.value, customLimit.value) && validTurnSeconds(createTurnSeconds.value));
 const termsChanged = computed(() => room.value?.room_tier === 'custom' && (room.value.base_stake !== settingsBase.value || room.value.loss_limit !== settingsLimit.value));
-const settingsValid = computed(() => !termsChanged.value || validTerms(settingsBase.value, settingsLimit.value));
-const settingsChanged = computed(() => termsChanged.value || Boolean(room.value?.auto_start_when_ready) !== settingsAutoStart.value);
+const settingsValid = computed(() => (!termsChanged.value || validTerms(settingsBase.value, settingsLimit.value)) && validTurnSeconds(settingsTurnSeconds.value));
+const settingsChanged = computed(() => termsChanged.value || Boolean(room.value?.auto_start_when_ready) !== settingsAutoStart.value || (room.value?.turn_timeout_seconds ?? 60) !== settingsTurnSeconds.value);
 const canManage = computed(() => host.value && room.value?.state !== 'playing');
 const bots = computed(() => room.value?.players.filter(player => player.is_bot) ?? []);
 const emptySeats = computed(() => Math.max(0, (room.value?.max_players ?? 0) - (room.value?.players.length ?? 0)));
@@ -327,11 +360,25 @@ function animateSnapshot(previous: RoomState | null, next: RoomState, live: bool
       dealCleanupTimer = setTimeout(clearDealing, dealEndsAt - Date.now() + 60);
     }
   }
-  if (current?.finished && canAnimate && (!before?.finished || newDeal)) {
+  const publicAction = next.last_public_action;
+  if (live && sameRoom && !newDeal && publicAction && publicAction.id !== previous?.last_public_action?.id
+    && next.players.some(player => player.is_bot && String(player.user_id) === String(publicAction.user_id))) {
+    const last = current?.last_play;
+    const kind = !Array.isArray(last) && last?.user_id === publicAction.user_id ? last.kind : undefined;
+    const voice = publicAction.action === 'bid' && publicAction.bid === 0 ? 'no_bid'
+      : publicAction.action === 'play' && kind === 'rocket' ? 'rocket'
+      : publicAction.action === 'play' && (kind === 'bomb' || kind === 'straight_flush') ? 'bomb'
+      : publicAction.action;
+    void playGameVoice(voice);
+  }
+  if (current?.finished && live && sameRoom && (!before?.finished || newDeal)) {
     clearTimeout(resultTimer);
     resultReady.value = false;
-    const showResult = () => { resultReady.value = true; resultAnimated.value = true; };
-    const delay = Math.max(0, dealEndsAt - Date.now());
+    const showResult = () => { resultReady.value = true; resultAnimated.value = !reducedMotion.value; };
+    // 音乐遵循声音设置，系统的减少动画偏好只控制视觉效果。
+    const delta = settledDelta(viewerId.value);
+    playRoundMusic(delta > 0 ? 'win' : delta < 0 ? 'loss' : 'push');
+    const delay = canAnimate ? Math.max(0, dealEndsAt - Date.now()) : 0;
     if (delay) resultTimer = setTimeout(showResult, delay);
     else showResult();
   }
@@ -362,13 +409,14 @@ function seatStyle(index: number) {
   // 斗地主和麻将的下家在右侧，服务端正向轮转对应屏幕逆时针。
   const positions = isMahjong.value
     ? [[6, 76], [94, 37], [74, 13], [6, 37]]
+    : isGuandan.value ? [[7, 82], [91, 25], [50, 12], [9, 25]]
     : currentGameType.value === 'landlord' ? [[7, 82], [91, 24], [9, 24]] : seatPositions[seatCount.value];
   const position = positions?.[index] ?? [50, 50];
   return { '--seat-x': `${position[0]}%`, '--seat-y': `${position[1]}%` };
 }
 function seatDirection(index: number) {
   if (index === 0) return 'south';
-  if (isMahjong.value) return ['south', 'east', 'north', 'west'][index] ?? 'north';
+  if (isMahjong.value || isGuandan.value) return ['south', 'east', 'north', 'west'][index] ?? 'north';
   if (currentGameType.value === 'landlord') return ['south', 'east', 'west'][index] ?? 'north';
   const position = seatPositions[seatCount.value]?.[index] ?? [50, 50];
   if (position[1]! < 25) return 'north';
@@ -405,6 +453,7 @@ function settledDelta(id: string): number {
 }
 
 function cardLabel(card: string): string {
+  card = card.split('#')[0]!;
   if (card === 'JokerSmall') return '小王';
   if (card === 'JokerBig') return '大王';
   const suit = { Club: '♣', Diamond: '♦', Heart: '♥', Spade: '♠' };
@@ -415,6 +464,7 @@ function cardLabel(card: string): string {
 }
 
 function cardImage(card: string): string | null {
+  card = card.split('#')[0]!;
   if (card === 'JokerSmall') return '/cards/JOKER-B.webp';
   if (card === 'JokerBig') return '/cards/JOKER-A.webp';
   if (/^(Club|Diamond|Heart|Spade)([2-9]|10|J|Q|K|A)$/.test(card)) return `/cards/${card}.webp`;
@@ -467,6 +517,7 @@ function openSettings() {
   settingsBase.value = room.value.base_stake;
   settingsLimit.value = room.value.loss_limit;
   settingsAutoStart.value = Boolean(room.value.auto_start_when_ready);
+  settingsTurnSeconds.value = room.value.turn_timeout_seconds ?? 60;
   error.value = '';
   settingsDialog.value?.showModal();
 }
@@ -551,11 +602,12 @@ async function request(path: string, body: Record<string, unknown>): Promise<boo
 }
 
 async function create(mode: 'solo' | 'multi', roomTier: RoomTier = selectedTier.value) {
+  if (!validTurnSeconds(createTurnSeconds.value)) { error.value = '操作等待时长须为 15 至 300 秒的整数'; return; }
   if (roomTier === 'custom' ? !customValid.value : !canEnterTier.value) {
     error.value = roomTier === 'custom' ? '请检查底分、单局上限和账户余额' : `进入${tier.value.title}需要至少 ${tier.value.entry} 灵石`;
     return;
   }
-  const payload: Record<string, unknown> = { game_type: lobbyGameType.value, mode, include_yueyue: mode === 'solo' || includeYueyue.value, room_tier: roomTier };
+  const payload: Record<string, unknown> = { game_type: lobbyGameType.value, mode, include_yueyue: mode === 'solo' || includeYueyue.value, room_tier: roomTier, turn_timeout_seconds: createTurnSeconds.value };
   if (roomTier === 'custom') Object.assign(payload, { base_stake: customBase.value, loss_limit: customLimit.value });
   if (await request('create', payload)) customDialog.value?.close();
 }
@@ -571,6 +623,7 @@ async function saveSettings() {
   const payload: Record<string, unknown> = { room_id: room.value.room_id };
   if (termsChanged.value) Object.assign(payload, { base_stake: settingsBase.value, loss_limit: settingsLimit.value });
   if (Boolean(room.value.auto_start_when_ready) !== settingsAutoStart.value) payload.auto_start_when_ready = settingsAutoStart.value;
+  if ((room.value.turn_timeout_seconds ?? 60) !== settingsTurnSeconds.value) payload.turn_timeout_seconds = settingsTurnSeconds.value;
   if (await request('settings', payload)) settingsDialog.value?.close();
 }
 
@@ -597,6 +650,7 @@ async function leave() {
 
 function toggleCard(index: number) {
   if (busy.value || game.value?.finished || myGame.value?.has_won || game.value?.phase === 'dingque') return;
+  guandanHint.value = null;
   if (isMahjong.value && !legalActions.value.includes('chow')) {
     selectedIndices.value = selectedIndices.value.includes(index) ? [] : [index];
     return;
@@ -604,6 +658,24 @@ function toggleCard(index: number) {
   selectedIndices.value = selectedIndices.value.includes(index)
     ? selectedIndices.value.filter(value => value !== index)
     : [...selectedIndices.value, index];
+}
+
+function guandanCardMark(card: string) {
+  const face = card.split('#')[0];
+  if (face === `Heart${game.value?.level}`) return '配';
+  return face?.replace(/^(Club|Diamond|Heart|Spade)/, '') === game.value?.level ? '级' : '';
+}
+
+function selectGuandanHint() {
+  if (busy.value || !guandanOptions.value.length) return;
+  guandanHintIndex.value = (guandanHintIndex.value + 1) % guandanOptions.value.length;
+  guandanHint.value = guandanOptions.value[guandanHintIndex.value]!;
+  selectedIndices.value = guandanHint.value.cards.map(card => myHand.value.indexOf(card)).filter(index => index >= 0);
+}
+
+function guandanTributeText(event: GuandanTributeEvent) {
+  if (event.kind === 'resist') return `${event.user_ids.map(nameFor).join('、')} 抗贡`;
+  return `${nameFor(event.user_id)} → ${nameFor(event.target_id)} ${event.kind === 'tribute' ? '进贡' : '还贡'} ${cardLabel(event.card)}${event.fallback ? '（无10及以下非级牌，改还最小非逢人配）' : ''}`;
 }
 
 function actionDisabled(action: string): boolean {
@@ -643,10 +715,13 @@ async function act(action: string, extra: Record<string, unknown> = {}) {
   const payload: Record<string, unknown> = { room_id: room.value.room_id, expected_revision: room.value.revision, action, ...extra };
   if (action === 'raise') payload.amount = Number(amount.value);
   if (action === 'compare') payload.target_id = targetId.value;
-  if (action === 'play') payload.cards = selectedCards.value;
+  if (action === 'play') {
+    payload.cards = selectedCards.value;
+    if (isGuandan.value && guandanHint.value && selectedCards.value.join('|') === guandanHint.value.cards.join('|')) payload.combo = guandanHint.value.combo;
+  }
   if (action === 'discard' || (action === 'kong' && selectedCards.value.length && !extra.tile)) payload.tile = selectedCards.value[0];
   if (action === 'chow' && !extra.tiles) payload.tiles = selectedCards.value;
-  await request('action', payload);
+  if (await request('action', payload)) playGameVoice(action === 'bid' && !extra.bid ? 'no_bid' : action);
 }
 
 onMounted(async () => {
@@ -681,6 +756,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopGameVoice();
+  setGameAudioScene('lobby');
   disposed = true;
   epoch++;
   clearInterval(pollTimer);
@@ -697,11 +774,11 @@ onBeforeUnmount(() => {
     <header class="tg-toolbar">
       <div class="tg-title"><h2>{{ rules.title }}<span v-if="room" class="tg-tier-tag">{{ tierNames[room.room_tier] }}</span></h2><p v-if="room" :title="game?.message">房间 {{ room.room_id }} · {{ room.state === 'waiting' ? '等待准备' : room.state === 'finished' ? '本局结束' : phaseLabel }}<span v-if="game && !game.finished && ['texas', 'golden_flower'].includes(currentGameType)" class="tg-compact-notice"> · {{ game.message }}</span></p><p v-else>{{ rules.summary }}</p></div>
       <div class="tg-actions">
-        <GameTools :profile="profile" :api-call="apiCall" :game-type="currentGameType" />
+        <GameTools :profile="profile" :api-call="apiCall" :game-type="currentGameType" :chat-available="Boolean(room)" @chat="socialPanel?.openChat()" />
         <button class="game-button quiet" @click="rulesDialog?.showModal()">玩法规则</button>
         <CopyRoomCode v-if="room" :room-id="room.room_id" />
         <button v-if="room" class="game-button quiet" :disabled="busy" @click="refresh">同步</button>
-        <button v-if="room?.mode === 'multi'" class="game-button quiet" :disabled="busy" @click="emit('invite', { room_id: room.room_id, game_type: room.game_type })">招募队友</button>
+        <button v-if="room?.mode === 'multi'" class="game-button quiet" :disabled="busy" @click="emit('invite', { room_id: room.room_id, game_type: room.game_type, player_count: room.players.length, max_players: room.max_players, bot_count: room.players.filter(player => player.is_bot).length, state: room.state })">招募队友</button>
         <button v-if="room" class="game-button quiet" :disabled="busy" @click="leave">离开房间</button>
         <button v-else class="game-button quiet" :disabled="busy || recovering" @click="emit('back')">返回大厅</button>
       </div>
@@ -725,6 +802,7 @@ onBeforeUnmount(() => {
           <button class="tg-mode-card tg-solo-entry" aria-label="月月陪玩" :disabled="busy || !canEnterTier" @click="create('solo')"><GameIcon name="solo" /><span><strong>月月陪玩</strong><small>自动配齐，随时开局</small></span><span class="tg-entry-arrow" aria-hidden="true">›</span></button>
           <div class="tg-friends-entry"><button class="tg-mode-card" aria-label="好友同桌" :disabled="busy || !canEnterTier" @click="create('multi')"><GameIcon name="friends" /><span><strong>好友同桌</strong><small>创建{{ tier.title }}，邀请朋友</small></span><span class="tg-entry-arrow" aria-hidden="true">›</span></button><label class="tg-check"><input v-model="includeYueyue" type="checkbox" :disabled="busy">邀请月月一起玩</label></div>
         </div>
+        <div class="tg-turn-setting tg-turn-create"><label for="create-turn-seconds">操作等待时长（秒）</label><select id="create-turn-seconds" v-model.number="createTurnSeconds" :disabled="busy"><option v-for="seconds in turnTimeOptions" :key="seconds" :value="seconds">{{ seconds }} 秒</option></select><small>适用于单人和好友房间</small></div>
         <div class="tg-lobby-footer"><p :class="{ 'tg-entry-insufficient': !canEnterTier }">{{ canEnterTier ? `${tier.title} · 底分 ${tier.base} · 准入 ${tier.entry} 灵石` : `进入${tier.title}还需 ${tier.entry - profile.balance} 灵石` }}</p><div class="tg-actions"><button class="game-button" :disabled="busy" @click="showRoomDirectory = true">房间列表</button><button class="game-button quiet" :disabled="busy" @click="error = ''; customDialog?.showModal()"><GameIcon name="room" />自定义房间</button><button class="game-button gold" :disabled="busy" @click="error = ''; joinDialog?.showModal()">加入房间</button></div></div>
       </div>
     </div>
@@ -747,6 +825,8 @@ onBeforeUnmount(() => {
           <div v-if="winNotice && !game?.finished" class="tg-win-notice" :data-win-event-id="winNotice.id">
             <RoundFeedback :key="winNotice.id" title="胡牌 · 血战继续" :subtitle="`${nameFor(winNotice.user_id)} · ${winNotice.fan}番 ${winNotice.label}${winNotice.tile ? ` · 胡${cardLabel(winNotice.tile)}` : ''}`" detail="本局尚未结束 · 灵石待结算" tone="mahjong" :animated="!reducedMotion" aria-label="血战途中胡牌" />
           </div>
+          <div v-if="isGuandan && game" class="tg-guandan-level" aria-label="掼蛋级牌与队伍"><strong>本局打 {{ game.level ?? '—' }}</strong><span v-if="game.team_levels">一队 {{ game.team_levels[0] }} · 二队 {{ game.team_levels[1] }}</span><small>♥级牌逢人配 · 对家为队友</small></div>
+          <details v-if="isGuandan && game?.tribute_events?.length" class="tg-guandan-tribute"><summary>自动贡还贡 · {{ game.tribute_events.length }} 条</summary><p v-for="(event, index) in game.tribute_events" :key="index">{{ guandanTributeText(event) }}</p></details>
           <div v-if="currentGameType === 'landlord' && game" class="tg-bottom-cards" aria-label="地主底牌"><small>地主底牌</small><div class="tg-public-cards"><div v-for="index in 3" :key="index" class="tg-board-card"><img v-if="game.bottom_cards?.[index - 1] && cardImage(game.bottom_cards[index - 1]!)" :src="cardImage(game.bottom_cards[index - 1]!)!" :alt="cardLabel(game.bottom_cards[index - 1]!)"><img v-else src="/table-assets/card-back.png" alt="未公开底牌"></div></div></div>
           <div v-if="isMahjong && game" class="tg-walls" aria-hidden="true"><div v-for="side in ['north', 'west', 'east']" :key="side" class="tg-wall" :class="`tg-wall-${side}`"><i v-for="tile in 13" :key="tile"></i></div></div>
           <div v-if="currentGameType === 'landlord' && game" class="tg-seat-plays">
@@ -788,7 +868,7 @@ onBeforeUnmount(() => {
           <div class="tg-seats">
             <section v-for="(member, index) in seatedPlayers" :key="member.user_id" class="tg-seat" :style="seatStyle(index)" :data-position="seatDirection(index)" :data-has-won="Boolean(gamePlayer(member.user_id)?.has_won)" :class="{ 'tg-self': String(member.user_id) === viewerId, 'tg-current': String(member.user_id) === String(game?.current_player_id) && !game?.finished, 'tg-folded': room.state === 'playing' && gamePlayer(member.user_id)?.folded, 'tg-has-won': gamePlayer(member.user_id)?.has_won }">
               <div class="tg-player">
-                <div class="tg-avatar"><img :src="member.avatar_url || '/character/normal.webp'" :alt="`${member.username}头像`"><span v-if="String(member.user_id) === String(room.host_user_id)" class="tg-host-badge" title="房主">主</span></div>
+                <button class="tg-avatar tg-interact-avatar" :data-game-avatar="member.user_id" :aria-label="`与${member.username}互动`" :disabled="String(member.user_id) === viewerId" @click="socialPanel?.openInteraction(member.user_id)"><img :src="member.avatar_url || '/character/normal.webp'" :alt="`${member.username}头像`"><span v-if="String(member.user_id) === String(room.host_user_id)" class="tg-host-badge" title="房主">主</span></button>
                 <div class="tg-nameplate"><h3 :title="member.username">{{ member.username }}</h3><span v-if="String(member.user_id) === viewerId" class="tg-seat-tag">你</span><span v-else-if="member.is_bot" class="tg-seat-tag">AI</span><span v-if="gamePlayer(member.user_id)?.role && gamePlayer(member.user_id)?.role !== 'unknown'" class="tg-role">{{ gamePlayer(member.user_id)?.role === 'landlord' ? '地主' : '农民' }}</span></div>
                 <p v-if="room.state === 'waiting'" class="tg-seat-state" :class="{ 'tg-ready': member.is_ready }">{{ member.is_ready ? '已准备' : '等待准备' }}</p>
                 <p v-else-if="isSichuan && game && !game.finished" class="tg-sichuan-pending" :aria-label="`${member.username}的待结算理论分`">待结算理论 {{ signedScore(gamePlayer(member.user_id)?.score_delta) }}</p>
@@ -797,6 +877,7 @@ onBeforeUnmount(() => {
               <p v-if="isSichuan && game" class="tg-sichuan-seat-status"><span v-if="gamePlayer(member.user_id)?.missing_suit" class="tg-missing-suit">缺{{ suitNames[gamePlayer(member.user_id)!.missing_suit!] }}</span><strong v-if="gamePlayer(member.user_id)?.has_won" :title="`${gamePlayer(member.user_id)?.win_label ?? '胡牌'} · ${gamePlayer(member.user_id)?.win_fan ?? 1}番${gamePlayer(member.user_id)?.winning_tile ? ` · 胡${cardLabel(gamePlayer(member.user_id)!.winning_tile!)}` : ''}`">第{{ gamePlayer(member.user_id)?.win_order }}胡 · {{ gamePlayer(member.user_id)?.win_fan }}番</strong><span v-else-if="game.phase === 'dingque'">定缺中</span></p>
               <p v-if="room.state === 'finished'" class="tg-seat-state" :class="{ 'tg-ready': member.is_ready }" :aria-label="`${member.username}的准备状态`">{{ member.is_ready ? '已准备' : '未准备' }}</p>
               <p v-else-if="gamePlayer(member.user_id)?.folded" class="tg-seat-state">已弃牌</p><p v-else-if="member.connected === false && !member.is_bot" class="tg-seat-state">托管中</p>
+              <p v-if="isGuandan && game" class="tg-guandan-team" :class="{ teammate: gamePlayer(member.user_id)?.team === myGame?.team }">{{ gamePlayer(member.user_id)?.team === myGame?.team ? '我方' : '对方' }}<span v-if="index === 2"> · 队友</span><strong v-if="gamePlayer(member.user_id)?.finished_rank"> · 第{{ gamePlayer(member.user_id)?.finished_rank }}名</strong></p>
               <p v-if="gamePlayer(member.user_id)?.hand_name" class="tg-hand-name">{{ gamePlayer(member.user_id)?.hand_name }}</p>
               <p v-if="game?.finished" class="tg-settled" :class="{ 'tg-positive': settledDelta(member.user_id) > 0 }"><span class="tg-settled-label">{{ room.actual_settlement ? '实际净变动' : '待结算净变动' }}</span> {{ settledDelta(member.user_id) > 0 ? '+' : '' }}{{ settledDelta(member.user_id) }} 灵石</p>
               <div v-if="game?.finished && String(member.user_id) !== viewerId && gamePlayer(member.user_id)?.hand.length" class="tg-opponent-hand" :style="{ '--public-count': gamePlayer(member.user_id)?.hand.length ?? 1 }"><img v-for="(card, cardIndex) in gamePlayer(member.user_id)?.hand" :key="cardIndex" :src="cardImage(card) || '/table-assets/card-back.png'" :alt="cardLabel(card)"></div>
@@ -812,7 +893,12 @@ onBeforeUnmount(() => {
       <footer class="tg-dock" aria-label="桌游操作区">
         <div v-if="currentGameType === 'landlord' && game && !game.finished && game.current_player_id" class="tg-countdown" aria-label="出牌倒计时"><span>{{ String(game.current_player_id) === viewerId ? '轮到你出牌' : `等待 ${currentName}` }}</span><strong v-if="secondsLeft !== null">{{ secondsLeft }}</strong></div>
         <div v-if="game" class="tg-hand-shelf">
-          <div v-if="myHand.length" class="tg-my-hand" :style="{ '--hand-count': myHand.length }" aria-label="我的手牌">
+          <div v-if="isGuandan && myHand.length" class="tg-guandan-hand" aria-label="我的手牌">
+            <div v-for="(handRow, rowIndex) in guandanHandRows" :key="rowIndex" class="tg-my-hand" :style="{ '--hand-count': handRow.length }">
+              <button v-for="item in handRow" :key="item.card" class="tg-card tg-hand-card" :data-unique-card="item.card" :class="{ selected: selectedIndices.includes(item.index), 'tg-guandan-wild': guandanCardMark(item.card) === '配' }" :aria-label="`${cardLabel(item.card)}，第${item.index + 1}张${guandanCardMark(item.card) ? `，${guandanCardMark(item.card) === '配' ? '逢人配' : '级牌'}` : ''}`" :aria-pressed="selectedIndices.includes(item.index)" :disabled="busy || game.finished || Boolean(myGame?.finished_rank)" @click="toggleCard(item.index)"><img :src="cardImage(item.card)!" :alt="cardLabel(item.card)"><small v-if="guandanCardMark(item.card)" class="tg-guandan-card-mark">{{ guandanCardMark(item.card) }}</small></button>
+            </div>
+          </div>
+          <div v-else-if="myHand.length" class="tg-my-hand" :style="{ '--hand-count': myHand.length }" aria-label="我的手牌">
             <button v-for="(item, index) in renderedHand" :key="item.id" class="tg-card tg-hand-card" :data-card-id="item.id" :data-card-dealing="dealingCards[item.id] !== undefined" :style="{ '--deal-delay': `${dealingCards[item.id] ?? 0}ms` }" :class="{ selected: selectedIndices.includes(index), 'tg-tile': isMahjong, 'tg-missing-tile': isSichuan && item.card[0] === myGame?.missing_suit }" :aria-label="`${cardLabel(item.card)}，第${index + 1}张`" :aria-pressed="selectedIndices.includes(index)" :disabled="busy || game.finished || !(currentGameType === 'landlord' || isMahjong) || myGame?.has_won || game.phase === 'dingque'" @click="toggleCard(index)"><img v-if="cardImage(item.card)" :src="cardImage(item.card)!" :alt="cardLabel(item.card)" @animationend="finishHandAnimation(item.id)"><span v-else>{{ cardLabel(item.card) }}</span></button>
           </div>
           <p v-else-if="currentGameType === 'golden_flower' && !game.finished" class="tg-muted">🂠 🂠 🂠 · 点击「看牌」查看你的三张牌</p>
@@ -820,6 +906,7 @@ onBeforeUnmount(() => {
 
         <p class="tg-wallet-strip">余额 {{ profile.balance }} 灵石 · 底分 {{ room.base_stake }} · 单局最多输 {{ room.loss_limit }}<span v-if="room.settlement_status === 'settled'"> · 本局已结算</span><span v-else-if="room.settlement_status === 'reserved'"> · {{ isSichuan ? '整局结束统一结算' : '本局已冻结' }}</span></p>
         <div class="tg-control-panel">
+        <p v-if="isGuandan && game?.finished" class="tg-guandan-match" role="status">{{ guandanMatchText }}</p>
         <template v-if="room.state === 'waiting' || room.state === 'finished'">
           <div class="tg-actions"><button class="game-button quiet" :disabled="busy" @click="openSettings">房间设置</button><button v-if="host" class="game-button quiet" :disabled="busy" @click="openBots">陪玩管理</button></div>
           <div class="tg-actions"><button class="game-button" :disabled="busy" @click="request('ready', { room_id: room.room_id, ready: !viewer?.is_ready })">{{ viewer?.is_ready ? '取消准备' : room.state === 'finished' ? '准备下一局' : '准备' }}</button><button v-if="host" class="game-button gold" :disabled="busy || !startReady" @click="request('start', { room_id: room.room_id })">开始本局</button></div>
@@ -834,7 +921,8 @@ onBeforeUnmount(() => {
           <p v-if="legalActions.includes('call') || legalActions.includes('compare')" class="tg-muted tg-bet-cost"><span v-if="legalActions.includes('call')">跟注 {{ game.call_amount ?? 0 }}</span><span v-if="legalActions.includes('compare')"> · 比牌 {{ game.compare_cost ?? 0 }}</span></p>
           <div v-if="legalActions.includes('chow') && game.chow_options?.length" class="tg-actions"><button v-for="(tiles, index) in game.chow_options" :key="index" class="game-button" :disabled="busy" @click="act('chow', { tiles })">吃 {{ tiles.map(cardLabel).join(' ') }}</button></div>
           <div v-if="legalActions.includes('kong') && game.kong_options?.length" class="tg-actions"><button v-for="tile in game.kong_options" :key="tile" class="game-button" :disabled="busy" @click="act('kong', { tile })">杠 {{ cardLabel(tile) }}</button></div>
-          <div v-if="genericActions.length || selectedIndices.length" class="tg-actions"><button v-for="action in genericActions" :key="action" class="game-button" :class="{ gold: ['play', 'win', 'call'].includes(action) }" :disabled="actionDisabled(action)" @click="act(action)">{{ action === 'pass' ? currentGameType === 'landlord' ? '不出' : isMahjong ? '过' : labels[action] : labels[action] || action }}</button><button v-if="selectedIndices.length" class="game-button quiet" :disabled="busy" @click="selectedIndices = []">清空选择</button></div>
+          <div v-if="genericActions.length || selectedIndices.length" class="tg-actions"><button v-for="action in genericActions" :key="action" class="game-button" :class="{ gold: ['play', 'win', 'call'].includes(action) }" :disabled="actionDisabled(action)" @click="act(action)">{{ action === 'pass' ? currentGameType === 'landlord' || isGuandan ? '不出' : isMahjong ? '过' : labels[action] : labels[action] || action }}</button><button v-if="isGuandan && legalActions.includes('play')" class="game-button quiet" :disabled="busy || !guandanOptions.length" @click="selectGuandanHint">提示</button><button v-if="selectedIndices.length" class="game-button quiet" :disabled="busy" @click="selectedIndices = []; guandanHint = null">清空选择</button></div>
+          <p v-if="isGuandan && guandanHint" class="tg-guandan-hint">{{ guandanHint.name }} · 提示 {{ guandanHintIndex + 1 }}/{{ guandanOptions.length }}</p>
           <p v-if="isSichuan && myGame?.has_won && !game.finished" class="tg-muted tg-blood-progress">你已胡牌，等待血战结束 · 当前 {{ game.winners.length }}/3 人胡牌</p>
           <p v-else-if="!legalActions.length && !game.finished" class="tg-muted">等待 {{ currentName || '其他玩家' }} {{ game.phase === 'dingque' ? '定缺' : '操作' }}…</p>
           <p v-if="isSichuan && mustDiscardMissingSuit && legalActions.includes('discard')" class="tg-muted">请先打出缺{{ suitNames[myGame!.missing_suit!] }}的牌</p>
@@ -853,6 +941,7 @@ onBeforeUnmount(() => {
         <p class="tg-modal-hint">准入灵石 {{ customLimit }} · 单局上限至少 100 灵石，且不低于底分的 10 倍。</p>
         <p class="tg-modal-hint">开局冻结单局上限，结算按实际输赢返还；不会自动追加。</p>
         <label class="tg-check"><input v-model="includeYueyue" type="checkbox" :disabled="busy">邀请月月一起玩</label>
+        <div class="tg-turn-setting"><label for="custom-turn-seconds">操作等待时长（秒）</label><input id="custom-turn-seconds" v-model.number="createTurnSeconds" type="number" min="15" max="300" step="1" inputmode="numeric" :disabled="busy"></div>
         <p v-if="error" class="tg-modal-error" role="alert">{{ error }}</p>
         <div class="tg-modal-footer"><span>可用 {{ profile.balance }} 灵石</span><button class="game-button gold" :disabled="busy || !customValid">创建自定义房间</button></div>
       </form>
@@ -870,10 +959,11 @@ onBeforeUnmount(() => {
           <template v-if="room.room_tier === 'custom'"><div class="tg-setting-fields"><label>底分<input v-model.number="settingsBase" type="number" min="1" :max="maxBaseStake" step="1" inputmode="numeric" :disabled="busy"></label><label>单局最多输<input v-model.number="settingsLimit" type="number" :min="Math.max(100, settingsBase * 10)" :max="Math.min(maxLossLimit, profile.balance)" step="1" inputmode="numeric" :disabled="busy"></label></div><p class="tg-modal-hint">准入灵石 {{ settingsLimit }} · 修改底分或单局上限后，所有真人需重新准备。</p><p class="tg-modal-hint">每位真人余额须满足新准入，最低单局上限为 100 灵石和 10 倍底分中的较大值。</p></template>
           <dl v-else class="tg-room-terms"><div><dt>底分</dt><dd>{{ room.base_stake }} 灵石</dd></div><div><dt>准入灵石</dt><dd>{{ room.entry_min }}</dd></div><div><dt>单局最多输</dt><dd>{{ room.loss_limit }} 灵石</dd></div></dl>
           <label class="tg-auto-start-option"><input v-model="settingsAutoStart" type="checkbox" :disabled="busy">全员准备后自动开启游戏</label>
+          <div class="tg-turn-setting"><label for="settings-turn-seconds">操作等待时长（秒）</label><input id="settings-turn-seconds" v-model.number="settingsTurnSeconds" type="number" min="15" max="300" step="1" inputmode="numeric" :disabled="busy"></div><p class="tg-modal-hint">可设 15–300 秒；修改后所有真人需重新准备。</p>
           <p class="tg-modal-hint">达到最低人数且所有玩家准备后自动开局。关闭后由房主手动开始。</p>
           <p v-if="error" class="tg-modal-error" role="alert">{{ error }}</p><div class="tg-modal-footer"><span>可用 {{ profile.balance }} 灵石</span><button class="game-button gold" :disabled="busy || !settingsValid || !settingsChanged">保存设置</button></div>
         </form>
-        <template v-else><dl class="tg-room-terms"><div><dt>底分</dt><dd>{{ room.base_stake }} 灵石</dd></div><div><dt>准入灵石</dt><dd>{{ room.entry_min }}</dd></div><div><dt>单局最多输</dt><dd>{{ room.loss_limit }} 灵石</dd></div></dl><p class="tg-modal-hint">全员准备后自动开局：{{ room.auto_start_when_ready ? '已开启' : '已关闭' }}。房间设置由房主在本局结束后调整。</p></template>
+        <template v-else><dl class="tg-room-terms"><div><dt>底分</dt><dd>{{ room.base_stake }} 灵石</dd></div><div><dt>准入灵石</dt><dd>{{ room.entry_min }}</dd></div><div><dt>单局最多输</dt><dd>{{ room.loss_limit }} 灵石</dd></div><div><dt>操作等待时长</dt><dd>{{ room.turn_timeout_seconds ?? 60 }} 秒</dd></div></dl><p class="tg-modal-hint">全员准备后自动开局：{{ room.auto_start_when_ready ? '已开启' : '已关闭' }}。房间设置由房主在本局结束后调整。</p></template>
         <section class="tg-room-members" aria-label="房间成员">
           <h3>房间成员</h3><p v-if="host" class="tg-modal-hint">房主可在等待开局或结算完成后移出玩家。</p>
           <ul class="tg-bot-list"><li v-for="member in room.players" :key="member.user_id"><img :src="member.avatar_url || '/character/normal.webp'" alt=""><div><strong>{{ member.username }}{{ String(member.user_id) === String(room.host_user_id) ? ' · 房主' : member.is_bot ? ' · AI' : '' }}</strong><small>{{ room.state === 'playing' ? '对局中' : member.is_ready ? '已准备' : '未准备' }}</small></div><button v-if="host && !member.is_bot && String(member.user_id) !== String(room.host_user_id)" class="game-button quiet" :aria-label="`踢出 ${member.username}`" :disabled="busy || !canManage" @click="kickPlayer(member)">踢出</button></li></ul>
@@ -889,6 +979,7 @@ onBeforeUnmount(() => {
       <p v-if="error" class="tg-modal-error" role="alert">{{ error }}</p>
     </dialog>
 
+    <GameSocial v-if="room" ref="socialPanel" scope-type="table" hide-toggle :room-id="room.room_id" :viewer-id="viewerId" :members="room.players" :api-call="apiCall" />
     <dialog ref="rulesDialog" class="tg-rules" aria-labelledby="table-rules-title">
       <div class="tg-rules-head"><h2 id="table-rules-title">{{ rules.title }}规则</h2><button class="game-button quiet" aria-label="关闭规则" @click="rulesDialog?.close()">关闭</button></div>
       <p>{{ rules.players }}</p>
@@ -900,6 +991,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.tg-interact-avatar { padding: 0; cursor: pointer; background: none; color: inherit; }
+.tg-interact-avatar:disabled { cursor: default; opacity: 1; }
 /* 使用独立的横屏安全区：背景延展，头像、手牌与操作始终留在视窗内。 */
 .table-games { position: relative; flex: 1; min-width: 0; min-height: 0; width: 100%; color: #fff2cc; background: #634665; container-type: size; text-align: center; --gold: #f4d28b; --card-height: clamp(68px, 24cqh, 172px); }
 .table-games, .table-games * { box-sizing: border-box; }
@@ -1030,6 +1123,7 @@ onBeforeUnmount(() => {
 .tg-player { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; align-items: center; gap: 2px 7px; padding: 6px 8px 6px 6px; border: 1px solid #ebc986; border-radius: 9px; background: linear-gradient(#6588b9f5, #435484f5); box-shadow: inset 0 1px #d9ddf780, inset 0 -3px #343d6559, 0 3px 0 #735d68, 0 5px 10px #49335466; text-align: left; }
 .tg-avatar { position: relative; grid-row: 1 / 3; width: clamp(28px, 7.5cqh, 56px); height: clamp(28px, 7.5cqh, 56px); border: 2px solid #f2cc83; border-radius: 7px; background: #d8bca2; box-shadow: 0 1px 4px #42335988; }
 .tg-avatar img { display: block; width: 100%; height: 100%; border-radius: 3px; object-fit: cover; }
+.table-games button.tg-avatar.tg-interact-avatar { display: block; min-height: 0; padding: 0; opacity: 1; }
 .tg-host-badge { position: absolute; right: -5px; bottom: -3px; width: 14px; height: 14px; border-radius: 50%; background: #ffe1a0; color: #995044; font-size: 9px; text-align: center; box-shadow: 0 1px 2px #5e3d5c88; }
 .tg-nameplate { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .tg-nameplate h3 { margin: 0; min-width: 0; font-size: clamp(10px, 1.8cqh, 13px); font-weight: 500; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
@@ -1090,7 +1184,7 @@ onBeforeUnmount(() => {
 .tg-bet-fields { pointer-events: none; }
 .tg-bet-fields .tg-field { pointer-events: auto; }
 .tg-error { position: absolute; bottom: 26px; left: 20%; right: 20%; z-index: 12; margin: 0; padding: 8px 12px; background: #6e2828ee; border: 1px solid #e7b0a3; border-radius: 6px; max-height: 20cqh; overflow: auto; color: #ffe8de; font-size: 12px; }
-.tg-modal { width: min(560px, calc(100vw - 28px)); max-height: calc(100dvh - 24px); margin: auto; padding: 20px; border: 2px solid #d1a469; border-radius: 18px; background: radial-gradient(ellipse at top left, #fff9e7, transparent 72%), #f1dcba; box-shadow: 0 20px 80px #36263f99, inset 0 0 0 3px #fff0cd, inset 0 0 0 5px #dcb57c99; color: #49405e; text-align: left; overflow: auto; }
+.tg-modal { width: min(560px, calc(var(--activity-width, 100vw) - 28px)); max-height: calc(var(--activity-height, 100dvh) - 24px); margin: auto; padding: 20px; border: 2px solid #d1a469; border-radius: 18px; background: radial-gradient(ellipse at top left, #fff9e7, transparent 72%), #f1dcba; box-shadow: 0 20px 80px #36263f99, inset 0 0 0 3px #fff0cd, inset 0 0 0 5px #dcb57c99; color: #49405e; text-align: left; overflow: auto; }
 .tg-modal::backdrop { background: #3a284d9e; backdrop-filter: blur(4px); }
 .tg-modal-head { display: flex; align-items: center; gap: 10px; margin: -5px 0 16px; position: sticky; top: -20px; z-index: 2; background: #f7e8cb; border-bottom: 1px solid #d4ad77; padding-block: 5px 10px; }
 .tg-modal-head > .game-icon { width: 72px; height: 55px; flex-shrink: 0; }
@@ -1107,6 +1201,10 @@ onBeforeUnmount(() => {
 .tg-room-members .tg-bot-list button { flex-shrink: 0; }
 .tg-setting-fields label, .tg-room-code-label { display: flex; flex-direction: column; gap: 7px; color: #514563; font-size: 12px; }
 .tg-setting-fields input, .tg-room-code-label input { width: 100%; }
+.tg-turn-setting { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; font-size: 13px; }
+.tg-turn-setting input, .tg-turn-setting select { width: 100px; }
+.tg-turn-setting small { opacity: .8; }
+.tg-turn-create { margin: 6px 0 0; color: #ffedca; }
 .tg-modal-hint { color: #786349; font-size: 11px; line-height: 1.7; margin: 12px 0; }
 .tg-modal-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 18px; border-top: 1px solid #d8b784; padding-top: 14px; }
 .tg-modal-footer > span { color: #806144; font-size: 11px; }
@@ -1126,7 +1224,7 @@ onBeforeUnmount(() => {
 .tg-bot-list small { color: #8b6a4c; font-size: 10px; }
 .table-games .tg-bot-list button { margin-left: auto; }
 .tg-bots-empty { font-size: 12px; color: #816847; padding: 20px 0; text-align: center; }
-.tg-rules { width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); margin: auto; border: 2px solid #d1a469; border-radius: 16px; padding: 18px; background: #f6e5c5; box-shadow: 0 15px 65px #392a4c88, inset 0 0 0 3px #fff3d7, inset 0 0 0 5px #dcb57c88; color: #4d4261; text-align: left; overflow: auto; }
+.tg-rules { width: min(680px, calc(var(--activity-width, 100vw) - 24px)); max-height: calc(var(--activity-height, 100dvh) - 24px); margin: auto; border: 2px solid #d1a469; border-radius: 16px; padding: 18px; background: #f6e5c5; box-shadow: 0 15px 65px #392a4c88, inset 0 0 0 3px #fff3d7, inset 0 0 0 5px #dcb57c88; color: #4d4261; text-align: left; overflow: auto; }
 .tg-rules::backdrop { background: #3a284da3; }
 .tg-rules-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -18px; background: #f6e5c5; border-bottom: 1px solid #d4ae77; padding: 6px 0; }
 .tg-rules h2 { margin: 0; font-size: 20px; color: #595181; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-weight: 900; }
@@ -1218,7 +1316,7 @@ onBeforeUnmount(() => {
   .tg-win-notice :deep(.round-feedback) { --result-padding: 6px 13px; }
   .tg-win-notice :deep(.round-feedback-subtitle), .tg-win-notice :deep(.round-feedback-detail) { font-size: 8px; }
   .tg-sichuan-seat-status { gap: 2px; font-size: 8px; }
-  .table-games .tg-tier-card { height: clamp(103px, 32cqh, 155px); padding: 10px; border-radius: 13px 13px 9px 9px; }
+  .table-games .tg-tier-card { height: clamp(92px, 26cqh, 132px); padding: 10px; border-radius: 13px 13px 9px 9px; }
   .tg-tier-heading { top: 11px; left: 12px; gap: 4px; }
   .tg-tier-heading > span { font-size: 9px; letter-spacing: 1px; }
   .tg-tier-heading strong { font-size: 24px; }
@@ -1327,11 +1425,14 @@ onBeforeUnmount(() => {
   .table-games.tg-finished .tg-round-result :deep(.result-copy) { gap: 1px; }
   .tg-lobby { padding-block: 6px; }
   .tg-lobby-inner { gap: 6px; }
+  .tg-turn-create { margin: 0; gap: 6px; font-size: 10px; }
+  .tg-turn-create small { display: none; }
+  .tg-turn-create select { min-height: 28px; padding: 2px 6px; }
   .tg-lobby-heading h3 { font-size: 16px; margin: 0; }
   .tg-eyebrow { display: none; }
   .tg-lobby-balance { flex-direction: row; align-items: baseline; gap: 8px; }
   .tg-lobby-balance strong { font-size: 17px; }
-  .table-games .tg-tier-card { height: 104px; }
+  .table-games .tg-tier-card { height: 92px; }
   .tg-tier-heading { top: 9px; }
   .tg-tier-heading strong { font-size: 22px; }
   .tg-tier-heading > span { display: none; }
@@ -1405,5 +1506,62 @@ onBeforeUnmount(() => {
 @container game-viewport (max-width: 620px) {
   .game-texas .tg-count-8 .tg-seat { width: 76px; }
   .game-texas .tg-count-8 .tg-settled-label { display: none; }
+  .game-texas.tg-finished .tg-count-8 .tg-seat:nth-child(2),
+  .game-texas.tg-finished .tg-count-8 .tg-seat:nth-child(7) { top: 39%; }
+}
+/* 掼蛋27张牌分两行，保留每张可读牌面和独立牌ID的点击区域。 */
+.game-guandan .tg-table-status { left: 29%; right: 29%; top: 20%; max-height: 10cqh; }
+.game-guandan .tg-center { top: 35%; left: 30%; right: 30%; width: auto; transform: none; }
+.game-guandan .tg-center .tg-board-card { width: clamp(28px, 7cqh, 62px); }
+.game-guandan .tg-seat { width: clamp(85px, 13cqw, 180px); }
+.game-guandan .tg-seat:not(.tg-self) .tg-hidden-hand i { display: none; }
+.game-guandan .tg-hidden-hand { margin-top: 2px; padding: 0; }
+.game-guandan .tg-hidden-hand span { margin: 0; font-size: clamp(10px, 1.4cqw, 14px); }
+.tg-guandan-level { position: absolute; z-index: 5; top: 3%; left: 22%; display: grid; gap: 3px; text-align: left; color: #fff1cc; text-shadow: 0 1px #403057; }
+.tg-guandan-level strong { color: #ffe292; font-size: clamp(14px, 1.8cqw, 23px); }
+.tg-guandan-level span, .tg-guandan-level small { font-size: clamp(9px, 1.2cqw, 13px); }
+.tg-guandan-tribute { position: absolute; z-index: 9; right: 18%; top: 3%; max-width: 27%; font-size: clamp(10px, 1.1cqw, 13px); text-align: left; color: #ffedc6; border-radius: 6px; background: #4b426ad9; padding: 5px 8px; }
+.tg-guandan-tribute[open] { max-height: 32cqh; overflow-y: auto; border: 1px solid #d8b573; }
+.tg-guandan-tribute summary { cursor: pointer; }
+.tg-guandan-tribute p { margin: 5px 0; }
+.tg-guandan-team { margin: 2px 0; color: #ffcfb9; font-size: clamp(10px, 1.2cqw, 14px); }
+.tg-guandan-team.teammate { color: #e1f7b8; }
+.game-guandan .tg-hand-shelf { left: 16%; right: 4%; bottom: 29px; }
+.game-guandan .tg-guandan-hand { display: grid; gap: 5px; }
+.game-guandan .tg-my-hand { --face-width: min(12cqh, calc((100cqw - 12px) / (1 + (var(--hand-count) - 1) * .43))); padding: 10px 2px 1px; }
+.game-guandan .tg-card, .game-guandan button.tg-card { flex-basis: calc(var(--face-width) * .43); width: calc(var(--face-width) * .43); }
+.game-guandan .tg-card:last-child { flex-basis: var(--face-width); }
+.game-guandan .tg-guandan-card-mark { position: absolute; z-index: 1; top: 30%; left: 0; min-width: 12px; font-size: clamp(8px, 1.2cqw, 12px); border-radius: 2px; color: #fff9d2; background: #716235; pointer-events: none; }
+.game-guandan .tg-guandan-wild .tg-guandan-card-mark { background: #b44149; }
+.game-guandan .tg-control-panel, .game-guandan.tg-playing-cards .tg-control-panel { left: 23%; right: 8%; bottom: calc(33.6cqh + 61px); justify-content: center; gap: 3px 8px; }
+.game-guandan .tg-guandan-hint { margin: 0; font-size: 11px; }
+.game-guandan .tg-guandan-match { flex-basis: 100%; margin: 0 0 3px; font-size: clamp(10px, 1.3cqw, 16px); color: #ffe1a1; }
+.game-guandan.tg-waiting:not(.tg-finished) .tg-control-panel { bottom: 25%; }
+.game-guandan.tg-finished .tg-round-result { top: 30%; left: 38%; width: 30%; }
+.game-guandan.tg-finished .tg-control-panel { bottom: 32px; }
+.game-guandan.tg-finished .tg-hand-shelf { bottom: 140px; }
+@container game-viewport (max-height: 480px) {
+  .game-guandan .tg-avatar { width: 28px; height: 28px; }
+  .game-guandan .tg-seat-chips { font-size: 11px; }
+  .game-guandan .tg-guandan-level small { display: none; }
+  .game-guandan .tg-table-status { top: 19%; left: 20%; right: 55%; }
+  .game-guandan .tg-table-status .tg-notice { display: none; }
+  .game-guandan .tg-table-status .tg-turn { font-size: 9px; }
+  .game-guandan .tg-center { top: 28%; left: 19%; right: 57%; }
+  .game-guandan .tg-control-panel, .game-guandan.tg-playing-cards .tg-control-panel { left: 43%; right: 3%; bottom: calc(33.6cqh + 57px); }
+  .game-guandan .tg-guandan-hint { display: none; }
+  .game-guandan .tg-hand-shelf { left: 17%; right: 4%; }
+  .game-guandan.tg-finished .tg-control-panel { left: 17%; right: 2%; bottom: 29px; gap: 4px; }
+  .game-guandan.tg-finished .tg-control-panel .tg-actions { gap: 3px; }
+  .game-guandan.tg-finished .tg-hand-shelf { bottom: 80px; }
+  .game-guandan.tg-finished .tg-center { display: none; }
+  .game-guandan.tg-finished .tg-round-result { top: 48%; left: 24%; width: 18%; }
+  .game-guandan.tg-finished .tg-round-result :deep(.round-feedback-title) { font-size: 16px; }
+  .game-guandan.tg-finished .tg-round-result :deep(.round-feedback-subtitle),
+  .game-guandan.tg-finished .tg-round-result :deep(.result-emblem) { display: none; }
+  .game-guandan.tg-finished .tg-round-result :deep(.round-feedback-detail) { font-size: 9px; }
+  .game-guandan.tg-finished .tg-guandan-match { position: absolute; bottom: 39px; left: 0; right: 0; margin: 0; font-size: 9px; }
+  .game-guandan.tg-finished .tg-self { top: 70%; }
+  .game-guandan.tg-finished .tg-seat[data-position="north"] { top: 17%; }
 }
 </style>

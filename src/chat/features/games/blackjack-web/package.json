@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@discord/embedded-app-sdk": "^2.4.0",
+    "animejs": "^4.5.0",
     "vue": "^3.5.0"
   },
   "devDependencies": {

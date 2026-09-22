@@ -26,16 +26,28 @@ for (const [gameType, playerCount] of [['texas', 2], ['texas', 8], ['golden_flow
     await page.goto(`/?dev_user_id=${uid}`);
     await page.getByRole('button', { name: gameType === 'texas' ? /^德州扑克/ : /^炸金花/ }).click();
     await page.getByRole('button', { name: /^月月陪玩/ }).click();
-    for (const viewport of [{ width: 1188, height: 1196 }, { width: 876, height: 1158 }, { width: 1440, height: 900 }, { width: 2560, height: 600 }, { width: 1024, height: 480 }, { width: 844, height: 390 }, { width: 667, height: 375 }, { width: 568, height: 320 }, { width: 700, height: 320 }, { width: 700, height: 800 }]) {
+    for (const viewport of [{ width: 1188, height: 1196 }, { width: 876, height: 1158 }, { width: 1440, height: 900 }, { width: 2560, height: 600 }, { width: 1024, height: 480 }, { width: 844, height: 390 }, { width: 667, height: 375 }, { width: 568, height: 320 }, { width: 700, height: 320 }, { width: 700, height: 800 }, { width: 390, height: 844, embedded: true }, { width: 844, height: 390, embedded: true }, { width: 568, height: 320, embedded: true }]) {
+      if (viewport.embedded) await page.evaluate(async () => {
+        history.replaceState({}, '', `${location.pathname}?frame_id=layout-test`);
+        const viewportModule = await import('/src/activityViewport.ts' as string);
+        viewportModule.updateActivityViewport();
+      });
       await page.setViewportSize(viewport);
+      const content = { width: viewport.width - (viewport.embedded ? 64 : 0), height: viewport.height };
+      await expect.poll(() => page.locator('.game-viewport-stage').evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return { width: Math.round(rect.width), height: Math.round(rect.height) };
+      })).toEqual(content);
       const stage = (await page.locator('.game-viewport-stage').boundingBox())!;
-      expect(stage.width, '牌桌铺满窗口宽度，不出现两侧留边').toBeCloseTo(viewport.width, 0);
+      expect(stage.width, '牌桌铺满灰条之外的可用宽度').toBeCloseTo(content.width, 0);
       expect(stage.height, '牌桌铺满窗口高度，不出现上下留边').toBeCloseTo(viewport.height, 0);
-      expect(Math.abs(stage.x + stage.width / 2 - viewport.width / 2)).toBeLessThan(1);
+      expect(Math.abs(stage.x + stage.width / 2 - content.width / 2)).toBeLessThan(1);
       expect(Math.abs(stage.y + stage.height / 2 - viewport.height / 2)).toBeLessThan(1);
       const status = (await page.locator('.tg-poker-status').boundingBox())!;
       const pot = (await page.locator('.tg-pot').boundingBox())!;
-      expect(status.y + status.height, '提示行必须在底池上方').toBeLessThanOrEqual(pot.y);
+      const rotated = await page.evaluate(() => document.documentElement.dataset.activityRotated === 'true');
+      if (rotated) expect(pot.x + pot.width, '旋转后提示行仍在逻辑底池上方').toBeLessThanOrEqual(status.x + 1);
+      else expect(status.y + status.height, '提示行必须在底池上方').toBeLessThanOrEqual(pot.y);
       const overlaps = await page.evaluate(() => {
         const targets = [...document.querySelectorAll('.tg-notice, .tg-turn, .tg-pot, .tg-center > .tg-public-cards, .tg-center > .tg-table-caption')].filter(e => e.getClientRects().length);
         const blockers = [...document.querySelectorAll('.tg-player, .tg-hidden-hand > *, .tg-my-hand, .tg-control-panel button, .tg-control-panel .tg-field, .tg-control-panel > .tg-muted')];
@@ -48,7 +60,7 @@ for (const [gameType, playerCount] of [['texas', 2], ['texas', 8], ['golden_flow
       for (const control of await page.locator('.tg-toolbar button,.tg-control-panel button,.tg-control-panel input,.tg-control-panel select').all()) {
         await expect(control).toBeInViewport({ ratio: 1 });
         const bounds = (await control.boundingBox())!;
-        expect(bounds.height).toBeGreaterThanOrEqual(35.5);
+        expect(rotated ? bounds.width : bounds.height).toBeGreaterThanOrEqual(35.5);
         expect(bounds.x).toBeGreaterThanOrEqual(stage.x - 1);
         expect(bounds.x + bounds.width).toBeLessThanOrEqual(stage.x + stage.width + 1);
         expect(bounds.y + bounds.height).toBeLessThanOrEqual(stage.y + stage.height + 1);

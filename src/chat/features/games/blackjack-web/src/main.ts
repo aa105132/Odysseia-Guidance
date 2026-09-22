@@ -1,5 +1,9 @@
 import { createApp } from 'vue';
 import './style.css';
+import { installActivityViewport } from './activityViewport';
+
+const removeViewportListeners = installActivityViewport();
+if (import.meta.hot) import.meta.hot.dispose(removeViewportListeners);
 
 async function bootstrap() {
     try {

@@ -4,6 +4,7 @@ const uid = '123456789012345678';
 const personal = { rounds: 12, wins: 7, losses: 4, draws: 1, win_rate: 58.3333, net_profit: 456, today_profit: -24, legacy_rounds: 2 };
 
 async function mockProfile(page: Page) {
+  await page.route('**/api/tables/history?**', route => route.fulfill({ json: { success: true, entries: [], total: 0, has_more: false, timezone: 'Asia/Shanghai' } }));
   await page.route('**/api/profile', route => route.fulfill({ json: { success: true, user_id: uid, username: '统计牌友', avatar_url: '/character/normal.webp', balance: 5000 } }));
 }
 
@@ -23,7 +24,7 @@ test('个人面板展示净盈利与胜率，并支持21点筛选及空态', asy
   await expect(panel).toHaveCount(0);
 });
 
-test('排行榜切换当日和累计，展示前20之外自己的排名', async ({ page }) => {
+test('排行榜切换当日和累计，展示自己的排名', async ({ page }) => {
   await mockProfile(page);
   const periods: string[] = [];
   await page.route('**/api/tables/leaderboard?**', route => {
@@ -97,7 +98,7 @@ test('568×320统计面板可滚动，关闭及筛选保持可触达', async ({ 
   await page.getByRole('button', { name: '查看个人信息与统计', exact: true }).click();
   const panel = page.getByRole('dialog', { name: '个人统计', exact: true });
   await expect(panel.locator('.stats-metrics')).toBeAttached();
-  for (const control of await panel.locator('button,select').all()) {
+  for (const control of await panel.locator('.stats-heading button,.stats-controls button,.stats-controls select').all()) {
     await expect(control).toBeInViewport({ ratio: 1 });
     expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(36);
   }

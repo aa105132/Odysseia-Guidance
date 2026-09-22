@@ -112,7 +112,7 @@ def api(monkeypatch):
         def __init__(self):
             self.results = {}
 
-        async def settle_blackjack(self, round_key, user_id, stake, payout, profile=None):
+        async def settle_blackjack(self, round_key, user_id, stake, payout, profile=None, details=None):
             key = (round_key, str(user_id))
             if key not in self.results:
                 if payout:

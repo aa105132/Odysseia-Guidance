@@ -57,7 +57,7 @@ async def finish_pending(runner):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("game_type", ["texas", "golden_flower", "landlord", "mahjong", "sichuan_mahjong"])
+@pytest.mark.parametrize("game_type", ["texas", "golden_flower", "landlord", "mahjong", "sichuan_mahjong", "guandan"])
 async def test_real_table_finishes_when_model_always_returns_illegal_action(game_type):
     client = SimulatedClient({"action": "play", "cards": ["不在手中的牌"]})
     service, runner, now = install(client)

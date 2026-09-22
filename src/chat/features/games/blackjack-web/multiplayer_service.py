@@ -81,6 +81,7 @@ class MultiplayerPlayerState:
 class MultiplayerRoom:
     room_id: str
     host_user_id: int
+    turn_timeout_seconds: int = 60
     players: Dict[int, MultiplayerPlayerState] = field(default_factory=dict)
     state: str = "waiting"  # waiting | playing | dealer_turn | finished
     deck: List[str] = field(default_factory=list)
@@ -204,7 +205,7 @@ class MultiplayerBlackjackService:
                 str(current_turn_user_id) if current_turn_user_id is not None else None
             ),
             "turn_deadline": room.turn_deadline,
-            "turn_timeout_seconds": self.TURN_TIMEOUT_SECONDS,
+            "turn_timeout_seconds": room.turn_timeout_seconds,
             "ready_player_count": ready_player_count,
             "all_players_ready": all_players_ready,
             "dealer": {
@@ -253,6 +254,7 @@ class MultiplayerBlackjackService:
                 "base_stake": None,
                 "entry_min": 0,
                 "loss_limit": None,
+                "turn_timeout_seconds": room.turn_timeout_seconds,
                 "is_member": is_member,
                 "can_join": is_member or (
                     room.state in ("waiting", "finished") and len(room.players) < self.MAX_PLAYERS
@@ -261,11 +263,12 @@ class MultiplayerBlackjackService:
             })
         return rooms
 
-    def create_room(self, user_id: int, username: str, avatar_url: str) -> Dict[str, Any]:
+    def create_room(self, user_id: int, username: str, avatar_url: str, turn_timeout_seconds: int = 60) -> Dict[str, Any]:
+        self._validate_turn_timeout(turn_timeout_seconds)
         if user_id == self.YUEYUE_USER_ID:
             raise ValueError("该用户编号保留给月月陪玩")
         room_id = self._generate_room_id()
-        room = MultiplayerRoom(room_id=room_id, host_user_id=user_id)
+        room = MultiplayerRoom(room_id=room_id, host_user_id=user_id, turn_timeout_seconds=turn_timeout_seconds)
         room.players[user_id] = MultiplayerPlayerState(
             user_id=user_id,
             username=username,
@@ -274,6 +277,26 @@ class MultiplayerBlackjackService:
         )
         self._rooms[room_id] = room
         self._touch(room)
+        return self._to_room_state(room)
+
+    @staticmethod
+    def _validate_turn_timeout(seconds: int) -> None:
+        if type(seconds) is not int or not 15 <= seconds <= 300:
+            raise ValueError("操作等待时长必须为15至300秒的整数")
+
+    def settings(self, room_id: str, user_id: int, turn_timeout_seconds: int) -> Dict[str, Any]:
+        self._validate_turn_timeout(turn_timeout_seconds)
+        room = self._get_room_or_raise(room_id)
+        if room.host_user_id != user_id:
+            raise PermissionError("只有房主可以修改房间设置")
+        if room.state in ("playing", "dealer_turn"):
+            raise ValueError("请在本局结束后修改等待时长")
+        if room.turn_timeout_seconds != turn_timeout_seconds:
+            room.turn_timeout_seconds = turn_timeout_seconds
+            for player in room.players.values():
+                if not player.is_bot:
+                    player.is_ready = False
+            self._touch(room)
         return self._to_room_state(room)
 
     def join_room(self, room_id: str, user_id: int, username: str, avatar_url: str) -> Dict[str, Any]:
@@ -700,7 +723,7 @@ class MultiplayerBlackjackService:
         return room.turn_order[room.current_turn_index]
 
     def _start_turn_timer(self, room: MultiplayerRoom) -> None:
-        room.turn_deadline = time.time() + self.TURN_TIMEOUT_SECONDS
+        room.turn_deadline = time.time() + room.turn_timeout_seconds
 
     def _expire_turn_if_needed(self, room: MultiplayerRoom) -> None:
         if (
