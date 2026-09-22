@@ -32,6 +32,7 @@ StaleTableAction = _table_module.StaleTableAction
 _wallet_module = import_module("src.chat.features.games.blackjack-web.table_wallet")
 table_wallet = None
 table_tick_task = None
+game_bot_runner = None
 
 
 def _get_table_wallet():
@@ -70,6 +71,32 @@ async def _tick_tables():
                 except Exception:
                     log.exception("桌游房间 %s 推进失败，将在下一次重试", room_id)
         table_service._cleanup()
+        if game_bot_runner is not None:
+            # 多人 21 点也在无浏览器轮询时推进月月并提交完成的派彩。
+            for room_id in list(multiplayer_blackjack_service._rooms):
+                async with room_locks[_room_lock_key(room_id)]:
+                    try:
+                        multiplayer_blackjack_service._get_room_or_raise(room_id)
+                        await _try_settle_multiplayer_round(room_id)
+                    except Exception:
+                        log.exception("多人21点房间 %s 推进失败，将在下一次重试", room_id)
+            game_bot_runner.prune(table_service.rooms, multiplayer_blackjack_service._rooms)
+
+
+def _configure_game_llm():
+    """环境已加载后安装服务端决策器；缺少配置时保持原算法。"""
+    global game_bot_runner
+    module = import_module("src.chat.features.games.blackjack-web.game_llm")
+    client = module.GameLLMClient()
+    if not client.enabled:
+        log.info("陪玩 LLM 未启用，使用本地算法")
+        return
+    runner_module = import_module("src.chat.features.games.blackjack-web.game_bot_runner")
+    game_bot_runner = runner_module.GameBotRunner(client, multiplayer_blackjack_service)
+    table_service.bot_action_provider = game_bot_runner.table_action
+    table_service.action_observer = game_bot_runner.observe_table_action
+    multiplayer_blackjack_service.bot_action_provider = game_bot_runner.blackjack_action
+    log.info("陪玩 LLM 已启用，调用上限 %.1f 秒，失败自动回退算法", client.timeout_seconds)
 
 def _strip_wrapping_quotes(value: Optional[str]) -> str:
     """去除环境变量值外层的一对引号，兼容被错误写成 '"xxx"' 的情况。"""
@@ -204,6 +231,7 @@ async def startup_event():
     log.info("Blackjack service initialized.")
     recovered = await _get_table_wallet().recover()
     log.info("桌游托管已恢复，退还 %s 笔中断牌局灵石", recovered)
+    _configure_game_llm()
     global table_tick_task
     table_tick_task = asyncio.create_task(_tick_tables())
 
@@ -218,6 +246,11 @@ async def shutdown_event():
         table_tick_task.cancel()
         with suppress(asyncio.CancelledError):
             await table_tick_task
+    if game_bot_runner is not None:
+        await game_bot_runner.close()
+    table_service.bot_action_provider = None
+    table_service.action_observer = None
+    multiplayer_blackjack_service.bot_action_provider = None
 
 
 # --- 中间件：添加详细的请求日志 ---

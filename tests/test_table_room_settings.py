@@ -13,6 +13,102 @@ HOST = {"user_id": "1", "username": "房主", "avatar_url": ""}
 GUEST = {"user_id": "2", "username": "访客", "avatar_url": ""}
 
 
+def started_landlord_room():
+    now = [1000.0]
+    service = tables.TableService(clock=lambda: now[0])
+    rid = service.create(HOST, "landlord", "solo", True)["room_id"]
+    service.ready(rid, "1", True)
+    service.start(rid, "1")
+    return service, service._room(rid), now
+
+
+def test_llm_pending_preserves_bot_turn_revision_and_deadline():
+    service, room, now = started_landlord_room()
+    service.action(room.room_id, "1", "bid", bid=0)
+    requests = []
+    service.bot_action_provider = lambda received, uid: requests.append((received.room_id, uid))
+    before_state = copy.deepcopy(room.engine.public_state("1"))
+    before_room = (room.revision, room.turn_deadline, room.updated_at, room.last_turn, room.state)
+    now[0] = room.turn_deadline + 100
+    for _ in range(3):
+        service.get(room.room_id, "1")
+    assert room.engine.public_state("1") == before_state
+    assert (room.revision, room.turn_deadline, room.updated_at, room.last_turn, room.state) == before_room
+    assert len(requests) == 3
+    assert all(uid == room.engine.current_player_id for _, uid in requests)
+
+
+def test_llm_ready_action_is_applied_once_and_observed_before_revision_update():
+    service, room, now = started_landlord_room()
+    service.action(room.room_id, "1", "bid", bid=0)
+    uid = room.engine.current_player_id
+    original_revision = room.revision
+    suggestion = {"action": "bid", "bid": 3}
+    service.bot_action_provider = lambda received, current: suggestion
+    observed = []
+    service.action_observer = lambda received, current, action, payload: observed.append(
+        (current, action, payload, received.engine.landlord_id, received.revision))
+    now[0] = room.turn_deadline
+    service.get(room.room_id, "1")
+    assert room.engine.landlord_id == uid
+    assert observed == [(uid, "bid", {"bid": 3}, uid, original_revision)]
+    assert room.revision == original_revision + 1
+    assert suggestion == {"action": "bid", "bid": 3}
+    service.get(room.room_id, "1")
+    assert len(observed) == 1
+
+
+def test_human_timeout_uses_algorithm_without_requesting_llm():
+    service, room, now = started_landlord_room()
+    service.bot_action_provider = lambda *_: pytest.fail("真人超时不应请求月月模型")
+    expected = room.engine.suggest_action("1")
+    observed = []
+    service.action_observer = lambda *event: observed.append(event[1:])
+    now[0] = room.turn_deadline
+    service.get(room.room_id, "1")
+    assert observed == [("1", expected["action"], {key: value for key, value in expected.items() if key != "action"})]
+
+
+def test_successful_human_action_is_observed_but_invalid_action_is_not():
+    service, room, _ = started_landlord_room()
+    observed = []
+    service.action_observer = lambda *event: observed.append(event[1:])
+    with pytest.raises(ValueError):
+        service.action(room.room_id, "1", "bid", bid=4)
+    assert observed == []
+    service.action(room.room_id, "1", "bid", bid=3)
+    assert observed == [("1", "bid", {"bid": 3})]
+
+
+def test_observer_failure_does_not_leave_successful_action_half_applied(caplog):
+    service, room, _ = started_landlord_room()
+    revision = room.revision
+
+    def broken_observer(*_):
+        raise RuntimeError("不可记录的模型响应或密钥")
+
+    service.action_observer = broken_observer
+    service.action(room.room_id, "1", "bid", bid=3)
+    assert room.engine.phase == "playing"
+    assert room.revision == revision + 1
+    assert room.turn_deadline is not None
+    assert "RuntimeError" in caplog.text
+    assert "不可记录的模型响应或密钥" not in caplog.text
+
+
+def test_unconfigured_bot_provider_keeps_algorithmic_play():
+    service, room, now = started_landlord_room()
+    assert service.bot_action_provider is None
+    service.action(room.room_id, "1", "bid", bid=0)
+    uid = room.engine.current_player_id
+    expected = room.engine.suggest_action(uid)
+    observed = []
+    service.action_observer = lambda *event: observed.append(event[1:])
+    now[0] = room.turn_deadline
+    service.get(room.room_id, "1")
+    assert observed == [(uid, expected["action"], {key: value for key, value in expected.items() if key != "action"})]
+
+
 @pytest.mark.parametrize("tier,base,entry,limit", [
     ("beginner", 1, 100, 100),
     ("intermediate", 5, 1000, 500),

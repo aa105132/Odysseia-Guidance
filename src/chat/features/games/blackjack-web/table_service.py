@@ -2,11 +2,15 @@
 
 from dataclasses import dataclass, field
 from importlib import import_module
+import logging
 import random
 import secrets
 import time
 import uuid
 from typing import Any
+
+
+log = logging.getLogger(__name__)
 
 
 GAME_SPECS = {
@@ -99,6 +103,17 @@ class TableService:
     def __init__(self, clock=time.time):
         self.rooms: dict[str, GameTable] = {}
         self.clock = clock
+        self.bot_action_provider = None
+        self.action_observer = None
+
+    def _observe_action(self, room: GameTable, user_id: str, action: str, payload: dict):
+        """成功执行后记录公开动作；记忆失败不能中断牌局和资金流程。"""
+        if self.action_observer is None:
+            return
+        try:
+            self.action_observer(room, user_id, action, dict(payload))
+        except Exception as exc:
+            log.warning("桌游动作记忆更新失败，原因类型=%s", type(exc).__name__)
 
     def _room(self, room_id: str) -> GameTable:
         room = self.rooms.get(str(room_id).strip().upper())
@@ -144,9 +159,17 @@ class TableService:
         if room.turn_deadline is None or self.clock() < room.turn_deadline:
             return
         user_id = str(room.engine.current_player_id)
-        suggestion = dict(room.engine.suggest_action(user_id))
+        player = room.players.get(user_id)
+        if player is not None and player.is_bot and self.bot_action_provider is not None:
+            proposed = self.bot_action_provider(room, user_id)
+            if proposed is None:
+                return
+            suggestion = dict(proposed)
+        else:
+            suggestion = dict(room.engine.suggest_action(user_id))
         action = suggestion.pop("action")
         room.engine.act(user_id, action, **suggestion)
+        self._observe_action(room, user_id, action, suggestion)
         self._changed(room)
         self._set_turn(room)
 
@@ -457,6 +480,7 @@ class TableService:
             raise ValueError("当前没有正在进行的牌局")
         previous_turn = room.engine.current_player_id
         room.engine.act(str(user_id), action, **payload)
+        self._observe_action(room, str(user_id), action, payload)
         self._changed(room)
         if room.engine.finished or room.engine.current_player_id != previous_turn or action != "look":
             self._set_turn(room)

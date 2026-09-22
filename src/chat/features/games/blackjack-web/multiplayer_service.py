@@ -102,6 +102,7 @@ class MultiplayerBlackjackService:
 
     def __init__(self):
         self._rooms: Dict[str, MultiplayerRoom] = {}
+        self.bot_action_provider = None
 
     def _touch(self, room: MultiplayerRoom) -> None:
         room.updated_at = time.time()
@@ -214,6 +215,22 @@ class MultiplayerBlackjackService:
                 "score": dealer_score,
             },
             "players": [self._to_player_dict(p, room) for p in players],
+        }
+
+    def llm_public_state(self, room: MultiplayerRoom) -> Dict[str, Any]:
+        """为陪玩提供只读局面，不推进牌局，也不暴露荷官暗牌或牌堆。"""
+        dealer_hand = list(room.dealer_hand[:1])
+        if len(room.dealer_hand) > 1:
+            dealer_hand.append("Hidden")
+        return {
+            "state": room.state,
+            "current_turn_user_id": str(self._current_turn_user_id(room)) if self._current_turn_user_id(room) is not None else None,
+            "dealer": {"hand": dealer_hand},
+            "players": [{
+                "user_id": str(player.user_id), "hand": list(player.hand),
+                "score": _calculate_hand_score(player.hand), "status": player.status,
+                "bet_amount": player.bet_amount,
+            } for player in sorted(room.players.values(), key=lambda item: item.seat_index)],
         }
 
     def list_rooms(self, viewer_id: int) -> List[Dict[str, Any]]:
@@ -635,6 +652,12 @@ class MultiplayerBlackjackService:
             player = room.players.get(self._current_turn_user_id(room))
             if not player or not player.is_bot:
                 return
+            if self.bot_action_provider is not None:
+                action = self.bot_action_provider(room, player.user_id)
+                if action is not None:
+                    self.apply_bot_action(room, action)
+                # 模型每次只执行一步，要牌后的新决策由下一次轮询申请。
+                return
             while _companion_should_hit(player.hand, room.dealer_hand[0]):
                 player.hand.append(room.deck.pop())
             if _calculate_hand_score(player.hand) > 21:
@@ -644,6 +667,30 @@ class MultiplayerBlackjackService:
                 player.status = "stood"
             self._advance_turn(room)
             self._touch(room)
+
+    def apply_bot_action(self, room: MultiplayerRoom, action: dict) -> None:
+        """执行已校验的单次陪玩动作，可在房间副本上验证，不涉及账户派彩。"""
+        if not isinstance(action, dict) or set(action) != {"action"} or action["action"] not in ("hit", "stand"):
+            raise ValueError("陪玩动作只能为 hit 或 stand")
+        player = room.players.get(self._current_turn_user_id(room))
+        if room.state != "playing" or player is None or not player.is_bot or player.status != "playing":
+            raise ValueError("当前没有可行动的陪玩")
+        if action["action"] == "stand":
+            player.status = "stood"
+            self._advance_turn(room)
+        else:
+            if not room.deck:
+                raise ValueError("牌堆已空，无法要牌")
+            player.hand.append(room.deck.pop())
+            score = _calculate_hand_score(player.hand)
+            if score > 21:
+                player.status = "bust"
+                player.result = "loss"
+                self._advance_turn(room)
+            elif score == 21:
+                player.status = "stood"
+                self._advance_turn(room)
+        self._touch(room)
 
     def _current_turn_user_id(self, room: MultiplayerRoom) -> Optional[int]:
         if room.state != "playing" or not room.turn_order:
@@ -663,6 +710,9 @@ class MultiplayerBlackjackService:
         ):
             return
         player = room.players.get(self._current_turn_user_id(room))
+        if player and player.is_bot and self.bot_action_provider is not None:
+            # 模型等待由异步请求超时及算法回退控制，不能套用真人自动停牌。
+            return
         if player and player.status == "playing":
             # 断线或长时间不操作时自动停牌，其他玩家可以继续本局。
             player.status = "stood"

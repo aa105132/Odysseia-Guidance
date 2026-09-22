@@ -361,6 +361,90 @@ def bot_room(service, include_guest=False):
     return room_id
 
 
+def llm_bot_turn(service, include_guest=True, draws=("Club2", "Club8")):
+    room_id = bot_room(service, include_guest=include_guest)
+    service.bot_action_provider = lambda room, user_id: None
+    cards = ["Club10", "Diamond7", "Heart10", "Spade8", "Club5", "Diamond6"]
+    if include_guest:
+        cards.extend(["Heart9", "Spade9"])
+    cards.extend(draws)
+    start_with_cards(service, room_id, cards)
+    state = service.stand(room_id, 10)
+    assert state["current_turn_user_id"] == "-1"
+    return room_id, service._rooms[room_id]
+
+
+def test_llm_pending_bot_is_not_advanced_by_reads_or_human_timeout(service):
+    room_id, room = llm_bot_turn(service)
+    before = (list(room.deck), list(room.players[-1].hand), room.current_turn_index)
+    with patch.object(multiplayer.time, "time", return_value=room.turn_deadline + 1000):
+        for _ in range(3):
+            state = service.get_room_state(room_id)
+            assert state["current_turn_user_id"] == "-1"
+    assert (room.deck, room.players[-1].hand, room.current_turn_index) == before
+
+
+def test_llm_public_state_is_read_only_and_hides_dealer_hole_card(service):
+    _, room = llm_bot_turn(service)
+    def forbidden(*_):
+        raise AssertionError("公开状态不能推进模型行动")
+    service.bot_action_provider = forbidden
+    snapshot = service.llm_public_state(room)
+    assert snapshot["dealer"] == {"hand": ["Club10", "Hidden"]}
+    assert snapshot["current_turn_user_id"] == "-1"
+    assert "deck" not in snapshot
+    assert all("username" not in player and "avatar_url" not in player for player in snapshot["players"])
+    snapshot["players"][0]["hand"].clear()
+    assert room.players[10].hand == ["Heart10", "Spade8"]
+
+
+def test_llm_provider_executes_only_one_hit_per_drive(service):
+    _, room = llm_bot_turn(service)
+    calls = []
+    def provider(selected_room, user_id):
+        calls.append((selected_room.room_id, user_id))
+        return {"action": "hit"}
+    service.bot_action_provider = provider
+    service._drive_bot_turns(room)
+    assert calls == [(room.room_id, -1)]
+    assert room.players[-1].hand == ["Club5", "Diamond6", "Club2"]
+    assert room.players[-1].status == "playing"
+    service._drive_bot_turns(room)
+    assert room.players[-1].status == "stood"
+    assert service._current_turn_user_id(room) == 20
+
+
+@pytest.mark.parametrize("action", [None, {}, {"action": "hit", "extra": 1}, {"action": "fold"}, {"action": True}])
+def test_llm_bot_action_rejects_invalid_parameters_without_mutating(service, action):
+    _, room = llm_bot_turn(service)
+    before = (list(room.deck), list(room.players[-1].hand), room.current_turn_index)
+    with pytest.raises(ValueError):
+        service.apply_bot_action(room, action)
+    assert (room.deck, room.players[-1].hand, room.current_turn_index) == before
+
+
+def test_llm_bot_stand_finishes_round_without_changing_dealer_rules(service):
+    _, room = llm_bot_turn(service, include_guest=False)
+    service.apply_bot_action(room, {"action": "stand"})
+    assert room.state == "finished"
+    assert room.dealer_hand == ["Club10", "Diamond7"]
+    assert room.players[10].payout_amount == 200
+    assert room.players[-1].payout_amount == 0
+    with pytest.raises(ValueError):
+        service.apply_bot_action(room, {"action": "stand"})
+
+
+def test_llm_bot_bust_advances_to_next_human(service):
+    _, room = llm_bot_turn(service, draws=("ClubK",))
+    room.players[-1].hand = ["Club8", "Diamond6"]
+    service.apply_bot_action(room, {"action": "hit"})
+    assert room.players[-1].status == "bust"
+    assert room.players[-1].result == "loss"
+    assert service._current_turn_user_id(room) == 20
+    with pytest.raises(ValueError):
+        service.apply_bot_action(room, {"action": "stand"})
+
+
 def test_configure_bot_requires_host_and_available_seat(service):
     room_id = service.create_room(10, "房主", "")["room_id"]
     service.join_room(room_id, 20, "另一玩家", "")
