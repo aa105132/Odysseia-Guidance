@@ -464,7 +464,10 @@ async def get_public_config():
         log.error("服务器缺少 DISCORD_CLIENT_ID/VITE_DISCORD_CLIENT_ID")
         raise HTTPException(status_code=500, detail="Server is missing Discord client id")
 
-    return JSONResponse(content={"discord_client_id": client_id})
+    return JSONResponse(content={
+        "discord_client_id": client_id,
+        "noname_available": (_noname_bridge.NONAME_DIST_DIR / "index.html").is_file(),
+    })
 
 
 @app.get("/api/user")

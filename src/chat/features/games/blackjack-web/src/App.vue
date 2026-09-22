@@ -31,6 +31,7 @@ type RoomStage = "waiting" | "playing" | "dealer_turn" | "finished";
 
 type PublicConfigResponse = {
   discord_client_id?: string;
+  noname_available?: boolean;
 };
 
 type ProfileResponse = {
@@ -113,6 +114,7 @@ type SingleGameEnvelope = {
 };
 
 const viewMode = ref<ViewMode>("loading");
+const nonameAvailable = ref(false);
 const selectedTableGame = ref<TableGameType>('texas');
 const availableTableGames: TableGameType[] = ['texas', 'landlord', 'mahjong', 'golden_flower'];
 const loadingText = ref("初始化中...");
@@ -694,6 +696,7 @@ async function fetchPublicConfig(): Promise<void> {
   }
 
   const configData = (await response.json()) as PublicConfigResponse;
+  nonameAvailable.value = configData.noname_available === true;
   runtimeDiscordClientId.value = String(configData.discord_client_id ?? "").trim();
 }
 
@@ -1415,7 +1418,7 @@ onBeforeUnmount(() => {
       <section v-if="viewMode === 'game_hub'" class="lobby-panel game-hub-panel">
         <div class="lobby-section-heading"><h3>今晚，玩点什么？</h3><button class="game-button" @click="openRoomDirectory()">房间列表</button></div>
         <div class="game-grid hub-game-grid">
-          <button class="game-card" @click="viewMode = 'noname'">
+          <button v-if="nonameAvailable" class="game-card" @click="viewMode = 'noname'">
             <span class="game-card-art"><svg viewBox="0 0 160 140" aria-hidden="true"><path d="M20 30 80 10l60 20v55l-60 45-60-45z" fill="#684877" stroke="#edc278" stroke-width="5"/><path d="m45 35 72 66m-2-67-70 69" stroke="#ffe5a3" stroke-width="8"/><text x="80" y="85" text-anchor="middle" fill="#fff1ca" font-size="42">杀</text></svg></span>
             <span class="game-card-copy"><span class="game-name">三国杀</span><span class="game-desc">无名杀 · 娱乐试玩</span></span>
           </button>

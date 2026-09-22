@@ -145,6 +145,20 @@ def _client(api, client_host="127.0.0.1"):
     )
 
 
+@pytest.mark.asyncio
+async def test_public_config_reports_noname_asset_availability(api, monkeypatch, tmp_path):
+    monkeypatch.setattr(api.module, "_resolve_discord_client_id", lambda: str(HOST_ID))
+    monkeypatch.setattr(api.module._noname_bridge, "NONAME_DIST_DIR", tmp_path)
+    async with _client(api) as client:
+        response = await client.get("/api/config")
+        assert response.status_code == 200
+        assert response.json()["noname_available"] is False
+        (tmp_path / "index.html").write_text("game", encoding="utf-8")
+        response = await client.get("/api/config")
+        assert response.json()["noname_available"] is True
+        assert response.json()["discord_client_id"] == str(HOST_ID)
+
+
 async def _request(client, action, user_id=HOST_ID, method="POST", **payload):
     kwargs = {"headers": {"X-Test-User": str(user_id)}}
     if method != "GET":
