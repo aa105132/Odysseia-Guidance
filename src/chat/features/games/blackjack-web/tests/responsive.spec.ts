@@ -106,6 +106,23 @@ async function expectActionsAboveOwnHand(page: Page) {
   expect(first.y - row.y - row.height, '按钮紧靠手牌，不能飘到远处').toBeLessThanOrEqual(65);
 }
 
+async function expectBettingAwayFromDiscordRail(page: Page) {
+  const width = page.viewportSize()!.width;
+  const overlay = await page.evaluate(() => {
+    const rail = document.createElement('div');
+    rail.id = 'discord-test-rail';
+    rail.style.cssText = 'position:fixed;right:0;top:0;bottom:0;width:8vw;z-index:99999;background:#5558';
+    document.body.append(rail);
+    return rail.id;
+  });
+  for (const control of await page.locator('.multi-mode-view .betting-dock button, .multi-mode-view .betting-dock input').all()) {
+    const box = (await control.boundingBox())!;
+    expect(box.x + box.width, '下注准备按钮完整避开右侧8%覆盖区域').toBeLessThanOrEqual(width * .92);
+    await expectReachable(control);
+  }
+  await page.locator(`#${overlay}`).evaluate(element => element.remove());
+}
+
 async function expectBlackjackSeats(page: Page, multiplayer: boolean) {
   await waitForTableMotion(page);
   const viewport = page.viewportSize()!;
@@ -321,6 +338,8 @@ for (const viewport of viewports) {
     await expect(page.locator('.seat-area')).toHaveCount(3);
     await expectControlsReachable(page);
     await expectBlackjackSeats(page, true);
+    await expectBettingAwayFromDiscordRail(page);
+    await captureFinalScreenshot(page, `landscape-blackjack-multi-waiting-${viewport.width}x${viewport.height}.png`);
     await page.getByLabel('多人下注金额').fill('10');
     await page.getByRole('button', { name: '下注', exact: true }).click();
     await page.getByRole('button', { name: '准备', exact: true }).click();
@@ -333,6 +352,7 @@ for (const viewport of viewports) {
     await page.getByRole('button', { name: '停牌', exact: true }).click();
     await expect(page.getByRole('button', { name: '沿用上局并准备' })).toBeVisible();
     await expectControlsReachable(page);
+    await expectBettingAwayFromDiscordRail(page);
 
     // 竖屏仅提示旋转，不能卸载牌局或清空操作状态。
     await page.setViewportSize({ width: 375, height: 667 });

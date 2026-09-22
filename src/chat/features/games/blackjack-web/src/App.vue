@@ -1600,12 +1600,6 @@ onBeforeUnmount(() => {
                 <span v-if="!dealer?.hand.length" key="dealer-placeholder" class="card-placeholder">待发牌</span>
               </TransitionGroup>
             </section>
-            <div v-if="!blackjackResult && roomState.state !== 'playing'" class="table-center-mark">
-              <span class="table-brand">月月茶楼 · 以牌会友</span>
-              <strong class="table-game-name">21 点</strong>
-              <div class="table-chip-stack" aria-hidden="true"><i></i><i></i><i></i></div>
-              <p class="center-caption">{{ roomState.state === 'waiting' ? `已准备 ${roomState.ready_player_count}/${players.length}` : isMyTurn ? '轮到你了' : roomStateText }}</p>
-            </div>
             <div class="player-seats">
               <section v-for="{ seatIndex, position } in displaySeats" :key="seatIndex" class="seat-area" :class="[`seat-${position}`, { 'empty-seat-area': !seatPlayerMap[seatIndex], 'turn-active': seatPlayerMap[seatIndex]?.is_current_turn, 'viewer-seat': String(seatPlayerMap[seatIndex]?.user_id) === String(viewerUserId) }]">
                 <template v-if="seatPlayerMap[seatIndex]">
@@ -2238,6 +2232,15 @@ onBeforeUnmount(() => {
 .single-action-zone.betting-dock { grid-template-columns: minmax(0, 1fr); justify-items: center; }
 .single-action-zone.betting-dock > .action-row { grid-column: 1; justify-content: center; }
 .single-action-zone.betting-dock > .balance-text { grid-column: 1; grid-row: 3; text-align: center; }
+/* Discord 手机横屏右侧会覆盖悬浮工具栏，下注与准备整组收进桌心。 */
+.multi-mode-view .betting-dock {
+  width: min(950px, calc(100% - max(16%, 96px)));
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+}
+.multi-mode-view .betting-dock > .action-row { grid-column: 1; justify-content: center; }
+.multi-mode-view .betting-dock > .balance-text { grid-column: 1; grid-row: 3; text-align: center; }
+.multi-mode-view .betting-dock > .multi-waiting-controls { flex-wrap: wrap; }
 @container game-viewport (max-height: 334px) {
   .action-dock:not(.betting-dock) { bottom: calc(clamp(30px, 18cqh, 50px) * 1.38 + 18px); }
 }
