@@ -13,6 +13,23 @@ guandan = importlib.import_module("src.chat.features.games.blackjack-web.guandan
 IDS = ["human:secret", "bot:one", "bot:two", "bot:three"]
 
 
+def test_model_candidates_are_bounded_and_varied_without_losing_hand_or_memory():
+    game = guandan.GuandanGame(IDS, seed=42)
+    uid = game.current_player_id
+    original = game.public_state(uid)
+    original["seat_actions"] = {IDS[1]: {"action": "play", "cards": ["Club3#0"]}}
+    state = llm._context("guandan", original, uid)["state"]
+    options = state["play_options"]
+    assert 0 < len(options) <= 12
+    assert {option["kind"] for option in options} == {option["kind"] for option in original["play_options"]}
+    own = next(player for player in state["players"] if player["hand"])
+    assert own["hand"] == game.hands[uid] and len(own["hand"]) == 27
+    assert state["seat_actions"]["seat_2"]["cards"] == ["Club3#0"]
+    assert len(original["play_options"]) == 80
+    for option in options:
+        copy.deepcopy(game).act(uid, "play", cards=option["cards"])
+
+
 def test_context_keeps_public_tribute_and_masks_all_identities():
     game = guandan.GuandanGame(IDS, seed=21)
     uid = game.current_player_id
@@ -43,6 +60,7 @@ async def test_model_valid_action_uses_unique_cards_without_token_cap(monkeypatc
     def handler(request):
         payload = json.loads(request.content)
         assert "max_tokens" not in payload and "max_completion_tokens" not in payload
+        assert payload["reasoning_effort"] == "low"
         assert all(identity not in json.dumps(payload) for identity in IDS)
         return response(action)
     result = await client(monkeypatch, handler).choose_action(context)

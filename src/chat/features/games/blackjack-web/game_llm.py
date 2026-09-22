@@ -78,6 +78,24 @@ def _context(game_type: str, public_state: dict, user_id: str) -> dict:
         raise ValueError("公开状态包含无法编码的数据")
 
     state = clean(public_state)
+    if game_type == "guandan":
+        # 完整手牌和公开记牌保持原样；候选按牌型分组，避免重复组合拖长推理。
+        groups = {}
+        seen = set()
+        for option in state.get("play_options", []):
+            signature = (option.get("combo"), option.get("kind"), option.get("rank"), option.get("size"))
+            if signature in seen:
+                continue
+            seen.add(signature)
+            groups.setdefault((option.get("kind"), option.get("size")), []).append(option)
+        options = []
+        take_high = False
+        while len(options) < 12 and any(groups.values()):
+            for group in groups.values():
+                if group and len(options) < 12:
+                    options.append(group.pop(-1 if take_high else 0))
+            take_high = not take_high
+        state["play_options"] = options
     if game_type == "golden_flower":
         for player in state.get("players", []):
             if not player.get("hand") and player.get("hand_count", 0):
@@ -226,6 +244,9 @@ class GameLLMClient:
                             *history, current_message,
                         ],
                     }
+                    if context.get("game_type") == "guandan":
+                        # 掼蛋组合由规则引擎校验，降低模型穷举耗时，不限制输出令牌数。
+                        payload["reasoning_effort"] = "low"
                     async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
                         async with client.stream("POST", self._url, json=payload,
                                                  headers={"Authorization": f"Bearer {self._api_key}"}) as response:
