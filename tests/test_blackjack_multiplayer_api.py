@@ -108,6 +108,19 @@ def api(monkeypatch):
             "is_dev": False,
         }
 
+    class TestSettlementWallet:
+        def __init__(self):
+            self.results = {}
+
+        async def settle_blackjack(self, round_key, user_id, stake, payout, profile=None):
+            key = (round_key, str(user_id))
+            if key not in self.results:
+                if payout:
+                    await coins.add_coins(int(user_id), payout, "21点游戏结算派彩")
+                self.results[key] = payout - stake
+            return await coins.get_balance(int(user_id))
+
+    module.table_wallet = TestSettlementWallet()
     module.app.dependency_overrides[module.get_current_user_profile] = test_profile
 
     # 庄家 17 点，三个座位依次 19、18、16 点，避免测试依赖随机发牌。
@@ -485,7 +498,7 @@ def single_api(api, monkeypatch, tmp_path):
     with sqlite3.connect(db_path) as connection:
         connection.execute(
             "CREATE TABLE blackjack_games (user_id INTEGER PRIMARY KEY, bet_amount INTEGER, "
-            "game_state TEXT, deck TEXT, player_hand TEXT, dealer_hand TEXT)"
+            "game_state TEXT, deck TEXT, player_hand TEXT, dealer_hand TEXT, round_key TEXT)"
         )
 
     class IsolatedGameDatabase:

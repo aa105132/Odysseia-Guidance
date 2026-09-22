@@ -1,6 +1,18 @@
 import { expect, test } from '@playwright/test';
 
 test('德州2倍4倍仅填值，按当前桌注与合法上下限计算，点击加注才提交', async ({ page }) => {
+  await page.addInitScript(() => {
+    const Base = window.AudioContext;
+    (window as any).__playedFrequencies = [];
+    window.AudioContext = class extends Base {
+      createOscillator() {
+        const oscillator = super.createOscillator();
+        const start = oscillator.start.bind(oscillator);
+        oscillator.start = (...args) => { (window as any).__playedFrequencies.push(oscillator.frequency.value); start(...args); };
+        return oscillator;
+      }
+    };
+  });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 568, height: 320 });
   const uid = '123456789012345678';
@@ -33,7 +45,9 @@ test('德州2倍4倍仅填值，按当前桌注与合法上下限计算，点击
   await four.click(); await expect(input).toHaveValue('40');
   await four.click(); await expect(input).toHaveValue('40');
   expect(actions).toEqual([]);
+  await page.evaluate(() => { (window as any).__playedFrequencies = []; });
   await raise.click();
+  await expect.poll(() => page.evaluate(() => (window as any).__playedFrequencies)).toEqual(expect.arrayContaining([660, 880, 1100]));
   expect(actions).toEqual([{ room_id: 'QUICK1', expected_revision: 1, action: 'raise', amount: 40 }]);
   const refresh = async () => { room.revision++; await page.getByRole('button', { name: '同步', exact: true }).click(); };
   room.game.current_bet = 0; room.game.min_raise_to = 2; await refresh();

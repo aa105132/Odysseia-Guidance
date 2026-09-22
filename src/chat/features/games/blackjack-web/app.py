@@ -45,8 +45,12 @@ async def _settle_table(room_id: str):
     settlement = table_service.settlement(room_id)
     if settlement is not None:
         round_key, payouts = settlement
-        await _get_table_wallet().settle(round_key, payouts)
         room = table_service._room(room_id)
+        await _get_table_wallet().settle(
+            round_key, payouts, game_type=room.game_type,
+            profiles={uid: {"username": player.username, "avatar_url": player.avatar_url}
+                      for uid, player in room.players.items() if not player.is_bot},
+        )
         room.settlement_status = "settled"
         table_service._changed(room)
 
@@ -157,6 +161,7 @@ room_locks = LockCache()
 activity_room_bindings = TTLCache(maxsize=1000, ttl=21600)
 room_activity_bindings = TTLCache(maxsize=1000, ttl=21600)
 discord_profile_cache = TTLCache(maxsize=2000, ttl=60)
+player_profile_cache = TTLCache(maxsize=2000, ttl=21600)
 
 
 async def _record_game_result(bet_amount: int, payout_amount: int):
@@ -260,6 +265,7 @@ async def get_current_user_id(
     在本地开发中，如果没有提供token，则返回一个固定的测试用户ID。
     """
     profile = await get_current_user_profile(request, token)
+    player_profile_cache[int(profile["user_id"])] = profile
     return int(profile["user_id"])
 
 
@@ -904,15 +910,16 @@ async def _try_settle_multiplayer_round(room_id: str):
     if not settlement.get("committed"):
         return
 
-    payouts = settlement.get("payouts", {})
-    for uid, amount in payouts.items():
-        if int(amount) > 0:
-            await coin_service.add_coins(
-                int(uid),
-                int(amount),
-                f"多人21点房间{room_id}结算派彩",
-            )
-            multiplayer_blackjack_service.mark_payout_committed(room_id, int(uid))
+    room = multiplayer_blackjack_service._get_room_or_raise(room_id)
+    for player in list(room.players.values()):
+        if player.is_bot or player.bet_amount <= 0:
+            continue
+        await _get_table_wallet().settle_blackjack(
+            room.round_key, str(player.user_id), player.bet_amount, player.payout_amount,
+            {"username": player.username, "avatar_url": player.avatar_url},
+        )
+        if player.payout_amount > 0:
+            multiplayer_blackjack_service.mark_payout_committed(room_id, player.user_id)
 
     bet_total = int(settlement.get("bet_total", 0))
     payout_total = int(settlement.get("payout_total", 0))
@@ -920,278 +927,121 @@ async def _try_settle_multiplayer_round(room_id: str):
     multiplayer_blackjack_service.mark_round_committed(room_id)
 
 
+def _single_payout(game) -> int:
+    if game.game_state == "finished_blackjack":
+        return game.bet_amount * 5 // 2
+    if game.game_state == "finished_win":
+        return game.bet_amount * 2
+    if game.game_state == "finished_push":
+        return game.bet_amount
+    return 0
+
+
+async def _settle_single_game(game):
+    payout = _single_payout(game)
+    balance = await _get_table_wallet().settle_blackjack(
+        game.round_key, str(game.user_id), game.bet_amount, payout,
+        player_profile_cache.get(game.user_id),
+    )
+    await blackjack_service.delete_game(game.user_id)
+    await _record_game_result(game.bet_amount, payout)
+    return balance
+
+
+async def _single_response(game):
+    balance = (await _settle_single_game(game) if game.game_state.startswith("finished")
+               else await _ensure_user_balance(game.user_id))
+    return {"success": True, "game": game.to_dict(), "new_balance": balance}
+
+
 @app.get("/api/game/current")
 async def current_single_game(user_id: int = Depends(get_current_user_id)):
     async with user_locks[user_id]:
         game = await blackjack_service.get_active_game(user_id)
-        return {"success": True, "game": game.to_dict() if game else None, "new_balance": await _ensure_user_balance(user_id)}
+        if game:
+            return await _single_response(game)
+        return {"success": True, "game": None, "new_balance": await _ensure_user_balance(user_id)}
 
 
 @app.post("/api/game/start")
-async def start_game(
-    bet_request: BetRequest, user_id: int = Depends(get_current_user_id)
-):
-    """
-    API: 玩家下注并开始一个新游戏
-    """
-    bet_amount = bet_request.amount
-    if bet_amount <= 0:
-        raise HTTPException(status_code=400, detail="Bet amount must be positive")
-
-    log.info(f"用户 {user_id} 正在下注 {bet_amount} 开始新游戏")
+async def start_game(bet_request: BetRequest, user_id: int = Depends(get_current_user_id)):
+    if bet_request.amount <= 0:
+        raise HTTPException(status_code=400, detail="下注金额必须大于零")
     async with user_locks[user_id]:
-        # 刷新或重复提交不能隐式没收已有的下注。
-        if await blackjack_service.get_active_game(user_id):
+        previous = await blackjack_service.get_active_game(user_id)
+        if previous:
+            if previous.game_state.startswith("finished"):
+                return await _single_response(previous)
             raise HTTPException(status_code=409, detail="你还有未结束的单人牌局，请继续操作或明确放弃")
-
-        # 扣除赌注
-        new_balance = await coin_service.remove_coins(
-            user_id, bet_amount, "21点游戏下注"
-        )
-        if new_balance is None:
-            raise HTTPException(status_code=402, detail="Insufficient funds")
-
+        balance = await coin_service.remove_coins(user_id, bet_request.amount, "21点游戏下注")
+        if balance is None:
+            raise HTTPException(status_code=402, detail="余额不足")
         try:
-            # 创建游戏
-            game = await blackjack_service.start_game(user_id, bet_amount)
-
-            # --- 新增：如果游戏在发牌时就已结束（例如21点），立即处理派彩 ---
-            final_balance = new_balance
-            if game.game_state.startswith("finished"):
-                payout_amount = 0
-                reason = "21点游戏结算"
-
-                if game.game_state == "finished_blackjack":
-                    payout_amount = int(game.bet_amount * 2.5)  # Blackjack 3:2赔率
-                    reason = "21点游戏Blackjack获胜"
-                elif game.game_state == "finished_push":
-                    payout_amount = game.bet_amount  # 平局，退还赌注
-                    reason = "21点游戏平局"
-                # 注意: 'finished_loss' (庄家21点) 的派彩为0
-
-                if payout_amount > 0:
-                    final_balance = await coin_service.add_coins(
-                        user_id, payout_amount, reason
-                    )
-
-                log.info(
-                    f"用户 {user_id} 在发牌时结束游戏。结果: {game.game_state}。赌注: {game.bet_amount}。派彩: {payout_amount}。"
-                )
-
-                # 游戏已结束，立即删除记录
-                await blackjack_service.delete_game(user_id)
-                # --- 记录游戏结果 ---
-                await _record_game_result(game.bet_amount, payout_amount)
-
-            return JSONResponse(
-                content={
-                    "success": True,
-                    "game": game.to_dict(),
-                    "new_balance": final_balance,  # 返回更新后的余额
-                }
-            )
-        except Exception as e:
-            log.error(f"为用户 {user_id} 开始游戏时出错: {e}", exc_info=True)
-            # 退还赌注
-            await coin_service.add_coins(user_id, bet_amount, "21点游戏开始失败退款")
-            raise HTTPException(status_code=500, detail="Could not start the game.")
-
-
-# TODO: Re-implement double down with server-side logic
+            game = await blackjack_service.start_game(user_id, bet_request.amount)
+        except Exception:
+            # 仅创建失败可退款；已生成的结果结算失败则保留并重试。
+            await coin_service.add_coins(user_id, bet_request.amount, "21点游戏开始失败退款")
+            raise
+        return await _single_response(game)
 
 
 @app.post("/api/game/forfeit")
 async def forfeit_game(user_id: int = Depends(get_current_user_id)):
-    """
-    API: 玩家放弃当前游戏
-    用于解决玩家因任何原因（如网络断开、浏览器关闭）被卡在游戏中的问题。
-    """
-    log.warning(f"用户 {user_id} 正在请求放弃当前游戏。")
     async with user_locks[user_id]:
-        active_game = await blackjack_service.get_active_game(user_id)
-        if not active_game:
-            log.info(f"用户 {user_id} 请求放弃游戏，但没有活跃游戏。")
-            # 即使没有游戏，也返回成功，因为最终状态是一致的（没有活跃游戏）
-            return JSONResponse(
-                content={"success": True, "message": "No active game to forfeit."},
-                status_code=200,
-            )
-
-        log.info(f"用户 {user_id} 已放弃赌注为 {active_game.bet_amount} 的游戏。")
-        # 直接删除游戏记录，赌注不退还
-        await blackjack_service.delete_game(user_id)
-
-        # --- 记录游戏结果 ---
-        await _record_game_result(active_game.bet_amount, 0)  # 投降，派彩为0
-
-        return JSONResponse(
-            content={"success": True, "message": "Game forfeited successfully."},
-            status_code=200,
-        )
+        game = await blackjack_service.get_active_game(user_id)
+        if not game:
+            return {"success": True, "message": "没有进行中的牌局"}
+        if not game.game_state.startswith("finished"):
+            game.game_state = "finished_loss"
+            await blackjack_service._save_game_state(game)
+        await _settle_single_game(game)
+        return {"success": True, "message": "本局已结束"}
 
 
 @app.post("/api/game/double")
 async def double_down(user_id: int = Depends(get_current_user_id)):
-    """API: 玩家双倍下注"""
     async with user_locks[user_id]:
         game = await blackjack_service.get_active_game(user_id)
         if not game:
-            raise HTTPException(
-                status_code=400, detail="No active game to double down on."
-            )
-
+            raise HTTPException(status_code=400, detail="没有进行中的牌局")
+        if game.game_state.startswith("finished"):
+            return await _single_response(game)
         if len(game.player_hand) != 2:
-            raise HTTPException(
-                status_code=409,
-                detail="You can only double down on your initial two cards.",
-            )
-
-        double_amount = game.bet_amount
-        new_balance = await coin_service.remove_coins(
-            user_id, double_amount, "21点游戏双倍下注"
-        )
-        if new_balance is None:
-            raise HTTPException(
-                status_code=402, detail="Insufficient funds to double down."
-            )
-
+            raise HTTPException(status_code=409, detail="只能在最初两张牌时双倍下注")
+        amount = game.bet_amount
+        balance = await coin_service.remove_coins(user_id, amount, "21点游戏双倍下注")
+        if balance is None:
+            raise HTTPException(status_code=402, detail="余额不足")
         try:
-            game = await blackjack_service.double_down(user_id, double_amount)
+            game = await blackjack_service.double_down(user_id, amount)
+        except Exception:
+            saved = await blackjack_service.get_active_game(user_id)
+            if saved is None or saved.bet_amount == amount:
+                await coin_service.add_coins(user_id, amount, "21点双倍下注失败退款")
+            raise
+        return await _single_response(game)
 
-            payout_amount = 0
-            reason = "21点游戏结算"
 
-            if game.game_state == "finished_win":
-                payout_amount = game.bet_amount * 2
-                reason = "21点游戏获胜"
-            elif game.game_state == "finished_blackjack":
-                payout_amount = int(game.bet_amount * 2.5)
-                reason = "21点游戏Blackjack获胜"
-            elif game.game_state == "finished_push":
-                payout_amount = game.bet_amount
-                reason = "21点游戏平局"
-
-            final_balance = new_balance
-            if payout_amount > 0:
-                final_balance = await coin_service.add_coins(
-                    user_id, payout_amount, reason
-                )
-
-            log.info(
-                f"User {user_id} doubled down. Result: {game.game_state}. New Bet: {game.bet_amount}. Payout: {payout_amount}."
-            )
-
-            await blackjack_service.delete_game(user_id)
-
-            # --- 记录游戏结果 ---
-            await _record_game_result(game.bet_amount, payout_amount)
-
-            return JSONResponse(
-                content={
-                    "success": True,
-                    "game": game.to_dict(),
-                    "new_balance": final_balance,
-                }
-            )
-        except ValueError as e:
-            await coin_service.add_coins(user_id, double_amount, "21点双倍下注失败退款")
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            await coin_service.add_coins(user_id, double_amount, "21点双倍下注失败退款")
-            log.error(
-                f"Error during double down for user {user_id}: {e}", exc_info=True
-            )
-            raise HTTPException(
-                status_code=500,
-                detail="An error occurred during the double down action.",
-            )
+async def _single_action(user_id: int, action):
+    async with user_locks[user_id]:
+        try:
+            game = await blackjack_service.get_active_game(user_id)
+            if game and game.game_state.startswith("finished"):
+                return await _single_response(game)
+            game = await action(user_id)
+            return await _single_response(game)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/api/game/hit")
 async def player_hit(user_id: int = Depends(get_current_user_id)):
-    """API: 玩家要牌"""
-    async with user_locks[user_id]:
-        try:
-            game = await blackjack_service.player_hit(user_id)
-            new_balance = await coin_service.get_balance(user_id)
-
-            # 如果玩家爆牌，游戏结束并结算
-            if game.game_state == "finished_loss":
-                log.info(f"User {user_id} busted. Bet of {game.bet_amount} lost.")
-                await blackjack_service.delete_game(user_id)
-                # --- 记录游戏结果 ---
-                await _record_game_result(game.bet_amount, 0)  # 爆牌，派彩为0
-                return JSONResponse(
-                    content={
-                        "success": True,
-                        "game": game.to_dict(),
-                        "new_balance": new_balance,
-                    }
-                )
-
-            return JSONResponse(content={"success": True, "game": game.to_dict()})
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            log.error(f"Error during player hit for user {user_id}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail="An error occurred during the hit action."
-            )
+    return await _single_action(user_id, blackjack_service.player_hit)
 
 
 @app.post("/api/game/stand")
 async def player_stand(user_id: int = Depends(get_current_user_id)):
-    """API: 玩家停牌，庄家行动并结算"""
-    async with user_locks[user_id]:
-        try:
-            game = await blackjack_service.player_stand(user_id)
-
-            payout_amount = 0
-            reason = "21点游戏结算"
-
-            if game.game_state == "finished_win":
-                payout_amount = game.bet_amount * 2
-                reason = "21点游戏获胜"
-            elif game.game_state == "finished_blackjack":
-                payout_amount = int(game.bet_amount * 2.5)  # Blackjack 3:2
-                reason = "21点游戏Blackjack获胜"
-            elif game.game_state == "finished_push":
-                payout_amount = game.bet_amount
-                reason = "21点游戏平局"
-            # 'finished_loss' has a payout_amount of 0
-
-            new_balance = await coin_service.get_balance(user_id)
-            if payout_amount > 0:
-                new_balance = await coin_service.add_coins(
-                    user_id, payout_amount, reason
-                )
-
-            log.info(
-                f"User {user_id} finished game. Result: {game.game_state}. Bet: {game.bet_amount}. Payout: {payout_amount}."
-            )
-
-            # 游戏结束，删除记录
-            await blackjack_service.delete_game(user_id)
-
-            # --- 记录游戏结果 ---
-            await _record_game_result(game.bet_amount, payout_amount)
-
-            return JSONResponse(
-                content={
-                    "success": True,
-                    "game": game.to_dict(),
-                    "new_balance": new_balance,
-                }
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            log.error(
-                f"Error during player stand for user {user_id}: {e}", exc_info=True
-            )
-            raise HTTPException(
-                status_code=500, detail="An error occurred during the stand action."
-            )
+    return await _single_action(user_id, blackjack_service.player_stand)
 
 
 @app.get("/api/profile")
@@ -1438,6 +1288,12 @@ async def multi_leave_room(
                         bet_amount,
                         f"多人21点房间{room_id}离房退还下注",
                     )
+
+            if room_before.get("state") in ("playing", "dealer_turn"):
+                room = multiplayer_blackjack_service._get_room_or_raise(room_id)
+                await _get_table_wallet().settle_blackjack(
+                    room.round_key, str(user_id), int(player_before["bet_amount"]), 0, user,
+                )
 
             leave_result = multiplayer_blackjack_service.leave_room(room_id, user_id)
             # 离开者可能是最后一位尚未操作的玩家，此时引擎会立即结束本局。
@@ -1794,6 +1650,30 @@ async def multi_stand(
             raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/tables/stats")
+async def table_personal_statistics(
+    game_type: str = Query(default="all"),
+    user: Dict[str, Any] = Depends(get_current_user_profile),
+):
+    if game_type not in {"all", "blackjack", *_table_module.GAME_SPECS}:
+        raise HTTPException(status_code=400, detail="不支持的游戏类型")
+    return {"success": True, **await _get_table_wallet().statistics(str(user["user_id"]), None if game_type == "all" else game_type)}
+
+
+@app.get("/api/tables/leaderboard")
+async def table_profit_leaderboard(
+    period: Literal["today", "all"] = Query(default="today"),
+    game_type: str = Query(default="all"),
+    limit: int = Query(default=20, ge=1, le=20),
+    user: Dict[str, Any] = Depends(get_current_user_profile),
+):
+    if game_type not in {"all", "blackjack", *_table_module.GAME_SPECS}:
+        raise HTTPException(status_code=400, detail="不支持的游戏类型")
+    return {"success": True, **await _get_table_wallet().leaderboard(
+        str(user["user_id"]), period, None if game_type == "all" else game_type, limit,
+    )}
+
+
 class TableCreateRequest(BaseModel):
     model_config = {"extra": "forbid"}
     game_type: str
@@ -1802,12 +1682,19 @@ class TableCreateRequest(BaseModel):
     room_tier: str = "beginner"
     base_stake: Optional[int] = Field(default=None, ge=1, le=(2**53 - 1) // 80, strict=True)
     loss_limit: Optional[int] = Field(default=None, ge=100, le=(2**53 - 1) // 8, strict=True)
+    auto_start_when_ready: bool = Field(default=False, strict=True)
 
 
 class TableSettingsRequest(RoomRequest):
     model_config = {"extra": "forbid"}
-    base_stake: int = Field(ge=1, le=(2**53 - 1) // 80, strict=True)
-    loss_limit: int = Field(ge=100, le=(2**53 - 1) // 8, strict=True)
+    base_stake: Optional[int] = Field(default=None, ge=1, le=(2**53 - 1) // 80, strict=True)
+    loss_limit: Optional[int] = Field(default=None, ge=100, le=(2**53 - 1) // 8, strict=True)
+    auto_start_when_ready: Optional[bool] = Field(default=None, strict=True)
+
+
+class TableKickRequest(RoomRequest):
+    model_config = {"extra": "forbid"}
+    target_user_id: str = Field(min_length=1, max_length=80)
 
 
 class TableReadyRequest(RoomRequest):
@@ -1848,6 +1735,9 @@ async def _table_operation(room_id: str, operation, *args, **kwargs):
         try:
             existing = table_service._room(normalized)
             viewer_id = str(args[0]["user_id"]) if isinstance(args[0], dict) else str(args[0])
+            if operation != table_service.join and viewer_id in existing.removed_user_ids:
+                return {"success": True, "room": None, "room_exit_reason": "kicked",
+                        "viewer_balance": await _ensure_user_balance(int(viewer_id))}
             if operation != table_service.join:
                 table_service._member(existing, viewer_id)
             # 加入、离开或修改座位前完成原参与者的结算。
@@ -1856,19 +1746,35 @@ async def _table_operation(room_id: str, operation, *args, **kwargs):
                 await _check_table_entry([viewer_id], existing.entry_min)
             elif operation == table_service.settings:
                 configured = table_service.validate_settings(normalized, *args, **kwargs)
-                await _check_table_entry(
-                    [uid for uid, player in configured.players.items() if not player.is_bot],
-                    args[2],
-                )
+                if args[2] is not None:
+                    await _check_table_entry(
+                        [uid for uid, player in configured.players.items() if not player.is_bot],
+                        args[2],
+                    )
+            can_trigger_start = operation in (
+                table_service.ready, table_service.settings, table_service.kick,
+                table_service.leave, table_service.bots,
+            )
+            previous = copy.deepcopy(existing) if can_trigger_start else None
             room = operation(normalized, *args, **kwargs)
             if normalized in table_service.rooms:
                 await _settle_table(normalized)
+                if can_trigger_start and table_service.should_auto_start(normalized):
+                    try:
+                        await _start_table_round(normalized, table_service._room(normalized).host_user_id)
+                    except BaseException:
+                        table_service.rooms[normalized] = previous
+                        raise
+                    # 冻结成功后保留新局状态；结算失败可由下次同步重试。
+                    await _settle_table(normalized)
                 if room is not None:
                     room = table_service._snapshot(table_service._room(normalized), viewer_id)
             balance = await _ensure_user_balance(int(viewer_id))
             return {"success": True, "room": room, "viewer_balance": balance}
         except StaleTableAction as exc:
             raise HTTPException(status_code=409, detail=str(exc))
+        except _wallet_module.InsufficientTableBalance as exc:
+            raise HTTPException(status_code=402, detail=str(exc))
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
@@ -1895,7 +1801,8 @@ async def create_table(request: TableCreateRequest, user: Dict[str, Any] = Depen
                 )
                 await _check_table_entry([str(user["user_id"])], entry_min)
             room = table_service.create(user, request.game_type, request.mode, request.include_yueyue,
-                                        request.room_tier, request.base_stake, request.loss_limit)
+                                        request.room_tier, request.base_stake, request.loss_limit,
+                                        request.auto_start_when_ready)
             return {"success": True, "room": room, "viewer_balance": await _ensure_user_balance(int(user["user_id"]))}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -1925,7 +1832,31 @@ async def configure_table_bots(request: TableBotsRequest, user: Dict[str, Any] =
 @app.post("/api/tables/settings")
 async def set_table_settings(request: TableSettingsRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
     return await _table_operation(request.room_id, table_service.settings, str(user["user_id"]),
-                                  request.base_stake, request.loss_limit)
+                                  request.base_stake, request.loss_limit, request.auto_start_when_ready)
+
+
+@app.post("/api/tables/kick")
+async def kick_table_player(request: TableKickRequest, user: Dict[str, Any] = Depends(get_current_user_profile)):
+    return await _table_operation(request.room_id, table_service.kick, str(user["user_id"]),
+                                  request.target_user_id)
+
+
+async def _start_table_round(room_id: str, host_user_id: str):
+    """手动、自动开局共用资金事务；调用者必须持有房间锁。"""
+    room = table_service._room(room_id)
+    previous = copy.deepcopy(room)
+    table_service.start(room_id, host_user_id)
+    try:
+        await _get_table_wallet().reserve(
+            str(room.escrow_key),
+            [uid for uid, player in room.players.items() if not player.is_bot],
+            room.buy_in,
+            room.entry_min,
+        )
+    except BaseException:
+        table_service.rooms[room_id] = previous
+        raise
+    return room
 
 
 @app.post("/api/tables/start")
@@ -1936,19 +1867,7 @@ async def start_table(request: RoomRequest, user: Dict[str, Any] = Depends(get_c
             room = table_service._room(room_id)
             table_service._member(room, str(user["user_id"]))
             await _settle_table(room_id)
-            previous = copy.deepcopy(room)
-            table_service.start(room_id, str(user["user_id"]))
-            # 所有玩家在一个数据库事务中扣款，任一人不足则整桌回滚。
-            try:
-                await _get_table_wallet().reserve(
-                    str(room.escrow_key),
-                    [uid for uid, player in room.players.items() if not player.is_bot],
-                    room.buy_in,
-                    room.entry_min,
-                )
-            except BaseException:
-                table_service.rooms[room_id] = previous
-                raise
+            room = await _start_table_round(room_id, str(user["user_id"]))
             await _settle_table(room_id)
             return {"success": True, "room": table_service._snapshot(room, str(user["user_id"])), "viewer_balance": await _ensure_user_balance(int(user["user_id"]))}
         except _wallet_module.InsufficientTableBalance as exc:

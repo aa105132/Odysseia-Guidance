@@ -85,6 +85,8 @@ class GameTable:
     base_stake: int = 1
     entry_min: int = 100
     next_bot_number: int = 1
+    auto_start_when_ready: bool = False
+    removed_user_ids: set[str] = field(default_factory=set)
 
 
 class TableService:
@@ -170,6 +172,7 @@ class TableService:
             "base_stake": room.base_stake,
             "entry_min": room.entry_min,
             "loss_limit": room.buy_in,
+            "auto_start_when_ready": room.auto_start_when_ready,
             "settlement_status": room.settlement_status,
             "actual_settlement": dict(room.actual_settlement),
             "include_yueyue": "bot:yueyue" in room.players,
@@ -229,11 +232,13 @@ class TableService:
 
     def create(self, user: dict, game_type: str, mode: str, include_yueyue: bool,
                room_tier: str = "beginner", base_stake: int | None = None,
-               loss_limit: int | None = None) -> dict:
+               loss_limit: int | None = None, auto_start_when_ready: bool = False) -> dict:
         if game_type not in GAME_SPECS:
             raise ValueError("不支持的游戏类型")
         if mode not in ("solo", "multi"):
             raise ValueError("不支持的游戏模式")
+        if type(auto_start_when_ready) is not bool:
+            raise ValueError("自动开局设置必须为布尔值")
         base_stake, entry_min, loss_limit = room_settings(room_tier, base_stake, loss_limit)
         validate_game_stake(game_type, base_stake)
         user_id = str(user["user_id"])
@@ -250,7 +255,8 @@ class TableService:
         while not room_id or room_id in self.rooms:
             room_id = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
         room = GameTable(room_id, game_type, user_id, mode, loss_limit,
-                         room_tier=room_tier, base_stake=base_stake, entry_min=entry_min)
+                         room_tier=room_tier, base_stake=base_stake, entry_min=entry_min,
+                         auto_start_when_ready=auto_start_when_ready)
         room.players[user_id] = TablePlayer(user_id, str(user["username"]), str(user["avatar_url"]))
         self.rooms[room_id] = room
         bot_count = GAME_SPECS[game_type][0] - 1 if mode == "solo" else int(include_yueyue)
@@ -293,6 +299,7 @@ class TableService:
                 raise ValueError("房间已满")
             del room.players[spare]
         room.players[user_id] = TablePlayer(user_id, str(user["username"]), str(user["avatar_url"]))
+        room.removed_user_ids.discard(user_id)
         self._changed(room)
         return self._snapshot(room, user_id)
 
@@ -311,24 +318,62 @@ class TableService:
         self._changed(room)
         return self._snapshot(room, user_id)
 
-    def validate_settings(self, room_id: str, user_id: str, base_stake: int, loss_limit: int) -> GameTable:
+    def validate_settings(self, room_id: str, user_id: str, base_stake: int | None = None,
+                          loss_limit: int | None = None, auto_start_when_ready: bool | None = None) -> GameTable:
         room = self._room(room_id)
         self._member(room, user_id)
         if room.host_user_id != str(user_id):
             raise PermissionError("只有房主可以调整房间设置")
         if room.state == "playing":
             raise ValueError("牌局中不能调整设置，请本局结束后再设置")
-        if room.room_tier != "custom":
-            raise ValueError("仅自定义房间可以调整底分和单局上限")
-        room_settings("custom", base_stake, loss_limit)
-        validate_game_stake(room.game_type, base_stake)
+        if auto_start_when_ready is not None and type(auto_start_when_ready) is not bool:
+            raise ValueError("自动开局设置必须为布尔值")
+        if (base_stake is None) != (loss_limit is None):
+            raise ValueError("底分和单局上限必须一起设置")
+        if base_stake is None and auto_start_when_ready is None:
+            raise ValueError("请提供需要修改的房间设置")
+        if base_stake is not None:
+            if room.room_tier != "custom":
+                raise ValueError("仅自定义房间可以调整底分和单局上限")
+            room_settings("custom", base_stake, loss_limit)
+            validate_game_stake(room.game_type, base_stake)
         return room
 
-    def settings(self, room_id: str, user_id: str, base_stake: int, loss_limit: int) -> dict:
-        room = self.validate_settings(room_id, user_id, base_stake, loss_limit)
-        room.base_stake, room.entry_min, room.buy_in = room_settings("custom", base_stake, loss_limit)
-        for player in room.players.values():
-            player.is_ready = player.is_bot
+    def settings(self, room_id: str, user_id: str, base_stake: int | None = None,
+                 loss_limit: int | None = None, auto_start_when_ready: bool | None = None) -> dict:
+        room = self.validate_settings(room_id, user_id, base_stake, loss_limit, auto_start_when_ready)
+        if base_stake is not None and (base_stake, loss_limit) != (room.base_stake, room.buy_in):
+            room.base_stake, room.entry_min, room.buy_in = room_settings("custom", base_stake, loss_limit)
+            for player in room.players.values():
+                player.is_ready = player.is_bot
+        if auto_start_when_ready is not None:
+            room.auto_start_when_ready = auto_start_when_ready
+        self._changed(room)
+        return self._snapshot(room, user_id)
+
+    def should_auto_start(self, room_id: str) -> bool:
+        """只判断是否可开局；实际开局和冻结资金由接口在房间锁内完成。"""
+        room = self._room(room_id)
+        if not room.auto_start_when_ready or room.state == "playing" or room.settlement_status == "reserved":
+            return False
+        active = [player for player in room.players.values() if player.connected or player.is_bot]
+        minimum, maximum, _, _ = GAME_SPECS[room.game_type]
+        host = room.players.get(room.host_user_id)
+        return bool(host and host.connected and minimum <= len(active) <= maximum
+                    and all(player.is_ready for player in active))
+
+    def kick(self, room_id: str, user_id: str, target_user_id: str) -> dict:
+        room = self._room(room_id)
+        self._member(room, user_id)
+        if room.host_user_id != str(user_id):
+            raise PermissionError("只有房主可以移出玩家")
+        if room.state == "playing" or room.settlement_status == "reserved":
+            raise ValueError("本局进行中或尚未结算，不能移出玩家")
+        target = room.players.get(str(target_user_id))
+        if target is None or target.is_bot or target.user_id == room.host_user_id:
+            raise ValueError("只能移出房间内的其他真人玩家")
+        del room.players[target.user_id]
+        room.removed_user_ids.add(target.user_id)
         self._changed(room)
         return self._snapshot(room, user_id)
 

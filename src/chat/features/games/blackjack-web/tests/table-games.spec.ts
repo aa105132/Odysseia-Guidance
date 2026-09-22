@@ -409,7 +409,8 @@ test('插画大厅与场次入口适配横屏，准入限制和创建参数一�
   const settings = page.getByRole('dialog', { name: '房间设置', exact: true });
   await expect(settings).toContainText('1000');
   await expect(settings).toContainText('500');
-  await expect(settings.getByRole('button', { name: '保存设置', exact: true })).toHaveCount(0);
+  await expect(settings.getByRole('button', { name: '保存设置', exact: true })).toBeDisabled();
+  await expect(settings.getByLabel('全员准备后自动开启游戏')).not.toBeChecked();
 });
 
 test('单人房逐个移除陪玩，按选择人数添加且刷新不补回', async ({ page }) => {

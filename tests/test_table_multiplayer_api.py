@@ -151,6 +151,147 @@ def _ledger(api):
         return connection.execute("SELECT user_id, stake, payout, status FROM table_game_escrow ORDER BY user_id").fetchall()
 
 
+def test_auto_start_reserves_once_when_last_player_gets_ready(api):
+    async def scenario():
+        async with AsyncExitStack() as stack:
+            ids = USER_IDS[:2]
+            clients = await _clients(stack, api, ids)
+            room = await _create_and_join(clients, "texas")
+            rid = room["room_id"]
+            configured = _room(await _post(clients[ids[0]], "settings", room_id=rid, auto_start_when_ready=True))
+            assert configured["auto_start_when_ready"] is True
+            waiting = _room(await _post(clients[ids[0]], "ready", room_id=rid, ready=True))
+            assert waiting["state"] == "waiting"
+            results = await asyncio.gather(*[
+                _post(clients[ids[1]], "ready", room_id=rid, ready=True) for _ in range(2)
+            ])
+            assert sorted(result.status_code for result in results) == [200, 400]
+            playing = next(_room(result) for result in results if result.status_code == 200)
+            assert playing["state"] == "playing"
+            assert playing["round_number"] == 1
+            assert _balances(api, ids) == {uid: INITIAL_BALANCE - 100 for uid in ids}
+            assert len(_ledger(api)) == 2
+            finished = await _finish_through_requests(api, clients, playing)
+            assert finished["settlement_status"] == "settled"
+            assert all(not player["is_ready"] for player in finished["players"])
+            for client in clients.values():
+                room = _room(await _post(client, "ready", room_id=rid, ready=True))
+            assert room["state"] == "playing"
+            assert room["round_number"] == 2
+            assert len(_ledger(api)) == 4
+    asyncio.run(scenario())
+
+
+def test_auto_start_keeps_reserved_round_when_post_start_sync_fails(api, monkeypatch):
+    async def scenario():
+        async with AsyncExitStack() as stack:
+            ids = USER_IDS[:2]
+            clients = await _clients(stack, api, ids)
+            room = await _create_and_join(clients, "texas", auto_start_when_ready=True)
+            rid = room["room_id"]
+            _room(await _post(clients[ids[0]], "ready", room_id=rid, ready=True))
+            original = api.module._settle_table
+
+            async def fail_after_reserve(room_id):
+                if api.module.table_service._room(room_id).state == "playing":
+                    raise RuntimeError("模拟冻结成功后的同步异常")
+                return await original(room_id)
+
+            monkeypatch.setattr(api.module, "_settle_table", fail_after_reserve)
+            response = await _post(clients[ids[1]], "ready", room_id=rid, ready=True)
+            assert response.status_code == 500
+            current = api.module.table_service._room(rid)
+            assert current.state == "playing"
+            assert current.escrow_key
+            assert current.round_number == 1
+            assert len(_ledger(api)) == 2
+            assert _balances(api, ids) == {uid: INITIAL_BALANCE - 100 for uid in ids}
+            monkeypatch.setattr(api.module, "_settle_table", original)
+            recovered = _room(await clients[ids[0]].get(f"/api/tables/{rid}"))
+            assert recovered["state"] == "playing"
+            assert recovered["round_number"] == 1
+    asyncio.run(scenario())
+
+
+def test_auto_start_insufficient_balance_rolls_back_ready_and_escrow(api):
+    async def scenario():
+        async with AsyncExitStack() as stack:
+            ids = USER_IDS[:2]
+            clients = await _clients(stack, api, ids)
+            room = await _create_and_join(clients, "texas", auto_start_when_ready=True)
+            rid = room["room_id"]
+            _room(await _post(clients[ids[0]], "ready", room_id=rid, ready=True))
+            with sqlite3.connect(api.db_path) as connection:
+                connection.execute("UPDATE user_coins SET balance = 50 WHERE user_id = ?", (int(ids[1]),))
+            failed = await _post(clients[ids[1]], "ready", room_id=rid, ready=True)
+            assert failed.status_code == 402
+            waiting = _room(await clients[ids[0]].get(f"/api/tables/{rid}"))
+            assert waiting["state"] == "waiting"
+            assert waiting["round_number"] == 0
+            assert [player["is_ready"] for player in waiting["players"]] == [True, False]
+            with sqlite3.connect(api.db_path) as connection:
+                escrow_exists = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'table_game_escrow'"
+                ).fetchone()
+            assert not escrow_exists or _ledger(api) == []
+            assert _balances(api, ids) == {ids[0]: INITIAL_BALANCE, ids[1]: 50}
+    asyncio.run(scenario())
+
+
+def test_enabling_auto_start_for_ready_room_starts_and_disabling_keeps_manual_mode(api):
+    async def scenario():
+        async with AsyncExitStack() as stack:
+            ids = USER_IDS[:2]
+            clients = await _clients(stack, api, ids)
+            room = await _create_and_join(clients, "texas")
+            rid = room["room_id"]
+            for client in clients.values():
+                waiting = _room(await _post(client, "ready", room_id=rid, ready=True))
+                assert waiting["state"] == "waiting"
+            denied = await _post(clients[ids[1]], "settings", room_id=rid, auto_start_when_ready=True)
+            assert denied.status_code == 403
+            playing = _room(await _post(clients[ids[0]], "settings", room_id=rid, auto_start_when_ready=True))
+            assert playing["state"] == "playing"
+            await _finish_through_requests(api, clients, playing)
+            _room(await _post(clients[ids[0]], "settings", room_id=rid, auto_start_when_ready=False))
+            for client in clients.values():
+                waiting = _room(await _post(client, "ready", room_id=rid, ready=True))
+            assert waiting["state"] == "finished"
+            assert waiting["auto_start_when_ready"] is False
+            assert waiting["round_number"] == 1
+            playing = _room(await _post(clients[ids[0]], "start", room_id=rid))
+            assert playing["round_number"] == 2
+    asyncio.run(scenario())
+
+
+def test_kick_requires_host_revokes_access_and_preserves_settled_balance(api):
+    async def scenario():
+        async with AsyncExitStack() as stack:
+            ids = USER_IDS[:2]
+            clients = await _clients(stack, api, ids)
+            room = await _create_and_join(clients, "texas")
+            rid = room["room_id"]
+            denied = await _post(clients[ids[1]], "kick", room_id=rid, target_user_id=ids[0])
+            assert denied.status_code == 403
+            room = await _ready_and_start(clients, rid)
+            denied = await _post(clients[ids[0]], "kick", room_id=rid, target_user_id=ids[1])
+            assert denied.status_code == 400
+            await _finish_through_requests(api, clients, room)
+            balances = _balances(api, ids)
+            kicked = _room(await _post(clients[ids[0]], "kick", room_id=rid, target_user_id=ids[1]))
+            assert [player["user_id"] for player in kicked["players"]] == [ids[0]]
+            assert _balances(api, ids) == balances
+            denied = await clients[ids[1]].get(f"/api/tables/{rid}")
+            assert denied.status_code == 200
+            assert denied.json()["room"] is None
+            assert denied.json()["room_exit_reason"] == "kicked"
+            denied = await _post(clients[ids[1]], "ready", room_id=rid, ready=True)
+            assert denied.status_code == 200
+            assert denied.json()["room"] is None
+            assert denied.json()["room_exit_reason"] == "kicked"
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("game_type,count", [("texas", 2), ("texas", 8), ("golden_flower", 2), ("landlord", 3), ("mahjong", 4)])
 def test_real_clients_finish_each_game_with_private_hands_and_atomic_settlement(api, game_type, count):
     async def scenario():

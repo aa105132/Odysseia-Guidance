@@ -1,3 +1,4 @@
+from uuid import uuid4
 import random
 import string
 import time
@@ -70,6 +71,7 @@ class MultiplayerRoom:
     payouts_committed: bool = False
     committed_payout_user_ids: Set[int] = field(default_factory=set)
     forfeited_bet_total: int = 0
+    round_key: str = field(default_factory=lambda: f"blackjack:multi:{uuid4().hex}")
     updated_at: float = field(default_factory=lambda: time.time())
 
 
@@ -458,6 +460,7 @@ class MultiplayerBlackjackService:
         room.payouts_committed = False
         room.committed_payout_user_ids.clear()
         room.forfeited_bet_total = 0
+        room.round_key = f"blackjack:multi:{uuid4().hex}"
 
         for p in participants:
             p.hand = [room.deck.pop(), room.deck.pop()]
@@ -720,6 +723,7 @@ class MultiplayerBlackjackService:
         room.payouts_committed = False
         room.committed_payout_user_ids.clear()
         room.forfeited_bet_total = 0
+        room.round_key = f"blackjack:multi:{uuid4().hex}"
 
         for player in room.players.values():
             player.hand = []

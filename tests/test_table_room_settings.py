@@ -88,6 +88,50 @@ def test_bot_addition_preserves_existing_players_and_stable_unique_ids():
     assert len({player["username"] for player in readded["players"]}) == 4
 
 
+def test_auto_start_setting_is_optional_and_available_for_fixed_tiers():
+    service = tables.TableService(clock=lambda: 1000)
+    room = service.create(HOST, "texas", "multi", False)
+    rid = room["room_id"]
+    assert room["auto_start_when_ready"] is False
+    service.join(rid, GUEST)
+    service.ready(rid, "1", True)
+    service.ready(rid, "2", True)
+    assert service.should_auto_start(rid) is False
+    with pytest.raises(PermissionError):
+        service.settings(rid, "2", auto_start_when_ready=True)
+    enabled = service.settings(rid, "1", auto_start_when_ready=True)
+    assert enabled["auto_start_when_ready"] is True
+    assert all(player["is_ready"] for player in enabled["players"])
+    assert service.should_auto_start(rid) is True
+    service.ready(rid, "2", False)
+    assert service.should_auto_start(rid) is False
+    service.kick(rid, "1", "2")
+    assert service.should_auto_start(rid) is False
+
+
+def test_kick_checks_host_target_and_round_state():
+    service = tables.TableService(clock=lambda: 1000)
+    rid = service.create(HOST, "texas", "multi", True)["room_id"]
+    service.join(rid, GUEST)
+    before = copy.deepcopy(service.get(rid, "1"))
+    with pytest.raises(PermissionError):
+        service.kick(rid, "2", "1")
+    for target in ("1", "bot:yueyue", "missing"):
+        with pytest.raises(ValueError):
+            service.kick(rid, "1", target)
+    assert service.get(rid, "1") == before
+    kicked = service.kick(rid, "1", "2")
+    assert "2" not in [player["user_id"] for player in kicked["players"]]
+    with pytest.raises(PermissionError):
+        service.get(rid, "2")
+    service.join(rid, GUEST)
+    service.ready(rid, "1", True)
+    service.ready(rid, "2", True)
+    service.start(rid, "1")
+    with pytest.raises(ValueError):
+        service.kick(rid, "1", "2")
+
+
 def test_solo_all_bots_can_be_removed_without_automatic_replacement():
     service = tables.TableService(clock=lambda: 1000)
     room = service.create(HOST, "landlord", "solo", True)

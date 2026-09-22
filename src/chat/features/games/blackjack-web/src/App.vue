@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import dialogueConfig from "./dialogue.json";
 import TableGames from "./TableGames.vue";
+import GameTools from "./GameTools.vue";
+import { mountGameAudio, unmountGameAudio, playGameSound } from "./gameAudio";
 import NonameGame from "./NonameGame.vue";
 import RoomDirectory from "./RoomDirectory.vue";
 import RoomInvite from "./RoomInvite.vue";
@@ -662,7 +664,12 @@ async function apiCall<T>(
         throw Object.assign(new Error(typeof errorData.detail === "string" ? errorData.detail : "请求参数不正确"), { status: response.status });
       }
 
-      return (await response.json()) as T;
+      const result = (await response.json()) as T;
+      if (method === 'POST' && (endpoint.startsWith('/api/game/') || endpoint.startsWith('/api/multi/room/'))) {
+        if (/\/(bet|double)$/.test(endpoint)) playGameSound('raise');
+        else if (/\/(start|hit|stand)$/.test(endpoint)) playGameSound('deal');
+      }
+      return result;
     } catch (error) {
       lastError = error;
       if (attempt < retries && !Number((error as { status?: number })?.status)) {
@@ -1355,10 +1362,12 @@ watch(
 );
 
 onMounted(() => {
+  mountGameAudio();
   void bootstrap();
 });
 
 onBeforeUnmount(() => {
+  unmountGameAudio();
   resetPresentation();
   stopRoomPolling();
   stopDealerSpeechLoop();
@@ -1380,6 +1389,7 @@ onBeforeUnmount(() => {
           <p>找张喜欢的牌桌，和月月一起开局</p>
         </div>
 
+        <GameTools v-if="profile" :profile="profile" :api-call="apiCall" />
         <div v-if="profile" class="profile-chip">
           <img class="profile-avatar" :src="playerAvatarSrc({
             user_id: String(profile.user_id),
@@ -1458,6 +1468,7 @@ onBeforeUnmount(() => {
             <span>{{ singleStateText }}</span>
           </div>
           <div class="toolbar-actions">
+            <GameTools v-if="profile" :profile="profile" :api-call="apiCall" game-type="blackjack" />
             <button class="game-button" @click="blackjackRulesDialog?.showModal()">玩法规则</button>
             <button class="game-button" :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回</button>
             <button class="game-button" :disabled="requestInFlight || !canSingleOperate" @click="forfeitSingleGame">放弃</button>
@@ -1589,6 +1600,7 @@ onBeforeUnmount(() => {
           <div class="toolbar-actions">
             <button class="game-button" @click="blackjackRulesDialog?.showModal()">玩法规则</button>
             <CopyRoomCode :room-id="roomState.room_id" />
+            <GameTools v-if="profile" :profile="profile" :api-call="apiCall" game-type="blackjack" />
             <button class="game-button" :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
             <button class="game-button" :disabled="requestInFlight" @click="recruitTeammates">招募队友</button>
             <button class="game-button" :disabled="requestInFlight" @click="leaveRoom">离开房间</button>

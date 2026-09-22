@@ -1,6 +1,7 @@
 import logging
 import json
 import random
+from uuid import uuid4
 from typing import Optional, List, Dict, Any
 
 from src.chat.utils.database import chat_db_manager
@@ -23,8 +24,10 @@ class BlackjackGame:
         deck: List[str],
         player_hand: List[str],
         dealer_hand: List[str],
+        round_key: Optional[str] = None,
     ):
         self.user_id = user_id
+        self.round_key = round_key or f"blackjack:single:{uuid4().hex}"
         self.bet_amount = bet_amount
         self.game_state = game_state
         self.deck = deck
@@ -149,8 +152,8 @@ class BlackjackService:
     async def _save_game_state(self, game: BlackjackGame):
         """Saves the entire game state to the database."""
         query = """
-            REPLACE INTO blackjack_games (user_id, bet_amount, game_state, deck, player_hand, dealer_hand)
-            VALUES (?, ?, ?, ?, ?, ?)
+            REPLACE INTO blackjack_games (user_id, bet_amount, game_state, deck, player_hand, dealer_hand, round_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             game.user_id,
@@ -159,6 +162,7 @@ class BlackjackService:
             json.dumps(game.deck),
             json.dumps(game.player_hand),
             json.dumps(game.dealer_hand),
+            game.round_key,
         )
         await self._db_manager._execute(
             self._db_manager._db_transaction, query, params, commit=True
@@ -178,6 +182,7 @@ class BlackjackService:
                 deck=json.loads(row["deck"]),
                 player_hand=json.loads(row["player_hand"]),
                 dealer_hand=json.loads(row["dealer_hand"]),
+                round_key=row["round_key"],
             )
         return None
 
@@ -321,7 +326,7 @@ class BlackjackService:
         log.info("Cleaning up all unfinished blackjack games...")
         rows = await self._db_manager._execute(
             self._db_manager._db_transaction,
-            "SELECT user_id, bet_amount FROM blackjack_games",
+            "SELECT user_id, bet_amount FROM blackjack_games WHERE game_state NOT LIKE 'finished%'",
             (),
             fetch="all",
         )

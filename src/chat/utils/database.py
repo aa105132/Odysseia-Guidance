@@ -127,6 +127,10 @@ class ChatDatabaseManager:
                 )
                 log.info("已向 blackjack_games 表添加 dealer_hand 列。")
 
+            if "round_key" not in blackjack_columns:
+                cursor.execute("ALTER TABLE blackjack_games ADD COLUMN round_key TEXT;")
+            cursor.execute("UPDATE blackjack_games SET round_key = 'blackjack:single:' || lower(hex(randomblob(16))) WHERE round_key IS NULL")
+
             # --- AI提示词配置表 ---
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS ai_prompts (

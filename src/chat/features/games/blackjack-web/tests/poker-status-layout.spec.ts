@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { captureFinalScreenshot } from './animation-helpers';
+import { captureFinalScreenshot, expectResultReadable } from './animation-helpers';
 
 for (const [gameType, playerCount] of [['texas', 2], ['texas', 8], ['golden_flower', 2], ['golden_flower', 5]] as const) {
   test(`${gameType}${playerCount}人连续拉伸窗口时牌桌铺满且信息互不重叠`, async ({ page }) => {
@@ -59,3 +59,65 @@ for (const [gameType, playerCount] of [['texas', 2], ['texas', 8], ['golden_flow
     }
   });
 }
+
+test('八人结算后明牌和准备状态清晰，所有座位完整显示', async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const uid = '123456789012345678';
+  const ids = Array.from({ length: 8 }, (_, i) => i ? `guest:${i}` : uid);
+  let finished = true;
+  const room = {
+    room_id: 'READABLE', game_type: 'texas', host_user_id: uid, state: 'finished', revision: 3,
+    mode: 'multi', min_players: 2, max_players: 8, room_tier: 'beginner', base_stake: 1,
+    entry_min: 100, loss_limit: 100, settlement_status: 'settled',
+    actual_settlement: Object.fromEntries(ids.map((id, i) => [id, i === 4 ? 70 : -10])),
+    players: ids.map((id, i) => ({ user_id: id, username: i ? `牌友${i}` : 'SpAcEkEy', avatar_url: '/character/normal.webp', is_bot: false, is_ready: i % 2 === 0, connected: true })),
+    game: {
+      phase: 'showdown', finished: true, current_player_id: null, legal_actions: [], winners: [ids[4]],
+      pot: 80, current_bet: 0, community_cards: ['Club2', 'Heart7', 'DiamondQ', 'SpadeA', 'ClubK'],
+      players: ids.map((id, i) => ({ user_id: id, hand: i % 3 ? [] : ['Spade10', 'ClubK'], hand_count: 2, stack: i === 4 ? 170 : 90, folded: i % 3 !== 0, hand_name: i % 3 ? '' : '一对' })),
+    },
+  };
+  await page.route('**/api/**', route => route.fulfill({ json: new URL(route.request().url()).pathname === '/api/profile'
+    ? { success: true, user_id: uid, username: 'SpAcEkEy', avatar_url: '/character/normal.webp', balance: 20000 }
+    : { success: true, room: finished ? room : { ...room, state: 'playing', game: { ...room.game, finished: false, phase: 'river', current_player_id: uid, message: '河牌圈下注。' } }, viewer_balance: 19990 } }));
+  await page.goto(`/?dev_user_id=${uid}`);
+  await page.getByRole('button', { name: /^德州扑克/ }).click();
+  await page.getByRole('button', { name: /^月月陪玩/ }).click();
+  for (const viewport of [{ width: 2188, height: 984 }, { width: 1440, height: 900 }, { width: 1188, height: 1196 }, { width: 1024, height: 600 }, { width: 844, height: 390 }, { width: 568, height: 320 }]) {
+    await page.setViewportSize(viewport);
+    finished = false;
+    await page.getByRole('button', { name: '同步', exact: true }).click();
+    await expect(page.locator('.table-games')).not.toHaveClass(/tg-finished/);
+    const before = (await page.locator('.tg-center .tg-board-card').first().boundingBox())!;
+    finished = true;
+    await page.getByRole('button', { name: '同步', exact: true }).click();
+    await expect(page.locator('.table-games')).toHaveClass(/tg-finished/);
+    const after = (await page.locator('.tg-center .tg-board-card').first().boundingBox())!;
+    for (const key of ['x', 'y', 'width', 'height'] as const) expect(after[key], `${viewport.width} 结算后公共牌 ${key} 保持不变`).toBeCloseTo(before[key], 0);
+    await expectResultReadable(page, page.locator('.tg-round-result'));
+    const arena = (await page.locator('.tg-scroll').boundingBox())!;
+    const geometry = await page.locator('.tg-seat').evaluateAll(seats => seats.map(seat => {
+      const box = seat.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, nameSize: parseFloat(getComputedStyle(seat.querySelector('h3')!).fontSize) };
+    }));
+    for (const [i, box] of geometry.entries()) {
+      expect(box.left, `${viewport.width} 座位${i}左边界`).toBeGreaterThanOrEqual(0);
+      expect(box.right, `${viewport.width} 座位${i}右边界`).toBeLessThanOrEqual(viewport.width);
+      expect(box.top, `${viewport.width} 座位${i}上边界`).toBeGreaterThanOrEqual(arena.y);
+      expect(box.bottom, `${viewport.width} 座位${i}下边界`).toBeLessThanOrEqual(viewport.height - 23);
+      if (viewport.width >= 1000) expect(box.nameSize).toBeGreaterThanOrEqual(14);
+    }
+    for (const seat of await page.locator('.tg-seat').all()) {
+      await expect(seat.locator('.tg-seat-state')).toHaveText(/已准备|未准备/);
+      await expect(seat.locator('.tg-player')).toHaveCSS('opacity', '1');
+    }
+    if (viewport.width >= 1000) {
+      for (const face of await page.locator('.tg-opponent-hand img').all()) expect((await face.boundingBox())!.width).toBeGreaterThanOrEqual(42);
+      expect((await page.locator('.tg-center .tg-board-card').first().boundingBox())!.width).toBeGreaterThanOrEqual(48);
+    }
+    const collisions = geometry.flatMap((a, i) => geometry.slice(i + 1).filter(b => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1));
+    expect(collisions, `${viewport.width} 座位之间不互相遮挡`).toEqual([]);
+    await captureFinalScreenshot(page, `texas-eight-finished-${viewport.width}.png`);
+  }
+});
