@@ -162,6 +162,9 @@ activity_room_bindings = TTLCache(maxsize=1000, ttl=21600)
 room_activity_bindings = TTLCache(maxsize=1000, ttl=21600)
 discord_profile_cache = TTLCache(maxsize=2000, ttl=60)
 player_profile_cache = TTLCache(maxsize=2000, ttl=21600)
+leaderboard_profile_cache = TTLCache(maxsize=2000, ttl=21600)
+leaderboard_profile_failures = TTLCache(maxsize=2000, ttl=60)
+leaderboard_profile_lock = asyncio.Lock()
 
 
 async def _record_game_result(bet_amount: int, payout_amount: int):
@@ -334,6 +337,7 @@ async def get_current_user_profile(
                 "username": username,
                 "avatar_url": avatar_url,
                 "is_dev": False,
+                "is_bot": bool(user_data.get("bot", False)),
             }
             discord_profile_cache[token.credentials] = profile
             return dict(profile)
@@ -1663,6 +1667,55 @@ async def table_personal_statistics(
     return {"success": True, **await _get_table_wallet().statistics(str(user["user_id"]), None if game_type == "all" else game_type)}
 
 
+async def _load_leaderboard_profiles(user_ids: set[str]):
+    """只读补齐历史账号资料；资料缺失不能被当成机器人或从榜单删除。"""
+    async with leaderboard_profile_lock:
+        pending = []
+        bot = service_registry.bot
+        for user_id in user_ids:
+            if user_id in leaderboard_profile_cache or user_id in leaderboard_profile_failures:
+                continue
+            cached_user = bot.get_user(int(user_id)) if bot is not None else None
+            if cached_user is not None:
+                leaderboard_profile_cache[user_id] = {
+                    "username": cached_user.global_name or cached_user.name,
+                    "avatar_url": str(cached_user.display_avatar.url),
+                    "is_bot": cached_user.bot,
+                }
+            else:
+                pending.append(user_id)
+        bot_token = _resolve_discord_bot_token()
+        if not pending or not bot_token:
+            return
+        semaphore = asyncio.Semaphore(4)
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            async def load(user_id: str):
+                async with semaphore:
+                    try:
+                        response = await client.get(
+                            f"https://discord.com/api/v10/users/{user_id}",
+                            headers={"Authorization": f"Bot {bot_token}"},
+                        )
+                        response.raise_for_status()
+                        data = response.json()
+                        if str(data.get("id")) != user_id:
+                            raise ValueError("Discord 资料与请求账号不匹配")
+                        leaderboard_profile_cache[user_id] = {
+                            "username": data.get("global_name") or data.get("username") or user_id,
+                            "avatar_url": _build_discord_avatar_url(data),
+                            "is_bot": bool(data.get("bot", False)),
+                        }
+                    except (httpx.HTTPError, ValueError, TypeError):
+                        leaderboard_profile_failures[user_id] = True
+            try:
+                # 限制整批回填时间；Discord 暂不可用时仍返回已有战绩。
+                await asyncio.wait_for(asyncio.gather(*(load(uid) for uid in pending)), timeout=5.0)
+            except asyncio.TimeoutError:
+                for uid in pending:
+                    if uid not in leaderboard_profile_cache:
+                        leaderboard_profile_failures[uid] = True
+
+
 @app.get("/api/tables/leaderboard")
 async def table_profit_leaderboard(
     period: Literal["today", "all"] = Query(default="today"),
@@ -1672,9 +1725,28 @@ async def table_profit_leaderboard(
 ):
     if game_type not in {"all", "blackjack", *_table_module.GAME_SPECS}:
         raise HTTPException(status_code=400, detail="不支持的游戏类型")
-    return {"success": True, **await _get_table_wallet().leaderboard(
-        str(user["user_id"]), period, None if game_type == "all" else game_type, limit,
-    )}
+    user_id = str(user["user_id"])
+    if not user.get("is_dev"):
+        leaderboard_profile_cache[user_id] = dict(user)
+    resolved_game = None if game_type == "all" else game_type
+    excluded = {int(uid) for uid, profile in leaderboard_profile_cache.items() if profile.get("is_bot")}
+    # 排除发生在 SQL 聚合排名前，保证名次和补位正确，个人排名也遵循相同规则。
+    for _ in range(3):
+        board = await _get_table_wallet().leaderboard(user_id, period, resolved_game, limit, tuple(excluded))
+        entries = [*board["entries"], *([board["self"]] if board["self"] else [])]
+        await _load_leaderboard_profiles({entry["user_id"] for entry in entries if entry["user_id"] != user_id})
+        discovered = {int(uid) for uid, profile in leaderboard_profile_cache.items() if profile.get("is_bot")}
+        if discovered <= excluded:
+            break
+        excluded.update(discovered)
+    else:
+        board = await _get_table_wallet().leaderboard(user_id, period, resolved_game, limit, tuple(excluded))
+    for entry in [*board["entries"], *([board["self"]] if board["self"] else [])]:
+        profile = leaderboard_profile_cache.get(entry["user_id"])
+        if profile:
+            entry["username"] = profile.get("username") or entry["username"]
+            entry["avatar_url"] = profile.get("avatar_url") or entry["avatar_url"]
+    return {"success": True, **board}
 
 
 class TableCreateRequest(BaseModel):

@@ -3,18 +3,18 @@ import { ref } from 'vue';
 import GameStatsPanel from './GameStatsPanel.vue';
 import { soundEnabled, musicEnabled, setSoundEnabled, setMusicEnabled } from './gameAudio';
 type ApiCall = <T>(endpoint: string, method: 'GET' | 'POST', body?: unknown, retries?: number) => Promise<T>;
-defineProps<{ profile: { user_id: string; username: string; avatar_url: string; balance: number }; apiCall: ApiCall; gameType?: string }>();
+defineProps<{ profile: { user_id: string; username: string; avatar_url: string; balance: number }; apiCall: ApiCall; gameType?: string; audioOnly?: boolean }>();
 const menu = ref<HTMLDialogElement | null>(null);
 const panel = ref<'stats' | 'leaderboard' | null>(null);
 function openPanel(tab: 'stats' | 'leaderboard') { menu.value?.close(); panel.value = tab; }
 </script>
 
 <template>
-  <button class="game-button quiet" aria-label="战绩与声音" @click="menu?.showModal()">更多</button>
+  <button class="game-button quiet" :aria-label="audioOnly ? '声音设置' : '战绩与声音'" @click="menu?.showModal()">{{ audioOnly ? '声音' : '更多' }}</button>
   <Teleport to="body">
-    <dialog ref="menu" class="game-tools-dialog" aria-label="战绩与声音">
-      <header><h2>战绩与声音</h2><button class="game-button quiet" @click="menu?.close()">关闭</button></header>
-      <div class="tools-links"><button class="game-button" @click="openPanel('stats')">个人统计</button><button class="game-button" @click="openPanel('leaderboard')">盈利排行</button></div>
+    <dialog ref="menu" class="game-tools-dialog" :aria-label="audioOnly ? '声音设置' : '战绩与声音'">
+      <header><h2>{{ audioOnly ? '声音设置' : '战绩与声音' }}</h2><button class="game-button quiet" @click="menu?.close()">关闭</button></header>
+      <div v-if="!audioOnly" class="tools-links"><button class="game-button" @click="openPanel('stats')">个人统计</button><button class="game-button" @click="openPanel('leaderboard')">盈利排行</button></div>
       <label data-audio-toggle><span>游戏音效<small>点击、发牌、加注</small></span><input type="checkbox" :checked="soundEnabled" @change="setSoundEnabled(($event.target as HTMLInputElement).checked)"></label>
       <label data-audio-toggle><span>背景音乐<small>轻柔拨弦 · 茶间小调</small></span><input type="checkbox" :checked="musicEnabled" @change="setMusicEnabled(($event.target as HTMLInputElement).checked)"></label>
       <p>设置保存在当前设备，切到后台自动静音。</p>

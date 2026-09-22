@@ -1,5 +1,5 @@
 <script setup lang="ts">
-type IconName = 'blackjack' | 'landlord' | 'mahjong' | 'texas' | 'golden_flower' | 'beginner' | 'intermediate' | 'advanced' | 'solo' | 'friends' | 'room' | 'robot';
+type IconName = 'blackjack' | 'landlord' | 'mahjong' | 'texas' | 'golden_flower' | 'beginner' | 'intermediate' | 'advanced' | 'solo' | 'friends' | 'room' | 'robot' | 'leaderboard';
 const props = defineProps<{ name: IconName }>();
 const paintedGames = ['blackjack', 'landlord', 'mahjong', 'texas', 'golden_flower'];
 </script>
@@ -8,7 +8,17 @@ const paintedGames = ['blackjack', 'landlord', 'mahjong', 'texas', 'golden_flowe
   <img v-if="paintedGames.includes(props.name)" class="game-icon painted-game-icon" :src="`/ui/guochao/game-${name}.webp`" alt="" aria-hidden="true" draggable="false">
   <svg v-else class="game-icon" viewBox="0 0 160 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
     <ellipse cx="80" cy="104" rx="55" ry="8" fill="#041819" opacity=".24" />
-    <g v-if="name === 'beginner' || name === 'intermediate' || name === 'advanced'">
+    <g v-if="name === 'leaderboard'">
+      <defs><linearGradient id="rank-gold" x1="40" y1="20" x2="113" y2="99" gradientUnits="userSpaceOnUse"><stop stop-color="#fff2ad"/><stop offset=".48" stop-color="#eab951"/><stop offset="1" stop-color="#a96428"/></linearGradient></defs>
+      <circle cx="80" cy="53" r="46" fill="#fff3b4" opacity=".15"/>
+      <path d="M53 30H32v16c0 17 15 25 29 25m46-41h21v16c0 17-15 25-29 25" stroke="#a46430" stroke-width="12" stroke-linejoin="round"/>
+      <path d="M53 28H32v16c0 17 15 25 29 25m46-41h21v16c0 17-15 25-29 25" stroke="#f5d382" stroke-width="7" stroke-linejoin="round"/>
+      <path d="M49 19h62v24c0 23-13 36-31 36S49 66 49 43Z" fill="url(#rank-gold)" stroke="#fff0b6" stroke-width="3"/>
+      <path d="m80 30 6 12 13 2-10 9 2 13-11-6-11 6 2-13-10-9 13-2Z" fill="#fff5c4" stroke="#b27c36" stroke-width="2"/>
+      <path d="M74 78h12v15h-12Z" fill="#deb05e"/><path d="M61 92h38l8 12H53Z" fill="url(#rank-gold)" stroke="#ffe4a0" stroke-width="2"/>
+      <path d="m27 77 6 11 12-3m88-8-6 11-12-3" stroke="#ecd386" stroke-width="3" stroke-linecap="round"/>
+    </g>
+    <g v-else-if="name === 'beginner' || name === 'intermediate' || name === 'advanced'">
       <circle cx="80" cy="57" r="46" :fill="name === 'beginner' ? '#7ECBC1' : name === 'intermediate' ? '#94B8EA' : '#E7BF70'" opacity=".14" />
       <path d="m80 11 38 20v37L80 98 42 68V31z" :fill="name === 'beginner' ? '#276D63' : name === 'intermediate' ? '#315582' : '#83612D'" :stroke="name === 'beginner' ? '#91DACA' : name === 'intermediate' ? '#ADC9EF' : '#F3D399'" stroke-width="3" />
       <path d="m80 21 29 15v27L80 86 51 63V36z" stroke="#FFFFFF" opacity=".18" stroke-width="2" />

@@ -18,10 +18,10 @@ test('声音开关独立生效且刷新保留，音乐在用户操作后才开�
   });
   await page.route('**/api/profile', route => route.fulfill({ json: { success: true, user_id: '123456789012345678', username: '音乐牌友', avatar_url: '/character/normal.webp', balance: 2000 } }));
   await page.goto('/?dev_user_id=123456789012345678');
-  await expect(page.getByRole('button', { name: '战绩与声音' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '声音设置' })).toBeVisible();
   expect(await page.evaluate(() => (window as any).__audioTrace.starts)).toBe(0);
-  await page.getByRole('button', { name: '战绩与声音' }).click();
-  const menu = page.getByRole('dialog', { name: '战绩与声音' });
+  await page.getByRole('button', { name: '声音设置' }).click();
+  const menu = page.getByRole('dialog', { name: '声音设置' });
   const sound = menu.getByRole('checkbox', { name: /游戏音效/ });
   const music = menu.getByRole('checkbox', { name: /背景音乐/ });
   await expect(sound).toBeChecked();
@@ -37,10 +37,10 @@ test('声音开关独立生效且刷新保留，音乐在用户操作后才开�
   await expect.poll(() => page.evaluate(() => (window as any).__audioTrace.gains[1].gain.value)).toBe(0);
   const muted = await page.evaluate(() => (window as any).__audioTrace.starts);
   await menu.getByRole('button', { name: '关闭' }).click();
-  await page.getByRole('button', { name: '战绩与声音' }).click();
+  await page.getByRole('button', { name: '声音设置' }).click();
   expect(await page.evaluate(() => (window as any).__audioTrace.starts)).toBe(muted);
   await page.reload();
-  await page.getByRole('button', { name: '战绩与声音' }).click();
+  await page.getByRole('button', { name: '声音设置' }).click();
   await expect(sound).not.toBeChecked();
   await expect(music).not.toBeChecked();
   expect(await page.evaluate(() => (window as any).__audioTrace.starts)).toBe(0);

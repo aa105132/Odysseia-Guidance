@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import dialogueConfig from "./dialogue.json";
 import TableGames from "./TableGames.vue";
 import GameTools from "./GameTools.vue";
+import GameStatsPanel from "./GameStatsPanel.vue";
 import { mountGameAudio, unmountGameAudio, playGameSound } from "./gameAudio";
 import NonameGame from "./NonameGame.vue";
 import RoomDirectory from "./RoomDirectory.vue";
@@ -114,6 +115,7 @@ type SingleGameEnvelope = {
 };
 
 const viewMode = ref<ViewMode>("loading");
+const lobbyStatsPanel = ref<'stats' | 'leaderboard' | null>(null);
 const nonameAvailable = ref(false);
 const selectedTableGame = ref<TableGameType>('texas');
 const availableTableGames: TableGameType[] = ['texas', 'landlord', 'mahjong', 'golden_flower'];
@@ -1392,8 +1394,9 @@ onBeforeUnmount(() => {
           <p>找张喜欢的牌桌，和月月一起开局</p>
         </div>
 
-        <GameTools v-if="profile" :profile="profile" :api-call="apiCall" />
-        <div v-if="profile" class="profile-chip">
+        <div v-if="profile" class="lobby-profile-actions">
+        <GameTools :profile="profile" :api-call="apiCall" audio-only />
+        <button type="button" class="profile-chip" aria-label="查看个人信息与统计" @click="lobbyStatsPanel = 'stats'">
           <img class="profile-avatar" :src="playerAvatarSrc({
             user_id: String(profile.user_id),
             username: profile.username,
@@ -1412,12 +1415,13 @@ onBeforeUnmount(() => {
             <div class="profile-name">{{ profile.username }}</div>
             <div class="profile-balance">余额：{{ profile.balance }}</div>
           </div>
+        </button>
         </div>
       </header>
 
       <section v-if="viewMode === 'game_hub'" class="lobby-panel game-hub-panel">
         <div class="lobby-section-heading"><h3>今晚，玩点什么？</h3><button class="game-button" @click="openRoomDirectory()">房间列表</button></div>
-        <div class="game-grid hub-game-grid">
+        <div class="game-grid hub-game-grid" :style="{ '--hub-columns': nonameAvailable ? 7 : 6 }">
           <button v-if="nonameAvailable" class="game-card" @click="viewMode = 'noname'">
             <span class="game-card-art"><svg viewBox="0 0 160 140" aria-hidden="true"><path d="M20 30 80 10l60 20v55l-60 45-60-45z" fill="#684877" stroke="#edc278" stroke-width="5"/><path d="m45 35 72 66m-2-67-70 69" stroke="#ffe5a3" stroke-width="8"/><text x="80" y="85" text-anchor="middle" fill="#fff1ca" font-size="42">杀</text></svg></span>
             <span class="game-card-copy"><span class="game-name">三国杀</span><span class="game-desc">无名杀 · 娱乐试玩</span></span>
@@ -1432,8 +1436,13 @@ onBeforeUnmount(() => {
             <span class="game-card-copy"><span class="game-name">{{ tableGameRules[gameType].title }}</span><span class="game-desc">单人挑战 / 多人同桌</span></span>
             <span class="card-arrow" aria-hidden="true">◆</span>
           </button>
+          <button class="game-card leaderboard-card" @click="lobbyStatsPanel = 'leaderboard'">
+            <span class="game-card-art"><GameIcon name="leaderboard" /></span>
+            <span class="game-card-copy"><span class="game-name">排行榜</span><span class="game-desc">当日盈利 / 总计盈利</span></span>
+            <span class="card-arrow" aria-hidden="true">◆</span>
+          </button>
         </div>
-        <p class="lobby-footnote"><span aria-hidden="true">◆</span> 棋牌游戏使用账户灵石 · 三国杀为免费娱乐模式</p>
+        <p class="lobby-footnote"><span aria-hidden="true">◆</span> 棋牌游戏使用账户灵石<template v-if="nonameAvailable"> · 三国杀为免费娱乐模式</template></p>
       </section>
 
       <GameViewport v-else-if="viewMode === 'noname' && profile">
@@ -1690,6 +1699,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <GameStatsPanel v-if="lobbyStatsPanel && profile" :profile="profile" :api-call="apiCall" :initial-tab="lobbyStatsPanel" @close="lobbyStatsPanel = null" />
       <div v-if="statusMessage" class="status-message" role="status">{{ statusMessage }}</div>
       <div v-if="errorMessage" class="error-message" role="alert">{{ errorMessage }}</div>
       <dialog ref="blackjackRulesDialog" class="blackjack-rules" aria-labelledby="blackjack-rules-title">
@@ -2046,7 +2056,7 @@ onBeforeUnmount(() => {
 .action-dock .quick-bets button { padding-inline: 7px; }
 
 .multi-root input,
-.multi-root button:not(.game-button, .game-card) {
+.multi-root button:not(.game-button, .game-card, .profile-chip) {
   min-width: 0;
   min-height: 40px;
   max-width: 100%;
@@ -2065,7 +2075,7 @@ onBeforeUnmount(() => {
 .multi-root input { background: linear-gradient(180deg, #ffedc2, #fff8e8); color-scheme: light; box-shadow: inset 0 2px 3px #a86b2926; }
 .multi-root input::placeholder { color: #957354; }
 .multi-root button { cursor: pointer; }
-.multi-root button:not(.game-button, .game-card):hover { border-color: #fff0b2; background: #ffedbc; }
+.multi-root button:not(.game-button, .game-card, .profile-chip):hover { border-color: #fff0b2; background: #ffedbc; }
 .multi-root button:disabled { cursor: not-allowed; opacity: .45; }
 .multi-root :focus-visible { outline: 2px solid #fff0a8; outline-offset: 2px; }
 .multi-root .primary-btn:not(.game-button) { background: linear-gradient(180deg, #ffcf55, #ef8141 55%, #d64e35); border-color: #ffe3a0; color: #fff5d0; font-weight: 700; }
@@ -2076,7 +2086,7 @@ onBeforeUnmount(() => {
 .lobby-eyebrow { display: block; margin-bottom: 6px; color: #ffe8ab; font-size: 9px; font-weight: 600; letter-spacing: 4px; }
 .title-group h1 { margin: 0; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-size: 26px; font-weight: 800; color: #fff1b5; letter-spacing: 2px; text-shadow: -1px -1px #794149, 1px -1px #794149, -1px 1px #794149, 1px 2px #794149, 0 3px #b77848; }
 .title-group p { margin: 6px 0 0; font-size: 12px; color: #fff2d8; }
-.profile-chip { display: flex; align-items: center; gap: 10px; background: url("/ui/guochao/cloud-pattern.svg") center / 110px, linear-gradient(145deg, #677caf, #404075); border: 2px solid #f5d088; border-radius: 13px 13px 7px 7px; padding: 9px 14px 9px 9px; min-width: 0; max-width: 42%; box-shadow: inset 0 1px #d3e3ff66, 0 3px 0 #975d3e, 0 5px 15px #5135404d; }
+.multi-root .profile-chip { display: flex; align-items: center; gap: 10px; background: url("/ui/guochao/cloud-pattern.svg") center / 110px, linear-gradient(145deg, #677caf, #404075); border: 2px solid #f5d088; border-radius: 13px 13px 7px 7px; padding: 9px 14px 9px 9px; min-width: 0; max-width: 42%; box-shadow: inset 0 1px #d3e3ff66, 0 3px 0 #975d3e, 0 5px 15px #5135404d; }
 .profile-avatar { width: 39px; height: 39px; border-radius: 8px; object-fit: cover; object-position: center 22%; border: 1px solid #ffe5a8; background: #7988ba; }
 .profile-meta { min-width: 0; text-align: left; }
 .profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: #fff1cd; }
@@ -2090,7 +2100,7 @@ onBeforeUnmount(() => {
 .lobby-panel .toolbar-actions { margin-top: 18px; }
 .lobby-actions { display: flex; flex-direction: column; gap: 11px; }
 .game-grid { display: grid; gap: 14px; }
-.hub-game-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.hub-game-grid { grid-template-columns: repeat(var(--hub-columns, 6), minmax(0, 1fr)); }
 .multi-root .game-card {
   --card-accent: #ffde93;
   --card-shade: #ac4e4b;
@@ -2122,7 +2132,13 @@ onBeforeUnmount(() => {
 .multi-root .landlord-card { --card-shade: #d98545; --card-depth: #a7463e; }
 .multi-root .mahjong-card { --card-shade: #58a3a7; --card-depth: #3b577e; }
 .multi-root .golden_flower-card { --card-shade: #aa7098; --card-depth: #633d76; }
+.multi-root .leaderboard-card { --card-shade: #b99349; --card-depth: #765047; }
+.lobby-profile-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-width: 0; max-width: 50%; }
+.lobby-profile-actions .profile-chip { max-width: 100%; font: inherit; cursor: pointer; }
+.profile-chip:focus-visible { outline: 3px solid #fff4cc; outline-offset: 4px; }
 .game-card-art { display: block; width: min(100%, 170px); aspect-ratio: 4 / 3; margin: 6px auto 9px; filter: drop-shadow(0 5px 5px #39284c66); }
+.hub-game-grid .game-card-art { position: relative; aspect-ratio: 1; flex: none; }
+.hub-game-grid .game-card-art :deep(.game-icon) { position: absolute; inset: 0; }
 .game-card-copy { display: flex; flex-direction: column; gap: 8px; }
 .game-name { color: #fff0bb; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-size: 21px; font-weight: 800; letter-spacing: 2px; text-shadow: -1px -1px #58345b, 1px -1px #58345b, -1px 1px #58345b, 1px 2px #58345b, 0 3px #9b6a42; }
 .game-desc { color: #fff0d6; font-size: 11px; font-weight: 500; letter-spacing: .3px; text-shadow: 0 1px 2px #533c57; }
@@ -2275,7 +2291,7 @@ onBeforeUnmount(() => {
   .lobby-eyebrow { font-size: 7px; letter-spacing: 3px; margin-bottom: 3px; }
   .title-group h1 { font-size: 21px; }
   .title-group p { font-size: 10px; margin-top: 3px; }
-  .profile-chip { padding: 6px 10px 6px 6px; gap: 7px; border-radius: 9px; }
+  .multi-root .profile-chip { padding: 6px 10px 6px 6px; gap: 7px; border-radius: 9px; }
   .profile-avatar { width: 32px; height: 32px; }
   .profile-name { font-size: 11px; }
   .profile-balance { font-size: 10px; margin-top: 3px; }

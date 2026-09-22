@@ -28,7 +28,9 @@ const legacyRounds = computed(() => tab.value === 'stats' ? stats.value?.legacy_
 function number(value: number) { return value.toLocaleString('zh-CN'); }
 function profit(value: number) { return `${value > 0 ? '+' : ''}${number(value)}`; }
 function profitClass(value: number) { return value > 0 ? 'profit-positive' : value < 0 ? 'profit-negative' : ''; }
-function avatarFallback(event: Event) { const image = event.target as HTMLImageElement; image.onerror = null; image.src = '/character/normal.webp'; }
+const defaultAvatar = '/ui/player-avatar.svg';
+function avatarFallback(event: Event) { const image = event.target as HTMLImageElement; if (!image.src.endsWith(defaultAvatar)) image.src = defaultAvatar; }
+function playerName(entry: Entry) { return !entry.username || entry.username === entry.user_id ? `牌友 · ${entry.user_id.slice(-6)}` : entry.username; }
 async function refresh() {
   const current = ++sequence;
   const requestedTab = tab.value;
@@ -69,7 +71,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; panel.value?.close(); });
         <p v-if="loading" class="stats-empty" role="status">正在加载牌局记录…</p>
         <div v-else-if="error" class="stats-empty stats-error" role="alert"><p>{{ error }}</p><button class="game-button" @click="refresh">重试</button></div>
         <template v-else-if="tab === 'stats' && stats">
-          <div class="stats-profile"><img :src="profile.avatar_url || '/character/normal.webp'" alt="" @error="avatarFallback"><div><strong>{{ profile.username }}</strong><span>{{ names[gameType] }} · 已结算牌局</span></div><span class="stats-balance">余额 {{ number(profile.balance) }} 灵石</span></div>
+          <div class="stats-profile"><img :src="profile.avatar_url || defaultAvatar" alt="" @error="avatarFallback"><div><strong>{{ profile.username }}</strong><span>{{ names[gameType] }} · 已结算牌局</span></div><span class="stats-balance">余额 {{ number(profile.balance) }} 灵石</span></div>
           <div v-if="!stats.rounds" class="stats-no-rounds" role="status">还没有该玩法的已结算记录，完成一局后就会显示在这里。</div>
           <dl class="stats-metrics">
             <div><dt>总场次</dt><dd>{{ number(stats.rounds) }}<small>场</small></dd></div>
@@ -83,7 +85,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; panel.value?.close(); });
         <template v-else-if="board">
           <ol v-if="board.entries.length" class="stats-ranking" aria-label="盈利排名">
             <li v-for="entry in board.entries" :key="entry.user_id" :class="{ 'stats-is-self': entry.user_id === String(profile.user_id) }">
-              <span class="stats-rank" :class="{ 'stats-top-three': entry.rank <= 3 }">{{ entry.rank }}</span><img :src="entry.avatar_url || '/character/normal.webp'" alt="" @error="avatarFallback"><div class="stats-player"><strong>{{ entry.username || '牌友' }}<small v-if="entry.user_id === String(profile.user_id)">你</small></strong><span>{{ number(entry.rounds) }} 场</span></div><span class="stats-profit" :class="profitClass(entry.net_profit)">{{ profit(entry.net_profit) }}<small>灵石</small></span>
+              <span class="stats-rank" :class="{ 'stats-top-three': entry.rank <= 3 }">{{ entry.rank }}</span><img :src="entry.avatar_url || defaultAvatar" alt="" @error="avatarFallback"><div class="stats-player"><strong :title="entry.user_id">{{ playerName(entry) }}<small v-if="entry.user_id === String(profile.user_id)">你</small></strong><span>{{ number(entry.rounds) }} 场</span></div><span class="stats-profit" :class="profitClass(entry.net_profit)">{{ profit(entry.net_profit) }}<small>灵石</small></span>
             </li>
           </ol>
           <p v-else class="stats-empty" role="status">{{ period === 'today' ? '今天还没有已结算的牌局' : '还没有该玩法的结算记录' }}</p>

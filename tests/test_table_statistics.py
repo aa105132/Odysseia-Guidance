@@ -3,7 +3,9 @@
 import asyncio
 from contextlib import AsyncExitStack
 import sqlite3
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from test_table_wallet import wallet, balances
@@ -143,3 +145,78 @@ async def test_blackjack_settlement_atomic_and_retryable(wallet):
     assert (stats["rounds"], stats["net_profit"]) == (1, 150)
     with pytest.raises(ValueError, match="不同金额"):
         await wallet.settle_blackjack("blackjack:1", "1", 100, 200)
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_excludes_confirmed_bots_before_ranking_and_limit(wallet):
+    await wallet.reserve("ranked", ["1", "2"], 100)
+    await wallet.settle("ranked", {"1": 150, "2": 100}, game_type="texas")
+    with sqlite3.connect(wallet.db_path) as connection:
+        for uid in (-1, "bot:yueyue"):
+            connection.execute("""INSERT INTO table_game_results VALUES
+                (?, ?, 'texas', '月月', '', 999, '2026-09-22', ?)""",
+                (str(uid), uid, wallet._today()))
+    board = await wallet.leaderboard("2", "all", limit=1, excluded_user_ids=(1,))
+    assert [row["user_id"] for row in board["entries"]] == ["2"]
+    assert board["self"]["rank"] == 1
+    assert (await wallet.leaderboard("1", "all", excluded_user_ids=(1,)))["self"] is None
+    # 过滤只影响展示，不改写资金或历史结算。
+    assert balances(wallet)[1] == 150
+    with sqlite3.connect(wallet.db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM table_game_results").fetchone()[0] == 4
+
+
+def test_leaderboard_recovers_legacy_profiles_and_replaces_confirmed_bot(api, monkeypatch):
+    async def scenario():
+        module = api.module
+        wallet = module._get_table_wallet()
+        await wallet.reserve("legacy", list(USER_IDS[:3]), 100)
+        await wallet.settle("legacy", dict(zip(USER_IDS[:3], (180, 170, 160))))
+
+        async def load_profiles(user_ids):
+            for uid in user_ids:
+                module.leaderboard_profile_cache[uid] = {
+                    "username": "真实玩家" if uid == USER_IDS[1] else "机器人",
+                    "avatar_url": f"https://cdn.discordapp.com/avatars/{uid}/avatar.png",
+                    "is_bot": uid == USER_IDS[0],
+                }
+
+        loader = AsyncMock(side_effect=load_profiles)
+        monkeypatch.setattr(module, "_load_leaderboard_profiles", loader)
+        result = await module.table_profit_leaderboard("all", "all", 1, {
+            "user_id": USER_IDS[2], "username": "本人", "avatar_url": "/self.png",
+        })
+        assert [(e["user_id"], e["rank"]) for e in result["entries"]] == [(USER_IDS[1], 1)]
+        assert result["entries"][0]["username"] == "真实玩家"
+        assert result["self"]["username"] == "本人"
+        assert result["self"]["rank"] == 2
+        assert loader.await_count == 2
+    asyncio.run(scenario())
+
+
+def test_leaderboard_discord_profile_fetch_is_cached_and_failure_keeps_user(api, monkeypatch):
+    async def scenario():
+        module = api.module
+        calls = []
+        def respond(request):
+            uid = request.url.path.rsplit("/", 1)[-1]
+            calls.append(uid)
+            assert request.method == "GET"
+            if uid == USER_IDS[1]:
+                return httpx.Response(429, json={"retry_after": 1})
+            return httpx.Response(200, json={"id": uid, "username": "数字昵称真人", "avatar": "hash", "bot": False})
+        original_client = httpx.AsyncClient
+        monkeypatch.setattr(module, "_resolve_discord_bot_token", lambda: "test-only-token")
+        monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: original_client(transport=httpx.MockTransport(respond), **kwargs))
+        for _ in range(2):
+            await module._load_leaderboard_profiles(set(USER_IDS[:2]))
+        assert sorted(calls) == sorted(USER_IDS[:2])
+        assert module.leaderboard_profile_cache[USER_IDS[0]]["is_bot"] is False
+        assert module.leaderboard_profile_cache[USER_IDS[0]]["avatar_url"].endswith("hash.png?size=128")
+        assert USER_IDS[1] not in module.leaderboard_profile_cache
+        wallet = module._get_table_wallet()
+        await wallet.reserve("unknown", [USER_IDS[1]], 100)
+        await wallet.settle("unknown", {USER_IDS[1]: 150})
+        result = await module.table_profit_leaderboard("all", "all", 20, {"user_id": USER_IDS[2]})
+        assert result["entries"][0]["user_id"] == USER_IDS[1]
+    asyncio.run(scenario())

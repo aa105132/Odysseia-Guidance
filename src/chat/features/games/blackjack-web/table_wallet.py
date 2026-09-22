@@ -192,11 +192,16 @@ class TableWallet:
     async def statistics(self, user_id: str, game_type: str | None = None):
         return await asyncio.to_thread(self._statistics, user_id, game_type)
 
-    def _leaderboard(self, user_id: str, period: str, game_type: str | None, limit: int):
+    def _leaderboard(self, user_id: str, period: str, game_type: str | None, limit: int,
+                     excluded_user_ids: tuple[int, ...] = ()):
         if period not in ("today", "all"):
             raise ValueError("排行榜周期必须为 today 或 all")
         day = self._today()
-        conditions, parameters = [], []
+        # 游戏陪玩没有 Discord 正整数账号；已核实的 Discord 机器人也不参与排名。
+        conditions, parameters = ["typeof(user_id) = 'integer'", "user_id > 0"], []
+        if excluded_user_ids:
+            conditions.append(f"user_id NOT IN ({','.join('?' for _ in excluded_user_ids)})")
+            parameters.extend(excluded_user_ids)
         if game_type:
             conditions.append("game_type = ?")
             parameters.append(game_type)
@@ -229,13 +234,15 @@ class TableWallet:
             return {"rank": row[0], "user_id": row[1], "rounds": row[2],
                     "net_profit": row[3], "username": row[4], "avatar_url": row[5]}
         return {"period": period, "day": day, "timezone": "Asia/Shanghai",
-                "entries": [entry(row) for row in rows[:limit]],
+                "entries": [entry(row) for row in rows if row[6] <= limit],
                 "self": next((entry(row) for row in rows if row[1] == str(user_id)), None),
                 "legacy_rounds": rows[0][7] if rows else 0}
 
     async def leaderboard(self, user_id: str, period: str = "today",
-                          game_type: str | None = None, limit: int = 20):
-        return await asyncio.to_thread(self._leaderboard, user_id, period, game_type, limit)
+                          game_type: str | None = None, limit: int = 20,
+                          excluded_user_ids: tuple[int, ...] = ()):
+        return await asyncio.to_thread(self._leaderboard, user_id, period, game_type, limit,
+                                       excluded_user_ids)
 
     def _refund(self, round_key: str | None):
         with self._transaction() as connection:

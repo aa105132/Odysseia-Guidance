@@ -11,8 +11,7 @@ test('个人面板展示净盈利与胜率，并支持21点筛选及空态', asy
   await mockProfile(page);
   await page.route('**/api/tables/stats?**', route => route.fulfill({ json: { success: true, timezone: 'Asia/Shanghai', stats: new URL(route.request().url()).searchParams.get('game_type') === 'blackjack' ? { ...personal, rounds: 0, wins: 0, losses: 0, draws: 0, win_rate: 0, net_profit: 0, today_profit: 0, legacy_rounds: 0 } : personal } }));
   await page.goto(`/?dev_user_id=${uid}`);
-  await page.getByRole('button', { name: '战绩与声音', exact: true }).click();
-  await page.getByRole('button', { name: '个人统计', exact: true }).click();
+  await page.getByRole('button', { name: '查看个人信息与统计', exact: true }).click();
   const panel = page.getByRole('dialog', { name: '个人统计', exact: true });
   await expect(panel.getByText('58.3')).toBeVisible();
   await expect(panel.getByText('+456', { exact: false })).toBeVisible();
@@ -35,14 +34,32 @@ test('排行榜切换当日和累计，展示前20之外自己的排名', async 
       self: { rank: 25, user_id: uid, username: '统计牌友', avatar_url: '', net_profit: 16, rounds: 2 } } });
   });
   await page.goto(`/?dev_user_id=${uid}`);
-  await page.getByRole('button', { name: '战绩与声音', exact: true }).click();
-  await page.getByRole('button', { name: '盈利排行', exact: true }).click();
+  await page.getByRole('button', { name: /排行榜.*当日盈利/ }).click();
   const panel = page.getByRole('dialog', { name: '盈利排行榜' });
   await expect(panel.getByText('第 25 名')).toBeVisible();
   await expect(panel.locator('.stats-ranking')).toContainText('+100');
   await panel.getByRole('button', { name: '总计盈利', exact: true }).click();
   await expect(panel.locator('.stats-ranking')).toContainText('+2,000');
   expect(periods).toEqual(['today', 'all']);
+});
+
+test('历史玩家缺少资料时使用通用头像，头像加载失败仍可查看排名', async ({ page }) => {
+  await mockProfile(page);
+  const legacyId = '1438147017091055740';
+  await page.route('**/api/tables/leaderboard?**', route => route.fulfill({ json: {
+    entries: [
+      { rank: 1, user_id: legacyId, username: legacyId, avatar_url: '', net_profit: 90, rounds: 5 },
+      { rank: 2, user_id: uid, username: '头像失效的牌友', avatar_url: '/missing-player-avatar.png', net_profit: 20, rounds: 2 },
+    ], self: null, timezone: 'Asia/Shanghai', legacy_rounds: 5,
+  } }));
+  await page.goto(`/?dev_user_id=${uid}`);
+  await page.getByRole('button', { name: /排行榜.*当日盈利/ }).click();
+  const panel = page.getByRole('dialog', { name: '盈利排行榜' });
+  await expect(panel.getByText('牌友 · 055740')).toBeVisible();
+  for (const avatar of await panel.locator('.stats-ranking img').all()) {
+    await expect(avatar).toHaveAttribute('src', '/ui/player-avatar.svg');
+    await expect.poll(() => avatar.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  }
 });
 
 test('快速切换玩法时旧请求不能覆盖新结果，失败后可重试', async ({ page }) => {
@@ -56,8 +73,7 @@ test('快速切换玩法时旧请求不能覆盖新结果，失败后可重试',
     return route.fulfill({ json: { success: true, timezone: 'Asia/Shanghai', stats: { ...personal, rounds: game === 'blackjack' ? 99 : 12 } } });
   });
   await page.goto(`/?dev_user_id=${uid}`);
-  await page.getByRole('button', { name: '战绩与声音', exact: true }).click();
-  await page.getByRole('button', { name: '个人统计', exact: true }).click();
+  await page.getByRole('button', { name: '查看个人信息与统计', exact: true }).click();
   const panel = page.getByRole('dialog', { name: '个人统计', exact: true });
   await expect(panel.locator('.stats-metrics')).toBeVisible();
   await panel.getByRole('combobox', { name: '统计玩法' }).selectOption('texas');
@@ -78,8 +94,7 @@ test('568×320统计面板可滚动，关闭及筛选保持可触达', async ({ 
   await mockProfile(page);
   await page.route('**/api/tables/stats?**', route => route.fulfill({ json: { success: true, timezone: 'Asia/Shanghai', stats: personal } }));
   await page.goto(`/?dev_user_id=${uid}`);
-  await page.getByRole('button', { name: '战绩与声音', exact: true }).click();
-  await page.getByRole('button', { name: '个人统计', exact: true }).click();
+  await page.getByRole('button', { name: '查看个人信息与统计', exact: true }).click();
   const panel = page.getByRole('dialog', { name: '个人统计', exact: true });
   await expect(panel.locator('.stats-metrics')).toBeAttached();
   for (const control of await panel.locator('button,select').all()) {

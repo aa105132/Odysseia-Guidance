@@ -73,6 +73,8 @@ def api(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(ROOT))
     _load_module(monkeypatch, "multiplayer_service", WEB_DIR / "multiplayer_service.py")
     module = _load_module(monkeypatch, "tables_api_under_test", WEB_DIR / "app.py")
+    # ASGI 测试不得读取开发机凭据访问真实 Discord；资料回填测试单独提供模拟传输。
+    monkeypatch.setattr(module, "_resolve_discord_bot_token", lambda: "")
     clock = FakeClock()
     module.table_service = module._table_module.TableService(clock=clock)
     module.table_wallet = module._wallet_module.TableWallet(str(db_path))
