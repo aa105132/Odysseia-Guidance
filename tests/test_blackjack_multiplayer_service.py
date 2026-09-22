@@ -528,3 +528,43 @@ def test_human_timeout_poll_drives_bot_without_another_timeout(service):
         state = service.get_room_state(room_id)
     assert state["state"] == "finished"
     assert player_state(state, -1)["score"] == 17
+
+
+@pytest.mark.parametrize("hand,upcard,hit", [
+    (["Club10", "Heart6"], "Diamond6", False),
+    (["Club10", "Heart6"], "Diamond10", True),
+    (["ClubA", "Heart6"], "Diamond6", True),
+    (["ClubA", "Heart7"], "Diamond10", True),
+    (["ClubA", "Heart7"], "Diamond8", False),
+    (["Club10", "Heart7"], "DiamondA", False),
+    (["Club10", "Heart2"], "Diamond3", True),
+    (["Club10", "Heart2"], "Diamond4", False),
+    (["ClubA", "HeartA", "Spade6"], "Diamond9", True),
+    (["ClubA", "Heart9"], "DiamondA", False),
+])
+def test_companion_considers_soft_totals_and_dealer_upcard(hand, upcard, hit):
+    assert multiplayer._companion_should_hit(hand, upcard) is hit
+
+
+@pytest.mark.parametrize("hidden_card", ["Diamond10", "Diamond2"])
+def test_companion_stands_on_hard_sixteen_against_six_without_using_hole_card(service, hidden_card):
+    room_id = bot_room(service, include_guest=True)
+    start_with_cards(service, room_id, [
+        "Club6", hidden_card, "Heart10", "Spade8", "Club10", "Heart6",
+        "Heart9", "Spade9", "ClubK",
+    ])
+    state = service.stand(room_id, 10)
+    assert state["current_turn_user_id"] == "20"
+    assert player_state(state, -1)["hand"] == ["Club10", "Heart6"]
+    assert player_state(state, -1)["status"] == "stood"
+
+
+def test_companion_hits_soft_eighteen_against_ten(service):
+    room_id = bot_room(service, include_guest=True)
+    start_with_cards(service, room_id, [
+        "Club10", "Diamond7", "Heart10", "Spade8", "ClubA", "Heart7",
+        "Heart9", "Spade9", "Club2",
+    ])
+    state = service.stand(room_id, 10)
+    assert player_state(state, -1)["hand"] == ["ClubA", "Heart7", "Club2"]
+    assert player_state(state, -1)["score"] == 20

@@ -97,6 +97,48 @@ def evaluate_golden_hand(cards: list[str]) -> tuple[int, ...]:
     return (0, *ranks)
 
 
+def _sampled_texas_rank(cards: list[tuple[str, int]]) -> tuple[int, ...]:
+    """采样专用的五至七张牌评估，避免每次枚举 21 种五张组合。"""
+    counts = Counter(rank for _, rank in cards)
+    ranks = sorted(counts, reverse=True)
+    suits: dict[str, list[int]] = {}
+    for suit, rank in cards:
+        suits.setdefault(suit, []).append(rank)
+    flush = next((sorted(values, reverse=True) for values in suits.values() if len(values) >= 5), [])
+    if flush and (high := _straight_high(flush)):
+        return (8, high)
+    quads = [rank for rank in ranks if counts[rank] == 4]
+    if quads:
+        return (7, quads[0], next(rank for rank in ranks if rank != quads[0]))
+    trips = [rank for rank in ranks if counts[rank] >= 3]
+    pairs = [rank for rank in ranks if counts[rank] >= 2]
+    if trips and (other_pairs := [rank for rank in pairs if rank != trips[0]]):
+        return (6, trips[0], other_pairs[0])
+    if flush:
+        return (5, *flush[:5])
+    if high := _straight_high(ranks):
+        return (4, high)
+    if trips:
+        return (3, trips[0], *[rank for rank in ranks if rank != trips[0]][:2])
+    if len(pairs) >= 2:
+        return (2, *pairs[:2], next(rank for rank in ranks if rank not in pairs[:2]))
+    if pairs:
+        return (1, pairs[0], *[rank for rank in ranks if rank != pairs[0]][:3])
+    return (0, *ranks[:5])
+
+
+_STRATEGY_DECK = [(suit, rank) for suit in SUITS for rank in range(2, 15)]
+
+
+def _starting_hand_score(hand: list[tuple[str, int]]) -> float:
+    """仅用于对公开大额加注建立较紧的候选范围。"""
+    (suit_a, rank_a), (suit_b, rank_b) = hand
+    high, low = max(rank_a, rank_b), min(rank_a, rank_b)
+    if high == low:
+        return 1.0 + high / 14
+    return (high + low) / 28 + (0.12 if suit_a == suit_b else 0) - max(0, high - low - 1) * 0.035
+
+
 def _validate_player_ids(player_ids: list[str], minimum: int, maximum: int) -> list[str]:
     ids = [str(user_id) for user_id in player_ids]
     if not minimum <= len(ids) <= maximum:
@@ -153,6 +195,8 @@ class TexasHoldemGame:
         self.SMALL_BLIND = self.base_stake
         self.BIG_BLIND = self.base_stake * 2
         self.rng = random.Random(seed)
+        # 策略采样不消耗洗牌随机数，不能通过陪玩决策影响发牌。
+        self.strategy_rng = random.Random(f"texas-strategy:{seed}" if seed is not None else None)
         self.players = [PokerPlayer(user_id, stack=self.buy_in) for user_id in ids]
         self.deck = create_deck()
         self.rng.shuffle(self.deck)
@@ -409,20 +453,94 @@ class TexasHoldemGame:
             "settlement": {player.user_id: player.stack - self.buy_in for player in self.players} if self.finished else {},
         }
 
+    def _estimated_equity(self, player: PokerPlayer, opponents: list[PokerPlayer]) -> float:
+        """从自己的底牌和已发公共牌采样；对手的牌和牌堆都不参与计算。"""
+        hand = [card_parts(card) for card in player.hand]
+        board = [card_parts(card) for card in self.community_cards]
+        known = set(hand + board)
+        unseen = [card for card in _STRATEGY_DECK if card not in known]
+        score = 0.0
+        samples = 80 if not board else 64
+        for _ in range(samples):
+            remaining = list(unseen)
+            sampled_hands = []
+            for opponent in opponents:
+                # 已公开的大注意味着范围更强；评估候选时仍不能看未来公共牌。
+                pressure = (opponent.round_bet >= self.BIG_BLIND * 4) if not board else (
+                    opponent.round_bet >= max(self.BIG_BLIND * 2, self.pot * 0.25)
+                )
+                candidates = [self.strategy_rng.sample(remaining, 2) for _ in range(3 if pressure else 1)]
+                if board:
+                    candidate = max(candidates, key=lambda cards: _sampled_texas_rank(cards + board))
+                else:
+                    candidate = max(candidates, key=_starting_hand_score)
+                sampled_hands.append(candidate)
+                for card in candidate:
+                    remaining.remove(card)
+            runout = board + self.strategy_rng.sample(remaining, 5 - len(board))
+            own_rank = _sampled_texas_rank(hand + runout)
+            other_ranks = [_sampled_texas_rank(cards + runout) for cards in sampled_hands]
+            best_other = max(other_ranks)
+            if own_rank > best_other:
+                score += 1
+            elif own_rank == best_other:
+                score += 1 / (1 + other_ranks.count(own_rank))
+        return score / samples
+
     def suggest_action(self, user_id: str) -> dict:
         player = self._player(user_id)
         actions = self._legal_actions(player)
         if not actions:
             raise ValueError("当前没有可执行的操作")
-        # 只使用自己的底牌、公共牌及公开投入，不读取其他玩家底牌。
-        ranks = [card_parts(card)[1] for card in player.hand]
-        strength = evaluate_best_hand(player.hand + self.community_cards)[0] if self.community_cards else (1 if ranks[0] == ranks[1] else 0)
-        to_call = max(0, self.current_bet - player.round_bet)
-        if "raise" in actions and strength >= 2 and self.rng.random() < 0.2:
-            return {"action": "raise", "amount": min(player.round_bet + player.stack, self._minimum_raise_target())}
+        opponents = [other for other in self._active() if other.user_id != player.user_id]
+        equity = self._estimated_equity(player, opponents)
+        to_call = min(player.stack, max(0, self.current_bet - player.round_bet))
+        # 只能争夺自己能覆盖的底池，短筹码不能把其他人的边池算作跟注收益。
+        eligible_pot = sum(min(other.total_bet, player.total_bet + to_call) for other in self.players)
+        expected_calls = 0.0
+        if not self.community_cards and self.current_bet <= self.BIG_BLIND * 3 and to_call <= player.stack * 0.10:
+            # 翻前早位采样包含尚未行动的人，给他们的小额跟注留折扣，否则八人桌 AA 也会被赔率误判。
+            expected_calls = 0.55 * sum(
+                min(other.stack, max(0, self.current_bet - other.round_bet))
+                for other in opponents if other.user_id in self._pending
+            )
+        pot_odds = to_call / max(1, eligible_pot + to_call + expected_calls)
+        commitment = to_call / max(1, player.stack)
+        call_threshold = pot_odds + 0.035 + commitment * 0.075
+        if len(opponents) > 1 and self.community_cards:
+            call_threshold += 0.025
+        can_continue = not to_call or equity >= call_threshold
+
+        value_threshold = 0.64 if len(opponents) == 1 else (0.50 if len(opponents) == 2 else 0.40)
+        if not self.community_cards:
+            # 多人翻前的绝对胜率天然较低，仍应给 AA 等明显领先平均范围的牌取价值。
+            value_threshold = max(0.27, 0.62 - 0.075 * (len(opponents) - 1))
+        later_players = [other for other in opponents if not other.all_in and other.user_id in self._pending]
+        in_position = not later_players or (not self.community_cards and self._current_index == self.dealer_index)
+        roll = self.strategy_rng.random()
+        # 低频偷池只在对手尚未表现强度且有弃牌空间时出现，多人底池不乱诈唬。
+        bluff = (
+            not to_call and in_position and len(opponents) <= 2
+            and all(not other.all_in for other in opponents)
+            and equity < value_threshold and roll < 0.055
+        )
+        value_raise = can_continue and equity >= value_threshold and roll < 0.82
+        if "raise" in actions and (value_raise or bluff):
+            effective_max = min(
+                player.round_bet + player.stack,
+                max(other.round_bet + other.stack for other in opponents if not other.all_in),
+            )
+            fraction = 0.45 if bluff else (0.75 if equity > 0.8 else 0.55)
+            target = max(self._minimum_raise_target(), self.current_bet + round((self.pot + to_call) * fraction))
+            target = min(target, effective_max)
+            extra = target - player.round_bet
+            # 边缘牌不因最低加注过高而被迫推光；极强牌或低筹码才允许大额承诺。
+            affordable = extra <= player.stack * (0.18 if bluff else 0.38) or (not bluff and equity >= 0.80)
+            if target >= self._minimum_raise_target() and affordable:
+                return {"action": "raise", "amount": target}
         if "check" in actions:
             return {"action": "check"}
-        if "call" in actions and (strength >= 1 or to_call <= max(self.BIG_BLIND, player.stack // 5)):
+        if "call" in actions and can_continue:
             return {"action": "call"}
         return {"action": "fold"}
 
@@ -440,6 +558,7 @@ class GoldenFlowerGame:
         self.base_stake = _validate_base_stake(base_stake, self.buy_in)
         self.ANTE = self.base_stake
         self.rng = random.Random(seed)
+        self.strategy_rng = random.Random(f"golden-strategy:{seed}" if seed is not None else None)
         self.deck = create_deck()
         self.rng.shuffle(self.deck)
         self.players = [PokerPlayer(user_id, stack=self.buy_in) for user_id in ids]
@@ -605,12 +724,44 @@ class GoldenFlowerGame:
         if player.user_id != self.current_player_id or not actions:
             raise ValueError("当前没有可执行的操作")
         if "look" in actions:
+            # 暗牌阶段不能读取自己的手牌；只在首圈且底注很小时少量闷一手。
+            if (
+                "call" in actions and self.action_count < len(self.players)
+                and self._cost(player) <= min(self.ANTE * 2, player.stack // 30)
+                and self.strategy_rng.random() < 0.12
+            ):
+                return {"action": "call"}
             return {"action": "look"}
-        # 看牌后只评估自己的三张牌；挑选比牌目标不读取其暗牌。
-        strength = evaluate_golden_hand(player.hand)[0]
-        if "compare" in actions and (strength >= 1 or self.action_count >= len(self.players) * 2):
-            opponents = [candidate.user_id for candidate in self._active() if candidate.user_id != player.user_id]
-            return {"action": "compare", "target_id": self.rng.choice(opponents)}
-        if "call" in actions and self._cost(player) <= max(self.ANTE * 2, player.stack // 5):
+        opponents = [other for other in self._active() if other.user_id != player.user_id]
+        known = set(player.hand)
+        unseen = [card for card in create_deck() if card not in known]
+        own_rank = evaluate_golden_hand(player.hand)
+        # 对随机三张牌的胜率只是基线：持续跟注的明牌对手用更紧的范围估计。
+        wins = sum(own_rank > evaluate_golden_hand(self.strategy_rng.sample(unseen, 3)) for _ in range(192))
+        percentile = wins / 192
+        rounds = self.action_count / len(self.players)
+        equity = 1.0
+        for other in opponents:
+            tightness = min(0.45, (0.12 if other.seen else 0) + rounds * 0.035 + (0.12 if self.base_bet >= 4 * self.ANTE else 0))
+            equity *= max(0.0, (percentile - tightness) / (1 - tightness))
+        cost = self._cost(player)
+        compare_cost = cost * 2
+        roll = self.strategy_rng.random()
+        affordable_raise = compare_cost <= min(player.stack * 0.18, self.buy_in * 0.16)
+        bluff = (
+            len(opponents) <= 2 and 0.8 <= rounds <= 5 and self.base_bet <= self.ANTE * 4
+            and percentile < 0.65 and affordable_raise and roll < 0.075
+        )
+        value_raise = equity >= (0.72 if len(opponents) == 1 else 0.55) and roll < 0.62
+        if "raise" in actions and (bluff or (value_raise and (affordable_raise or equity > 0.94))):
+            return {"action": "raise", "amount": self.base_bet * 2}
+        # 高成本、后期或接近行动上限时主动比牌，避免强牌白白跟注耗尽筹码。
+        if "compare" in actions and (
+            equity > 0.58 and (rounds >= 2 or cost >= player.stack * 0.10 or roll < 0.24)
+        ):
+            targets = sorted(opponents, key=lambda other: (other.seen, other.total_bet))
+            return {"action": "compare", "target_id": targets[0].user_id}
+        required = cost / max(1, self.pot + cost) + 0.08 + min(0.16, cost / max(1, player.stack) * 0.4)
+        if "call" in actions and equity >= required and (percentile >= 0.45 or cost <= self.ANTE * 2):
             return {"action": "call"}
         return {"action": "fold"}

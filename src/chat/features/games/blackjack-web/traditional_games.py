@@ -300,10 +300,11 @@ class LandlordGame:
         self.message = ("地主获胜" if landlord_wins else "农民获胜") + ("，春天翻倍。" if spring else "。")
         self.message += f"每名农民理论结算 {stake} 灵石，地主理论结算 {stake * 2} 灵石；实际以钱包结算为准。"
 
-    def _candidates(self, user_id: str):
-        """按点数生成代表性组合；不读取对手暗牌。"""
+    @staticmethod
+    def _hand_candidates(hand: list[str]):
+        """按点数生成代表性组合；同点数的花色不影响斗地主决策。"""
         groups: dict[int, list[str]] = {}
-        for card in self.hands[user_id]:
+        for card in hand:
             groups.setdefault(poker_value(card), []).append(card)
         values = sorted(groups)
         candidates = []
@@ -344,7 +345,7 @@ class LandlordGame:
                                 candidates.append(core + [card for rank in chosen for card in groups[rank][:wing_width]])
         seen = set()
         for cards in candidates:
-            signature = tuple(sorted(cards))
+            signature = tuple(sorted(poker_value(card) for card in cards))
             if signature in seen:
                 continue
             seen.add(signature)
@@ -352,28 +353,184 @@ class LandlordGame:
                 pattern = classify_landlord_cards(cards)
             except ValueError:
                 continue
+            yield cards, pattern
+
+    def _candidates(self, user_id: str):
+        """仅使用自己的牌，筛选可以压过当前桌面牌型的动作。"""
+        for cards, pattern in self._hand_candidates(self.hands[user_id]):
             if self.last_pattern is None or landlord_beats(pattern, self.last_pattern):
                 yield cards, pattern
+
+    @staticmethod
+    def _hand_planner(hand: list[str], candidates):
+        """有界分解剩余手牌，兼顾连牌和带牌；预算耗尽使用合法分解上界。"""
+        hand_counts = Counter(poker_value(card) for card in hand)
+        original = tuple(hand_counts[rank] for rank in range(3, 18))
+        moves = []
+        for cards, _ in candidates:
+            counts = Counter(poker_value(card) for card in cards)
+            moves.append((len(cards), tuple((rank - 3, count) for rank, count in counts.items())))
+        moves.sort(key=lambda item: -item[0])
+        by_rank = [[move for move in moves if any(index == rank for index, _ in move[1])]
+                   for rank in range(15)]
+        cache = {tuple([0] * 15): 0}
+
+        def remainder(state, move):
+            if any(state[index] < count for index, count in move):
+                return None
+            result = list(state)
+            for index, count in move:
+                result[index] -= count
+            return tuple(result)
+
+        def greedy(state):
+            # 三种起点降低“最长顺子拆掉飞机”等单一贪心偏差。
+            if not any(state):
+                return 0
+            result = sum(state)
+            for skip in range(3):
+                remaining = state
+                turns = 0
+                ignored = skip
+                for _, move in moves:
+                    next_state = remainder(remaining, move)
+                    if next_state is None:
+                        continue
+                    if ignored:
+                        ignored -= 1
+                        continue
+                    while next_state is not None:
+                        turns += 1
+                        remaining = next_state
+                        next_state = remainder(remaining, move)
+                result = min(result, turns + sum(remaining))
+            return result
+
+        def estimate(state, budget=0):
+            if state in cache:
+                return cache[state]
+            best = greedy(state)
+            if best <= 2 or not budget:
+                return best
+            # 固定分支与节点预算；仅分解自己手牌，绝不枚举真实对手暗牌。
+            pending = [(state, 0)]
+            visited = {}
+            while pending and budget:
+                current, depth = pending.pop()
+                budget -= 1
+                if depth + 1 >= best:
+                    continue
+                anchor = next(index for index, count in enumerate(current) if count)
+                options = []
+                for size, move in by_rank[anchor]:
+                    next_state = remainder(current, move)
+                    if next_state is None:
+                        continue
+                    if not any(next_state):
+                        best = min(best, depth + 1)
+                        continue
+                    next_depth = depth + 1
+                    if visited.get(next_state, 100) <= next_depth:
+                        continue
+                    visited[next_state] = next_depth
+                    if next_depth + 1 < best:
+                        options.append((size, next_state, next_depth))
+                for _, next_state, next_depth in reversed(sorted(options, reverse=True)[:24]):
+                    pending.append((next_state, next_depth))
+            cache[state] = best
+            return best
+
+        return original, remainder, estimate
 
     def suggest_action(self, user_id: str) -> dict:
         user_id = str(user_id)
         if not self._legal_actions(user_id):
             raise ValueError("尚未轮到该玩家")
         if self.phase == "bidding":
-            strength = sum(poker_value(card) >= 15 for card in self.hands[user_id])
-            desired = 3 if strength >= 4 else 2 if strength >= 3 else 1
+            counts = Counter(poker_value(card) for card in self.hands[user_id])
+            strength = counts[17] * 3 + counts[16] * 2 + counts[15] * 1.5 + counts[14] * 0.4
+            strength += sum(count == 4 for count in counts.values()) * 3
+            if counts[16] and counts[17]:
+                strength += 2
+            # 高牌控制力和成型大牌共同决定叫分，弱牌允许不叫。
+            strength += sum(count >= 3 for rank, count in counts.items() if rank <= 14) * 0.4
+            desired = 3 if strength >= 7 else 2 if strength >= 4.5 else 1 if strength >= 2.5 else 0
             bid = desired if desired > self.highest_bid else 0
             return {"action": "bid", "bid": bid}
-        candidates = list(self._candidates(user_id))
+        all_candidates = list(self._hand_candidates(self.hands[user_id]))
+        candidates = [item for item in all_candidates
+                      if self.last_pattern is None or landlord_beats(item[1], self.last_pattern)]
         if not candidates:
             return {"action": "pass"}
-        # 农民不抢队友已出的普通牌；可直接出完则优先结束。
+        # 可直接出完优先结束，避免为了保留炸弹而错过已经到手的胜利。
         finishing = [item for item in candidates if len(item[0]) == len(self.hands[user_id])]
-        if (not finishing and self.last_play and user_id != self.landlord_id
-                and self.last_play["user_id"] != self.landlord_id):
-            return {"action": "pass"}
-        cards, _ = min(finishing or candidates, key=lambda item: (
-            item[1].kind in ("bomb", "rocket"), -len(item[0]), item[1].rank))
+        if finishing:
+            return {"action": "play", "cards": list(finishing[0][0])}
+
+        # 对手只读取公开剩余张数，队友协作也不能查看队友手牌内容。
+        enemies = [uid for uid in self.player_ids
+                   if uid != user_id and (user_id == self.landlord_id or uid == self.landlord_id)]
+        enemy_counts = [len(self.hands[uid]) for uid in enemies]
+        nearest_enemy = min(enemy_counts)
+        teammate = next((uid for uid in self.player_ids
+                         if uid != user_id and uid != self.landlord_id), None) if user_id != self.landlord_id else None
+        next_player = self.player_ids[(self.turn_index + 1) % 3]
+        teammate_leads = (self.last_play and user_id != self.landlord_id
+                          and self.last_play["user_id"] != self.landlord_id)
+        must_block = (self.last_pattern is not None and self.last_pattern.size in enemy_counts
+                      and self.last_pattern.kind in ("single", "pair"))
+        if teammate_leads:
+            # 通常让队友继续走；仅当地主马上可接走末张/末对时替队友拦截。
+            if not (next_player == self.landlord_id and must_block and self.last_pattern.rank < 14):
+                return {"action": "pass"}
+
+        if must_block:
+            normal = [item for item in candidates if item[1].kind not in ("bomb", "rocket")]
+            if normal:
+                cards, _ = max(normal, key=lambda item: item[1].rank)
+                return {"action": "play", "cards": list(cards)}
+            if not teammate_leads or self.last_pattern.rank < 14:
+                cards, _ = min(candidates, key=lambda item: (item[1].kind == "rocket", item[1].rank))
+                return {"action": "play", "cards": list(cards)}
+
+        original, remainder, estimate = self._hand_planner(self.hands[user_id], all_candidates)
+        hand_turns = estimate(original, budget=64)
+        ranked = []
+        for cards, pattern in candidates:
+            used = Counter(poker_value(card) for card in cards)
+            remaining = remainder(original, tuple((rank - 3, count) for rank, count in used.items()))
+            split_cost = sum(9 if original[rank - 3] == 4 else 1.0 if original[rank - 3] == 3 else 0.5
+                             for rank, count in used.items() if count < original[rank - 3])
+            if original[13] and original[14] and bool(used[16]) != bool(used[17]):
+                split_cost += 6
+            control_cost = sum(max(0, rank - 13) * count * 0.35 for rank, count in used.items())
+            bomb_cost = 5 if pattern.kind in ("bomb", "rocket") else 0
+            position_cost = 0
+            if self.last_play is None:
+                if pattern.kind == "single" and 1 in enemy_counts:
+                    position_cost += 12 + (17 - pattern.rank) * 1.5
+                if pattern.kind == "pair" and 2 in enemy_counts:
+                    position_cost += 8 + (15 - pattern.rank)
+                if teammate and next_player == teammate and nearest_enemy > 2:
+                    if len(self.hands[teammate]) == pattern.size and pattern.kind in ("single", "pair"):
+                        position_cost -= max(0, 16 - pattern.rank) * 0.7
+            cost = split_cost + control_cost + bomb_cost + position_cost + pattern.rank * 0.025 - len(cards) * 0.3
+            ranked.append([estimate(remaining) * 7 + cost, cards, pattern, remaining, cost, split_cost])
+        # 先做便宜排序，只对最有希望的 12 个动作增加固定深度预算。
+        ranked.sort(key=lambda item: item[0])
+        for item in ranked[:12]:
+            item[0] = estimate(item[3], budget=48) * 7 + item[4]
+        best = min(ranked, key=lambda item: item[0])
+        _, cards, pattern, remaining, _, split_cost = best
+        remaining_turns = estimate(remaining)
+        if self.last_play and nearest_enemy > 3:
+            # 不能因“有牌可压”拆炸弹、拆连牌或过早交掉最后的控制牌。
+            if (pattern.kind in ("bomb", "rocket") and remaining_turns > 1
+                    or split_cost >= 6
+                    or remaining_turns > hand_turns
+                    or remaining_turns >= hand_turns and split_cost >= 1.4
+                    or pattern.rank >= 15 and self.last_pattern.rank <= 12 and remaining_turns >= 3):
+                return {"action": "pass"}
         return {"action": "play", "cards": list(cards)}
 
 

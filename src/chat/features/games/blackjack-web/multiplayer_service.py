@@ -41,6 +41,26 @@ def _calculate_hand_score(hand: List[str]) -> int:
     return score
 
 
+def _companion_should_hit(hand: List[str], dealer_upcard: str) -> bool:
+    """陪玩按自己的软硬点数和荷官明牌决策；多人规则仅支持要牌与停牌。"""
+    score = _calculate_hand_score(hand)
+    if score >= 21:
+        return False
+    minimum = sum(1 if card.endswith("A") else _get_card_value(card) for card in hand)
+    soft = score != minimum
+    upcard = _get_card_value(dealer_upcard)
+    if soft:
+        # 软 17 仍可安全改善；软 18 遇到荷官强明牌时继续要牌。
+        return score <= 17 or (score == 18 and upcard >= 9)
+    if score >= 17:
+        return False
+    if score <= 11:
+        return True
+    if score == 12:
+        return upcard not in (4, 5, 6)
+    return upcard not in (2, 3, 4, 5, 6)
+
+
 @dataclass
 class MultiplayerPlayerState:
     user_id: int
@@ -610,12 +630,12 @@ class MultiplayerBlackjackService:
         return sum(p.payout_amount for p in room.players.values() if p.bet_amount > 0 and not p.is_bot)
 
     def _drive_bot_turns(self, room: MultiplayerRoom) -> None:
-        """月月只依据自己的手牌行动；到 17 点停牌，立即交回下一真人。"""
+        """月月按自身手牌与荷官明牌行动，然后立即交回下一真人。"""
         while room.state == "playing":
             player = room.players.get(self._current_turn_user_id(room))
             if not player or not player.is_bot:
                 return
-            while _calculate_hand_score(player.hand) < 17:
+            while _companion_should_hit(player.hand, room.dealer_hand[0]):
                 player.hand.append(room.deck.pop())
             if _calculate_hand_score(player.hand) > 21:
                 player.status = "bust"
