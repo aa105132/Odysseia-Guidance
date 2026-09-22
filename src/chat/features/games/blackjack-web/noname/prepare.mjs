@@ -26,6 +26,11 @@ await edit('noname/entry.js', text => text.replace('"/preload.js"', '"/noname/pr
 await edit('noname/init/browser.js', text => text.replace('fetch(`${route}${queryString}`, init)', 'fetch(`/noname${route}${queryString}`, init)'));
 await edit('noname/init/index.js', text => text.replace('await loadConfig();', 'await loadConfig();\n  await window.odysseiaConfigure?.({lib,game});'));
 await edit('noname/init/import.js', text => text.replace('async function importFunction(type, path) {', 'async function importFunction(type, path) {\n  path = "/noname" + path;'));
+await edit('mode/connect.js', text => {
+  const marker = '_status.connectDenied = createNode;';
+  if (!text.includes(marker)) throw new Error('自动联机入口补丁不匹配');
+  return text.replace(marker, marker + '\n      window.odysseiaConnect?.();');
+});
 await fs.copyFile(path.join(here, 'activity-bootstrap.js'), path.join(output, 'activity-bootstrap.js'));
 await fs.writeFile(path.join(output, 'preload.js'), 'export { default } from "./noname/init/browser.js";\n');
 // Node 联机进程只绑定回环地址，经鉴权网关转发，不开放原生大厅端口。

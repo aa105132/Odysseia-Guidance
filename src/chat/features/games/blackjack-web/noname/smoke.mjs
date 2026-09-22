@@ -10,33 +10,36 @@ try {
     (async () => {
       async function open() {
         // 每个页面使用独立上下文，模拟两名玩家而非共享存储的标签页。
-        const page = await browser.newPage({ viewport: { width: 844, height: 390 } });
+        const page = await browser.newPage({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
         page.on('dialog', dialog => dialog.dismiss());
         await page.goto(url.href);
         await page.getByRole('button', { name: '三国杀 无名杀 · 娱乐试玩' }).click();
         await page.getByRole('checkbox').check();
         await page.getByRole('button', { name: '好友联机', exact: true }).click();
         const frame = page.frameLocator('iframe');
-        await frame.getByText('连接', { exact: true }).click();
-        await frame.getByText('创建房间', { exact: true }).waitFor();
+        await page.getByRole('button', { name: '创建房间', exact: true }).waitFor();
         return { page, frame };
       }
       const host = await open();
-      await host.frame.getByText('创建房间', { exact: true }).click();
-      await host.frame.getByText('启', { exact: true }).filter({ visible: true }).first().click();
-      await host.frame.getByText('跳过向导', { exact: true }).click();
+      await host.page.getByRole('button', { name: '创建房间', exact: true }).click();
+      await expect(host.page.getByRole('heading', { name: '等候牌友' })).toBeVisible();
+      const code = (await host.page.getByRole('button', { name: /复制房间号/ }).innerText()).trim();
+      await expect(host.page.getByRole('button', { name: '开始游戏', exact: true })).toBeDisabled();
       const guest = await open();
-      await guest.frame.getByText(/等待中.*人数：1\/8/).click();
-      await expect(guest.frame.getByText('分享房间', { exact: true })).toBeVisible();
-      await host.frame.getByText('开始游戏', { exact: true }).click();
+      await expect(guest.page.getByRole('button', { name: '入座', exact: true })).toBeVisible();
+      await guest.page.getByRole('textbox', { name: '三国杀房间号' }).fill(code);
+      await guest.page.getByRole('button', { name: '加入房间', exact: true }).click();
+      await expect(guest.page.getByText('等待房主开局', { exact: true })).toBeVisible();
+      await host.page.screenshot({ path: 'tmp/noname-direct-room-waiting.png' });
+      await host.page.getByRole('button', { name: '开始游戏', exact: true }).click();
       // 主公和其他身份按顺序选将，机器人由上游自动补齐。
       for (let turn = 0; turn < 20; turn++) {
         for (const { frame } of [host, guest]) {
           const choices = frame.locator('.dialog .button.character').filter({ visible: true });
           if (await choices.count()) {
-            await choices.first().click();
+            await choices.first().tap();
             const confirm = frame.getByText('确定', { exact: true }).filter({ visible: true });
-            if (await confirm.count()) await confirm.last().click();
+            if (await confirm.count()) await confirm.last().tap();
           }
         }
         if (await host.frame.locator('#handcards1 .card').count() && await guest.frame.locator('#handcards1 .card').count()) break;
@@ -46,7 +49,21 @@ try {
         expect(await frame.locator('#handcards1 .card').count()).toBeGreaterThan(0);
         expect(await frame.locator('body').innerText()).not.toContain('?ticket=');
       }
-      console.log('通过：手机横屏、两客户端入房、选将、双方发牌、界面无票据泄露');
+      const config = await host.page.frames()[1].evaluate(async () => {
+        const { lib } = await import('/noname/noname.js');
+        return { characters: lib.configOL.characterPack, cards: lib.configOL.cardPack, mode: lib.configOL.identity_mode };
+      });
+      expect(config).toEqual({ characters: ['standard'], cards: ['standard'], mode: 'normal' });
+      await host.page.waitForTimeout(700);
+      await host.page.screenshot({ path: 'tmp/noname-direct-room-playing.png' });
+      await host.page.getByRole('button', { name: '返回大厅', exact: true }).click();
+      await expect(guest.page.getByRole('button', { name: '好友联机', exact: true })).toBeVisible();
+      await guest.page.getByRole('button', { name: '好友联机', exact: true }).click();
+      await guest.page.getByRole('button', { name: '创建房间', exact: true }).click();
+      await expect(guest.page.getByRole('heading', { name: '等候牌友' })).toBeVisible();
+      await guest.page.getByRole('button', { name: '离开房间', exact: true }).click();
+      await expect(guest.page.getByRole('button', { name: '好友联机', exact: true })).toBeVisible();
+      console.log('通过：手机横屏、直接开房、房号加入、房主开局、经典标准包、双方发牌');
     })(),
     new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('真实联机验收超过 60 秒')), 60000); }),
   ]);

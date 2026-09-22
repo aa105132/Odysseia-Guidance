@@ -40,4 +40,17 @@ test('隔离嵌入子游戏，只发昵称与按需票据，不传身份令牌',
   const received = await frame.evaluate(() => (window as any).received);
   expect(received[0]).toEqual({ type: 'noname-launch', username: '牌友', mode: 'online' });
   expect(calls.some(path => /\/(bet|start|ready|action)$/.test(path))).toBe(false);
+  await frame.evaluate(() => parent.postMessage({ type: 'noname-state', phase: 'lobby', roomId: '', host: false, players: [], capacity: 8 }, location.origin));
+  await expect(page.getByRole('button', { name: '创建房间', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '创建房间', exact: true }).click();
+  await expect.poll(() => frame.evaluate(() => (window as any).received.at(-1))).toMatchObject({ type: 'noname-command', action: 'create', preset: 'classic', capacity: 8 });
+  await frame.evaluate(() => parent.postMessage({ type: 'noname-state', phase: 'waiting', roomId: 'sample-room', host: true, players: ['牌友'], capacity: 8 }, location.origin));
+  await expect(page.getByRole('button', { name: '开始游戏', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '复制房间号 sample-room' })).toBeVisible();
+  await frame.evaluate(() => parent.postMessage({ type: 'noname-state', phase: 'waiting', roomId: 'sample-room', host: true, players: ['牌友', '朋友'], capacity: 8 }, location.origin));
+  await expect(page.getByRole('button', { name: '开始游戏', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '开始游戏', exact: true }).click();
+  await expect.poll(() => frame.evaluate(() => (window as any).received.at(-1))).toMatchObject({ action: 'start' });
+  await frame.evaluate(() => parent.postMessage({ type: 'noname-state', phase: 'playing', roomId: 'sample-room', host: true, players: [], capacity: 8 }, location.origin));
+  await expect(page.locator('iframe')).toBeVisible();
 });
