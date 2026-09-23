@@ -310,6 +310,7 @@ test('黑杰克玩法规则与月月陪玩开关', async ({ page }) => {
   await page.getByRole('button', { name: '移除月月陪玩', exact: true }).click();
   expect((await removeRequest).postDataJSON()).toEqual({ room_id: 'ABC123', include_yueyue: false });
   await expect(page.getByRole('button', { name: '添加月月陪玩', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '战绩与声音', exact: true }).click();
   await page.getByRole('button', { name: '玩法规则', exact: true }).click();
   await expect(rules).toBeVisible();
 });

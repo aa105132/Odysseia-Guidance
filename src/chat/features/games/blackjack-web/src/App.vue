@@ -1542,8 +1542,8 @@ onBeforeUnmount(() => {
             <span>{{ singleStateText }}</span>
           </div>
           <div class="toolbar-actions">
-            <GameTools v-if="profile" :profile="profile" :api-call="apiCall" game-type="blackjack" />
-            <button class="game-button" @click="blackjackRulesDialog?.showModal()">玩法规则</button>
+            <GameTools v-if="profile" :profile="profile" :api-call="apiCall" game-type="blackjack" rules-available @rules="blackjackRulesDialog?.showModal()" />
+            <button v-if="profile" class="game-button gold" aria-label="打开牌桌聊天" :aria-expanded="singleSocial?.chatOpen ?? false" aria-controls="game-social-chat" @click="singleSocial?.toggleChat()">聊天</button>
             <button class="game-button" :disabled="requestInFlight" @click="enterBlackjackModeSelect">返回</button>
             <button class="game-button" :disabled="requestInFlight || !canSingleOperate" @click="forfeitSingleGame">放弃</button>
           </div>
@@ -1673,10 +1673,10 @@ onBeforeUnmount(() => {
             <span>{{ roomStateText }} · 房主：{{ hostDisplayName }}</span>
           </div>
           <div class="toolbar-actions">
-            <button class="game-button" @click="blackjackRulesDialog?.showModal()">玩法规则</button>
+            <button v-if="profile" class="game-button gold" aria-label="打开牌桌聊天" :aria-expanded="blackjackSocial?.chatOpen ?? false" aria-controls="game-social-chat" @click="blackjackSocial?.toggleChat()">聊天</button>
             <CopyRoomCode :room-id="roomState.room_id" />
             <button class="game-button" @click="openBlackjackSettings">房间设置</button>
-            <GameTools v-if="profile" :profile="profile" :api-call="apiCall" game-type="blackjack" />
+            <GameTools v-if="profile" :profile="profile" :api-call="apiCall" game-type="blackjack" rules-available @rules="blackjackRulesDialog?.showModal()" />
             <button class="game-button" :disabled="requestInFlight" @click="refreshRoom(true)">同步</button>
             <button class="game-button" :disabled="requestInFlight" @click="recruitTeammates">招募队友</button>
             <button class="game-button" :disabled="requestInFlight" @click="leaveRoom">离开房间</button>
@@ -1766,8 +1766,8 @@ onBeforeUnmount(() => {
       <GameStatsPanel v-if="lobbyStatsPanel && profile" :profile="profile" :api-call="apiCall" :initial-tab="lobbyStatsPanel" @close="lobbyStatsPanel = null" />
       <div v-if="statusMessage" class="status-message" role="status">{{ statusMessage }}</div>
       <div v-if="errorMessage" class="error-message" role="alert">{{ errorMessage }}</div>
-      <GameSocial v-if="viewMode === 'single' && profile" ref="singleSocial" scope-type="single" :room-id="`single-${viewerUserId}`" :viewer-id="viewerUserId" :members="singleSocialMembers" :api-call="apiCall" />
-      <GameSocial v-if="viewMode === 'table' && roomState && profile" ref="blackjackSocial" scope-type="blackjack" :room-id="roomState.room_id" :viewer-id="viewerUserId" :members="roomState.players" :api-call="apiCall" />
+      <GameSocial v-if="viewMode === 'single' && profile" ref="singleSocial" scope-type="single" hide-toggle :room-id="`single-${viewerUserId}`" :viewer-id="viewerUserId" :members="singleSocialMembers" :api-call="apiCall" />
+      <GameSocial v-if="viewMode === 'table' && roomState && profile" ref="blackjackSocial" scope-type="blackjack" hide-toggle :room-id="roomState.room_id" :viewer-id="viewerUserId" :members="roomState.players" :api-call="apiCall" />
       <dialog ref="blackjackSettingsDialog" class="blackjack-rules" aria-labelledby="blackjack-settings-title">
         <div class="rules-heading"><h2 id="blackjack-settings-title">21点房间设置</h2><button class="game-button" @click="blackjackSettingsDialog?.close()">关闭</button></div>
         <form @submit.prevent="saveBlackjackSettings"><label class="blackjack-time-setting">操作等待时长（秒）<input v-model.number="blackjackTurnSeconds" aria-label="21点操作等待时长" type="number" min="15" max="300" step="1" :disabled="!isHost || !isRoomBettingStage || requestInFlight"></label><p>可设 15–300 秒。房主可在等待或结算完成后修改，修改后真人需重新准备。</p><p v-if="errorMessage" role="alert">{{ errorMessage }}</p><button v-if="isHost" class="game-button gold" :disabled="!isRoomBettingStage || requestInFlight || !validBlackjackTurnSeconds">保存设置</button></form>

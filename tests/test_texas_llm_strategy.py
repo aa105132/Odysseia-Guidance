@@ -157,8 +157,9 @@ def test_paid_fold_and_malformed_result_validation_stay_strict():
     assert llm.GameLLMClient._validate_action({"action": "raise", "amount": 10}, context) is None
 
 
-def test_other_games_are_not_given_texas_strategy():
+def test_golden_flower_has_its_own_strategy_without_texas_assumptions():
     game = poker.GoldenFlowerGame(["甲", "乙"], seed=17)
     context = llm.build_table_context("golden_flower", game, game.current_player_id)
-    assert "strategy" not in context
+    assert "hand_analysis" not in context["strategy"]
+    assert not context["strategy"]["equity_reference"]["available"]
     assert llm.GameLLMClient._validate_action({"action": "fold"}, context) == {"action": "fold"}

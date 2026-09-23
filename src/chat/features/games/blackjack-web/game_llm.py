@@ -6,17 +6,20 @@ import json
 import logging
 import math
 import os
+import re
+from importlib import import_module
 from urllib.parse import urlsplit
 
 import httpx
 
 
 log = logging.getLogger(__name__)
+poker_strategy = import_module("src.chat.features.games.blackjack-web.poker_llm_strategy")
 MAX_RESPONSE_BYTES = 32768
 MAX_CONTENT_BYTES = 4096
 RULES = {
-    "texas": "无限注德州扑克。用自己的两张底牌和五张公共牌组成最佳五张牌。raise.amount 是本轮加注到的总额而非追加金额，遵守 min_raise_to/max_raise_to；河牌仍有最后一轮下注。目标是长期筹码收益，不是等到确定能赢才入池。隐藏牌代表未知范围，不能一律假定对手有强牌。结合公开行动历史、位置、下注尺度和底池赔率；小额下注不应让全部中等牌和有赔率的听牌自动弃牌，大注与多人底池应收紧。能免费check时不fold；强牌要主动取价值。未加注底池的后位可选择性加注偷盲；单挑或双对手示弱时，可用有阻断牌或后续改善空间的弱牌小额诈唬，有同花/顺子听牌可半诈唬，而非一律check或fold。河牌错失听牌也要结合阻断牌与之前行动判断是否诈唬。不要对全下者诈唬、多人无差别诈唬，或为提高诈唬次数强行跟大注/推光。strategy 提供的是公开信息算出的辅助数据，不是真实胜率；先判断诈唬是否合理，再用mix_percentile做混合决策：有利的小额偷池机会约低于25时执行，优质听牌半诈唬约低于40时执行，其余正常过牌/跟注；价值下注不受这两个阈值限制。",
-    "golden_flower": "炸金花。未看牌不能获知自己的手牌；look 看牌，call 跟注，raise.amount 为基础注总额，看牌者实际付双倍；compare.target_id 必须来自 compare_targets。考虑轮次、成本和适度诈唬。",
+    "texas": "无限注德州扑克。用自己的两张底牌和五张公共牌组成最佳五张牌，底牌从发下就已知，没有look动作，不必等翻牌才判断。raise.amount是本轮加注到的总额而非追加金额，遵守min_raise_to/max_raise_to；河牌仍有最后一轮下注。目标是长期筹码收益，而非只拿对子或确定能赢才入池。AK/AQ等高牌、同花连张、合适位置的同花A也有价值；小对子面对危险牌面不等于强牌。先看hand_analysis、位置、有效筹码和public_action_history，再比较跟注成本与范围胜率。equity_reference只是假设范围的摊牌参考：随机范围与较强范围对照均不是真实对手牌力；多人翻前仍未行动者可能弃牌，不要把全桌摊牌胜率直接套当前底池赔率导致好牌也弃。对手全下只说明下注尺度，不代表坚果；根据筹码深度、赔率和历史判断，用优势牌或足够赔率的牌接有利全下，不能一见all_in就fold，也不能无条件接。能免费check时不fold；强牌主动价值下注。后位未加注底池选择性偷盲；单挑或双对手示弱时，用阻断牌、合理下注故事或改善空间小额诈唬，同花/顺子听牌可以半诈唬；河牌错失听牌也可按阻断牌与历史诈唬，不能弱牌一律check/fold。对手已经全下时不靠诈唬逼退该玩家；多人强行动、大成本或缺乏合理范围时收紧。先判断机会合理且成本可控，再用mix_percentile混合：小额偷池约低于25执行，优质听牌半诈唬约低于40执行；其余正常过牌/跟注，价值下注不受阈值限制。",
+    "golden_flower": "炸金花。未看牌不能知道自己的三张牌；look免费且不结束回合，但以后跟加注成本加倍，并非必做动作。低成本首圈可以闷跟或选择性闷加，不要见别人加注就条件反射look。raise.amount是新的基础注总额，暗牌实际付amount、看牌者付2*amount；compare费用另见compare_cost，target_id必须来自compare_targets，同牌力时发起方负。看牌后不需要暴露真实强弱：弱牌可在有利单挑、小成本且公开行动支持时继续跟注或加注诈唬，强牌可价值加注或诱导，不能形成'看牌-弱牌就丢、对子才加'的固定模式。对手未看牌意味着其不知道自己牌力，盲加注本身不是强牌证据；已看牌也不等于必强，结合看牌后的公开行动、成本与人数判断。strategy提供随机三张牌范围的抽样基线，单张尤其高单张也可能领先盲打范围；不能把对手全部假定成对子以上。结合随机范围胜率、比牌费用和继续下注风险；单挑有利时可主动compare，尤其对反复抬价的盲打者，避免一直付跟注或无条件被吓退。多人compare只淘汰一人，不是立即收池；调用示例金额仍须在合法范围。先判断诈唬是否可信且便宜，再用mix_percentile约低于25时混合小额诈唬；强牌价值下注不受阈值限制，不为诈唬强行耗光筹码。",
     "landlord": "斗地主，地主对两名农民。bid 为 0 至 3 的叫分，play.cards 是要出的手牌；同类牌型比大小，炸弹和王炸例外。农民应配合队友，考虑剩余张数、保留炸弹和拆牌成本。",
     "guandan": "掼蛋，四人对家组队，双副108张。level是全桌当前级牌，红桃级牌可配非王；单对三、三带二、五张顺子、三连对、两连三、同点炸弹、同花顺和四王。同花顺大于五炸小于六炸。出完后若无人压，队友接风。优先从play_options选合法cards，保留#0/#1区分两副，必要时手动组合；配合队友，不压队友无必要的小牌，注意对手剩余张数。只输出action和cards，规则引擎会选最弱可压的通配解释。",
     "mahjong": "四人麻将。discard.tile 打牌，chow.tiles 选择 chow_options 中的顺子，kong.tile 来自 kong_options，pung 碰，win 胡，pass 跳过响应。只依据自身手牌、公开副露和弃牌。",
@@ -56,7 +59,7 @@ user_ids card automatic fallback""".split())
 
 
 def _texas_strategy(state: dict, you: str) -> dict:
-    """只从匿名公开局面计算成本和位置，不估算或读取对手暗牌。"""
+    """只从匿名可见局面计算成本、位置与假设范围参考，不读取对手暗牌。"""
     players = state.get("players", [])
     own = next(player for player in players if player["user_id"] == you)
     opponents = [player for player in players if player["user_id"] != you and not player.get("folded")]
@@ -93,6 +96,7 @@ def _texas_strategy(state: dict, you: str) -> dict:
         "unraised_preflop": state.get("phase") == "preflop" and state.get("current_bet", 0) <= state.get("big_blind", 0),
         "raise_to_examples": samples,
         "mix_percentile": int.from_bytes(hashlib.sha256(public_key.encode("utf-8")).digest()[:4], "big") % 100,
+        "hand_analysis": poker_strategy.texas_hand_analysis(state, you),
     }
 
 
@@ -157,6 +161,8 @@ def _context(game_type: str, public_state: dict, user_id: str) -> dict:
     }
     if game_type == "texas":
         context["strategy"] = _texas_strategy(state, context["you"])
+    elif game_type == "golden_flower":
+        context["strategy"] = poker_strategy.golden_flower_strategy(state, context["you"])
     return context
 
 
@@ -208,6 +214,15 @@ def _unique_object(pairs):
             raise ValueError("模型返回重复字段")
         result[key] = value
     return result
+
+
+def _parse_action_content(content: str):
+    """只兼容包住整个动作的单个 JSON 代码块，额外文字和重复字段仍拒绝。"""
+    text = content.strip()
+    fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", text, re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1)
+    return json.loads(text, object_pairs_hook=_unique_object)
 
 
 class GameLLMClient:
@@ -311,7 +326,7 @@ class GameLLMClient:
                     answer = message["content"]
                     if not isinstance(answer, str) or len(answer.encode("utf-8")) > MAX_CONTENT_BYTES:
                         raise ValueError("模型动作内容不合法")
-                    action = self._validate_action(json.loads(answer, object_pairs_hook=_unique_object), context)
+                    action = self._validate_action(_parse_action_content(answer), context)
                     if action is None:
                         log.info("游戏模型回退：动作格式无效")
                     return action
