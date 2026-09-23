@@ -42,6 +42,23 @@ async def complete(runner):
 
 
 @pytest.mark.asyncio
+async def test_runner_uses_full_configured_model_timeout(monkeypatch):
+    client = Client({"action": "call"})
+    client.timeout_seconds = 60
+    client.release.set()
+    runner = module.GameBotRunner(client, blackjack.MultiplayerBlackjackService())
+    captured = []
+    original_wait_for = asyncio.wait_for
+    async def wait_for(awaitable, timeout):
+        captured.append(timeout)
+        return await original_wait_for(awaitable, timeout)
+    monkeypatch.setattr(module.asyncio, "wait_for", wait_for)
+    assert await runner._choose({}) == {"action": "call"}
+    assert captured == [60.5]
+    await runner.close()
+
+
+@pytest.mark.asyncio
 async def test_polling_deduplicates_and_does_not_block_other_room():
     client = Client({"action": "call"})
     runner = module.GameBotRunner(client, blackjack.MultiplayerBlackjackService())

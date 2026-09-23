@@ -44,7 +44,8 @@ def context():
 
 
 @pytest.mark.parametrize("key,value", [
-    ("GAME_LLM_TIMEOUT_SECONDS", "nan"), ("GAME_LLM_TIMEOUT_SECONDS", "31"),
+    ("GAME_LLM_TIMEOUT_SECONDS", "nan"), ("GAME_LLM_TIMEOUT_SECONDS", "301"),
+    ("GAME_LLM_TIMEOUT_SECONDS", "1"),
     ("GAME_LLM_MAX_CONCURRENCY", "0"), ("GAME_LLM_MAX_CONCURRENCY", "2.1"),
     ("GAME_LLM_BASE_URL", "file:///secret"), ("GAME_LLM_BASE_URL", "https://key@model.test/v1"),
     ("GAME_LLM_BASE_URL", "https://model.test/v1?key=secret"), ("GAME_LLM_MODEL", ""),
@@ -58,6 +59,18 @@ def test_invalid_configuration_disables_client(monkeypatch, key, value):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("seconds", [2, 60, 300])
+async def test_configured_timeout_reaches_http_transport(monkeypatch, seconds):
+    monkeypatch.setenv("GAME_LLM_TIMEOUT_SECONDS", str(seconds))
+    def handler(request):
+        assert request.extensions["timeout"]["read"] == seconds
+        return response({"action": "stand"})
+    model = client(monkeypatch, handler)
+    assert model.enabled and model.timeout_seconds == seconds
+    assert await model.choose_action(context()) == {"action": "stand"}
+
+
+@pytest.mark.asyncio
 async def test_default_disabled_and_valid_chat_completion(monkeypatch):
     assert module.GameLLMClient().enabled is False
     assert await module.GameLLMClient().choose_action(context()) is None
@@ -68,7 +81,7 @@ async def test_default_disabled_and_valid_chat_completion(monkeypatch):
         assert request.headers["Authorization"] == "Bearer test-secret-never-log"
         return response({"action": "stand"})
     model = client(monkeypatch, handler)
-    assert model.enabled and model.timeout_seconds == 12
+    assert model.enabled and model.timeout_seconds == 60
     assert await model.choose_action(context()) == {"action": "stand"}
     assert received[0]["model"] == "打牌LLM"
     assert "max_tokens" not in received[0]

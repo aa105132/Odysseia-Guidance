@@ -7,7 +7,7 @@ Discord 小活动前端与 FastAPI 服务。现有 21 点已补齐窗口适配�
 服务端 `.env` 可配置 `GAME_LLM_ENABLED=true`、`GAME_LLM_BASE_URL`、
 `GAME_LLM_API_KEY`、`GAME_LLM_MODEL`。默认模型名为“打牌LLM”；接口兼容
 OpenAI Chat Completions。密钥仅在服务端使用，不进入前端或牌局响应。
-`GAME_LLM_TIMEOUT_SECONDS` 默认12秒，`GAME_LLM_MAX_CONCURRENCY` 默认4。
+`GAME_LLM_TIMEOUT_SECONDS` 默认60秒，支持2～300秒（包含排队与请求时间）；与房主设置的真人操作时长独立。`GAME_LLM_MAX_CONCURRENCY` 默认4。
 修改配置后在牌局结清时重启游戏服务生效；缺少配置时继续使用原算法。
 
 覆盖德州、炸金花、斗地主、两种麻将及多人21点的月月和陪玩座位。

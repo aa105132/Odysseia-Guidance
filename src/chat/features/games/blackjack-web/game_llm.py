@@ -168,13 +168,13 @@ def _unique_object(pairs):
 class GameLLMClient:
     def __init__(self):
         self.enabled = False
-        self.timeout_seconds = 12.0
+        self.timeout_seconds = 60.0
         self.model = os.getenv("GAME_LLM_MODEL", "打牌LLM").strip()
         self._api_key = os.getenv("GAME_LLM_API_KEY", "").strip()
         self._url = ""
         self._semaphore = asyncio.Semaphore(4)
         try:
-            self.timeout_seconds = _bounded_setting("GAME_LLM_TIMEOUT_SECONDS", 12, 2, 30)
+            self.timeout_seconds = _bounded_setting("GAME_LLM_TIMEOUT_SECONDS", 60, 2, 300)
             concurrency = _bounded_setting("GAME_LLM_MAX_CONCURRENCY", 4, 1, 32, integer=True)
             self._semaphore = asyncio.Semaphore(concurrency)
             base = os.getenv("GAME_LLM_BASE_URL", "").strip().rstrip("/")
