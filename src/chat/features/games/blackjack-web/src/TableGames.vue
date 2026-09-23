@@ -902,7 +902,9 @@ onBeforeUnmount(() => {
           <div v-else-if="myHand.length" class="tg-my-hand" :style="{ '--hand-count': myHand.length }" aria-label="我的手牌">
             <button v-for="(item, index) in renderedHand" :key="item.id" class="tg-card tg-hand-card" :data-card-id="item.id" :data-card-dealing="dealingCards[item.id] !== undefined" :style="{ '--deal-delay': `${dealingCards[item.id] ?? 0}ms` }" :class="{ selected: selectedIndices.includes(index), 'tg-tile': isMahjong, 'tg-missing-tile': isSichuan && item.card[0] === myGame?.missing_suit }" :aria-label="`${cardLabel(item.card)}，第${index + 1}张`" :aria-pressed="selectedIndices.includes(index)" :disabled="busy || game.finished || !(currentGameType === 'landlord' || isMahjong) || myGame?.has_won || game.phase === 'dingque'" @click="toggleCard(index)"><img v-if="cardImage(item.card)" :src="cardImage(item.card)!" :alt="cardLabel(item.card)" @animationend="finishHandAnimation(item.id)"><span v-else>{{ cardLabel(item.card) }}</span></button>
           </div>
-          <p v-else-if="currentGameType === 'golden_flower' && !game.finished" class="tg-muted">🂠 🂠 🂠 · 点击「看牌」查看你的三张牌</p>
+          <div v-else-if="currentGameType === 'golden_flower' && !game.finished && myGame?.hand_count" class="tg-my-hand" :style="{ '--hand-count': 3 }" aria-label="我的手牌" title="点击「看牌」查看你的三张牌">
+            <span v-for="index in 3" :key="index" class="tg-card tg-hand-card"><img src="/table-assets/card-back.png" :alt="`未看牌，第${index}张`"></span>
+          </div>
         </div>
 
         <p class="tg-wallet-strip">余额 {{ profile.balance }} 灵石 · 底分 {{ room.base_stake }} · 单局最多输 {{ room.loss_limit }}<span v-if="room.settlement_status === 'settled'"> · 本局已结算</span><span v-else-if="room.settlement_status === 'reserved'"> · {{ isSichuan ? '整局结束统一结算' : '本局已冻结' }}</span></p>

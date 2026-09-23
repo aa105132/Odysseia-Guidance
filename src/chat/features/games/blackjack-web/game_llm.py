@@ -15,6 +15,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 poker_strategy = import_module("src.chat.features.games.blackjack-web.poker_llm_strategy")
+jev = import_module("src.chat.features.games.blackjack-web.game_jev")
 MAX_RESPONSE_BYTES = 32768
 MAX_CONTENT_BYTES = 4096
 RULES = {
@@ -230,6 +231,7 @@ class GameLLMClient:
         self.enabled = False
         self.timeout_seconds = 60.0
         self.model = os.getenv("GAME_LLM_MODEL", "打牌LLM").strip()
+        self._use_evaluations = self.model.lower() in {"jev", "typesafe-ai/jev"}
         self._api_key = os.getenv("GAME_LLM_API_KEY", "").strip()
         self._url = ""
         self._semaphore = asyncio.Semaphore(4)
@@ -241,7 +243,7 @@ class GameLLMClient:
             parsed = urlsplit(base)
             valid_url = parsed.scheme in ("http", "https") and bool(parsed.hostname) and not (
                 parsed.username or parsed.password or parsed.query or parsed.fragment)
-            self._url = base + "/chat/completions"
+            self._url = base + ("/evaluations" if self._use_evaluations else "/chat/completions")
             self.enabled = os.getenv("GAME_LLM_ENABLED", "false").lower().strip() == "true" and bool(
                 valid_url and self._api_key and self.model and
                 not any(ord(char) < 32 or ord(char) == 127 for char in self._api_key))
@@ -300,16 +302,21 @@ class GameLLMClient:
                             raise ValueError("独立会话消息不合法")
                     if sum(len(item["content"].encode("utf-8")) for item in history) > 262144:
                         raise ValueError("独立会话过大")
-                    payload = {
-                        "model": self.model, "stream": False,
-                        "messages": [
-                            {"role": "system", "content": "你是牌局策略助手。仅根据给出的可见信息和规则，选择legal_actions中的一个动作。输出一个JSON对象，包含action及action_fields列出的必需字段；不能包含解释、代码块或其他字段。不得猜测已隐藏的具体牌。"},
-                            *history, current_message,
-                        ],
-                    }
-                    if context.get("game_type") == "guandan":
-                        # 掼蛋组合由规则引擎校验，降低模型穷举耗时，不限制输出令牌数。
-                        payload["reasoning_effort"] = "low"
+                    candidates = None
+                    if self._use_evaluations:
+                        candidates = jev.build_action_candidates(context)
+                        payload = jev.evaluation_payload(self.model, json.loads(current_message["content"]), history, candidates)
+                    else:
+                        payload = {
+                            "model": self.model, "stream": False,
+                            "messages": [
+                                {"role": "system", "content": "你是牌局策略助手。仅根据给出的可见信息和规则，选择legal_actions中的一个动作。输出一个JSON对象，包含action及action_fields列出的必需字段；不能包含解释、代码块或其他字段。不得猜测已隐藏的具体牌。"},
+                                *history, current_message,
+                            ],
+                        }
+                        if context.get("game_type") == "guandan":
+                            # 掼蛋组合由规则引擎校验，降低模型穷举耗时，不限制输出令牌数。
+                            payload["reasoning_effort"] = "low"
                     async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
                         async with client.stream("POST", self._url, json=payload,
                                                  headers={"Authorization": f"Bearer {self._api_key}"}) as response:
@@ -320,6 +327,8 @@ class GameLLMClient:
                                 if len(body) > MAX_RESPONSE_BYTES:
                                     raise ValueError("模型响应过大")
                     data = json.loads(body, object_pairs_hook=_unique_object)
+                    if candidates is not None:
+                        return self._validate_action(jev.selected_action(data, candidates), context)
                     message = data["choices"][0]["message"]
                     if "tool_calls" in message or "function_call" in message:
                         raise ValueError("不接受工具调用")
