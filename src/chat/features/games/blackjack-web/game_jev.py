@@ -130,16 +130,98 @@ def build_action_candidates(context: dict) -> dict[str, dict]:
     return candidates
 
 
+def _landlord_decision(current: dict, candidates: dict) -> tuple[dict, dict]:
+    """把当前敌我关系与自己的拆牌结果显式化，不读取任何其他座位暗牌。"""
+    state, you = current["state"], current["you"]
+    players = state["players"]
+    own = next(player for player in players if player["user_id"] == you)
+    hand = own["hand"]
+    landlord = state.get("landlord_id")
+    teammate = next((p["user_id"] for p in players if p["user_id"] not in (you, landlord)), None) if landlord and you != landlord else None
+    opponents = [p for p in players if p["user_id"] != you and (you == landlord or p["user_id"] == landlord)]
+    previous = state.get("last_play")
+    leader = previous.get("user_id") if previous else None
+    relation = "teammate" if leader == teammate and teammate else "opponent" if leader else "free_lead"
+    own_index = next(index for index, player in enumerate(players) if player["user_id"] == you)
+    next_seat = players[(own_index + 1) % len(players)]["user_id"]
+    patterns = {name: traditional.classify_landlord_cards(action["cards"])
+                for name, action in candidates.items() if action["action"] == "play"}
+    strongest = {}
+    for pattern in patterns.values():
+        strongest[pattern.kind] = max(strongest.get(pattern.kind, 0), pattern.rank)
+    if any(action["action"] in ("play", "pass") for action in candidates.values()):
+        original, remainder, estimate = traditional.LandlordGame._hand_planner(
+            hand, list(traditional.LandlordGame._hand_candidates(hand)))
+    counts = Counter(traditional.poker_value(card) for card in hand)
+    descriptions = {}
+    for name, action in candidates.items():
+        facts = {"action": action}
+        if action["action"] == "play":
+            cards = action["cards"]
+            pattern = patterns[name]
+            used = Counter(traditional.poker_value(card) for card in cards)
+            rest = list(hand)
+            for card in cards:
+                rest.remove(card)
+            remaining = remainder(original, tuple((rank - 3, count) for rank, count in used.items()))
+            facts.update(pattern=pattern.to_dict(), remaining_hand=rest, remaining_count=len(rest),
+                         wins_immediately=not rest, estimated_remaining_plays=estimate(remaining, budget=32),
+                         splits_same_rank_groups=[{"rank": rank, "before": counts[rank], "used": count}
+                                                  for rank, count in used.items() if count < counts[rank]])
+            if pattern.kind in ("single", "pair"):
+                facts["strongest_same_shape_reply"] = pattern.rank == strongest[pattern.kind]
+        elif action["action"] == "pass":
+            facts.update(remaining_hand=list(hand), remaining_count=len(hand), wins_immediately=False,
+                         estimated_remaining_plays=estimate(original, budget=32),
+                         meaning="本回合不出任何牌，把压制机会交给下家；不会减少自己的手牌，也不能直接取得出牌权。")
+        descriptions[name] = json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
+    focus = {
+        "phase": state["phase"], "you": you, "your_role": own.get("role"), "teammate": teammate,
+        "opponents": [{"seat": p["user_id"], "remaining_count": p["hand_count"]} for p in opponents],
+        "next_seat": next_seat, "current_last_play": previous, "last_play_relation": relation,
+        "enemy_last_single": any(p["hand_count"] == 1 for p in opponents),
+        "enemy_last_two_cards": any(p["hand_count"] == 2 for p in opponents),
+        "your_current_hand": list(hand),
+        "rank_order": "3<4<5<6<7<8<9<10<J<Q<K<A<2<小王<大王，花色不影响大小",
+        "planning_note": "estimated_remaining_plays仅是自己剩余牌的有界拆分估算，不保证能取得对应次数的出牌权，不是假定对手手牌。",
+    }
+    return focus, descriptions
+
+
 def evaluation_payload(model: str, current: dict, history: list, candidates: dict) -> dict:
+    instructions = "你是当前座位的牌局策略助手。阅读current中的规则、自己的可见牌、公开行动历史及这个座位的conversation。比较以下具体合法动作，以长期收益和当前游戏队伍目标选择一个最佳动作。候选是可选方案，不是算法推荐；不把未知牌当强牌，不因全下就机械弃牌，也不为激进而无条件跟注。不要猜测隐藏的具体牌，按局面选择合理的价值下注、诈唬或防守。返回所选choice及全部候选的概率。"
+    state = {"current": current, "conversation": history}
+    criteria = {name: json.dumps(action, ensure_ascii=False, separators=(",", ":"))
+                for name, action in candidates.items()}
+    if current["game_type"] == "landlord":
+        focus, criteria = _landlord_decision(current, candidates)
+        # 历史保留完整且独立，但最新事实置后，避免把旧王炸/旧pass当作本回合。
+        state = {"conversation": history, "current": current, "current_decision": focus}
+        instructions = (
+            "你正在打斗地主，唯一目标是让自己所在阵营先出完牌。只决定current_decision这个最新时刻的动作。"
+            "conversation是按时间从旧到新的已结束回合，供记牌与分析；旧手牌、旧last_play和旧回答不能覆盖current。"
+            "尤其过去对王炸不出，不代表现在对小单牌也不出。完整公开出牌记录在current.public_action_history。"
+            "当前要压的是current_decision.current_last_play，null表示自由领出。单牌可以用任何更大的单张接，允许拆对子。"
+            "候选附有准确牌型、实际剩余手牌、是否立即走完和拆牌估算。先看能否合法直接走完，再比较本方先走的路径。"
+            "上手是opponent时，用低拆牌成本的牌压住小牌、减少自己的散张并争取出牌权；"
+            "如果接掉散张后只剩一组完整对子，不要为保留较小散张而无故pass或拆掉该对子。"
+            "对手报单/报双时优先防止其下次直接走完，结合出牌顺序考虑用大单/大对拦截，而非机械放行。"
+            "enemy_last_single为真且当前跟单时，优先考虑strongest_same_shape_reply的大单封堵；只有明确有更好的本方走完路线时才放小。"
+            "上手是teammate且没有紧急拦截需要时通常pass，让队友继续走，不浪费大牌压自己人；"
+            "自己能直接走完、队友需要接力或下家地主即将走完时可以压队友。"
+            "确实接不了或接牌会严重破坏炸弹、连牌且无紧迫威胁时可以pass。不要一律有牌必接，也不要一律遇单就pass。"
+            "不猜测对手暗牌；出牌权并不保证，综合敌我剩余张数、公开历史和候选效果选最佳动作。"
+            "bidding阶段身份尚未确定，只根据自己高牌控制力、炸弹和成型牌组选bid分数，不把任何座位提前认作队友。"
+            "返回所选choice及全部候选的概率。"
+        )
     return {
         "model": model,
-        "state": {"current": current, "conversation": history},
+        "state": state,
         "questions": {
             "action": {
                 "type": "choice",
-                "instructions": "你是当前座位的牌局策略助手。阅读current中的规则、自己的可见牌、公开行动历史及这个座位的conversation。比较以下具体合法动作，以长期收益和当前游戏队伍目标选择一个最佳动作。候选是可选方案，不是算法推荐；不把未知牌当强牌，不因全下就机械弃牌，也不为激进而无条件跟注。不要猜测隐藏的具体牌，按局面选择合理的价值下注、诈唬或防守。返回所选choice及全部候选的概率。",
-                "criteria": {name: json.dumps(action, ensure_ascii=False, separators=(",", ":"))
-                             for name, action in candidates.items()},
+                "instructions": instructions,
+                "criteria": criteria,
             },
         },
     }
