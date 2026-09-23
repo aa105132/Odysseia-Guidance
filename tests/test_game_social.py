@@ -19,7 +19,8 @@ def setup():
 def test_catalog_fixed_and_returned_data_not_mutable(setup):
     service, _ = setup
     catalog = service.catalog()
-    assert len(catalog["chat"]) == 10
+    assert len(catalog["chat"]) == 11
+    assert {"id": "mm_or_gg", "text": "你是MM还是GG？"} in catalog["chat"]
     assert {item["id"] for item in catalog["interaction"]} == {"tea", "flower", "incense"}
     catalog["chat"][0]["text"] = "篡改"
     assert service.catalog()["chat"][0]["text"] != "篡改"

@@ -27,7 +27,7 @@ onMounted(() => panel.value?.showModal());
 </script>
 
 <template>
-  <Teleport to="body"><dialog ref="panel" class="room-invite" aria-labelledby="room-invite-title" @cancel.prevent="emit('close')">
+  <Teleport to="#app"><dialog ref="panel" class="room-invite" aria-labelledby="room-invite-title" @cancel.prevent="emit('close')">
     <header><div><small>好友相聚 · 同桌开局</small><h2 id="room-invite-title">招募队友</h2></div><button class="game-button quiet" @click="emit('close')">关闭</button></header>
     <div class="invite-code"><span>房间号</span><strong>{{ room.room_id }}</strong><button class="game-button" @click="copy(room.room_id, '房间号')">复制房间号</button></div>
     <p class="invite-summary">{{ roomInviteDescription(room) }}</p>

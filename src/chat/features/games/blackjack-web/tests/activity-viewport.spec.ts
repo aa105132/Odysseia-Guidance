@@ -9,7 +9,8 @@ async function setup(page: Page, roomLaunch = false) {
     if (path === '/api/config') return route.fulfill({ json: { discord_client_id: '1463798242981445672' } });
     if (path === '/api/token') return route.fulfill({ json: { access_token: 'mock' } });
     if (path === '/api/profile') return route.fulfill({ json: { success: true, user_id: uid, username: '手机牌友', avatar_url: '/character/normal.webp', balance: 1000 } });
-    if (path === '/api/tables/leaderboard') return route.fulfill({ json: { entries: [], self: null, legacy_rounds: 0, timezone: 'Asia/Shanghai' } });
+    if (path === '/api/tables/leaderboard') return route.fulfill({ json: { entries: Array.from({ length: 100 }, (_, i) => ({ rank: i + 1, user_id: `player${i}`, username: `排行榜牌友${i}`, avatar_url: '/character/normal.webp', net_profit: 100000 - i, rounds: 10 })), self: null, legacy_rounds: 0, timezone: 'Asia/Shanghai' } });
+    if (path === '/api/rooms') return route.fulfill({ json: { success: true, rooms: Array.from({ length: 10 }, (_, i) => ({ room_id: `ROOM${i}`, game_type: 'texas', host_username: `牌友${i}`, player_count: 3, max_players: 8, state: 'waiting', can_join: true, room_tier: 'beginner', base_stake: 1, entry_min: 100, loss_limit: 100, is_member: false })), total: 10 } });
     if (path.startsWith('/api/game-social')) return route.fulfill({ json: { cursor: 0, events: [] } });
     return route.fulfill({ json: { success: true, room, viewer_balance: 1000 } });
   });
@@ -40,8 +41,16 @@ for (const [width, height] of [[390, 844], [844, 390], [568, 320]]) {
     await board.click();
     const ranking = page.getByRole('dialog', { name: '盈利排行榜' });
     await insideContent(ranking, width!, height!);
+    await expect(ranking.locator('.stats-ranking li')).toHaveCount(100);
+    expect(await ranking.locator('.stats-content').evaluate(element => element.clientHeight), '正文至少完整容纳一行排行').toBeGreaterThanOrEqual(100);
     await ranking.getByRole('button', { name: '总计盈利', exact: true }).click();
     await ranking.getByRole('button', { name: '关闭统计面板' }).click();
+    await page.getByRole('button', { name: '房间列表', exact: true }).click();
+    const directory = page.getByRole('dialog', { name: '房间列表', exact: true });
+    await insideContent(directory, width!, height!);
+    await expect(directory.locator('.directory-room')).toHaveCount(10);
+    expect(await directory.locator('.directory-list').evaluate(element => element.clientHeight), '正文至少完整容纳一张房间卡').toBeGreaterThanOrEqual(100);
+    await directory.getByRole('button', { name: '关闭房间列表' }).click();
     await page.getByRole('button', { name: '声音设置', exact: true }).click();
     const sound = page.getByRole('dialog', { name: '声音设置' });
     await insideContent(sound, width!, height!);

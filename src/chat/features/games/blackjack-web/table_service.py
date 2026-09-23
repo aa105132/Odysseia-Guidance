@@ -113,8 +113,24 @@ class TableService:
         self.bot_action_provider = None
         self.action_observer = None
 
-    def _observe_action(self, room: GameTable, user_id: str, action: str, payload: dict):
+    @staticmethod
+    def _poker_action_snapshot(room: GameTable, user_id: str) -> dict | None:
+        """行动前只截取公开街道和筹码，避免换街清零或派彩污染下注历史。"""
+        if room.game_type not in {"texas", "golden_flower"}:
+            return None
+        try:
+            state = room.engine.public_state(str(user_id))
+            actor = next(player for player in state["players"] if str(player["user_id"]) == str(user_id))
+            return {**{key: state[key] for key in ("phase", "pot")},
+                    **{key: actor[key] for key in ("stack", "total_bet", "round_bet") if key in actor}}
+        except Exception as exc:
+            log.warning("扑克行动前公开快照失败，原因类型=%s", type(exc).__name__)
+            return None
+
+    def _observe_action(self, room: GameTable, user_id: str, action: str, payload: dict,
+                        poker_before: dict | None = None):
         """成功执行后记录公开动作；记忆失败不能中断牌局和资金流程。"""
+        poker_action = None
         try:
             state = room.engine.public_state(str(user_id))
             deal_count = int(state.get("deal_count", 0))
@@ -135,8 +151,15 @@ class TableService:
                     event.update({key: played[key] for key in ("combo", "kind", "name") if key in played})
                 if room.game_type in {"texas", "golden_flower"}:
                     actor = next(player for player in state["players"] if str(player["user_id"]) == str(user_id))
-                    event.update({key: state[key] for key in ("phase", "pot") if key in state})
-                    event.update({key: actor[key] for key in ("stack", "total_bet", "round_bet") if key in actor})
+                    poker_action = {**{key: state[key] for key in ("phase", "pot") if key in state},
+                                    **{key: actor[key] for key in ("stack", "total_bet", "round_bet") if key in actor}}
+                    if poker_before is not None:
+                        paid = actor["total_bet"] - poker_before["total_bet"]
+                        poker_action.update(phase=poker_before["phase"], pot=poker_before["pot"] + paid,
+                                            stack=poker_before["stack"] - paid)
+                        if "round_bet" in poker_before:
+                            poker_action["round_bet"] = poker_before["round_bet"] + paid
+                    event.update(poker_action)
                 if len(room.public_action_history) < 1000:
                     room.public_action_history.append(event)
                 else:
@@ -146,7 +169,7 @@ class TableService:
         if self.action_observer is None:
             return
         try:
-            self.action_observer(room, user_id, action, dict(payload))
+            self.action_observer(room, user_id, action, dict(payload), poker_action)
         except Exception as exc:
             log.warning("桌游动作记忆更新失败，原因类型=%s", type(exc).__name__)
 
@@ -203,8 +226,9 @@ class TableService:
         else:
             suggestion = dict(room.engine.suggest_action(user_id))
         action = suggestion.pop("action")
+        poker_before = self._poker_action_snapshot(room, user_id)
         room.engine.act(user_id, action, **suggestion)
-        self._observe_action(room, user_id, action, suggestion)
+        self._observe_action(room, user_id, action, suggestion, poker_before)
         self._changed(room)
         self._set_turn(room)
 
@@ -537,8 +561,9 @@ class TableService:
         if room.state != "playing":
             raise ValueError("当前没有正在进行的牌局")
         previous_turn = room.engine.current_player_id
+        poker_before = self._poker_action_snapshot(room, str(user_id))
         room.engine.act(str(user_id), action, **payload)
-        self._observe_action(room, str(user_id), action, payload)
+        self._observe_action(room, str(user_id), action, payload, poker_before)
         self._changed(room)
         if room.engine.finished or room.engine.current_player_id != previous_turn or action != "look":
             self._set_turn(room)

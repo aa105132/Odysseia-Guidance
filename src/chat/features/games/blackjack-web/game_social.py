@@ -10,6 +10,7 @@ import time
 CHAT_CATALOG = {
     "hurry": "快点吧，我等到花儿都谢了", "nice": "你的牌打得也太好了",
     "hello": "很高兴和你一起玩", "thanks": "谢谢你", "well_played": "这局打得漂亮",
+    "mm_or_gg": "你是MM还是GG？",
     "partner": "队友，我们配合一下", "let_me": "这轮让我来", "thinking": "别急，我想想怎么打",
     "good_luck": "祝大家好运", "again": "再来一局吧",
 }

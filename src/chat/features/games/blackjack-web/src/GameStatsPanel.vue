@@ -188,7 +188,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; detailSequence++; panel.val
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport to="#app">
     <dialog ref="panel" class="game-stats-panel" aria-labelledby="game-stats-title" @cancel.prevent="emit('close')">
       <header class="stats-heading"><div><small>月月茶楼 · 牌局记事</small><h2 id="game-stats-title">{{ tab === 'stats' ? '个人统计' : tab === 'transactions' ? '灵石明细' : '盈利排行榜' }}</h2></div><button class="game-button quiet" aria-label="关闭统计面板" @click="emit('close')">关闭</button></header>
       <div class="stats-controls">

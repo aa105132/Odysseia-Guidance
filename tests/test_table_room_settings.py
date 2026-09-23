@@ -46,7 +46,7 @@ def test_llm_ready_action_is_applied_once_and_observed_before_revision_update():
     suggestion = {"action": "bid", "bid": 3}
     service.bot_action_provider = lambda received, current: suggestion
     observed = []
-    service.action_observer = lambda received, current, action, payload: observed.append(
+    service.action_observer = lambda received, current, action, payload, poker_action: observed.append(
         (current, action, payload, received.engine.landlord_id, received.revision))
     now[0] = room.turn_deadline
     service.get(room.room_id, "1")
@@ -63,7 +63,7 @@ def test_human_timeout_uses_algorithm_without_requesting_llm():
     service.bot_action_provider = lambda *_: pytest.fail("真人超时不应请求月月模型")
     expected = room.engine.suggest_action("1")
     observed = []
-    service.action_observer = lambda *event: observed.append(event[1:])
+    service.action_observer = lambda *event: observed.append(event[1:4])
     now[0] = room.turn_deadline
     service.get(room.room_id, "1")
     assert observed == [("1", expected["action"], {key: value for key, value in expected.items() if key != "action"})]
@@ -72,7 +72,7 @@ def test_human_timeout_uses_algorithm_without_requesting_llm():
 def test_successful_human_action_is_observed_but_invalid_action_is_not():
     service, room, _ = started_landlord_room()
     observed = []
-    service.action_observer = lambda *event: observed.append(event[1:])
+    service.action_observer = lambda *event: observed.append(event[1:4])
     with pytest.raises(ValueError):
         service.action(room.room_id, "1", "bid", bid=4)
     assert observed == []
@@ -103,7 +103,7 @@ def test_unconfigured_bot_provider_keeps_algorithmic_play():
     uid = room.engine.current_player_id
     expected = room.engine.suggest_action(uid)
     observed = []
-    service.action_observer = lambda *event: observed.append(event[1:])
+    service.action_observer = lambda *event: observed.append(event[1:4])
     now[0] = room.turn_deadline
     service.get(room.room_id, "1")
     assert observed == [(uid, expected["action"], {key: value for key, value in expected.items() if key != "action"})]

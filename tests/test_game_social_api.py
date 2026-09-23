@@ -29,10 +29,11 @@ def test_table_and_blackjack_social_incremental_broadcast_permissions_and_limits
                 first, second, outsider = clients.values()
                 initial = await second.get(url)
                 assert initial.status_code == 200 and initial.json()["events"] == []
-                assert len(initial.json()["catalog"]["chat"]) == 10
-                sent = await first.post(url, json={"kind": "chat", "item_id": "hello"})
+                assert len(initial.json()["catalog"]["chat"]) == 11
+                sent = await first.post(url, json={"kind": "chat", "item_id": "mm_or_gg"})
                 assert sent.status_code == 200
                 event = sent.json()["event"]
+                assert event["text"] == "你是MM还是GG？"
                 assert event["user_id"] == USER_IDS[0]
                 assert (await second.get(url)).json()["events"] == []
                 delta = (await second.get(url, params={"after": initial.json()["cursor"]})).json()

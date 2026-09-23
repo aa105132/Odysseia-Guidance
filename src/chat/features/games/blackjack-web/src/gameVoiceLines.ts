@@ -4,6 +4,7 @@ export const quickVoiceLines = [
   { id: 'hurry', text: '快点吧，我等到花儿都谢了' },
   { id: 'nice', text: '你的牌打得也太好了' },
   { id: 'hello', text: '很高兴和你一起玩' },
+  { id: 'mm_or_gg', text: '你是MM还是GG？' },
   { id: 'thanks', text: '谢谢你' },
   { id: 'well_played', text: '这局打得漂亮' },
   { id: 'partner', text: '队友，我们配合一下' },

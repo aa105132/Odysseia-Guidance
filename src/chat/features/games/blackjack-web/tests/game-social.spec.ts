@@ -111,6 +111,8 @@ test('568×320互动菜单不溢出并可滚动使用全部快捷句', async ({ 
   await page.setViewportSize({ width: 568, height: 320 });
   await mountSocial(page, true);
   await page.getByRole('button', { name: '打开牌桌聊天' }).click();
+  await page.getByRole('button', { name: '你是MM还是GG？', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__audioCalls.some((call: any) => call.kind === 'play' && call.src.endsWith('/mm_or_gg.mp3')))).toBe(true);
   await page.getByRole('button', { name: '再来一局吧', exact: true }).scrollIntoViewIfNeeded();
   await expect(page.getByRole('button', { name: '再来一局吧', exact: true })).toBeInViewport({ ratio: 1 });
   await page.evaluate(() => (window as any).__socialTest.instance.value.openInteraction('two'));

@@ -1,6 +1,7 @@
 """游戏模型建议：仅传公开牌局信息，异常时交还本地算法处理。"""
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -14,7 +15,7 @@ log = logging.getLogger(__name__)
 MAX_RESPONSE_BYTES = 32768
 MAX_CONTENT_BYTES = 4096
 RULES = {
-    "texas": "无限注德州扑克。用自己的两张底牌和五张公共牌组成最佳五张牌；结合多人胜率、底池赔率和筹码决策。raise.amount 是本轮加注到的总额，遵守 min_raise_to/max_raise_to；河牌仍有最后一轮下注。",
+    "texas": "无限注德州扑克。用自己的两张底牌和五张公共牌组成最佳五张牌。raise.amount 是本轮加注到的总额而非追加金额，遵守 min_raise_to/max_raise_to；河牌仍有最后一轮下注。目标是长期筹码收益，不是等到确定能赢才入池。隐藏牌代表未知范围，不能一律假定对手有强牌。结合公开行动历史、位置、下注尺度和底池赔率；小额下注不应让全部中等牌和有赔率的听牌自动弃牌，大注与多人底池应收紧。能免费check时不fold；强牌要主动取价值。未加注底池的后位可选择性加注偷盲；单挑或双对手示弱时，可用有阻断牌或后续改善空间的弱牌小额诈唬，有同花/顺子听牌可半诈唬，而非一律check或fold。河牌错失听牌也要结合阻断牌与之前行动判断是否诈唬。不要对全下者诈唬、多人无差别诈唬，或为提高诈唬次数强行跟大注/推光。strategy 提供的是公开信息算出的辅助数据，不是真实胜率；先判断诈唬是否合理，再用mix_percentile做混合决策：有利的小额偷池机会约低于25时执行，优质听牌半诈唬约低于40时执行，其余正常过牌/跟注；价值下注不受这两个阈值限制。",
     "golden_flower": "炸金花。未看牌不能获知自己的手牌；look 看牌，call 跟注，raise.amount 为基础注总额，看牌者实际付双倍；compare.target_id 必须来自 compare_targets。考虑轮次、成本和适度诈唬。",
     "landlord": "斗地主，地主对两名农民。bid 为 0 至 3 的叫分，play.cards 是要出的手牌；同类牌型比大小，炸弹和王炸例外。农民应配合队友，考虑剩余张数、保留炸弹和拆牌成本。",
     "guandan": "掼蛋，四人对家组队，双副108张。level是全桌当前级牌，红桃级牌可配非王；单对三、三带二、五张顺子、三连对、两连三、同点炸弹、同花顺和四王。同花顺大于五炸小于六炸。出完后若无人压，队友接风。优先从play_options选合法cards，保留#0/#1区分两副，必要时手动组合；配合队友，不压队友无必要的小牌，注意对手剩余张数。只输出action和cards，规则引擎会选最弱可压的通配解释。",
@@ -52,6 +53,47 @@ winning_tile max_fan missing_suit_options reaction_kind after_kong source_id fro
 is_current_turn dealer level team_levels team finished_rank finish_order tribute_events
 match_finished match_winner_team level_gain play_options combo to_user_id target_id
 user_ids card automatic fallback""".split())
+
+
+def _texas_strategy(state: dict, you: str) -> dict:
+    """只从匿名公开局面计算成本和位置，不估算或读取对手暗牌。"""
+    players = state.get("players", [])
+    own = next(player for player in players if player["user_id"] == you)
+    opponents = [player for player in players if player["user_id"] != you and not player.get("folded")]
+    can_fold = [player for player in opponents if not player.get("all_in") and player.get("stack", 0) > 0]
+    call_cost = state.get("call_amount", 0)
+    stack = own.get("stack", 0)
+    # 短筹码仅能争夺自己跟注后覆盖的主池部分，不能拿旁人的边池诱导跟注。
+    covered_bet = own.get("total_bet", 0) + call_cost
+    contestable_pot = sum(min(player.get("total_bet", 0), covered_bet) for player in players)
+    button = next((index for index, player in enumerate(players) if player.get("is_dealer")), 0)
+    start = button
+    if state.get("phase") == "preflop":
+        start = next((index for index, player in enumerate(players) if player.get("is_big_blind")), button)
+    # 这是该街的常规相对位置；不能据此声称前面的人已经过牌。
+    order = [players[(start + offset) % len(players)] for offset in range(1, len(players) + 1)]
+    order = [player["user_id"] for player in order if not player.get("folded") and not player.get("all_in")]
+    samples = []
+    if "raise" in state.get("legal_actions", []):
+        for fraction in (0.33, 0.67):
+            target = min(state["max_raise_to"], max(state["min_raise_to"],
+                         state.get("current_bet", 0) + round((contestable_pot + call_cost) * fraction)))
+            if target <= state.get("current_bet", 0) or any(row["raise_to"] == target for row in samples):
+                continue
+            cost = target - own.get("round_bet", 0)
+            samples.append({"raise_to": target, "additional_cost": cost,
+                            "stack_fraction": round(cost / max(1, stack), 3)})
+    public_key = json.dumps({"you": you, "state": state}, sort_keys=True, ensure_ascii=False)
+    return {
+        "active_opponents": len(opponents), "opponents_can_fold": len(can_fold),
+        "call_cost": call_cost, "contestable_pot_before_call": contestable_pot,
+        "call_break_even_equity": round(call_cost / max(1, contestable_pot + call_cost), 4),
+        "call_stack_fraction": round(call_cost / max(1, stack), 4),
+        "street_position_order": order, "last_position": bool(order and order[-1] == you),
+        "unraised_preflop": state.get("phase") == "preflop" and state.get("current_bet", 0) <= state.get("big_blind", 0),
+        "raise_to_examples": samples,
+        "mix_percentile": int.from_bytes(hashlib.sha256(public_key.encode("utf-8")).digest()[:4], "big") % 100,
+    }
 
 
 def _context(game_type: str, public_state: dict, user_id: str) -> dict:
@@ -108,11 +150,14 @@ def _context(game_type: str, public_state: dict, user_id: str) -> dict:
             hand = dealer.get("hand", [])
             dealer["hand"] = hand[:1] + (["Hidden"] if len(hand) > 1 else [])
             dealer.pop("score", None)
-    return {
+    context = {
         "game_type": game_type, "rules": RULES[game_type], "you": seats[str(user_id)],
         "state": state, "action_fields": {action: list(ACTION_FIELDS[action]) for action in GAME_ACTIONS[game_type]},
         "_seat_ids": {seat: uid for uid, seat in seats.items()},
     }
+    if game_type == "texas":
+        context["strategy"] = _texas_strategy(state, context["you"])
+    return context
 
 
 def build_table_context(game_type: str, engine, user_id: str) -> dict:
@@ -217,6 +262,9 @@ class GameLLMClient:
             if not isinstance(target, str) or target not in context.get("_seat_ids", {}):
                 return None
             output["target_id"] = context["_seat_ids"][target]
+        if context.get("game_type") == "texas" and action == "fold" and "check" in context.get("state", {}).get("legal_actions", []):
+            # 免费过牌无需追加筹码，避免模型在无人下注时白送底池；不替它强制付费跟注。
+            output = {"action": "check"}
         return output
 
     async def choose_action(self, context: dict) -> dict | None:

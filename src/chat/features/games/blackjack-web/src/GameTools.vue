@@ -3,8 +3,8 @@ import { ref } from 'vue';
 import GameStatsPanel from './GameStatsPanel.vue';
 import { soundEnabled, musicEnabled, setSoundEnabled, setMusicEnabled } from './gameAudio';
 type ApiCall = <T>(endpoint: string, method: 'GET' | 'POST', body?: unknown, retries?: number) => Promise<T>;
-defineProps<{ profile: { user_id: string; username: string; avatar_url: string; balance: number }; apiCall: ApiCall; gameType?: string; audioOnly?: boolean; chatAvailable?: boolean }>();
-const emit = defineEmits<{ chat: [] }>();
+defineProps<{ profile: { user_id: string; username: string; avatar_url: string; balance: number }; apiCall: ApiCall; gameType?: string; audioOnly?: boolean; rulesAvailable?: boolean }>();
+const emit = defineEmits<{ rules: [] }>();
 const menu = ref<HTMLDialogElement | null>(null);
 const panel = ref<'stats' | 'leaderboard' | null>(null);
 function openPanel(tab: 'stats' | 'leaderboard') { menu.value?.close(); panel.value = tab; }
@@ -12,11 +12,11 @@ function openPanel(tab: 'stats' | 'leaderboard') { menu.value?.close(); panel.va
 
 <template>
   <button class="game-button quiet" :aria-label="audioOnly ? '声音设置' : '战绩与声音'" @click="menu?.showModal()">{{ audioOnly ? '声音' : '更多' }}</button>
-  <Teleport to="body">
+  <Teleport to="#app">
     <dialog ref="menu" class="game-tools-dialog" :aria-label="audioOnly ? '声音设置' : '战绩与声音'">
       <header><h2>{{ audioOnly ? '声音设置' : '战绩与声音' }}</h2><button class="game-button quiet" @click="menu?.close()">关闭</button></header>
       <div v-if="!audioOnly" class="tools-links"><button class="game-button" @click="openPanel('stats')">个人统计</button><button class="game-button" @click="openPanel('leaderboard')">盈利排行</button></div>
-      <div v-if="chatAvailable" class="tools-links"><button class="game-button" aria-label="打开牌桌聊天" @click="menu?.close(); emit('chat')">牌桌聊天</button></div>
+      <div v-if="rulesAvailable" class="tools-links"><button class="game-button" @click="menu?.close(); emit('rules')">玩法规则</button></div>
       <label data-audio-toggle><span>游戏音效与语音<small>点击、加注、快捷聊天与月月语音</small></span><input type="checkbox" :checked="soundEnabled" @change="setSoundEnabled(($event.target as HTMLInputElement).checked)"></label>
       <label data-audio-toggle><span>背景音乐<small>大厅随机音乐 · 对局与胜负音乐</small></span><input type="checkbox" :checked="musicEnabled" @change="setMusicEnabled(($event.target as HTMLInputElement).checked)"></label>
       <p>设置保存在当前设备，切到后台自动静音。</p>

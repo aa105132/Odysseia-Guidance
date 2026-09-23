@@ -65,7 +65,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; clearInterval(timer); panel
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport to="#app">
     <dialog ref="panel" class="room-directory" aria-labelledby="room-directory-title" @cancel.prevent="close">
       <header class="directory-heading"><GameIcon name="room" /><div><small>月月茶楼 · 寻桌入席</small><h2 id="room-directory-title">房间列表</h2></div><button class="game-button quiet" :disabled="Boolean(joining)" aria-label="关闭房间列表" @click="close">关闭</button></header>
       <div class="directory-filters"><label>玩法 <select v-model="filter" :disabled="loading || Boolean(joining) || restrictGame" aria-label="筛选房间玩法"><option value="">全部玩法</option><option v-for="(name, id) in names" :key="id" :value="id">{{ name }}</option></select></label><label class="directory-open"><input v-model="onlyOpen" type="checkbox">只看可加入</label><button class="game-button" :disabled="loading || Boolean(joining)" @click="refresh">{{ loading ? '刷新中…' : '刷新' }}</button></div>

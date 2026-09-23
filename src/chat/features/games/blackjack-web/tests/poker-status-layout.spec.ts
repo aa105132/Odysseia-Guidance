@@ -57,6 +57,15 @@ for (const [gameType, playerCount] of [['texas', 2], ['texas', 8], ['golden_flow
         }).map(b => `${a.className} / ${b.className}`));
       });
       expect(overlaps, `${viewport.width}×${viewport.height}不能发生碰撞`).toEqual([]);
+      const playerOverlaps = await page.evaluate(() => {
+        const players = [...document.querySelectorAll('.tg-player')];
+        const buttons = [...document.querySelectorAll('.tg-control-panel button')];
+        return players.flatMap(player => buttons.filter(button => {
+          const a = player.getBoundingClientRect(), b = button.getBoundingClientRect();
+          return Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
+        }).map(button => `${player.textContent} / ${button.textContent}`));
+      });
+      expect(playerOverlaps, `${viewport.width}×${viewport.height}行动按钮不能盖住玩家信息`).toEqual([]);
       for (const control of await page.locator('.tg-toolbar button,.tg-control-panel button,.tg-control-panel input,.tg-control-panel select').all()) {
         await expect(control).toBeInViewport({ ratio: 1 });
         const bounds = (await control.boundingBox())!;

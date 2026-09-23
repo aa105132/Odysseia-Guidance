@@ -122,7 +122,6 @@ test('手机整体旋转后声音弹窗与头像互动可点击，快捷语音�
   await interaction.getByRole('button', { name: '倒茶', exact: true }).click();
   await expect(page.locator('.social-notices')).toContainText('倒茶');
   await expect(page.locator('.game-social-animation')).toHaveCount(0);
-  await page.getByRole('button', { name: '战绩与声音', exact: true }).click();
   await page.getByRole('button', { name: '打开牌桌聊天', exact: true }).click();
   await page.getByRole('button', { name: '谢谢你', exact: true }).click();
   await expect.poll(() => trackCount(page, '/thanks.mp3')).toBe(1);
@@ -175,6 +174,10 @@ test('真实21点真人与陪玩语音只播一次，胜负插曲与新局场景
   await page.getByRole('button', { name: '21点 立即游玩' }).click();
   await page.getByRole('button', { name: '多人对战 最多3人同桌' }).click();
   await page.getByRole('button', { name: '创建房间', exact: true }).click();
+  await page.getByRole('button', { name: '打开牌桌聊天', exact: true }).click();
+  await page.getByRole('button', { name: '你是MM还是GG？', exact: true }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole('button', { name: '你是MM还是GG？', exact: true })).toBeInViewport({ ratio: 1 });
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '要牌', exact: true }).click();
   await expect.poll(() => trackCount(page, '/hit.mp3')).toBe(1);
   room.players[1].hand.push('Diamond4'); room.players[1].score = 15;

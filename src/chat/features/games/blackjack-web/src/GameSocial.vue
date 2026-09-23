@@ -17,7 +17,6 @@ const sending = ref(false);
 const error = ref('');
 const messages = ref<SocialEvent[]>([]);
 const catalog = ref<Catalog>({ chat: [...quickVoiceLines], interaction: [{ id: 'tea', text: '倒茶' }, { id: 'flower', text: '鲜花' }, { id: 'incense', text: '烧香' }] });
-const root = ref<HTMLElement | null>(null);
 const menu = ref<HTMLElement | null>(null);
 const animations = new Set<ReturnType<typeof animate>>();
 const animatedNodes = new Set<HTMLElement>();
@@ -39,8 +38,13 @@ function openInteraction(userId: string) {
   void nextTick(() => menu.value?.querySelector<HTMLButtonElement>('button')?.focus());
 }
 function openChat() { opened.value = true; targetId.value = null; error.value = ''; }
-defineExpose({ openInteraction, openChat });
-function escape(event: KeyboardEvent) { if (event.key === 'Escape') { close(); root.value?.querySelector<HTMLButtonElement>('.social-toggle')?.focus(); } }
+function toggleChat() { if (opened.value) close(); else openChat(); }
+defineExpose({ openInteraction, openChat, toggleChat, chatOpen: opened });
+function escape(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || !opened.value && !targetId.value) return;
+  close();
+  document.querySelector<HTMLButtonElement>('[aria-controls="game-social-chat"]')?.focus();
+}
 function clearAnimations() {
   animations.forEach(animation => animation.cancel()); animations.clear();
   animatedNodes.forEach(node => node.remove()); animatedNodes.clear();
@@ -144,11 +148,11 @@ onBeforeUnmount(() => { disposed = true; epoch++; clearTimeout(pollTimer); clear
 </script>
 
 <template>
-  <div ref="root" class="game-social">
+  <div class="game-social">
     <div class="social-notices" aria-live="polite"><p v-for="notice in notices" :key="notice.id">{{ notice.text }}</p></div>
-    <section v-if="opened" class="social-panel" aria-label="牌桌聊天"><header><strong>牌桌聊天</strong><button aria-label="收起聊天" @click="close">收起</button></header><div class="social-messages" aria-label="最近消息"><p v-if="!messages.length">选一句招呼，和牌友聊聊吧。</p><p v-for="message in messages.slice(-5)" :key="message.event_id"><b>{{ message.username }}</b> {{ message.kind === 'interaction' ? `向 ${message.target_username || '牌友'}` : '：' }}{{ message.text }}</p></div><div class="social-quick"><button v-for="line in catalog.chat" :key="line.id" :disabled="sending" @click="send('chat', line.id)">{{ line.text }}</button></div><label class="social-target">互动对象 <select aria-label="互动对象" @change="openInteraction(($event.target as HTMLSelectElement).value)"><option value="">选择牌友</option><option v-for="member in members.filter(item => String(item.user_id) !== String(viewerId))" :key="member.user_id" :value="member.user_id">{{ member.username }}</option></select></label><p v-if="error" class="social-error" role="alert">{{ error }}</p></section>
+    <section v-if="opened" id="game-social-chat" class="social-panel" aria-label="牌桌聊天"><header><strong>牌桌聊天</strong><button aria-label="收起聊天" @click="close">收起</button></header><div class="social-messages" aria-label="最近消息"><p v-if="!messages.length">选一句招呼，和牌友聊聊吧。</p><p v-for="message in messages.slice(-5)" :key="message.event_id"><b>{{ message.username }}</b> {{ message.kind === 'interaction' ? `向 ${message.target_username || '牌友'}` : '：' }}{{ message.text }}</p></div><div class="social-quick"><button v-for="line in catalog.chat" :key="line.id" :disabled="sending" @click="send('chat', line.id)">{{ line.text }}</button></div><label class="social-target">互动对象 <select aria-label="互动对象" @change="openInteraction(($event.target as HTMLSelectElement).value)"><option value="">选择牌友</option><option v-for="member in members.filter(item => String(item.user_id) !== String(viewerId))" :key="member.user_id" :value="member.user_id">{{ member.username }}</option></select></label><p v-if="error" class="social-error" role="alert">{{ error }}</p></section>
     <section v-if="target" ref="menu" class="social-panel interaction-menu" role="dialog" aria-label="牌友互动"><header><strong>向 {{ target.username }} 送出</strong><button aria-label="关闭互动菜单" @click="targetId = null">关闭</button></header><div class="interaction-options"><button v-for="item in catalog.interaction" :key="item.id" :disabled="sending" @click="send('interaction', item.id)"><span class="interaction-icon" v-html="interactionArt[item.id] || ''"></span>{{ item.text }}</button></div><small>桌边心意，免费互动</small><p v-if="error" class="social-error" role="alert">{{ error }}</p></section>
-    <button v-if="!hideToggle" class="social-toggle" :aria-expanded="opened" aria-label="打开牌桌聊天" @click="opened = !opened; targetId = null">聊天</button>
+    <button v-if="!hideToggle" class="social-toggle" :aria-expanded="opened" aria-controls="game-social-chat" aria-label="打开牌桌聊天" @click="toggleChat">聊天</button>
   </div>
 </template>
 

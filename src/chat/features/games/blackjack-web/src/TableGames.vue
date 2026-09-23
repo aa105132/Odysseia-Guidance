@@ -774,8 +774,9 @@ onBeforeUnmount(() => {
     <header class="tg-toolbar">
       <div class="tg-title"><h2>{{ rules.title }}<span v-if="room" class="tg-tier-tag">{{ tierNames[room.room_tier] }}</span></h2><p v-if="room" :title="game?.message">房间 {{ room.room_id }} · {{ room.state === 'waiting' ? '等待准备' : room.state === 'finished' ? '本局结束' : phaseLabel }}<span v-if="game && !game.finished && ['texas', 'golden_flower'].includes(currentGameType)" class="tg-compact-notice"> · {{ game.message }}</span></p><p v-else>{{ rules.summary }}</p></div>
       <div class="tg-actions">
-        <GameTools :profile="profile" :api-call="apiCall" :game-type="currentGameType" :chat-available="Boolean(room)" @chat="socialPanel?.openChat()" />
-        <button class="game-button quiet" @click="rulesDialog?.showModal()">玩法规则</button>
+        <GameTools :profile="profile" :api-call="apiCall" :game-type="currentGameType" :rules-available="Boolean(room)" @rules="rulesDialog?.showModal()" />
+        <button v-if="room" class="game-button gold" aria-label="打开牌桌聊天" :aria-expanded="socialPanel?.chatOpen ?? false" aria-controls="game-social-chat" @click="socialPanel?.toggleChat()">聊天</button>
+        <button v-else class="game-button quiet" @click="rulesDialog?.showModal()">玩法规则</button>
         <CopyRoomCode v-if="room" :room-id="room.room_id" />
         <button v-if="room" class="game-button quiet" :disabled="busy" @click="refresh">同步</button>
         <button v-if="room?.mode === 'multi'" class="game-button quiet" :disabled="busy" @click="emit('invite', { room_id: room.room_id, game_type: room.game_type, player_count: room.players.length, max_players: room.max_players, bot_count: room.players.filter(player => player.is_bot).length, state: room.state })">招募队友</button>
@@ -1172,6 +1173,7 @@ onBeforeUnmount(() => {
 .table-games .tg-hand-card.tg-tile img { position: static; width: 100%; max-width: 100%; box-shadow: none; }
 .table-games .tg-hand-card.tg-missing-tile { border-top-color: #d95e45; border-bottom-color: #edb44e; }
 .tg-control-panel { position: absolute; left: 18%; right: 5%; bottom: calc(26cqh + 28px); display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px 10px; pointer-events: auto; }
+.game-texas:has(.tg-count-8):not(.tg-waiting):not(.tg-finished) .tg-control-panel { bottom: calc(26cqh + 35px); }
 .tg-waiting .tg-control-panel { left: 18%; right: 18%; bottom: 26%; justify-content: center; }
 .tg-waiting .tg-control-panel > .tg-actions:first-child { flex-basis: 100%; }
 .tg-control-panel > .tg-muted { font-size: 10px; }
@@ -1380,6 +1382,9 @@ onBeforeUnmount(() => {
   .game-golden_flower:not(.tg-waiting) .tg-my-hand { --card-height: 20cqh; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-control-panel,
   .game-golden_flower:not(.tg-waiting) .tg-control-panel { left: 18%; right: 4%; bottom: calc(20cqh + 32px); flex-wrap: nowrap; }
+  /* 短屏保持操作排与公共牌的间距，右下座位单独下移避开按钮。 */
+  .game-texas:has(.tg-count-8):not(.tg-waiting):not(.tg-finished) .tg-control-panel { bottom: calc(20cqh + 32px); }
+  .game-texas:not(.tg-finished) .tg-count-8 .tg-seat:last-child { top: calc(var(--seat-y) + 7px); }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-bet-fields,
   .game-golden_flower:not(.tg-waiting) .tg-bet-fields { position: absolute; left: 0; right: 0; top: calc(100% + 23px); flex-wrap: nowrap; justify-content: space-between; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-bet-cost,

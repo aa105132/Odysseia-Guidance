@@ -104,7 +104,8 @@ class GameBotRunner:
     def _round_key(room) -> tuple:
         return ("table", room.room_id, id(room), room.round_number, getattr(room.engine, "deal_count", 0))
 
-    def observe_table_action(self, room, user_id: str, action: str, payload: dict):
+    def observe_table_action(self, room, user_id: str, action: str, payload: dict,
+                             poker_action: dict | None = None):
         """只记公共动作，不记录看牌内容、暗杠牌面或未公开的定缺选择。"""
         state = room.engine.public_state(str(user_id))
         if room.game_type == "landlord" and action == "bid" and not state.get("bids"):
@@ -123,9 +124,10 @@ class GameBotRunner:
             played = state.get("last_play") or {}
             event.update({key: played[key] for key in ("combo", "kind", "name") if key in played})
         if room.game_type in {"texas", "golden_flower"}:
-            actor = next(player for player in state["players"] if str(player["user_id"]) == str(user_id))
-            event.update({key: state[key] for key in ("phase", "pot") if key in state})
-            event.update({key: actor[key] for key in ("round_bet", "total_bet", "stack") if key in actor})
+            if poker_action is not None:
+                # 服务层已按行动前的街道还原下注后、派彩前金额，不再读取清零后的新街。
+                event.update({key: poker_action[key] for key in ("phase", "pot", "round_bet", "total_bet", "stack")
+                              if key in poker_action})
         # 完整公开记录按局保存，和对话截断无关，后续轮次仍能记住早期出的牌。
         self.public_actions.setdefault(self._round_key(room), []).append(event)
 
