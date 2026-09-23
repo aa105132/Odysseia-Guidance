@@ -1578,7 +1578,7 @@ onBeforeUnmount(() => {
               </TransitionGroup>
               <span class="seat-bet"><i aria-hidden="true"></i>{{ singleGame?.bet_amount ?? 0 }}</span>
               <div class="player-info-tag" :class="{ 'turn-active': canSingleOperate }">
-                <img :src="profile?.avatar_url || withAssetVersion('/character/normal.webp')" :alt="`${profile?.username || '玩家'}头像`" class="seat-player-avatar">
+                <img :src="profile?.avatar_url || withAssetVersion('/character/normal.webp')" :alt="`${profile?.username || '玩家'}头像`" class="seat-player-avatar" :data-game-avatar="viewerUserId">
                 <div class="seat-player-info"><h2>{{ profile?.username || '玩家' }} <span class="viewer-label">你</span></h2><p>持有 {{ profile?.balance ?? 0 }} 灵石</p></div>
               </div>
             </section>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { tableGameRules, type TableGameType, type TableRoomGameType } from './tableGameRules';
 import GameIcon from './GameIcon.vue';
 import RoundFeedback from './RoundFeedback.vue';
@@ -27,6 +27,7 @@ type GamePlayer = {
   missing_suit?: MissingSuit | null; has_won?: boolean; win_order?: number | null;
   win_fan?: number | null; win_label?: string | null; winning_tile?: string | null;
   team?: number; finished_rank?: number | null;
+  seen?: boolean; round_bet?: number; is_dealer?: boolean; is_small_blind?: boolean; is_big_blind?: boolean;
 };
 type GameState = {
   phase: string; finished: boolean; current_player_id: string | null;
@@ -91,6 +92,9 @@ const tiers: { id: PublicTier; title: string; subtitle: string; base: number; en
 const tierNames: Record<RoomTier, string> = { beginner: '初级场', intermediate: '中级场', advanced: '高级场', custom: '自定义房间' };
 const maxLossLimit = Math.floor((2 ** 53 - 1) / 8);
 const amount = ref<number | null>(null);
+const allInDialog = ref<HTMLDialogElement | null>(null);
+const cancelAllInButton = ref<HTMLButtonElement | null>(null);
+const pendingAllIn = ref<{ payload: Record<string, unknown>; key: string; cost: number; stack: number; label: string } | null>(null);
 const targetId = ref('');
 const selectedIndices = ref<number[]>([]);
 const guandanHintIndex = ref(-1);
@@ -156,6 +160,10 @@ const guandanMatchText = computed(() => {
 });
 const host = computed(() => String(room.value?.host_user_id) === viewerId.value);
 const legalActions = computed(() => game.value?.legal_actions ?? []);
+const raiseMinimum = computed(() => Math.min(game.value?.min_raise_to ?? 1, game.value?.max_raise_to ?? Number.MAX_SAFE_INTEGER));
+const raiseMaximum = computed(() => game.value?.max_raise_to ?? raiseMinimum.value);
+const raiseCost = computed(() => pokerActionCost('raise', { amount: Number(amount.value) }));
+const raiseCostLabel = computed(() => currentGameType.value === 'golden_flower' && myGame.value?.seen ? `已看牌 · 实付 ${raiseCost.value}` : `追加 ${raiseCost.value}`);
 const genericActions = computed(() => legalActions.value.filter(value => !['bid', 'dingque'].includes(value) && !(value === 'chow' && game.value?.chow_options?.length) && !(value === 'kong' && game.value?.kong_options?.length)));
 const missingSuitOptions = computed(() => game.value?.missing_suit_options ?? []);
 const mustDiscardMissingSuit = computed(() => isSichuan.value && Boolean(myGame.value?.missing_suit && myHand.value.some(card => card[0] === myGame.value?.missing_suit)));
@@ -512,6 +520,41 @@ function closeRoomDialogs() {
   botsDialog.value?.close();
 }
 
+function allInStateKey(value: RoomState | null): string {
+  const state = value?.game;
+  const own = state?.players.find(player => String(player.user_id) === viewerId.value);
+  return JSON.stringify([value?.room_id, value?.game_type, value?.round_number, value?.revision, value?.state,
+    value?.turn_deadline, state?.phase, state?.finished, state?.current_player_id, state?.legal_actions,
+    state?.min_raise_to, state?.max_raise_to, state?.call_amount, state?.compare_cost, state?.current_bet,
+    own?.stack, own?.round_bet, own?.seen]);
+}
+
+function cancelAllIn() {
+  pendingAllIn.value = null;
+  allInDialog.value?.close();
+}
+
+function resetRaiseAmount() {
+  amount.value = game.value?.min_raise_to === undefined ? null : raiseMinimum.value;
+}
+
+function syncRaiseAmount(previous: RoomState | null, next: RoomState) {
+  const before = previous?.game;
+  const current = next.game;
+  const nextIsMine = String(current?.current_player_id) === viewerId.value;
+  const fresh = !previous || previous.room_id !== next.room_id || previous.game_type !== next.game_type
+    || previous.round_number !== next.round_number || before?.phase !== current?.phase
+    || before?.finished !== current?.finished || previous.state !== next.state
+    || (nextIsMine && (String(before?.current_player_id) !== viewerId.value
+      || previous.turn_deadline !== next.turn_deadline || (!before?.legal_actions.length && Boolean(current?.legal_actions.length))));
+  if (fresh) { resetRaiseAmount(); return; }
+  // 同一回合的重复轮询保留正在编辑的值；只有合法范围改变时才安全夹取。
+  if (before?.min_raise_to !== current?.min_raise_to || before?.max_raise_to !== current?.max_raise_to) {
+    const value = Number(amount.value);
+    amount.value = Number.isSafeInteger(value) ? Math.min(raiseMaximum.value, Math.max(raiseMinimum.value, value)) : raiseMinimum.value;
+  }
+}
+
 function openSettings() {
   if (!room.value) return;
   settingsBase.value = room.value.base_stake;
@@ -531,6 +574,8 @@ function openBots() {
 function applyRoom(data: RoomEnvelope, live = true) {
   if (typeof data.viewer_balance === 'number') emit('balance', data.viewer_balance);
   if (!data.room) {
+    cancelAllIn();
+    amount.value = null;
     clearDealing();
     clearTimeout(resultTimer);
     renderedHand.value = [];
@@ -547,7 +592,9 @@ function applyRoom(data: RoomEnvelope, live = true) {
   if (room.value?.room_id === data.room.room_id && data.room.revision < room.value.revision) return;
   const oldHand = myHand.value.join(',');
   const previous = room.value;
+  if (pendingAllIn.value && pendingAllIn.value.key !== allInStateKey(data.room)) cancelAllIn();
   room.value = data.room;
+  syncRaiseAmount(previous, data.room);
   if (data.room.game_type === 'mahjong' || data.room.game_type === 'sichuan_mahjong') {
     selectedMahjongType.value = data.room.game_type;
     try { localStorage.setItem(variantStorageKey.value, data.room.game_type); } catch { /* 房间恢复不依赖本地存储可写。 */ }
@@ -557,7 +604,6 @@ function applyRoom(data: RoomEnvelope, live = true) {
   rememberRoom(data.room.room_id);
   if (oldHand !== myHand.value.join(',')) selectedIndices.value = [];
   if (!otherPlayers.value.some(player => player.user_id === targetId.value)) targetId.value = otherPlayers.value[0]?.user_id ?? '';
-  if (game.value?.min_raise_to !== undefined && (!amount.value || amount.value < game.value.min_raise_to)) amount.value = game.value.min_raise_to;
 }
 
 async function refresh() {
@@ -679,7 +725,7 @@ function guandanTributeText(event: GuandanTributeEvent) {
 }
 
 function actionDisabled(action: string): boolean {
-  if (busy.value) return true;
+  if (busy.value || pendingAllIn.value) return true;
   if (action === 'play') return selectedCards.value.length === 0;
   if (action === 'discard') return selectedCards.value.length !== 1 || (mustDiscardMissingSuit.value && selectedCards.value[0]?.[0] !== myGame.value?.missing_suit);
   if (action === 'chow') return selectedCards.value.length !== 2;
@@ -711,7 +757,8 @@ async function joinListedRoom(listed: { room_id: string; game_type: string }): P
 }
 
 async function act(action: string, extra: Record<string, unknown> = {}) {
-  if (!room.value) return;
+  if (!room.value || busy.value || pendingAllIn.value || !legalActions.value.includes(action)) return;
+  if (['raise', 'compare'].includes(action) && actionDisabled(action)) return;
   const payload: Record<string, unknown> = { room_id: room.value.room_id, expected_revision: room.value.revision, action, ...extra };
   if (action === 'raise') payload.amount = Number(amount.value);
   if (action === 'compare') payload.target_id = targetId.value;
@@ -721,7 +768,50 @@ async function act(action: string, extra: Record<string, unknown> = {}) {
   }
   if (action === 'discard' || (action === 'kong' && selectedCards.value.length && !extra.tile)) payload.tile = selectedCards.value[0];
   if (action === 'chow' && !extra.tiles) payload.tiles = selectedCards.value;
-  if (await request('action', payload)) playGameVoice(action === 'bid' && !extra.bid ? 'no_bid' : action);
+  const stack = myGame.value?.stack ?? 0;
+  const cost = pokerActionCost(action, payload);
+  if (['texas', 'golden_flower'].includes(currentGameType.value) && stack > 0 && cost >= stack) {
+    pendingAllIn.value = { payload, key: allInStateKey(room.value), cost, stack, label: labels[action] ?? action };
+    await nextTick();
+    if (!pendingAllIn.value) return;
+    allInDialog.value?.showModal();
+    cancelAllInButton.value?.focus();
+    return;
+  }
+  await submitAction(payload);
+}
+
+function pokerActionCost(action: string, payload: Record<string, unknown>): number {
+  const stack = myGame.value?.stack ?? 0;
+  if (action === 'all_in') return stack;
+  if (action === 'call') return game.value?.call_amount ?? 0;
+  if (action === 'compare') return game.value?.compare_cost ?? 0;
+  if (action !== 'raise') return 0;
+  const target = Number(payload.amount);
+  if (!Number.isSafeInteger(target)) return 0;
+  if (currentGameType.value === 'golden_flower') return target * (myGame.value?.seen ? 2 : 1);
+  const paidThisStreet = myGame.value?.round_bet ?? Math.max(0, (game.value?.max_raise_to ?? stack) - stack);
+  return Math.max(0, target - paidThisStreet);
+}
+
+async function submitAction(payload: Record<string, unknown>) {
+  if (await request('action', payload)) {
+    resetRaiseAmount();
+    playGameVoice(payload.action === 'bid' && !payload.bid ? 'no_bid' : String(payload.action));
+  }
+}
+
+async function confirmAllIn() {
+  const pending = pendingAllIn.value;
+  if (!pending || busy.value) return;
+  if (pending.key !== allInStateKey(room.value) || !legalActions.value.includes(String(pending.payload.action))) {
+    cancelAllIn();
+    error.value = '牌局已变化，请重新选择操作。';
+    return;
+  }
+  // 先消费这一次确认，再发请求；双击不会重复提交同一份旧动作。
+  cancelAllIn();
+  await submitAction(pending.payload);
 }
 
 onMounted(async () => {
@@ -756,6 +846,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  cancelAllIn();
   stopGameVoice();
   setGameAudioScene('lobby');
   disposed = true;
@@ -871,6 +962,7 @@ onBeforeUnmount(() => {
               <div class="tg-player">
                 <button class="tg-avatar tg-interact-avatar" :data-game-avatar="member.user_id" :aria-label="`与${member.username}互动`" :disabled="String(member.user_id) === viewerId" @click="socialPanel?.openInteraction(member.user_id)"><img :src="member.avatar_url || '/character/normal.webp'" :alt="`${member.username}头像`"><span v-if="String(member.user_id) === String(room.host_user_id)" class="tg-host-badge" title="房主">主</span></button>
                 <div class="tg-nameplate"><h3 :title="member.username">{{ member.username }}</h3><span v-if="String(member.user_id) === viewerId" class="tg-seat-tag">你</span><span v-else-if="member.is_bot" class="tg-seat-tag">AI</span><span v-if="gamePlayer(member.user_id)?.role && gamePlayer(member.user_id)?.role !== 'unknown'" class="tg-role">{{ gamePlayer(member.user_id)?.role === 'landlord' ? '地主' : '农民' }}</span></div>
+                <div v-if="currentGameType === 'texas' && game" class="tg-poker-positions" :aria-label="`${member.username}的德州位置`"><span v-if="gamePlayer(member.user_id)?.is_dealer" class="tg-position-dealer" title="庄家按钮位">庄</span><span v-if="gamePlayer(member.user_id)?.is_small_blind" class="tg-position-small">小盲</span><span v-if="gamePlayer(member.user_id)?.is_big_blind" class="tg-position-big">大盲</span></div>
                 <p v-if="room.state === 'waiting'" class="tg-seat-state" :class="{ 'tg-ready': member.is_ready }">{{ member.is_ready ? '已准备' : '等待准备' }}</p>
                 <p v-else-if="isSichuan && game && !game.finished" class="tg-sichuan-pending" :aria-label="`${member.username}的待结算理论分`">待结算理论 {{ signedScore(gamePlayer(member.user_id)?.score_delta) }}</p>
                 <p v-else-if="game" class="tg-seat-chips"><i aria-hidden="true"></i>{{ gamePlayer(member.user_id)?.stack ?? gamePlayer(member.user_id)?.chips ?? room.buy_in ?? 100 }}<small>灵石</small></p>
@@ -918,7 +1010,7 @@ onBeforeUnmount(() => {
           <div v-if="isSichuan && legalActions.includes('dingque')" class="tg-actions tg-dingque-actions" aria-label="选择定缺"><span>选择定缺：</span><button v-for="suit in missingSuitOptions" :key="suit" class="game-button gold" :disabled="busy" @click="act('dingque', { suit })">缺{{ suitNames[suit] }}</button></div>
           <div v-if="legalActions.includes('bid')" class="tg-actions"><span>叫分：</span><button v-for="bid in game.bid_options ?? [0, 1, 2, 3]" :key="bid" class="game-button" :disabled="busy" @click="act('bid', { bid })">{{ bid ? `${bid} 分` : '不叫' }}</button></div>
           <div v-if="legalActions.includes('raise') || legalActions.includes('compare')" class="tg-actions tg-bet-fields">
-            <div v-if="legalActions.includes('raise')" class="tg-field tg-raise-control"><label for="table-raise-amount">{{ currentGameType === 'texas' ? '本轮加到' : '基础注加到' }}</label><div class="tg-raise-entry"><input id="table-raise-amount" v-model.number="amount" type="number" :min="Math.min(game.min_raise_to ?? 1, game.max_raise_to ?? Number.MAX_SAFE_INTEGER)" :max="game.max_raise_to" step="1" inputmode="numeric" :disabled="busy"><template v-if="currentGameType === 'texas'"><button v-for="multiple in ([2, 4] as const)" :key="multiple" class="game-button quiet tg-quick-raise" :aria-label="`填入${multiple}倍当前桌注`" :title="`按当前桌注填入${multiple}倍，超出时按本轮可加金额限制`" :disabled="busy" @click="quickRaise(multiple)">{{ multiple }}×</button></template></div></div>
+            <div v-if="legalActions.includes('raise')" class="tg-field tg-raise-control"><label for="table-raise-amount">{{ currentGameType === 'texas' ? '本轮加到' : '基础注加到' }}<small class="tg-raise-cost">{{ raiseCostLabel }}</small></label><div class="tg-raise-entry"><input id="table-raise-amount" v-model.number="amount" type="number" :min="raiseMinimum" :max="raiseMaximum" step="1" inputmode="numeric" :disabled="busy"><template v-if="currentGameType === 'texas'"><button v-for="multiple in ([2, 4] as const)" :key="multiple" class="game-button quiet tg-quick-raise" :aria-label="`填入${multiple}倍当前桌注`" :title="`按当前桌注填入${multiple}倍，超出时按本轮可加金额限制`" :disabled="busy" @click="quickRaise(multiple)">{{ multiple }}×</button></template></div><input v-model.number="amount" class="tg-raise-slider" type="range" aria-label="加注金额滑条" :min="raiseMinimum" :max="raiseMaximum" step="1" :disabled="busy"></div>
             <label v-if="legalActions.includes('compare')" class="tg-field">比牌对手<select v-model="targetId" :disabled="busy"><option v-for="player in otherPlayers" :key="player.user_id" :value="player.user_id">{{ player.username }}</option></select></label>
           </div>
           <p v-if="legalActions.includes('call') || legalActions.includes('compare')" class="tg-muted tg-bet-cost"><span v-if="legalActions.includes('call')">跟注 {{ game.call_amount ?? 0 }}</span><span v-if="legalActions.includes('compare')"> · 比牌 {{ game.compare_cost ?? 0 }}</span></p>
@@ -936,6 +1028,15 @@ onBeforeUnmount(() => {
     </template>
 
     <p v-if="error" class="tg-error" role="alert">{{ error }}</p>
+
+    <dialog ref="allInDialog" class="tg-modal tg-all-in-confirm" aria-labelledby="all-in-confirm-title" aria-describedby="all-in-confirm-detail" @cancel.prevent="cancelAllIn" @close="pendingAllIn = null">
+      <template v-if="pendingAllIn">
+        <div class="tg-modal-head"><div><small>本次操作将用完桌上筹码</small><h2 id="all-in-confirm-title">确认全下？</h2></div></div>
+        <p id="all-in-confirm-detail">{{ pendingAllIn.label }}将投入剩余的 <strong>{{ pendingAllIn.cost }} 灵石</strong>，操作后剩余 <strong>{{ Math.max(0, pendingAllIn.stack - pendingAllIn.cost) }} 灵石</strong>。</p>
+        <p class="tg-modal-hint">确认后无法撤回，请核对金额。</p>
+        <div class="tg-modal-footer"><button ref="cancelAllInButton" class="game-button quiet" autofocus @click="cancelAllIn">取消</button><button class="game-button gold" :disabled="busy" @click="confirmAllIn">确认全下</button></div>
+      </template>
+    </dialog>
 
     <dialog ref="customDialog" class="tg-modal" aria-labelledby="custom-room-title">
       <div class="tg-modal-head"><GameIcon name="room" /><div><small>好友专属牌桌</small><h2 id="custom-room-title">自定义房间</h2></div><button class="game-button quiet" aria-label="关闭自定义房间" @click="customDialog?.close()">关闭</button></div>
@@ -1128,6 +1229,11 @@ onBeforeUnmount(() => {
 .tg-avatar img { display: block; width: 100%; height: 100%; border-radius: 3px; object-fit: cover; }
 .table-games button.tg-avatar.tg-interact-avatar { display: block; min-height: 0; padding: 0; opacity: 1; }
 .tg-host-badge { position: absolute; right: -5px; bottom: -3px; width: 14px; height: 14px; border-radius: 50%; background: #ffe1a0; color: #995044; font-size: 9px; text-align: center; box-shadow: 0 1px 2px #5e3d5c88; }
+.tg-poker-positions { position: absolute; left: 3px; bottom: calc(100% + 3px); display: flex; gap: 3px; white-space: nowrap; }
+.tg-seat[data-position='north'] .tg-poker-positions { top: 100%; bottom: auto; left: auto; right: 0; z-index: 1; }
+.tg-poker-positions span { padding: 2px 5px; border: 1px solid #fff0bc; border-radius: 5px; color: #352c49; background: #f6d88e; font-size: 10px; line-height: 1.2; font-weight: 800; box-shadow: 0 1px 4px #32224680; }
+.tg-poker-positions .tg-position-small { color: #fff; background: #405980; border-color: #badaff; }
+.tg-poker-positions .tg-position-big { color: #fff; background: #99512f; border-color: #ffd2a3; }
 .tg-nameplate { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .tg-nameplate h3 { margin: 0; min-width: 0; font-size: clamp(10px, 1.8cqh, 13px); font-weight: 500; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
 .tg-seat-tag, .tg-role { color: #f9dbb1; font-size: 9px; flex-shrink: 0; }
@@ -1184,6 +1290,13 @@ onBeforeUnmount(() => {
 .tg-field input { width: 84px; }
 .tg-field select { max-width: 122px; }
 .tg-raise-entry { display: flex; align-items: center; gap: 4px; }
+.tg-raise-control { display: grid; grid-template-columns: auto auto; gap: 1px 6px; }
+.tg-raise-control > label { display: flex; flex-direction: column; gap: 3px; }
+.tg-raise-cost { font-size: 9px; color: #ffdf98; white-space: nowrap; }
+.table-games input.tg-raise-slider { grid-column: 1 / -1; width: 100%; height: 36px; min-height: 36px; padding: 0 2px; border: 0; background: transparent; box-shadow: none; accent-color: #f6ce72; }
+.tg-all-in-confirm { width: min(400px, calc(var(--activity-width, 100vw) - 28px)); }
+.tg-all-in-confirm > p { font-size: 14px; line-height: 1.6; }
+.tg-all-in-confirm .tg-modal-footer { justify-content: flex-end; gap: 12px; }
 .table-games .tg-quick-raise { min-width: 36px; padding-inline: 7px; }
 .tg-bet-fields { pointer-events: none; }
 .tg-bet-fields .tg-field { pointer-events: auto; }
@@ -1395,9 +1508,13 @@ onBeforeUnmount(() => {
   .game-golden_flower:not(.tg-waiting) .tg-bet-fields .tg-field { font-size: 9px; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-bet-fields input,
   .game-golden_flower:not(.tg-waiting) .tg-bet-fields input { width: 55px; }
+  .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-bet-fields input.tg-raise-slider,
+  .game-golden_flower:not(.tg-waiting) .tg-bet-fields input.tg-raise-slider { width: 100%; }
   .game-golden_flower:not(.tg-waiting) .tg-bet-fields select { width: 68px; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-bet-fields { top: calc(100% + 3px); }
-  .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-raise-control { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .game-golden_flower:not(.tg-waiting) .tg-bet-fields { top: calc(100% - 7px); }
+  .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-raise-control { position: relative; grid-template-columns: 1fr; align-items: flex-start; gap: 0; }
+  .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-raise-control > label { position: absolute; bottom: calc(100% + 1px); display: flex; flex-direction: row; align-items: center; gap: 5px; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-bet-cost { left: auto; right: 0; text-align: right; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-center { top: 44%; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-center .tg-board-card { width: clamp(25px, 8cqh, 38px); }
