@@ -127,13 +127,15 @@ def _context(game_type: str, public_state: dict, user_id: str) -> dict:
     state = clean(public_state)
     if game_type == "guandan":
         # 完整手牌和公开记牌保持原样；候选按牌型分组，避免重复组合拖长推理。
+        own_hand = next(player["hand"] for player in state["players"] if player["user_id"] == seats[str(user_id)])
+        hand_plan = jev.guandan.guandan_hand_plan(own_hand, state["level"])
         groups = {}
         seen = set()
         for option in state.get("play_options", []):
             action = {"action": "play", "cards": option.get("cards", [])}
             if option.get("combo"):
                 action["combo"] = option["combo"]
-            if not jev.strategic_action_allowed({"game_type": game_type, "state": state, "you": seats[str(user_id)]}, action):
+            if not jev.strategic_action_allowed({"game_type": game_type, "state": state, "you": seats[str(user_id)]}, action, hand_plan):
                 continue
             signature = (option.get("combo"), option.get("kind"), option.get("rank"), option.get("size"))
             if signature in seen:
@@ -145,7 +147,6 @@ def _context(game_type: str, public_state: dict, user_id: str) -> dict:
             group.sort(key=lambda option: (option.get("rank", 0), option.get("combo", "")))
         take_high = False
         # 每种牌型至少保留大小两端；结束牌不因列表靠后而被截断。
-        own_hand = next(player["hand"] for player in state["players"] if player["user_id"] == seats[str(user_id)])
         options.extend(option for group in groups.values() for option in group if len(option.get("cards", [])) == len(own_hand))
         options = options[:jev.MAX_PLAY_CANDIDATES]
         while len(options) < jev.MAX_PLAY_CANDIDATES and any(groups.values()):

@@ -384,12 +384,12 @@ def test_sichuan_extreme_base_is_rejected_at_creation_and_settings_without_mutat
             with sqlite3.connect(api.db_path) as connection:
                 connection.execute("UPDATE user_coins SET balance=?", (10 * too_large,))
             rejected = await _post(client, "create", game_type=GAME_TYPE, mode="solo", room_tier="custom", base_stake=too_large, loss_limit=10 * too_large)
-            assert rejected.status_code == 400, rejected.text
-            assert "精度" in rejected.json()["detail"]
+            assert rejected.status_code == 422, rejected.text
+            assert {item["loc"][-1] for item in rejected.json()["detail"]} == {"base_stake", "loss_limit"}
             assert not api.module.table_service.rooms
             before = _room(await _post(client, "create", game_type=GAME_TYPE, mode="solo", room_tier="custom"))
             rejected = await _post(client, "settings", room_id=before["room_id"], base_stake=too_large, loss_limit=10 * too_large)
-            assert rejected.status_code == 400
+            assert rejected.status_code == 422
             assert _room(await client.get(f"/api/tables/{before['room_id']}")) == before
             assert _transactions(api) == []
     asyncio.run(scenario())

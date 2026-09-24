@@ -22,7 +22,8 @@ GAME_SPECS = {
     "mahjong": (4, 4, "traditional_games", "MahjongGame"),
     "sichuan_mahjong": (4, 4, "sichuan_mahjong", "SichuanMahjongGame"),
 }
-MAX_TABLE_AMOUNT = (2**53 - 1) // 8
+CUSTOM_MAX_BASE_STAKE = 20
+CUSTOM_MAX_LOSS_LIMIT = 2000
 ROOM_TIERS = {
     "beginner": (1, 100, 100),
     "intermediate": (5, 1000, 500),
@@ -40,10 +41,10 @@ def room_settings(room_tier: str, base_stake: int | None = None, loss_limit: int
         raise ValueError("不支持的场次")
     base_stake = 1 if base_stake is None else base_stake
     loss_limit = 100 if loss_limit is None else loss_limit
-    if type(base_stake) is not int or not 1 <= base_stake <= MAX_TABLE_AMOUNT // 10:
-        raise ValueError("底分必须是安全范围内的正整数")
-    if type(loss_limit) is not int or not max(100, 10 * base_stake) <= loss_limit <= MAX_TABLE_AMOUNT:
-        raise ValueError("单局最多输须为整数，至少100灵石且不低于底分的10倍")
+    if type(base_stake) is not int or not 1 <= base_stake <= CUSTOM_MAX_BASE_STAKE:
+        raise ValueError(f"自定义房间底分须为 1 至 {CUSTOM_MAX_BASE_STAKE} 的整数")
+    if type(loss_limit) is not int or not max(100, 10 * base_stake) <= loss_limit <= CUSTOM_MAX_LOSS_LIMIT:
+        raise ValueError(f"自定义房间单局最多输须为整数，至少100灵石且不低于底分的10倍，最多 {CUSTOM_MAX_LOSS_LIMIT} 灵石")
     return base_stake, loss_limit, loss_limit
 
 
@@ -518,6 +519,9 @@ class TableService:
             raise PermissionError("只有房主可以开始游戏")
         if room.state == "playing":
             raise ValueError("本局已开始")
+        if room.room_tier == "custom":
+            # 每次开局（包括自动开局和续局）重新校验，旧房间不能绕过固定上限。
+            room_settings("custom", room.base_stake, room.buy_in)
         # 离桌托管者在下一局释放座位。
         active = {uid: p for uid, p in room.players.items() if p.connected or p.is_bot}
         minimum, maximum, module_name, class_name = GAME_SPECS[room.game_type]

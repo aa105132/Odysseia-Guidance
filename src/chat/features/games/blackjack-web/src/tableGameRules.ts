@@ -1,5 +1,6 @@
 export type TableGameType = 'texas' | 'landlord' | 'mahjong' | 'golden_flower' | 'guandan';
 export type TableRoomGameType = TableGameType | 'sichuan_mahjong';
+export const CUSTOM_ROOM_LIMITS = { baseStake: 20, lossLimit: 2000 } as const;
 
 export type TableGameRules = {
   title: string;
@@ -8,7 +9,7 @@ export type TableGameRules = {
   sections: { title: string; text: string }[];
 };
 
-const roomEconomy = '初级场底分 1、准入 100、单局最多输 100 灵石；中级场底分 5、准入 1000、单局最多输 500；高级场底分 20、准入 5000、单局最多输 2000。准入只检查账户余额，不收门票。自定义房间由房主设置底分和单局亏损上限，无固定玩法上限，受所有玩家余额限制。开局冻结单局亏损上限，结束返还余款并计入账户净盈亏，不发放免费的局内积分。更改底分或单局亏损上限后需重新准备。房主可选全员准备后自动开局。';
+const roomEconomy = `初级场底分 1、准入 100、单局最多输 100 灵石；中级场底分 5、准入 1000、单局最多输 500；高级场底分 20、准入 5000、单局最多输 2000。准入只检查账户余额，不收门票。自定义房间底分为 1–${CUSTOM_ROOM_LIMITS.baseStake}，每人单局最多输 ${CUSTOM_ROOM_LIMITS.lossLimit} 灵石；单局上限至少为 100 灵石和 10 倍底分中的较大值，且不能超过玩家余额。开局冻结单局亏损上限，结束返还余款并计入账户净盈亏，不发放免费的局内积分。更改底分或单局亏损上限后需重新准备。房主可选全员准备后自动开局。`;
 
 export const tableGameRules: Record<TableRoomGameType, TableGameRules> = {
   guandan: {

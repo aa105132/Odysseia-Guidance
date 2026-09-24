@@ -1934,16 +1934,16 @@ class TableCreateRequest(BaseModel):
     mode: str = "multi"
     include_yueyue: bool = True
     room_tier: str = "beginner"
-    base_stake: Optional[int] = Field(default=None, ge=1, le=(2**53 - 1) // 80, strict=True)
-    loss_limit: Optional[int] = Field(default=None, ge=100, le=(2**53 - 1) // 8, strict=True)
+    base_stake: Optional[int] = Field(default=None, ge=1, le=_table_module.CUSTOM_MAX_BASE_STAKE, strict=True)
+    loss_limit: Optional[int] = Field(default=None, ge=100, le=_table_module.CUSTOM_MAX_LOSS_LIMIT, strict=True)
     auto_start_when_ready: bool = Field(default=False, strict=True)
     turn_timeout_seconds: int = Field(default=60, ge=15, le=300, strict=True)
 
 
 class TableSettingsRequest(RoomRequest):
     model_config = {"extra": "forbid"}
-    base_stake: Optional[int] = Field(default=None, ge=1, le=(2**53 - 1) // 80, strict=True)
-    loss_limit: Optional[int] = Field(default=None, ge=100, le=(2**53 - 1) // 8, strict=True)
+    base_stake: Optional[int] = Field(default=None, ge=1, le=_table_module.CUSTOM_MAX_BASE_STAKE, strict=True)
+    loss_limit: Optional[int] = Field(default=None, ge=100, le=_table_module.CUSTOM_MAX_LOSS_LIMIT, strict=True)
     auto_start_when_ready: Optional[bool] = Field(default=None, strict=True)
     turn_timeout_seconds: Optional[int] = Field(default=None, ge=15, le=300, strict=True)
 

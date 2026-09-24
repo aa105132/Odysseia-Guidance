@@ -205,6 +205,91 @@ def test_two_pure_wildcards_only_form_level_pair_in_finishing_threats():
         m.GuandanPattern("pair", 15, 2),)
 
 
+STRAIGHT_34567 = ["Club3#0", "Diamond4#0", "Heart5#0", "Spade6#0", "Club7#0"]
+
+
+@pytest.mark.parametrize("extra", [[], ["Club9#0", "Diamond9#0"], ["ClubK#0"]])
+def test_real_lead_keeps_34567_as_a_complete_straight(extra):
+    game = game_with(STRAIGHT_34567 + extra)
+    action = game.suggest_action("a")
+    assert set(action["cards"]) == set(STRAIGHT_34567)
+    game.act("a", **action)
+    assert game.last_pattern.kind == "straight"
+
+
+def test_real_opponent_small_single_is_taken_with_a_low_cost_loose_card():
+    game = game_with(["Club4#0", "Club8#0", "Diamond8#0", "ClubQ#0", "DiamondQ#0"])
+    game.hands["d"] = ["Diamond3#0", "Heart5#0", "Heart6#0", "Heart7#0", "Heart9#0"]
+    game.turn_index = 3
+    game.act("d", "play", cards=["Diamond3#0"])
+    assert game.current_player_id == "a"
+    action = game.suggest_action("a")
+    assert action["action"] == "play" and action["cards"] == ["Club4#0"]
+    game.act("a", **action)
+    assert game.hands["a"] == ["Club8#0", "Diamond8#0", "ClubQ#0", "DiamondQ#0"]
+
+
+def test_plan_exposes_extra_turns_when_a_five_card_straight_is_split():
+    analyze = m.guandan_hand_plan(STRAIGHT_34567, "2")
+    whole = analyze(STRAIGHT_34567)
+    split = analyze(["Club3#0"])
+    assert whole["estimated_current_plays"] == 1
+    assert whole["estimated_remaining_plays"] == 0
+    assert not whole["sequence_split_worsens_plan"]
+    assert split["estimated_remaining_plays"] == 4 and split["estimated_extra_plays"] == 4
+    assert split["sequence_split_worsens_plan"]
+    assert {row["kind"] for row in split["broken_sequence_groups"]} == {"straight"}
+
+
+def test_plan_does_not_penalize_six_card_chain_endpoint_that_keeps_a_straight():
+    hand = STRAIGHT_34567 + ["Diamond8#0"]
+    analyze = m.guandan_hand_plan(hand, "2")
+    facts = analyze(["Club3#0"])
+    assert facts["estimated_current_plays"] == 2
+    assert facts["estimated_remaining_plays"] == 1
+    assert facts["estimated_extra_plays"] == 0 and not facts["sequence_split_worsens_plan"]
+
+
+def test_plan_preserves_duplicate_copy_and_genuine_loose_card():
+    hand = STRAIGHT_34567 + ["Club3#1", "ClubK#0"]
+    analyze = m.guandan_hand_plan(hand, "2")
+    for card in ("Club3#0", "ClubK#0"):
+        facts = analyze([card])
+        assert not facts["sequence_split_worsens_plan"]
+    original = list(hand)
+    result = analyze(["ClubK#0"])
+    result["broken_sequence_groups"].append({"kind": "污染"})
+    assert analyze(["ClubK#0"])["broken_sequence_groups"] == []
+    assert hand == original
+
+
+def test_plan_reports_suit_loss_even_when_other_suit_preserves_normal_straight():
+    hand = ["Club3#0", "Club4#0", "Club5#0", "Club6#0", "Club7#0", "Diamond3#0"]
+    facts = m.guandan_hand_plan(hand, "2")(["Club3#0"])
+    assert any(row["kind"] == "straight_flush" for row in facts["broken_sequence_groups"])
+    assert facts["estimated_extra_plays"] == 0
+
+
+def test_plan_rebuilds_remaining_templates_when_wildcard_replaces_played_natural_card():
+    hand = STRAIGHT_34567 + ["Heart2#0"]
+    facts = m.guandan_hand_plan(hand, "2")(["Heart5#0"])
+    remaining = [card for card in hand if card != "Heart5#0"]
+    assert any(pattern.kind == "straight" for pattern in m.classify_guandan_cards(remaining, "2"))
+    assert facts["estimated_current_plays"] == 2
+    assert facts["estimated_remaining_plays"] == 1 and facts["estimated_extra_plays"] == 0
+    assert not facts["sequence_split_worsens_plan"]
+
+
+def test_plan_never_blocks_emergency_response_from_a_straight():
+    game = game_with(STRAIGHT_34567)
+    game.hands["b"] = ["Diamond6#1"]
+    game.last_pattern = m.GuandanPattern("single", 4, 1)
+    game.last_play = {"user_id": "d", "cards": ["Club4#1"], **game.last_pattern.to_dict()}
+    action = game.suggest_action("a")
+    assert action["cards"] == ["Club7#0"]
+    assert_legal(game, action)
+
+
 @pytest.mark.parametrize("hand,kind", [
     (("3", "4", "5", "6", "7", "Q", "Q"), "straight_flush"),
     (("3", "3", "3", "4", "4", "4", "Q", "Q"), "triple_straight"),

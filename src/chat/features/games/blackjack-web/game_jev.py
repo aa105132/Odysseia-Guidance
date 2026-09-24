@@ -103,7 +103,7 @@ def _guandan_play_facts(hand: list, cards: list, level: str, previous: dict | No
     }
 
 
-def strategic_action_allowed(context: dict, action: dict) -> bool:
+def strategic_action_allowed(context: dict, action: dict, hand_plan=None) -> bool:
     """只约束明确的低价值拆弹/堵队友残局，普通局面仍由模型比较。"""
     kind, state = context.get("game_type"), context["state"]
     if kind not in ("landlord", "guandan") or action.get("action") != "play":
@@ -129,9 +129,15 @@ def strategic_action_allowed(context: dict, action: dict) -> bool:
             return False
     if kind == "guandan" and state.get("last_play") is None:
         details = _guandan_play_facts(hand, cards, state["level"], combo=action.get("combo"))
-        if details["pattern"]["kind"] in ("single", "pair", "triple") and (details["breaks_natural_bombs"] or details["breaks_four_jokers"]):
-            # 自由领出始终可以完整打炸弹，不需要拆成若干单张才取得出牌权。
-            return False
+        if details["pattern"]["kind"] in ("single", "pair", "triple"):
+            if details["breaks_natural_bombs"] or details["breaks_four_jokers"]:
+                # 自由领出始终可以完整打炸弹，不需要拆成若干单张才取得出牌权。
+                return False
+            if len(hand) <= 10:
+                plan = (hand_plan or guandan.guandan_hand_plan(hand, state["level"]))(cards)
+                if plan["sequence_split_worsens_plan"] and plan["estimated_extra_plays"] >= 2:
+                    # 仅去掉短残局中把完整连牌拆散、平添至少两手的明显劣势领牌。
+                    return False
     return True
 
 
@@ -175,11 +181,12 @@ def build_action_candidates(context: dict) -> dict[str, dict]:
     if own is None:
         raise ValueError("没有当前玩家的可见状态")
     candidates = {}
+    hand_plan = guandan.guandan_hand_plan(own["hand"], state["level"]) if kind == "guandan" else None
 
     def add(action: dict):
         if action["action"] not in legal or action in candidates.values():
             return
-        if not strategic_action_allowed(context, action):
+        if not strategic_action_allowed(context, action, hand_plan):
             return
         if len(candidates) >= MAX_CANDIDATES:
             raise ValueError("候选动作过多")
@@ -255,7 +262,7 @@ def build_action_candidates(context: dict) -> dict[str, dict]:
             add({"action": "dingque", "suit": suit})
     if not candidates:
         raise ValueError("没有可供 Jev 评估的动作")
-    if kind == "landlord":
+    if kind in ("landlord", "guandan"):
         finishing = {name: action for name, action in candidates.items()
                      if action["action"] == "play" and Counter(action["cards"]) == Counter(own["hand"])}
         if finishing:
@@ -330,18 +337,22 @@ def _landlord_decision(current: dict, candidates: dict) -> tuple[dict, dict]:
 def _guandan_decision(current: dict, candidates: dict) -> tuple[dict, dict]:
     state, you = current["state"], current["you"]
     own = next(p for p in state["players"] if p["user_id"] == you)
+    hand_plan = guandan.guandan_hand_plan(own["hand"], state["level"])
     focus = {**team_decision_facts(current), "you": you, "your_team": own["team"],
              "phase": state["phase"], "level": state["level"], "your_current_hand": own["hand"],
              "finish_order": state.get("finish_order", []),
-             "planning_note": "只给自己可见牌和公开张数。remaining_rank_groups是点数组，不是最少手数，不能忽略顺子、三连对、钢板及同花顺。"}
+             "estimated_current_plays": hand_plan([])["estimated_current_plays"],
+             "planning_note": "剩手数是只使用自己手牌的有界估计，不保证牌权，也不等于胜率。remaining_rank_groups只是点数组；broken_sequence_groups配合estimated_extra_plays说明拆连牌代价。"}
     descriptions = {}
     for name, action in candidates.items():
         facts = {"action": action}
         if action["action"] == "play":
             facts.update(_guandan_play_facts(own["hand"], action["cards"], state["level"], state.get("last_play"), action.get("combo")))
+            facts.update(hand_plan(action["cards"]))
             facts["overtakes_teammate"] = focus["last_play_relation"] == "teammate"
         else:
             facts.update(remaining_count=len(own["hand"]), finishes_own_hand=False,
+                         estimated_remaining_plays=focus["estimated_current_plays"],
                          meaning="让当前上手继续保有牌权，所有未走玩家均过后由上手领出；上手已出完则其队友接风。")
         descriptions[name] = json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
     return focus, descriptions
@@ -384,10 +395,13 @@ def evaluation_payload(model: str, current: dict, history: list, candidates: dic
             "conversation是已结束回合，公开出牌历史在current.public_action_history，不能把旧上手当当前。"
             "候选标明引擎实际牌型、剩余手牌、拆点数组、拆炸弹和红桃级牌消耗；先看能否一手出完，再规划完整牌组出牌和接风。"
             "自由领出不是跟单：优先比较完整顺子、三连对、钢板、三带二、对子等组合，不能习惯性只从最小单张开始。"
+            "34567是一手顺子，不能打成五手单牌；比较estimated_total_plays_after_action与estimated_current_plays，避免拆连牌增加手数。"
+            "345678的端点3打掉还保有45678，和拆散34567不同；只有真实改善路线或紧急阻击才付拆组成本。"
             "有四张J就有自然炸弹，不要拆成J、J、J、J或三张J再一张；可以先走其他完整组或真正散张，保留炸弹夺回牌权。"
             "breaks_natural_bombs或breaks_four_jokers代表损失控制牌；只有能明显改善整手收尾路线才考虑拆组，不能只看当前点数小。"
             "也不能一律先炸或永远保炸：自己最后一手可出完就走，对手即将走完时可用炸弹及时拦截。"
             "对手报单时不要无理由送小单；跟单可为真正阻击拆对子，但不等于自由领出也要拆弹。"
+            "当前上手是对手的小单，而你有不拆组、不耗通配且不增加总手数的普通散单可压，应优先接牌走掉散张，不能像让队友那样一律不出。"
             "上手为teammate且快走完时应让牌，除自己立即走完或下家对手可能末手接走且有有效阻击。"
             "guandan_possible_finishing_replies是公开信息未排除的可能牌型，不是敌手实际手牌；末手炸弹可以跨牌型接走。"
             "队友已出完且当前领牌属于队友时尽量让其接风规则发挥作用。不能查看或猜定其他人的具体手牌。"

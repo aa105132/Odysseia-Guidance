@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { tableGameRules, type TableGameType, type TableRoomGameType } from './tableGameRules';
+import { CUSTOM_ROOM_LIMITS, tableGameRules, type TableGameType, type TableRoomGameType } from './tableGameRules';
 import GameIcon from './GameIcon.vue';
 import RoundFeedback from './RoundFeedback.vue';
 import RoomDirectory from './RoomDirectory.vue';
@@ -91,7 +91,8 @@ const tiers: { id: PublicTier; title: string; subtitle: string; base: number; en
   { id: 'advanced', title: '高级场', subtitle: '高手过招', base: 20, entry: 5000, limit: 2000 },
 ];
 const tierNames: Record<RoomTier, string> = { beginner: '初级场', intermediate: '中级场', advanced: '高级场', custom: '自定义房间' };
-const maxLossLimit = Math.floor((2 ** 53 - 1) / 8);
+const maxBaseStake = CUSTOM_ROOM_LIMITS.baseStake;
+const maxLossLimit = CUSTOM_ROOM_LIMITS.lossLimit;
 const amount = ref<number | null>(null);
 const allInDialog = ref<HTMLDialogElement | null>(null);
 const cancelAllInButton = ref<HTMLButtonElement | null>(null);
@@ -135,7 +136,6 @@ const currentGameType = computed(() => room.value?.game_type ?? lobbyGameType.va
 const isSichuan = computed(() => currentGameType.value === 'sichuan_mahjong');
 const isMahjong = computed(() => currentGameType.value === 'mahjong' || isSichuan.value);
 const isGuandan = computed(() => currentGameType.value === 'guandan');
-const maxBaseStake = computed(() => Math.floor((2 ** 53 - 1) / (isSichuan.value ? 512 : 80)));
 const rules = computed(() => tableGameRules[currentGameType.value]);
 const viewerId = computed(() => String(props.profile.user_id));
 const storageKey = computed(() => `yueyue.table.${isMahjong.value ? 'mahjong' : currentGameType.value}.${viewerId.value}`);
@@ -512,7 +512,7 @@ function rememberRoom(id: string | null) {
 }
 
 function validTerms(base: number, limit: number) {
-  return Number.isSafeInteger(base) && base >= 1 && base <= maxBaseStake.value
+  return Number.isSafeInteger(base) && base >= 1 && base <= maxBaseStake
     && Number.isSafeInteger(limit) && limit >= Math.max(100, base * 10)
     && limit <= maxLossLimit && limit <= props.profile.balance;
 }
@@ -1058,7 +1058,8 @@ onBeforeUnmount(() => {
       <div class="tg-modal-head"><GameIcon name="room" /><div><small>好友专属牌桌</small><h2 id="custom-room-title">自定义房间</h2></div><button class="game-button quiet" aria-label="关闭自定义房间" @click="customDialog?.close()">关闭</button></div>
       <form @submit.prevent="create('multi', 'custom')">
         <div class="tg-setting-fields"><label>底分<input v-model.number="customBase" type="number" min="1" :max="maxBaseStake" step="1" inputmode="numeric" :disabled="busy"></label><label>单局最多输<input v-model.number="customLimit" type="number" :min="Math.max(100, customBase * 10)" :max="Math.min(maxLossLimit, profile.balance)" step="1" inputmode="numeric" :disabled="busy"></label></div>
-        <p class="tg-modal-hint">准入灵石 {{ customLimit }} · 单局上限至少 100 灵石，且不低于底分的 10 倍。</p>
+        <p class="tg-modal-hint">底分 1–{{ maxBaseStake }} · 每人单局最多输 {{ maxLossLimit }} 灵石。</p>
+        <p class="tg-modal-hint">准入灵石 {{ customLimit }} · 单局上限至少 100 灵石，且不低于底分的 10 倍、不能超过余额。</p>
         <p class="tg-modal-hint">开局冻结单局上限，结算按实际输赢返还；不会自动追加。</p>
         <label class="tg-check"><input v-model="includeYueyue" type="checkbox" :disabled="busy">邀请月月一起玩</label>
         <div class="tg-turn-setting"><label for="custom-turn-seconds">操作等待时长（秒）</label><input id="custom-turn-seconds" v-model.number="createTurnSeconds" type="number" min="15" max="300" step="1" inputmode="numeric" :disabled="busy"></div>
@@ -1076,7 +1077,7 @@ onBeforeUnmount(() => {
       <div class="tg-modal-head"><GameIcon name="room" /><div><small>{{ room?.room_id }} · {{ room ? tierNames[room.room_tier] : '' }}</small><h2 id="room-settings-title">房间设置</h2></div><button class="game-button quiet" aria-label="关闭房间设置" @click="settingsDialog?.close()">关闭</button></div>
       <template v-if="room">
         <form v-if="canManage" @submit.prevent="saveSettings">
-          <template v-if="room.room_tier === 'custom'"><div class="tg-setting-fields"><label>底分<input v-model.number="settingsBase" type="number" min="1" :max="maxBaseStake" step="1" inputmode="numeric" :disabled="busy"></label><label>单局最多输<input v-model.number="settingsLimit" type="number" :min="Math.max(100, settingsBase * 10)" :max="Math.min(maxLossLimit, profile.balance)" step="1" inputmode="numeric" :disabled="busy"></label></div><p class="tg-modal-hint">准入灵石 {{ settingsLimit }} · 修改底分或单局上限后，所有真人需重新准备。</p><p class="tg-modal-hint">每位真人余额须满足新准入，最低单局上限为 100 灵石和 10 倍底分中的较大值。</p></template>
+          <template v-if="room.room_tier === 'custom'"><div class="tg-setting-fields"><label>底分<input v-model.number="settingsBase" type="number" min="1" :max="maxBaseStake" step="1" inputmode="numeric" :disabled="busy"></label><label>单局最多输<input v-model.number="settingsLimit" type="number" :min="Math.max(100, settingsBase * 10)" :max="Math.min(maxLossLimit, profile.balance)" step="1" inputmode="numeric" :disabled="busy"></label></div><p class="tg-modal-hint">底分 1–{{ maxBaseStake }} · 每人单局最多输 {{ maxLossLimit }} 灵石。</p><p class="tg-modal-hint">准入灵石 {{ settingsLimit }} · 修改底分或单局上限后，所有真人需重新准备。</p><p class="tg-modal-hint">每位真人余额须满足新准入，最低单局上限为 100 灵石和 10 倍底分中的较大值。</p></template>
           <dl v-else class="tg-room-terms"><div><dt>底分</dt><dd>{{ room.base_stake }} 灵石</dd></div><div><dt>准入灵石</dt><dd>{{ room.entry_min }}</dd></div><div><dt>单局最多输</dt><dd>{{ room.loss_limit }} 灵石</dd></div></dl>
           <label class="tg-auto-start-option"><input v-model="settingsAutoStart" type="checkbox" :disabled="busy">全员准备后自动开启游戏</label>
           <div class="tg-turn-setting"><label for="settings-turn-seconds">操作等待时长（秒）</label><input id="settings-turn-seconds" v-model.number="settingsTurnSeconds" type="number" min="15" max="300" step="1" inputmode="numeric" :disabled="busy"></div><p class="tg-modal-hint">可设 15–300 秒；修改后所有真人需重新准备。</p>

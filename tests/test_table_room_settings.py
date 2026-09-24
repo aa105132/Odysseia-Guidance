@@ -232,6 +232,8 @@ def test_tiers_expose_real_entry_and_loss_terms(tier, base, entry, limit):
     {"room_tier": "custom", "base_stake": True},
     {"room_tier": "custom", "base_stake": 1.5},
     {"room_tier": "custom", "base_stake": 20, "loss_limit": 199},
+    {"room_tier": "custom", "base_stake": 21, "loss_limit": 2000},
+    {"room_tier": "custom", "base_stake": 20, "loss_limit": 2001},
     {"room_tier": "custom", "loss_limit": 2**53},
 ])
 def test_invalid_terms_do_not_create_room(terms):
@@ -402,16 +404,39 @@ def test_engine_base_validation(engine, ids, base):
         engine(ids, buy_in=1000, base_stake=base)
 
 
-def test_large_custom_stakes_have_no_old_fixed_limit_and_do_not_change_other_rooms():
+def test_custom_upper_boundary_starts_without_changing_other_rooms():
     service = tables.TableService(clock=lambda: 1000)
-    room = service.create(HOST, "texas", "solo", True, room_tier="custom", base_stake=10000, loss_limit=200000)
+    room = service.create(HOST, "texas", "solo", True, room_tier="custom", base_stake=20, loss_limit=2000)
     service.ready(room["room_id"], "1", True)
     high = service.start(room["room_id"], "1")
-    assert high["game"]["small_blind"] == 10000
-    assert high["game"]["big_blind"] == 20000
-    assert high["game"]["pot"] == 30000
+    assert high["game"]["small_blind"] == 20
+    assert high["game"]["big_blind"] == 40
+    assert high["game"]["pot"] == 60
     standard = poker.TexasHoldemGame(["a", "b"])
     assert (standard.SMALL_BLIND, standard.BIG_BLIND) == (1, 2)
+
+
+@pytest.mark.parametrize("game_type", list(tables.GAME_SPECS))
+@pytest.mark.parametrize("base,limit", [(21, 2000), (20, 2001), (10000, 200000)])
+def test_custom_economy_caps_cover_creation_settings_and_start(game_type, base, limit):
+    service = tables.TableService(clock=lambda: 1000)
+    with pytest.raises(ValueError):
+        service.create(HOST, game_type, "solo", True, room_tier="custom", base_stake=base, loss_limit=limit)
+    assert service.rooms == {}
+    room = service.create(HOST, game_type, "solo", True, room_tier="custom", base_stake=20, loss_limit=2000)
+    rid = room["room_id"]
+    service.ready(rid, "1", True)
+    before = copy.deepcopy(service._room(rid))
+    with pytest.raises(ValueError):
+        service.settings(rid, "1", base, limit)
+    assert service._room(rid) == before
+    # 模拟更新前遗留的高额房间；必须在创建引擎、标记托管之前拒绝。
+    legacy = service._room(rid)
+    legacy.base_stake, legacy.buy_in = base, limit
+    before = copy.deepcopy(legacy)
+    with pytest.raises(ValueError):
+        service.start(rid, "1")
+    assert service._room(rid) == before
 
 
 def test_traditional_base_stakes_scale_final_score_without_changing_multipliers():

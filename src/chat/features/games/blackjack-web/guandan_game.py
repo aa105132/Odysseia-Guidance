@@ -153,6 +153,57 @@ def guandan_hand_analysis(hand, level, cards):
     }
 
 
+def guandan_hand_plan(hand, level):
+    """复用一份自己的牌型模板，返回每个候选出牌后的有界规划查询器。"""
+    hand = list(hand)
+    if level not in RANKS or not 1 <= len(hand) <= 27 or len(set(hand)) != len(hand):
+        raise ValueError("掼蛋规划需要1至27张不重复的自己手牌")
+    for card in hand:
+        card_parts(card)
+    candidates = list(GuandanGame._hand_candidates(hand, level))
+    original, _, _, estimate = GuandanGame._hand_planner(hand, candidates, level)
+    current = estimate(original, budget=40)
+    chains = [(cards, pattern) for cards, pattern in candidates
+              if pattern.kind in ("straight", "straight_flush", "pair_straight", "triple_straight")]
+    cache = {}
+
+    def analyze(cards):
+        signature = tuple(sorted(cards))
+        if signature in cache:
+            return deepcopy(cache[signature])
+        if len(set(cards)) != len(cards) or not set(cards) <= set(hand):
+            raise ValueError("规划候选必须来自自己的手牌")
+        remaining_cards = [card for card in hand if card not in cards]
+        if not remaining_cards:
+            remaining_candidates, remaining_plays = [], 0
+        elif not cards:
+            remaining_candidates, remaining_plays = candidates, current
+        else:
+            # 出掉自然牌后，通配牌可能形成新的组合；不能沿用出牌前模板漏掉这条路线。
+            remaining_candidates = list(GuandanGame._hand_candidates(remaining_cards, level))
+            rest, _, _, estimate_remaining = GuandanGame._hand_planner(remaining_cards, remaining_candidates, level)
+            remaining_plays = estimate_remaining(rest, budget=24)
+        retained = {(pattern.kind, pattern.rank, pattern.size) for _, pattern in remaining_candidates}
+        broken = {}
+        for chain_cards, pattern in chains:
+            key = (pattern.kind, pattern.rank, pattern.size)
+            if key not in retained and not set(chain_cards) <= set(cards):
+                # 同点副本或通配牌仍可继续组成时保留，不按牌ID误报拆组。
+                broken.setdefault(key, {"kind": pattern.kind, "rank": pattern.rank, "size": pattern.size})
+        result = {
+            "estimated_current_plays": current,
+            "estimated_remaining_plays": remaining_plays,
+            "estimated_total_plays_after_action": remaining_plays + bool(cards),
+            "estimated_extra_plays": max(0, remaining_plays + bool(cards) - current),
+            "broken_sequence_groups": list(broken.values()),
+            "sequence_split_worsens_plan": bool(broken and remaining_plays + bool(cards) > current),
+        }
+        cache[signature] = result
+        return deepcopy(result)
+
+    return analyze
+
+
 def guandan_finishing_threats(visible_cards, level, previous, remaining_count):
     """枚举公开信息尚未排除的末手牌型，不将未知牌归给任一玩家。"""
     if not 1 <= remaining_count <= 10:
@@ -294,9 +345,10 @@ class GuandanGame:
             return []
         return ["play", "pass"] if self.last_play else ["play"]
 
-    def _templates(self, hand):
+    @staticmethod
+    def _templates(hand, level):
         """按点数和有限模板造牌，不枚举27张手牌的幂集。"""
-        wilds = [card for card in hand if card_parts(card) == ("Heart", VALUES[self.level])]
+        wilds = [card for card in hand if card_parts(card) == ("Heart", VALUES[level])]
         groups = {}
         for card in hand:
             if card not in wilds:
@@ -348,18 +400,19 @@ class GuandanGame:
                         if cards:
                             yield cards
 
-    def _hand_candidates(self, hand):
+    @staticmethod
+    def _hand_candidates(hand, level):
         seen = set()
-        for cards in self._templates(hand):
+        for cards in GuandanGame._templates(hand, level):
             signature = tuple(sorted(cards))
             if signature in seen:
                 continue
             seen.add(signature)
-            for pattern in classify_guandan_cards(list(signature), self.level):
+            for pattern in classify_guandan_cards(list(signature), level):
                 yield list(signature), pattern
 
     def _candidates(self, uid):
-        for cards, pattern in self._hand_candidates(self.hands[uid]):
+        for cards, pattern in self._hand_candidates(self.hands[uid], self.level):
             if not self.last_pattern or guandan_beats(pattern, self.last_pattern):
                 yield cards, pattern
 
@@ -391,10 +444,11 @@ class GuandanGame:
             take_high = not take_high
         return selected
 
-    def _hand_planner(self, hand, candidates):
+    @staticmethod
+    def _hand_planner(hand, candidates, level):
         """按点数和独立通配牌计数估计手数；固定预算，不枚举对手牌。"""
         def move(cards):
-            counts = Counter(16 if card_parts(card) == ("Heart", VALUES[self.level])
+            counts = Counter(16 if card_parts(card) == ("Heart", VALUES[level])
                              else card_parts(card)[1] - 2 for card in cards)
             return tuple(sorted(counts.items()))
 
@@ -462,7 +516,7 @@ class GuandanGame:
         if not self._legal_actions(uid):
             raise ValueError("尚未轮到该玩家")
         hand = self.hands[uid]
-        all_candidates = list(self._hand_candidates(hand))
+        all_candidates = list(self._hand_candidates(hand, self.level))
         candidates = [item for item in all_candidates
                       if not self.last_pattern or guandan_beats(item[1], self.last_pattern)]
         finishing = [item for item in candidates if len(item[0]) == len(self.hands[uid])]
@@ -503,7 +557,7 @@ class GuandanGame:
                 # 对手已报单/报双时允许拆组，用本方最大同型牌守住这一轮。
                 cards, pattern = max(normal, key=lambda item: item[1].rank)
                 return {"action": "play", "cards": cards, "combo": pattern.combo}
-        original, move, remainder, estimate = self._hand_planner(hand, all_candidates)
+        original, move, remainder, estimate = self._hand_planner(hand, all_candidates, self.level)
         current_turns = estimate(original, budget=40)
         ranked = []
         for cards, pattern in candidates:
