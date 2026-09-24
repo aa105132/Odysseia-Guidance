@@ -34,6 +34,8 @@ let musicName = '';
 let previousLobby = '';
 let roundInterlude = false;
 let voiceEpoch = 0;
+let voiceFinishTimer: ReturnType<typeof setTimeout> | undefined;
+const queuedVoices: { id: string; queuedAt: number }[] = [];
 let musicEpoch = 0;
 const voices = new Set<OscillatorNode>();
 const lobbyTracks = ['Exciting1', 'Exciting2', 'lobby'];
@@ -138,17 +140,35 @@ export function playRoundMusic(result: 'win' | 'loss' | 'push') {
   if (result !== 'push') playMusic(result === 'win' ? 'win' : 'lose', true);
 }
 export function stopGameVoice() {
+  queuedVoices.length = 0;
+  clearTimeout(voiceFinishTimer);
   voiceEpoch++; release(voiceTrack); voiceTrack = null; syncMusicVolume();
 }
-export async function playGameVoice(id: string) {
+export async function playGameVoice(id: string, options: { enqueue?: boolean } = {}) {
   if (!voiceEnabled.value || !voiceVolume.value || document.hidden || !gameVoiceIds.has(id) || !users) return;
   if (!unlocked) return;
-  stopGameVoice();
-  const epoch = voiceEpoch;
-  const track = new Audio(`/audio/voice/${id}.mp3?v=doubao-20260924`);
+  if (options.enqueue && voiceTrack) {
+    // 连续动作按发生顺序报牌，短时间内的机器人响应不能截断本人刚出的牌。
+    if (queuedVoices.length < 4) queuedVoices.push({ id, queuedAt: Date.now() });
+    return;
+  }
+  if (!options.enqueue) stopGameVoice();
+  const epoch = ++voiceEpoch;
+  const track = new Audio(`/audio/voice/doubao-20260924-speed1/${id}.mp3`);
   voiceTrack = track; track.volume = voiceVolume.value; syncMusicVolume();
-  const finish = () => { if (epoch === voiceEpoch) { release(voiceTrack); voiceTrack = null; syncMusicVolume(); } };
+  const finish = () => {
+    if (epoch !== voiceEpoch) return;
+    voiceEpoch++;
+    clearTimeout(voiceFinishTimer);
+    release(voiceTrack); voiceTrack = null; syncMusicVolume();
+    // 网络或媒体阻塞后丢弃过时的报牌，不延迟播报已经过去的操作。
+    let next = queuedVoices.shift();
+    while (next && Date.now() - next.queuedAt > 8_000) next = queuedVoices.shift();
+    if (next) void playGameVoice(next.id, { enqueue: true });
+  };
   track.onended = finish; track.onerror = finish;
+  // 媒体既不结束也不报错时，避免后续整局报牌一直堵在队列中。
+  voiceFinishTimer = setTimeout(finish, 15_000);
   try { await track.play(); } catch { finish(); }
 }
 export function playGameSound(kind: 'click' | 'raise' | 'deal' | 'win' = 'click') {

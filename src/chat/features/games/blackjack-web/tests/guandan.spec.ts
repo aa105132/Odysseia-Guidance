@@ -95,8 +95,9 @@ test('月月公开动作只播一次，减少动画时仍有结算音乐', async
     const played: string[] = [];
     const seen = new WeakSet<HTMLMediaElement>();
     (window as unknown as {__played: string[]}).__played = played;
+    (window as any).__voiceTracks = [];
     HTMLMediaElement.prototype.play = function () {
-      if (!seen.has(this)) { seen.add(this); played.push(this.src); }
+      if (!seen.has(this)) { seen.add(this); played.push(this.src); if (this.src.includes('/voice/')) (window as any).__voiceTracks.push(this); }
       return Promise.resolve();
     };
     HTMLMediaElement.prototype.pause = function () {};
@@ -109,15 +110,17 @@ test('月月公开动作只播一次，减少动画时仍有结算音乐', async
   room.last_public_action = {id:'1:0:2',user_id:ids[1],action:'bid',bid:0};
   await page.getByRole('button',{name:'同步',exact:true}).click();
   await expect.poll(voiceCount).toBe(1);
-  expect(await page.evaluate(()=>(window as unknown as {__played:string[]}).__played.at(-1))).toContain('/audio/voice/no_bid.mp3');
+  expect(await page.evaluate(()=>(window as unknown as {__played:string[]}).__played.at(-1))).toContain('/audio/voice/doubao-20260924-speed1/no_bid.mp3');
   await page.getByRole('button',{name:'同步',exact:true}).click();
   expect(await voiceCount()).toBe(1);
+  await page.evaluate(() => (window as any).__voiceTracks.at(-1)?.onended?.());
   room.revision++;
-  room.last_public_action = {id:'1:0:3',user_id:ids[1],action:'play',bid:0};
-  room.game.last_play = {user_id:ids[1],cards:['Club4#1'],name:'炸弹',kind:'bomb'};
+  const bombCards = ['Club4#0', 'Club4#1', 'Heart4#0', 'Heart4#1'];
+  room.last_public_action = {id:'1:0:3',user_id:ids[1],action:'play',cards:bombCards,kind:'bomb'};
+  room.game.last_play = {user_id:ids[1],cards:bombCards,name:'炸弹',kind:'bomb'};
   await page.getByRole('button',{name:'同步',exact:true}).click();
   await expect.poll(voiceCount).toBe(2);
-  expect(await page.evaluate(()=>(window as unknown as {__played:string[]}).__played.at(-1))).toContain('/audio/voice/bomb.mp3');
+  expect(await page.evaluate(()=>(window as unknown as {__played:string[]}).__played.at(-1))).toContain('/audio/voice/doubao-20260924-speed1/bomb.mp3');
   room.revision++;
   room.state = 'finished'; room.game.finished = true; room.game.phase = 'finished';
   room.game.winners = [ids[0],ids[2]]; room.game.legal_actions = [];

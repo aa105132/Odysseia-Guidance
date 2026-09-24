@@ -77,6 +77,8 @@ test('真实桌游操作与机器人轮询去重，减少动态不禁语音，�
   expect(await trackCount(page, '/pass.mp3')).toBe(0);
   await page.getByRole('button', { name: '不出', exact: true }).click();
   await expect.poll(() => trackCount(page, '/pass.mp3')).toBe(1);
+  // 报牌现在顺序播放，模拟本人语音播完后才应开始下一位的语音。
+  await page.evaluate(() => (window as any).__tracks.findLast((track: any) => !track.paused && track.original.includes('/voice/'))?.onended?.());
   mock.room.revision++;
   mock.room.last_public_action = { id: '1:0:99', user_id: bot, action: 'pass' };
   await expect.poll(() => trackCount(page, '/pass.mp3')).toBe(2);
@@ -197,7 +199,7 @@ test('真实21点真人与陪玩语音只播一次，胜负插曲与新局场景
   await page.getByRole('button', { name: '同步', exact: true }).click();
   await expect.poll(() => activeTracks(page, '/music/')).toEqual(['/audio/music/Normal.mp3']);
   await page.getByRole('button', { name: '要牌', exact: true }).click();
-  await expect.poll(() => activeTracks(page, '/voice/')).toEqual(['/audio/voice/hit.mp3?v=doubao-20260924']);
+  await expect.poll(() => activeTracks(page, '/voice/')).toEqual(['/audio/voice/doubao-20260924-speed1/hit.mp3']);
   await page.getByRole('button', { name: '离开房间', exact: true }).click();
   await expect.poll(() => activeTracks(page, '/voice/')).toEqual([]);
 });

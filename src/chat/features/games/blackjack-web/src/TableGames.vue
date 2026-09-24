@@ -9,6 +9,7 @@ import GameTools from './GameTools.vue';
 import { playGameSound, setGameAudioScene, playRoundMusic, playGameVoice, stopGameVoice } from './gameAudio';
 import GameSocial from './GameSocial.vue';
 import type { RoomInvite } from './roomInvites';
+import { samePlayedCards, tableActionVoice, type TableVoiceAction } from './tableActionVoice';
 
 type Profile = { user_id: string; username: string; avatar_url: string; balance: number };
 type Member = { user_id: string; username: string; avatar_url: string; is_bot: boolean; is_ready: boolean; connected: boolean };
@@ -19,7 +20,7 @@ type GuandanPlayOption = { cards: string[]; combo: string; kind: string; name: s
 type GuandanTributeEvent =
   | { kind: 'tribute' | 'return'; user_id: string; target_id: string; card: string; automatic: boolean; fallback?: boolean }
   | { kind: 'resist'; user_ids: string[]; automatic: boolean };
-type PublicAction = { id: string; user_id: string; action: string; bid?: number; cards?: string[] };
+type PublicAction = TableVoiceAction & { id: string; user_id: string; action: string; bid?: number; cards?: string[]; tile?: string; kind?: string; combo?: string };
 type GamePlayer = {
   user_id: string; hand: string[]; hand_count: number; chips?: number; stack?: number;
   folded?: boolean; role?: string; bet?: number; score?: number; looked?: boolean;
@@ -307,14 +308,20 @@ function reconcileHand(nextCards: string[], fresh: boolean): Set<number> {
   return added;
 }
 
+function startsNewDeal(previous: RoomState | null, next: RoomState) {
+  const before = previous?.game;
+  const current = next.game;
+  return Boolean(current && previous?.room_id === next.room_id && (!before
+    || (next.round_number !== undefined && previous?.round_number !== undefined && next.round_number > previous.round_number)
+    || (current.deal_count !== undefined && before.deal_count !== undefined && current.deal_count > before.deal_count)
+    || (before.finished && !current.finished)));
+}
+
 function animateSnapshot(previous: RoomState | null, next: RoomState, live: boolean) {
   const sameRoom = previous?.room_id === next.room_id;
   const before = sameRoom ? previous?.game : null;
   const current = next.game;
-  const newDeal = Boolean(current && sameRoom && (!before
-    || (next.round_number !== undefined && previous?.round_number !== undefined && next.round_number > previous.round_number)
-    || (current.deal_count !== undefined && before.deal_count !== undefined && current.deal_count > before.deal_count)
-    || (before.finished && !current.finished)));
+  const newDeal = startsNewDeal(previous, next);
   if (!sameRoom || newDeal || !live) {
     clearDealing();
     clearTimeout(resultTimer);
@@ -371,13 +378,8 @@ function animateSnapshot(previous: RoomState | null, next: RoomState, live: bool
   const publicAction = next.last_public_action;
   if (live && sameRoom && !newDeal && publicAction && publicAction.id !== previous?.last_public_action?.id
     && next.players.some(player => player.is_bot && String(player.user_id) === String(publicAction.user_id))) {
-    const last = current?.last_play;
-    const kind = !Array.isArray(last) && last?.user_id === publicAction.user_id ? last.kind : undefined;
-    const voice = publicAction.action === 'bid' && publicAction.bid === 0 ? 'no_bid'
-      : publicAction.action === 'play' && kind === 'rocket' ? 'rocket'
-      : publicAction.action === 'play' && (kind === 'bomb' || kind === 'straight_flush') ? 'bomb'
-      : publicAction.action;
-    void playGameVoice(voice);
+    const voice = tableActionVoice(next.game_type, publicAction, current);
+    if (voice) void playGameVoice(voice, { enqueue: true });
   }
   if (current?.finished && live && sameRoom && (!before?.finished || newDeal)) {
     clearTimeout(resultTimer);
@@ -571,9 +573,10 @@ function openBots() {
   botsDialog.value?.showModal();
 }
 
-function applyRoom(data: RoomEnvelope, live = true) {
+function applyRoom(data: RoomEnvelope, live = true, onAccepted?: (data: RoomEnvelope) => void) {
   if (typeof data.viewer_balance === 'number') emit('balance', data.viewer_balance);
   if (!data.room) {
+    stopGameVoice();
     cancelAllIn();
     amount.value = null;
     clearDealing();
@@ -592,6 +595,9 @@ function applyRoom(data: RoomEnvelope, live = true) {
   if (room.value?.room_id === data.room.room_id && data.room.revision < room.value.revision) return;
   const oldHand = myHand.value.join(',');
   const previous = room.value;
+  if (previous?.room_id !== data.room.room_id || startsNewDeal(previous, data.room)) stopGameVoice();
+  // 清理旧局队列后先播本人已成功的动作，再处理响应中的机器人公开动作。
+  onAccepted?.(data);
   if (pendingAllIn.value && pendingAllIn.value.key !== allInStateKey(data.room)) cancelAllIn();
   room.value = data.room;
   syncRaiseAmount(previous, data.room);
@@ -625,7 +631,7 @@ async function refresh() {
   } finally { pollInFlight = false; }
 }
 
-async function request(path: string, body: Record<string, unknown>): Promise<boolean> {
+async function request(path: string, body: Record<string, unknown>, onAccepted?: (data: RoomEnvelope) => void): Promise<boolean> {
   if (busy.value) return false;
   busy.value = true;
   error.value = '';
@@ -633,7 +639,8 @@ async function request(path: string, body: Record<string, unknown>): Promise<boo
   try {
     const data = await props.apiCall<RoomEnvelope>(`/api/tables/${path}`, 'POST', body, 0);
     if (disposed || requestEpoch !== epoch) return false;
-    applyRoom(data, path !== 'join' && path !== 'create');
+    if (!data.success) throw new Error('操作未成功，请重新同步后重试');
+    applyRoom(data, path !== 'join' && path !== 'create', onAccepted);
     if (path === 'action') playGameSound(['raise', 'all_in', 'call'].includes(String((body as { action?: string })?.action)) ? 'raise' : 'deal');
     if (path === 'start' || (path === 'ready' && data.room?.state === 'playing')) playGameSound('deal');
     return true;
@@ -795,9 +802,18 @@ function pokerActionCost(action: string, payload: Record<string, unknown>): numb
 }
 
 async function submitAction(payload: Record<string, unknown>) {
-  if (await request('action', payload)) {
+  const gameType = currentGameType.value;
+  const actorId = viewerId.value;
+  const selectedKinds = gameType === 'guandan'
+    ? new Set(guandanOptions.value.filter(option => samePlayedCards(option.cards, payload.cards)).map(option => option.kind))
+    : new Set<string>();
+  const unambiguousKind = selectedKinds.size === 1 ? [...selectedKinds][0] : undefined;
+  if (await request('action', payload, data => {
+    if (!data.room || data.room.room_id !== payload.room_id) return;
+    const voice = tableActionVoice(gameType, { ...payload, user_id: actorId, kind: unambiguousKind }, data.room.game);
+    if (voice) void playGameVoice(voice, { enqueue: true });
+  })) {
     resetRaiseAmount();
-    playGameVoice(payload.action === 'bid' && !payload.bid ? 'no_bid' : String(payload.action));
   }
 }
 

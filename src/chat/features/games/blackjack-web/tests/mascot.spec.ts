@@ -68,12 +68,12 @@ test('点击有动作与豆包语音，连续点击不重播，遵循语音音�
   await expect(page.locator('.yueyue-mascot-sprite')).toHaveAttribute('data-animation', 'waving');
   await expect(page.locator('.yueyue-mascot-speech')).toContainText('我在呢，今天想玩什么？');
   await button.click();
-  expect(await voiceTracks(page)).toEqual([{ original: '/audio/voice/pet_hello.mp3?v=doubao-20260924', volume: .47, paused: false }]);
+  expect(await voiceTracks(page)).toEqual([{ original: '/audio/voice/doubao-20260924-speed1/pet_hello.mp3', volume: .47, paused: false }]);
   await page.clock.runFor(2700);
   await button.focus();
   await page.keyboard.press('Enter');
   await expect(page.locator('.yueyue-mascot-sprite')).toHaveAttribute('data-animation', 'review');
-  expect((await voiceTracks(page)).at(-1)!.original).toContain('/pet_touch.mp3?');
+  expect((await voiceTracks(page)).at(-1)!.original).toContain('/doubao-20260924-speed1/pet_touch.mp3');
   await page.getByRole('button', { name: '关闭语音' }).click();
   expect((await voiceTracks(page)).every(track => track.paused)).toBe(true);
   await page.clock.runFor(2700);
