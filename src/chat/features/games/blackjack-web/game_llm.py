@@ -22,7 +22,7 @@ RULES = {
     "texas": "无限注德州扑克。用自己的两张底牌和五张公共牌组成最佳五张牌，底牌从发下就已知，没有look动作，不必等翻牌才判断。raise.amount是本轮加注到的总额而非追加金额，遵守min_raise_to/max_raise_to；河牌仍有最后一轮下注。目标是长期筹码收益，而非只拿对子或确定能赢才入池。AK/AQ等高牌、同花连张、合适位置的同花A也有价值；小对子面对危险牌面不等于强牌。先看hand_analysis、位置、有效筹码和public_action_history，再比较跟注成本与范围胜率。equity_reference只是假设范围的摊牌参考：随机范围与较强范围对照均不是真实对手牌力；多人翻前仍未行动者可能弃牌，不要把全桌摊牌胜率直接套当前底池赔率导致好牌也弃。对手全下只说明下注尺度，不代表坚果；根据筹码深度、赔率和历史判断，用优势牌或足够赔率的牌接有利全下，不能一见all_in就fold，也不能无条件接。能免费check时不fold；强牌主动价值下注。后位未加注底池选择性偷盲；单挑或双对手示弱时，用阻断牌、合理下注故事或改善空间小额诈唬，同花/顺子听牌可以半诈唬；河牌错失听牌也可按阻断牌与历史诈唬，不能弱牌一律check/fold。对手已经全下时不靠诈唬逼退该玩家；多人强行动、大成本或缺乏合理范围时收紧。先判断机会合理且成本可控，再用mix_percentile混合：小额偷池约低于25执行，优质听牌半诈唬约低于40执行；其余正常过牌/跟注，价值下注不受阈值限制。",
     "golden_flower": "炸金花。未看牌不能知道自己的三张牌；look免费且不结束回合，但以后跟加注成本加倍，并非必做动作。低成本首圈可以闷跟或选择性闷加，不要见别人加注就条件反射look。raise.amount是新的基础注总额，暗牌实际付amount、看牌者付2*amount；compare费用另见compare_cost，target_id必须来自compare_targets，同牌力时发起方负。看牌后不需要暴露真实强弱：弱牌可在有利单挑、小成本且公开行动支持时继续跟注或加注诈唬，强牌可价值加注或诱导，不能形成'看牌-弱牌就丢、对子才加'的固定模式。对手未看牌意味着其不知道自己牌力，盲加注本身不是强牌证据；已看牌也不等于必强，结合看牌后的公开行动、成本与人数判断。strategy提供随机三张牌范围的抽样基线，单张尤其高单张也可能领先盲打范围；不能把对手全部假定成对子以上。结合随机范围胜率、比牌费用和继续下注风险；单挑有利时可主动compare，尤其对反复抬价的盲打者，避免一直付跟注或无条件被吓退。多人compare只淘汰一人，不是立即收池；调用示例金额仍须在合法范围。先判断诈唬是否可信且便宜，再用mix_percentile约低于25时混合小额诈唬；强牌价值下注不受阈值限制，不为诈唬强行耗光筹码。",
     "landlord": "斗地主，地主对两名农民。bid 为 0 至 3 的叫分，play.cards 是要出的手牌；同类牌型比大小，炸弹和王炸例外。农民应配合队友，考虑剩余张数、保留炸弹和拆牌成本。",
-    "guandan": "掼蛋，四人对家组队，双副108张。level是全桌当前级牌，红桃级牌可配非王；单对三、三带二、五张顺子、三连对、两连三、同点炸弹、同花顺和四王。同花顺大于五炸小于六炸。出完后若无人压，队友接风。优先从play_options选合法cards，保留#0/#1区分两副，必要时手动组合；配合队友，不压队友无必要的小牌，注意对手剩余张数。只输出action和cards，规则引擎会选最弱可压的通配解释。",
+    "guandan": "掼蛋，四人对家组队，双副108张。level是全桌当前级牌，红桃级牌可配非王；单对三、三带二、五张顺子、三连对、两连三、同点炸弹、同花顺和四王。同花顺大于五炸小于六炸。出完后若无人压，队友接风。优先从play_options选合法cards及combo，保留#0/#1区分两副；combo决定通配牌型，必须原样使用该牌组的合法combo，省略时引擎按最弱可压解释。自由领出先规划成组牌，保留自然炸弹，不能把四张J无故拆单。配合队友剩余张数和出牌顺序，队友快走完时让牌，自己立即走完或需要拦截下家对手末牌时除外。输出action、cards，可附合法combo。",
     "mahjong": "四人麻将。discard.tile 打牌，chow.tiles 选择 chow_options 中的顺子，kong.tile 来自 kong_options，pung 碰，win 胡，pass 跳过响应。只依据自身手牌、公开副露和弃牌。",
     "sichuan_mahjong": "四川血战麻将。dingque.suit 定缺，有缺门先打缺门；不能吃，允许碰杠胡，胡后其他玩家继续至三家胡牌。优先使用 missing_suit_options/kong_options 和合法动作。",
     "blackjack": "21点。仅 hit 要牌或 stand 停牌，超过21爆牌；A可算1或11，荷官按固定17点规则行动。只知道荷官明牌，结合自己点数作决策。",
@@ -130,17 +130,30 @@ def _context(game_type: str, public_state: dict, user_id: str) -> dict:
         groups = {}
         seen = set()
         for option in state.get("play_options", []):
+            action = {"action": "play", "cards": option.get("cards", [])}
+            if option.get("combo"):
+                action["combo"] = option["combo"]
+            if not jev.strategic_action_allowed({"game_type": game_type, "state": state, "you": seats[str(user_id)]}, action):
+                continue
             signature = (option.get("combo"), option.get("kind"), option.get("rank"), option.get("size"))
             if signature in seen:
                 continue
             seen.add(signature)
             groups.setdefault((option.get("kind"), option.get("size")), []).append(option)
         options = []
+        for group in groups.values():
+            group.sort(key=lambda option: (option.get("rank", 0), option.get("combo", "")))
         take_high = False
-        while len(options) < 12 and any(groups.values()):
+        # 每种牌型至少保留大小两端；结束牌不因列表靠后而被截断。
+        own_hand = next(player["hand"] for player in state["players"] if player["user_id"] == seats[str(user_id)])
+        options.extend(option for group in groups.values() for option in group if len(option.get("cards", [])) == len(own_hand))
+        options = options[:jev.MAX_PLAY_CANDIDATES]
+        while len(options) < jev.MAX_PLAY_CANDIDATES and any(groups.values()):
             for group in groups.values():
-                if group and len(options) < 12:
-                    options.append(group.pop(-1 if take_high else 0))
+                if group and len(options) < jev.MAX_PLAY_CANDIDATES:
+                    option = group.pop(-1 if take_high else 0)
+                    if option not in options:
+                        options.append(option)
             take_high = not take_high
         state["play_options"] = options
     if game_type == "golden_flower":
@@ -160,6 +173,8 @@ def _context(game_type: str, public_state: dict, user_id: str) -> dict:
         "state": state, "action_fields": {action: list(ACTION_FIELDS[action]) for action in GAME_ACTIONS[game_type]},
         "_seat_ids": {seat: uid for uid, seat in seats.items()},
     }
+    if game_type == "guandan":
+        context["optional_action_fields"] = {"play": ["combo"]}
     if game_type == "texas":
         context["strategy"] = _texas_strategy(state, context["you"])
     elif game_type == "golden_flower":
@@ -260,6 +275,11 @@ class GameLLMClient:
         if action not in context.get("state", {}).get("legal_actions", []):
             return None
         expected = {"action", *ACTION_FIELDS[action]}
+        if context.get("game_type") == "guandan" and action == "play" and "combo" in result:
+            combo = result["combo"]
+            if not isinstance(combo, str) or not 1 <= len(combo) <= 80:
+                return None
+            expected.add("combo")
         if set(result) != expected:
             return None
         output = dict(result)
@@ -282,6 +302,16 @@ class GameLLMClient:
         if context.get("game_type") == "texas" and action == "fold" and "check" in context.get("state", {}).get("legal_actions", []):
             # 免费过牌无需追加筹码，避免模型在无人下注时白送底池；不替它强制付费跟注。
             output = {"action": "check"}
+        try:
+            if context.get("game_type") == "guandan" and action == "play":
+                own = next(p for p in context["state"]["players"] if p["user_id"] == context["you"])
+                jev._guandan_play_facts(own["hand"], output["cards"], context["state"]["level"],
+                                        context["state"].get("last_play"), output.get("combo"))
+            if not jev.strategic_action_allowed(context, output):
+                # 普通对话模型也遵循残局协作约束，拒绝后走同一算法退路。
+                return None
+        except (ValueError, TypeError, KeyError):
+            return None
         return output
 
     async def choose_action(self, context: dict) -> dict | None:
@@ -310,7 +340,7 @@ class GameLLMClient:
                         payload = {
                             "model": self.model, "stream": False,
                             "messages": [
-                                {"role": "system", "content": "你是牌局策略助手。仅根据给出的可见信息和规则，选择legal_actions中的一个动作。输出一个JSON对象，包含action及action_fields列出的必需字段；不能包含解释、代码块或其他字段。不得猜测已隐藏的具体牌。"},
+                                {"role": "system", "content": "你是牌局策略助手。仅根据给出的可见信息和规则，选择legal_actions中的一个动作。输出一个JSON对象，包含action及action_fields列出的必需字段，可附optional_action_fields允许的字段；不能包含解释、代码块或其他字段。不得猜测已隐藏的具体牌。"},
                                 *history, current_message,
                             ],
                         }

@@ -133,6 +133,81 @@ def classify_guandan_cards(cards, level="2"):
     return patterns
 
 
+def guandan_hand_analysis(hand, level, cards):
+    """只解释自己出牌后的结构变化，不推测其他座位的暗牌。"""
+    counts = Counter(card_parts(card)[1] for card in hand)
+    used = Counter(card_parts(card)[1] for card in cards)
+    remaining = list(hand)
+    for card in cards:
+        remaining.remove(card)
+    splits = [{"rank": rank, "before": counts[rank], "used": number,
+               "remaining": counts[rank] - number}
+              for rank, number in sorted(used.items()) if number < counts[rank]]
+    return {
+        "remaining_hand": remaining, "remaining_count": len(remaining), "wins_immediately": not remaining,
+        "wildcards_used": sum(card_parts(card) == ("Heart", VALUES[level]) for card in cards),
+        "splits_same_rank_groups": splits,
+        "breaks_natural_bombs": [row for row in splits if row["rank"] < 16 and row["before"] >= 4
+                                  and row["used"] < 4 and row["remaining"] < 4],
+        "splits_four_jokers": counts[16] == counts[17] == 2 and 0 < used[16] + used[17] < 4,
+    }
+
+
+def guandan_finishing_threats(visible_cards, level, previous, remaining_count):
+    """枚举公开信息尚未排除的末手牌型，不将未知牌归给任一玩家。"""
+    if not 1 <= remaining_count <= 10:
+        return []
+    visible = set(visible_cards)
+    unseen = [card_parts(card) for card in DECK if card not in visible]
+    wild_count = sum(part == ("Heart", VALUES[level]) for part in unseen)
+    natural = [part for part in unseen if part != ("Heart", VALUES[level])]
+    counts = Counter(rank for _, rank in natural)
+    found = set()
+
+    def available(needs, suit=None):
+        source = counts if suit is None else Counter(rank for color, rank in natural if color == suit)
+        if any(rank >= 16 and source[rank] < number for rank, number in needs.items()):
+            return False
+        return sum(max(0, number - source[rank]) for rank, number in needs.items()) <= wild_count
+
+    def add(kind, rank, size):
+        pattern = GuandanPattern(kind, rank, size)
+        if size == remaining_count and guandan_beats(pattern, previous):
+            found.add(pattern)
+
+    if remaining_count == 1:
+        for rank in list(range(2, 15)) + [16, 17]:
+            if counts[rank] or rank == VALUES[level] and wild_count:
+                add("single", power(rank, level), 1)
+    for size, kind in ((2, "pair"), (3, "triple")):
+        if remaining_count == size:
+            for rank in list(range(2, 15)) + ([16, 17] if size == 2 else []):
+                # 纯双通配按引擎只解释为级牌对子，不能虚构其他点数的对子。
+                if (counts[rank] or rank == VALUES[level]) and available({rank: size}):
+                    add(kind, power(rank, level), size)
+    if remaining_count == 5:
+        for triple in range(2, 15):
+            if any(pair != triple and available({triple: 3, pair: 2})
+                   for pair in list(range(2, 15)) + [16, 17]):
+                add("full_house", power(triple, level), 5)
+    for kind, width, copies in (("straight", 5, 1), ("pair_straight", 3, 2), ("triple_straight", 2, 3)):
+        if remaining_count != width * copies:
+            continue
+        for sequence in sequences(width):
+            needs = {rank: copies for rank in sequence}
+            if available(needs):
+                add(kind, sequence[-1], remaining_count)
+            if kind == "straight" and any(available(needs, suit) for suit in SUITS):
+                add("straight_flush", sequence[-1], 5)
+    if 4 <= remaining_count <= 10:
+        for rank in range(2, 15):
+            if available({rank: remaining_count}):
+                add("bomb", power(rank, level), remaining_count)
+    if remaining_count == 4 and counts[16] == counts[17] == 2:
+        add("rocket", 17, 4)
+    return sorted(found, key=lambda pattern: (bomb_order(pattern), pattern.kind))
+
+
 class GuandanGame:
     """采用升1/2/3级、回贡10及以下、打A头游且队友非末游过关的房规。"""
 
@@ -273,39 +348,184 @@ class GuandanGame:
                         if cards:
                             yield cards
 
-    def _candidates(self, uid):
+    def _hand_candidates(self, hand):
         seen = set()
-        for cards in self._templates(self.hands[uid]):
+        for cards in self._templates(hand):
             signature = tuple(sorted(cards))
             if signature in seen:
                 continue
             seen.add(signature)
             for pattern in classify_guandan_cards(list(signature), self.level):
-                if not self.last_pattern or guandan_beats(pattern, self.last_pattern):
-                    yield list(signature), pattern
+                yield list(signature), pattern
+
+    def _candidates(self, uid):
+        for cards, pattern in self._hand_candidates(self.hands[uid]):
+            if not self.last_pattern or guandan_beats(pattern, self.last_pattern):
+                yield cards, pattern
+
+    def _play_options(self, uid, limit=80):
+        """先看完整有界模板，再均衡抽取，避免后枚举的顺子、钢板被截断。"""
+        candidates = list(self._candidates(uid))
+        groups = {}
+        selected, signatures = [], set()
+
+        def append(item):
+            cards, pattern = item
+            signature = (tuple(cards), pattern.combo)
+            if signature not in signatures and len(selected) < limit:
+                signatures.add(signature)
+                selected.append({"cards": cards, **pattern.to_dict()})
+
+        for item in candidates:
+            cards, pattern = item
+            if len(cards) == len(self.hands[uid]):
+                append(item)
+            groups.setdefault((pattern.kind, pattern.size), []).append(item)
+        for group in groups.values():
+            group.sort(key=lambda item: (item[1].rank, item[1].detail, item[0]))
+        take_high = False
+        while len(selected) < limit and any(groups.values()):
+            for group in groups.values():
+                if group:
+                    append(group.pop(-1 if take_high else 0))
+            take_high = not take_high
+        return selected
+
+    def _hand_planner(self, hand, candidates):
+        """按点数和独立通配牌计数估计手数；固定预算，不枚举对手牌。"""
+        def move(cards):
+            counts = Counter(16 if card_parts(card) == ("Heart", VALUES[self.level])
+                             else card_parts(card)[1] - 2 for card in cards)
+            return tuple(sorted(counts.items()))
+
+        original = [0] * 17
+        for index, number in move(hand):
+            original[index] = number
+        original = tuple(original)
+        moves = sorted({(len(cards), move(cards)) for cards, _ in candidates}, reverse=True)
+        by_index = [[item for item in moves if any(index == current for index, _ in item[1])]
+                    for current in range(17)]
+        cache = {tuple([0] * 17): 0}
+
+        def remainder(state, action):
+            if any(state[index] < number for index, number in action):
+                return None
+            result = list(state)
+            for index, number in action:
+                result[index] -= number
+            return tuple(result)
+
+        def estimate(state, budget=0):
+            if state in cache and (not budget or cache[state] <= 2):
+                return cache[state]
+            best = cache.get(state, sum(state))
+            # 两种贪心起点避免只追求最长组合，把另一个完整组拆散。
+            for skip in range(2):
+                rest, turns, ignored = state, 0, skip
+                for _, action in moves:
+                    next_state = remainder(rest, action)
+                    if next_state is None:
+                        continue
+                    if ignored:
+                        ignored -= 1
+                        continue
+                    while next_state is not None:
+                        rest, turns = next_state, turns + 1
+                        next_state = remainder(rest, action)
+                best = min(best, turns + sum(rest))
+            pending, visited = [(state, 0)], {}
+            while pending and budget and best > 2:
+                current, depth = pending.pop()
+                budget -= 1
+                if depth + 1 >= best:
+                    continue
+                anchor = next(index for index, count in enumerate(current) if count)
+                branches = []
+                for size, action in by_index[anchor]:
+                    next_state = remainder(current, action)
+                    if next_state is None:
+                        continue
+                    if not any(next_state):
+                        best = min(best, depth + 1)
+                    elif visited.get(next_state, 100) > depth + 1:
+                        visited[next_state] = depth + 1
+                        branches.append((size, next_state, depth + 1))
+                for _, rest, depth in reversed(sorted(branches, reverse=True)[:16]):
+                    pending.append((rest, depth))
+            cache[state] = best
+            return best
+
+        return original, move, remainder, estimate
 
     def suggest_action(self, user_id):
         uid = str(user_id)
         if not self._legal_actions(uid):
             raise ValueError("尚未轮到该玩家")
-        candidates = list(self._candidates(uid))
+        hand = self.hands[uid]
+        all_candidates = list(self._hand_candidates(hand))
+        candidates = [item for item in all_candidates
+                      if not self.last_pattern or guandan_beats(item[1], self.last_pattern)]
         finishing = [item for item in candidates if len(item[0]) == len(self.hands[uid])]
         if finishing:
             cards, pattern = min(finishing, key=lambda item: bomb_order(item[1]))
             return {"action": "play", "cards": cards, "combo": pattern.combo}
-        if self.last_play and self.teams[self.last_play["user_id"]] == self.teams[uid]:
-            return {"action": "pass"}
         if not candidates:
             return {"action": "pass"}
-        counts = Counter(card_parts(card)[1] for card in self.hands[uid])
-        danger = min(len(self.hands[other]) for other in self.player_ids if self.teams[other] != self.teams[uid] and self.hands[other]) <= 2
-        def cost(item):
-            cards, pattern = item
-            used = Counter(card_parts(card)[1] for card in cards)
-            split = sum(5 if counts[rank] >= 4 else 1.3 for rank, number in used.items() if number < counts[rank])
-            wild_used = sum(card_parts(card) == ("Heart", VALUES[self.level]) for card in cards)
-            return (bomb_order(pattern)[0] > 0) * (1 if danger else 12) + split + wild_used * 1.5 - len(cards) * 2 + (pattern.rank * (-0.3 if danger and self.last_pattern else 0.12))
-        cards, pattern = min(candidates, key=cost)
+        if self.last_play and self.teams[self.last_play["user_id"]] == self.teams[uid]:
+            following = self._next(uid)
+            if self.teams[following] != self.teams[uid] and following not in self.passed:
+                visible = set(hand) | set(self.last_play["cards"])
+                for event in self.seat_actions.values():
+                    visible.update(event["cards"])
+                threats = guandan_finishing_threats(visible, self.level, self.last_pattern,
+                                                   len(self.hands[following]))
+                blockers = [(cards, pattern) for cards, pattern in candidates
+                            if any(not guandan_beats(threat, pattern) for threat in threats)]
+                if blockers:
+                    # 只在下个敌手存在末手接走可能时替队友拦截；无法封堵就继续让牌。
+                    def blocking_key(item):
+                        _, pattern = item
+                        covered = sum(not guandan_beats(threat, pattern) for threat in threats)
+                        return (-covered, bool(bomb_order(pattern)[0]), bomb_order(pattern))
+                    cards, pattern = min(blockers, key=blocking_key)
+                    return {"action": "play", "cards": cards, "combo": pattern.combo}
+            return {"action": "pass"}
+        enemies = [other for other in self.player_ids
+                   if self.teams[other] != self.teams[uid] and self.hands[other]]
+        enemy_counts = [len(self.hands[other]) for other in enemies]
+        waiting_counts = [len(self.hands[other]) for other in enemies if other not in self.passed]
+        danger = min(enemy_counts) <= 2
+        must_block = (self.last_pattern and self.last_pattern.kind in ("single", "pair")
+                      and self.last_pattern.size in waiting_counts)
+        if must_block:
+            normal = [item for item in candidates if bomb_order(item[1])[0] == 0]
+            if normal:
+                # 对手已报单/报双时允许拆组，用本方最大同型牌守住这一轮。
+                cards, pattern = max(normal, key=lambda item: item[1].rank)
+                return {"action": "play", "cards": cards, "combo": pattern.combo}
+        original, move, remainder, estimate = self._hand_planner(hand, all_candidates)
+        current_turns = estimate(original, budget=40)
+        ranked = []
+        for cards, pattern in candidates:
+            facts = guandan_hand_analysis(hand, self.level, cards)
+            split = sum(14 if row in facts["breaks_natural_bombs"] else 2 if row["before"] >= 4 else 1.2
+                        for row in facts["splits_same_rank_groups"])
+            split += 14 if facts["splits_four_jokers"] else 0
+            rest = remainder(original, move(cards))
+            bomb_cost = (1 if danger else 3) if bomb_order(pattern)[0] else 0
+            lead_cost = 0
+            if not self.last_play and pattern.kind in ("single", "pair") and pattern.size in enemy_counts:
+                lead_cost = 10 + (17 - pattern.rank)
+            cost = split + bomb_cost + facts["wildcards_used"] * 1.5 + lead_cost + pattern.rank * 0.08 - len(cards) * 0.15
+            ranked.append([estimate(rest) * 8 + cost, cards, pattern, rest, cost, split])
+        ranked.sort(key=lambda item: item[0])
+        for item in ranked[:8]:
+            item[0] = estimate(item[3], budget=24) * 8 + item[4]
+        _, cards, pattern, rest, _, split = min(ranked, key=lambda item: item[0])
+        if self.last_play and not danger and estimate(rest) > 1:
+            if (split >= 10 or estimate(rest) > current_turns
+                    or bomb_order(pattern)[0] and estimate(rest) >= current_turns):
+                return {"action": "pass"}
         return {"action": "play", "cards": cards, "combo": pattern.combo}
 
     choose_bot_action = suggest_action
@@ -387,12 +607,7 @@ class GuandanGame:
 
     def public_state(self, viewer_id):
         viewer = str(viewer_id)
-        options = []
-        if viewer == self.current_player_id:
-            for cards, pattern in self._candidates(viewer):
-                options.append({"cards": cards, **pattern.to_dict()})
-                if len(options) == 80:
-                    break
+        options = self._play_options(viewer) if viewer == self.current_player_id else []
         return {
             "phase": self.phase, "finished": self.finished, "current_player_id": self.current_player_id,
             "players": [{"user_id": uid, "hand": list(self.hands[uid]) if uid == viewer or self.finished else [],

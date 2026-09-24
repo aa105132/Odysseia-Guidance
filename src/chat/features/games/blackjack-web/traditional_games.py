@@ -108,6 +108,98 @@ def landlord_beats(candidate: LandlordPattern, previous: LandlordPattern) -> boo
             and candidate.chain == previous.chain and candidate.rank > previous.rank)
 
 
+def _landlord_finishing_patterns(previous: dict, remaining: int, available: Counter) -> list[LandlordPattern]:
+    """按公开剩余容量判断可能的末手牌型，不枚举或读取其他玩家的暗牌。"""
+    old = LandlordPattern(previous["kind"], previous["rank"], previous["size"], previous.get("chain", 1))
+    possible = []
+    if remaining == old.size:
+        for rank in range(old.rank + 1, 18):
+            core = [rank]
+            amount = {"single": 1, "pair": 2, "triple": 3, "bomb": 4,
+                      "triple_single": 3, "triple_pair": 3,
+                      "four_two_single": 4, "four_two_pair": 4}.get(old.kind)
+            if old.kind in ("straight", "pair_straight", "airplane", "airplane_single", "airplane_pair"):
+                if rank > 14 or rank - old.chain + 1 < 3:
+                    continue
+                core = list(range(rank - old.chain + 1, rank + 1))
+                amount = 1 if old.kind == "straight" else 2 if old.kind == "pair_straight" else 3
+            if amount is None or not all(available[value] >= amount for value in core):
+                continue
+            outside = [available[value] for value in range(3, 18) if value not in core]
+            if old.kind == "triple_single" and not any(count >= 1 for count in outside):
+                continue
+            if old.kind == "triple_pair" and not any(count >= 2 for count in outside):
+                continue
+            if old.kind == "airplane_single" and sum(count >= 1 for count in outside) < old.chain:
+                continue
+            if old.kind == "airplane_pair" and sum(count >= 2 for count in outside) < old.chain:
+                continue
+            if old.kind == "four_two_single" and sum(outside) < 2:
+                continue
+            if old.kind == "four_two_pair" and sum(count >= 2 for count in outside) < 2:
+                continue
+            possible.append(LandlordPattern(old.kind, rank, old.size, old.chain))
+    # 炸弹与王炸可以改变牌型；不能因地主剩牌数不等于桌面牌张数而认定安全。
+    if remaining == 4:
+        possible.extend(LandlordPattern("bomb", rank, 4) for rank in range(3, 16)
+                        if available[rank] >= 4 and landlord_beats(LandlordPattern("bomb", rank, 4), old))
+    if remaining == 2 and available[16] and available[17]:
+        rocket = LandlordPattern("rocket", 17, 2)
+        if landlord_beats(rocket, old):
+            possible.append(rocket)
+    return list(dict.fromkeys(possible))
+
+
+def landlord_blocks_finishing_reply(pattern: LandlordPattern, cooperation: dict) -> bool:
+    """接管须至少阻止一种公开信息允许的末手；更大的普通牌挡不住末手炸弹。"""
+    threats = cooperation.get("landlord_possible_finishing_patterns", [])
+    return bool(cooperation.get("unknown_finishing_shape_threat")) or any(
+        not landlord_beats(LandlordPattern(item["kind"], item["rank"], item["size"], item["chain"]), pattern)
+        for item in threats
+    )
+
+
+def landlord_team_context(state: dict, user_id: str) -> dict:
+    """只用自己的手牌与公开桌面，说明让牌效果和地主末牌的拦截窗口。"""
+    players = state.get("players", [])
+    player_ids = [player["user_id"] for player in players]
+    own = next(player for player in players if player["user_id"] == user_id)
+    landlord = state.get("landlord_id")
+    teammate = next((player for player in players
+                     if player["user_id"] not in (user_id, landlord)), None) if landlord and landlord != user_id else None
+    previous = state.get("last_play")
+    teammate_leads = bool(teammate and previous and previous["user_id"] == teammate["user_id"])
+    next_player = player_ids[(player_ids.index(user_id) + 1) % len(player_ids)]
+    # 三人局当前上手是队友、下家也正好是队友，说明地主已经对这手过牌。
+    # 不能单看 seat_actions 的 pass；它可能属于队友本次压牌前的旧动作。
+    returns_lead = teammate_leads and next_player == teammate["user_id"]
+    landlord_count = next((player["hand_count"] for player in players if player["user_id"] == landlord), None)
+    threats = []
+    unknown_shape = False
+    if teammate_leads and next_player == landlord:
+        visible = set(own.get("hand", [])) | set(previous.get("cards", []))
+        for action in state.get("seat_actions", {}).values():
+            visible.update(action.get("cards", []))
+        known = Counter(poker_value(card) for card in visible)
+        available = Counter({rank: max(0, (1 if rank >= 16 else 4) - known[rank]) for rank in range(3, 18)})
+        unknown_shape = previous.get("kind") not in LANDLORD_CARD_NAMES and landlord_count == previous["size"]
+        threats = _landlord_finishing_patterns(previous, landlord_count, available)
+    reply_ranks = [pattern.rank for pattern in threats if pattern.kind == previous["kind"]] if previous else []
+    return {
+        "teammate": teammate["user_id"] if teammate else None,
+        "teammate_remaining_count": teammate["hand_count"] if teammate else None,
+        "teammate_close_to_finish": bool(teammate and 0 < teammate["hand_count"] <= 2),
+        "teammate_leads": teammate_leads,
+        "landlord_acts_next": bool(landlord and next_player == landlord),
+        "landlord_already_passed_current_play": returns_lead,
+        "pass_returns_lead_to_teammate": returns_lead,
+        "landlord_possible_finishing_reply_ranks": reply_ranks,
+        "landlord_possible_finishing_patterns": [pattern.to_dict() for pattern in threats],
+        "unknown_finishing_shape_threat": unknown_shape,
+        "must_block_landlord_finish": bool(threats) or unknown_shape,
+    }
+
+
 def _validate_players(player_ids: list[str], expected: int) -> list[str]:
     ids = [str(user_id) for user_id in player_ids]
     if len(ids) != expected or len(set(ids)) != expected or any(not uid for uid in ids):
@@ -475,23 +567,33 @@ class LandlordGame:
         teammate = next((uid for uid in self.player_ids
                          if uid != user_id and uid != self.landlord_id), None) if user_id != self.landlord_id else None
         next_player = self.player_ids[(self.turn_index + 1) % 3]
-        teammate_leads = (self.last_play and user_id != self.landlord_id
-                          and self.last_play["user_id"] != self.landlord_id)
+        teammate_leads = bool(self.last_play and teammate and self.last_play["user_id"] == teammate)
         must_block = (self.last_pattern is not None and self.last_pattern.size in enemy_counts
                       and self.last_pattern.kind in ("single", "pair"))
         if teammate_leads:
-            # 通常让队友继续走；仅当地主马上可接走末张/末对时替队友拦截。
-            if not (next_player == self.landlord_id and must_block and self.last_pattern.rank < 14):
+            cooperation = landlord_team_context(self.public_state(user_id), user_id)
+            if not cooperation["must_block_landlord_finish"]:
                 return {"action": "pass"}
+            # 仅保留确实能封住至少一种可能末牌的压牌；无意义接管会堵住队友。
+            protecting = [item for item in candidates
+                          if landlord_blocks_finishing_reply(item[1], cooperation)]
+            if not protecting:
+                return {"action": "pass"}
+            threats = [LandlordPattern(item["kind"], item["rank"], item["size"], item["chain"])
+                       for item in cooperation["landlord_possible_finishing_patterns"]]
+            # 紧急接管先尽量封住可能的末手，同等保护效果才优先保留炸弹。
+            cards, _ = max(protecting, key=lambda item: (
+                sum(not landlord_beats(threat, item[1]) for threat in threats),
+                item[1].kind not in ("bomb", "rocket"), item[1].rank))
+            return {"action": "play", "cards": list(cards)}
 
         if must_block:
             normal = [item for item in candidates if item[1].kind not in ("bomb", "rocket")]
             if normal:
                 cards, _ = max(normal, key=lambda item: item[1].rank)
                 return {"action": "play", "cards": list(cards)}
-            if not teammate_leads or self.last_pattern.rank < 14:
-                cards, _ = min(candidates, key=lambda item: (item[1].kind == "rocket", item[1].rank))
-                return {"action": "play", "cards": list(cards)}
+            cards, _ = min(candidates, key=lambda item: (item[1].kind == "rocket", item[1].rank))
+            return {"action": "play", "cards": list(cards)}
 
         original, remainder, estimate = self._hand_planner(self.hands[user_id], all_candidates)
         hand_turns = estimate(original, budget=64)

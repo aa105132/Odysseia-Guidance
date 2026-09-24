@@ -20,7 +20,7 @@ def test_model_candidates_are_bounded_and_varied_without_losing_hand_or_memory()
     original["seat_actions"] = {IDS[1]: {"action": "play", "cards": ["Club3#0"]}}
     state = llm._context("guandan", original, uid)["state"]
     options = state["play_options"]
-    assert 0 < len(options) <= 12
+    assert 0 < len(options) <= 24
     assert {option["kind"] for option in options} == {option["kind"] for option in original["play_options"]}
     own = next(player for player in state["players"] if player["hand"])
     assert own["hand"] == game.hands[uid] and len(own["hand"]) == 27
