@@ -204,7 +204,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.yueyue-mascot { display: flex; flex-direction: row-reverse; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; max-width: 1120px; margin: auto auto 0; min-height: 0; color: #4b5661; pointer-events: none; }
+.yueyue-mascot { display: flex; flex: 0 0 auto; flex-direction: row-reverse; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; max-width: 1120px; margin: auto auto 0; min-height: 0; color: #4b5661; pointer-events: none; }
 .yueyue-mascot-button { --mascot-width: clamp(96px, 12vw, 154px); position: relative; flex: 0 0 auto; display: block; width: var(--mascot-width); height: calc(var(--mascot-width) * 208 / 192); padding: 0; border: 0; border-radius: 18px; background: none; box-shadow: none; color: inherit; pointer-events: auto; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
 .yueyue-mascot-button:focus-visible { outline: 2px solid #877558; outline-offset: 3px; background: #faf7ed66; }
 .yueyue-mascot-sprite { display: block; width: 100%; height: 100%; background-repeat: no-repeat; background-size: 800% 1100%; }

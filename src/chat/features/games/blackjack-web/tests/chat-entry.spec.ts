@@ -1,6 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const uid = '123456789012345678';
+const cardHands: Record<string, string[]> = {
+  texas: ['ClubA', 'Spade10'],
+  golden_flower: ['ClubA', 'Spade10', 'Heart3'],
+  landlord: ['Club3', 'Diamond3', 'Heart3', 'Spade3', 'Club4', 'Diamond4', 'Heart5', 'Spade6', 'Club7', 'Diamond8', 'Heart9', 'Spade10', 'ClubJ', 'DiamondQ', 'HeartK', 'SpadeA', 'Club2', 'Diamond2', 'JokerSmall', 'JokerBig'],
+  guandan: ['Heart2#0', 'Heart2#1', 'Club2#0', 'Club3#0', 'Club3#1', 'Diamond3#0', 'Heart4#0', 'Spade4#0', 'Club5#0', 'Club6#0', 'Heart7#0', 'Spade7#0', 'Club8#0', 'Diamond8#0', 'Club9#0', 'Club10#0', 'Heart10#0', 'Spade10#1', 'ClubJ#0', 'DiamondJ#0', 'HeartQ#0', 'SpadeQ#0', 'ClubK#0', 'HeartA#0', 'SpadeA#0', 'JokerSmall#0', 'JokerBig#1'],
+  mahjong: ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'p1', 'p2', 'p3', 's7', 's8', 's9', 'z1', 'z1'],
+  sichuan_mahjong: ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'p1', 'p2', 'p3', 's7', 's8', 's9', 's1', 's1'],
+};
 
 async function mockVoice(page: Page) {
   await page.addInitScript(() => {
@@ -27,7 +35,10 @@ async function withDiscordRail(page: Page, width: number, height: number) {
     if (!document.getElementById('test-discord-rail')) {
       const rail = document.createElement('div');
       rail.id = 'test-discord-rail';
-      rail.style.cssText = 'position:fixed;right:0;top:0;bottom:0;width:64px;z-index:99999;background:#555';
+      const style = document.createElement('style');
+      // 灰条跟随物理方向自动移动，横竖转换后仍能真实阻挡错误位置的按钮。
+      style.textContent = '#test-discord-rail{position:fixed;right:0;top:0;bottom:0;width:64px;z-index:99999;background:#555}@media(orientation:portrait){#test-discord-rail{left:0;top:auto;width:auto;height:64px}}';
+      document.head.append(style);
       document.body.append(rail);
     }
   });
@@ -41,7 +52,13 @@ async function expectChat(page: Page, sends: number, screenshot?: string) {
   await expect(button).toHaveText('聊天');
   await expect(button).toBeInViewport({ ratio: 1 });
   const box = (await button.boundingBox())!;
-  expect(box.x + box.width, '聊天按钮完整避开 Discord 右侧灰条').toBeLessThanOrEqual(page.viewportSize()!.width - 64 + 1);
+  const { width, height } = page.viewportSize()!;
+  const portrait = height > width;
+  expect(box.x + box.width, '聊天按钮完整避开 Discord 物理安全区').toBeLessThanOrEqual(width - (portrait ? 0 : 64) + 1);
+  expect(box.y + box.height, '聊天按钮完整避开 Discord 物理安全区').toBeLessThanOrEqual(height - (portrait ? 64 : 0) + 1);
+  const stage = await page.locator('.game-viewport-stage').evaluate(element => ({ width: element.clientWidth, height: element.clientHeight }));
+  const hasMessage = await page.locator('.table-fullscreen:has(.blackjack-table) > .status-message, .table-fullscreen:has(.blackjack-table) > .error-message').count();
+  expect(stage, '每个模式的共享舞台使用完整安全矩形，只为实际21点提示保留24px').toEqual({ width: portrait ? height - 64 : width - 64, height: (portrait ? width : height) - (hasMessage ? 24 : 0) });
   if (screenshot) await page.screenshot({ path: `../../../../../tmp/jev-ui-${screenshot}-entry.png` });
   await button.click();
   await expect(button).toHaveAttribute('aria-expanded', 'true');
@@ -96,9 +113,22 @@ for (const [kind, title, count] of [
     await withDiscordRail(page, 844, 390);
     await expectChat(page, 1, `${kind}-844`);
     room.state = 'playing'; room.revision++;
-    room.game = { phase: 'playing', finished: false, current_player_id: uid, legal_actions: [], winners: [], message: '等待操作', community_cards: [], players: room.players.map((p: any) => ({ user_id: p.user_id, hand: [], hand_count: 0, stack: 100, score: 0, discards: [] })) };
+    const hand = cardHands[kind]!;
+    room.game = {
+      phase: 'playing', finished: false, current_player_id: uid,
+      legal_actions: kind === 'texas' ? ['check', 'raise', 'fold'] : kind === 'golden_flower' ? ['call', 'compare', 'fold'] : ['landlord', 'guandan'].includes(kind) ? ['play', 'pass'] : ['discard'],
+      winners: [], message: '轮到你操作', community_cards: kind === 'texas' ? ['HeartA', 'Club9', 'Diamond7'] : [],
+      min_raise_to: 4, max_raise_to: 100, call_amount: 1, compare_cost: 2,
+      bottom_cards: ['SpadeA', 'Club2', 'JokerBig'], level: '2', team_levels: ['2', '2'], play_options: [],
+      players: room.players.map((p: any, index: number) => ({ user_id: p.user_id, hand: index ? [] : hand, hand_count: hand.length, stack: 100, score: 0, team: index % 2, discards: [] })),
+    };
     await page.getByRole('button', { name: '同步', exact: true }).click();
     await withDiscordRail(page, 390, 844);
+    await expect(page.locator('.tg-my-hand .tg-hand-card')).toHaveCount(hand.length);
+    for (const control of await page.locator('.tg-hand-card, .tg-control-panel button, .tg-control-panel input, .tg-control-panel select').all()) {
+      await expect(control).toBeInViewport({ ratio: 1 });
+      if (await control.isEnabled()) await control.click({ trial: true });
+    }
     await expectChat(page, 2, `${kind}-390`);
     room.state = 'finished'; room.revision++; room.game.finished = true;
     await page.getByRole('button', { name: '同步', exact: true }).click();

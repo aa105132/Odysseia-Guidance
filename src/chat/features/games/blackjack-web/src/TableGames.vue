@@ -1185,7 +1185,7 @@ onBeforeUnmount(() => {
   65% { opacity: 1; }
   100% { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
 }
-.tg-felt { position: absolute; inset: 7% 0 0; background: url('/ui/guochao/table-felt-muted.svg') center/100% 100% no-repeat; filter: drop-shadow(0 8px 5px #17232e55); }
+.tg-felt { position: absolute; inset: 7% 0 0; background: url('/ui/guochao/table-felt-muted.svg') center/100% 100% no-repeat; filter: saturate(1.2) drop-shadow(0 8px 5px #17232e55); }
 .tg-center { position: absolute; top: 51%; left: 50%; width: 48%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: clamp(3px, 1.2cqh, 10px); text-align: center; z-index: 1; }
 /* 提示、底池与公共牌使用同一纵向流，避免独立百分比定位叠字。 */
 .tg-center > .tg-poker-status { position: static; width: 100%; min-width: 0; gap: 8px; }

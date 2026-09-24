@@ -11,6 +11,28 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 body { min-width: 0; }
+/* 背景覆盖整个物理窗口，交互内容单独使用避开 Discord 控件的安全矩形。 */
+body::before {
+  content: '';
+  position: fixed;
+  top: var(--activity-offset-top, 0px);
+  left: var(--activity-offset-left, 0px);
+  width: var(--activity-screen-width, 100vw);
+  height: var(--activity-screen-height, 100dvh);
+  pointer-events: none;
+  filter: saturate(1.16);
+  background: linear-gradient(180deg, #28344424, #25354785), #645a56 url('/ui/guochao/teahouse-room-soft.webp') center / cover;
+}
+body:has(.table-fullscreen)::before {
+  background: linear-gradient(#2634404f, #1726359c), #34414f url('/ui/guochao/teahouse-room-muted.webp') center / cover;
+}
+body:has(.farm-game)::before { background: #dce7d8; }
+:root[data-activity-rotated='true'] body::before {
+  width: var(--activity-screen-height, 100dvh);
+  height: var(--activity-screen-width, 100vw);
+  transform-origin: top left;
+  transform: translateX(var(--activity-screen-width, 100vw)) rotate(90deg);
+}
 #app {
   position: fixed;
   top: var(--activity-offset-top, 0px);
@@ -38,7 +60,7 @@ dialog[open] {
   max-width: calc(var(--activity-width, 100vw) - 24px) !important;
   max-height: calc(var(--activity-height, 100dvh) - 24px) !important;
 }
-dialog::backdrop { right: var(--activity-rail, 0px); }
+dialog::backdrop { right: var(--activity-safe-right, 0px); bottom: var(--activity-safe-bottom, 0px); }
 button, input, select { font: inherit; }
 button { cursor: pointer; touch-action: manipulation; }
 button:disabled { cursor: not-allowed; }

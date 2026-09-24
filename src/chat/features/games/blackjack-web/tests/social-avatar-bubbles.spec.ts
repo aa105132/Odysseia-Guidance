@@ -61,8 +61,10 @@ async function assertAnchored(page: Page, userId: string) {
   expect(Math.hypot(dx, dy), '气泡紧靠发送者头像').toBeLessThanOrEqual(12);
   expect(Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x) <= 0 || Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y) <= 0, '气泡不遮住头像').toBe(true);
   expect(b.x).toBeGreaterThanOrEqual(0); expect(b.y).toBeGreaterThanOrEqual(0);
-  expect(b.x + b.width).toBeLessThanOrEqual(page.viewportSize()!.width - 64 + 1);
-  expect(b.y + b.height).toBeLessThanOrEqual(page.viewportSize()!.height + 1);
+  const { width, height } = page.viewportSize()!;
+  const portrait = height > width;
+  expect(b.x + b.width).toBeLessThanOrEqual(width - (portrait ? 0 : 64) + 1);
+  expect(b.y + b.height).toBeLessThanOrEqual(height - (portrait ? 64 : 0) + 1);
   await expect(bubble).toHaveCSS('pointer-events', 'none');
   expect(await bubble.evaluate(element => {
     const box = element.getBoundingClientRect();

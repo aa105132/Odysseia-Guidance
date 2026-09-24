@@ -11,15 +11,24 @@ export function updateActivityViewport() {
   const width = Math.max(1, Math.round(visual?.width ?? innerWidth));
   const height = Math.max(1, Math.round(visual?.height ?? innerHeight));
   const rail = embedded() ? 64 : 0;
-  const physicalWidth = Math.max(1, width - rail);
+  // Discord 控件跟随物理屏幕方向；先避让，再转换游戏的横向坐标。
+  const portrait = height > width;
+  const safeRight = portrait ? 0 : rail;
+  const safeBottom = portrait ? rail : 0;
+  const physicalWidth = Math.max(1, width - safeRight);
+  const physicalHeight = Math.max(1, height - safeBottom);
   const touchDevice = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
-  const rotated = height > width && (width <= 768 || touchDevice);
-  current = { width: rotated ? height : physicalWidth, height: rotated ? physicalWidth : height, physicalWidth, physicalHeight: height, rail, rotated, offsetLeft: visual?.offsetLeft ?? 0, offsetTop: visual?.offsetTop ?? 0 };
+  const rotated = portrait && (width <= 768 || touchDevice);
+  current = { width: rotated ? physicalHeight : physicalWidth, height: rotated ? physicalWidth : physicalHeight, physicalWidth, physicalHeight, rail, rotated, offsetLeft: visual?.offsetLeft ?? 0, offsetTop: visual?.offsetTop ?? 0 };
   const style = document.documentElement.style;
   style.setProperty('--activity-width', `${current.width}px`);
   style.setProperty('--activity-height', `${current.height}px`);
   style.setProperty('--activity-physical-width', `${physicalWidth}px`);
-  style.setProperty('--activity-physical-height', `${height}px`);
+  style.setProperty('--activity-physical-height', `${physicalHeight}px`);
+  style.setProperty('--activity-screen-width', `${width}px`);
+  style.setProperty('--activity-screen-height', `${height}px`);
+  style.setProperty('--activity-safe-right', `${safeRight}px`);
+  style.setProperty('--activity-safe-bottom', `${safeBottom}px`);
   style.setProperty('--activity-rail', `${rail}px`);
   style.setProperty('--activity-rotation', rotated ? '90deg' : '0deg');
   style.setProperty('--activity-offset-left', `${current.offsetLeft}px`);

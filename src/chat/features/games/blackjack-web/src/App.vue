@@ -1448,7 +1448,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div :class="['multi-root', { 'table-fullscreen': ['single', 'table', 'table_games', 'noname', 'farm'].includes(viewMode) }]">
+  <div :class="['multi-root', { 'hub-fullscreen': viewMode === 'game_hub', 'table-fullscreen': ['single', 'table', 'table_games', 'noname', 'farm'].includes(viewMode) }]">
     <div v-if="viewMode === 'loading'" class="panel loading-panel">
       <h2>月月游戏中心</h2>
       <p>{{ loadingText }}</p>
@@ -1803,14 +1803,15 @@ onBeforeUnmount(() => {
 .blackjack-time-setting { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
 .blackjack-time-setting input { width: 100px; min-height: 36px; box-sizing: border-box; padding: 7px; color: #493d67; background: #fff6e4; border: 1px solid #d9b16b; border-radius: 8px; }
 .multi-root {
-  min-height: var(--activity-height, 100vh);
-  min-height: var(--activity-height, 100dvh);
+  height: 100%;
+  min-height: 0;
+  width: 100%;
   padding: 18px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   color: #fff1ce;
-  background: linear-gradient(180deg, #28344424, #25354785), #645a56 url("/ui/guochao/teahouse-room-soft.webp") center / cover fixed;
+  overflow: auto;
 }
 
 /* 横屏桌面按剩余高度分配牌桌空间，操作区不随牌桌滚动。 */
@@ -1893,7 +1894,7 @@ onBeforeUnmount(() => {
   object-fit: fill;
   pointer-events: none;
   user-select: none;
-  filter: none;
+  filter: saturate(1.2);
 }
 
 .hand-area,
@@ -2205,18 +2206,18 @@ onBeforeUnmount(() => {
 }
 .multi-root .game-card::before { content: ''; position: absolute; inset: 6px; z-index: -1; border: 1px solid #e7dac121; border-radius: 12px; pointer-events: none; }
 .multi-root .game-card:hover { border-color: #e2ceb0; transform: translateY(-2px); box-shadow: inset 0 1px 0 #fff9e52b, 0 9px 22px #1d303b55; }
-.multi-root .blackjack-card { --card-shade: #866766; --card-depth: #634f58; }
-.multi-root .texas-card { --card-shade: #5c778d; --card-depth: #414f66; }
-.multi-root .landlord-card { --card-shade: #a17c60; --card-depth: #795e51; }
-.multi-root .mahjong-card { --card-shade: #628781; --card-depth: #46676b; }
-.multi-root .golden_flower-card { --card-shade: #897189; --card-depth: #63566f; }
-.multi-root .guandan-card { --card-shade: #866d72; --card-depth: #615864; }
-.multi-root .farm-card { --card-shade: #698574; --card-depth: #455e56; }
-.multi-root .leaderboard-card { --card-shade: #948367; --card-depth: #6d6156; }
+.multi-root .blackjack-card { --card-shade: #a36d70; --card-depth: #794d5b; }
+.multi-root .texas-card { --card-shade: #5489a9; --card-depth: #3b597f; }
+.multi-root .landlord-card { --card-shade: #b88957; --card-depth: #8c5e44; }
+.multi-root .mahjong-card { --card-shade: #559b8d; --card-depth: #386e73; }
+.multi-root .golden_flower-card { --card-shade: #a17da6; --card-depth: #795a87; }
+.multi-root .guandan-card { --card-shade: #a47886; --card-depth: #76596f; }
+.multi-root .farm-card { --card-shade: #70a17c; --card-depth: #446f59; }
+.multi-root .leaderboard-card { --card-shade: #b09a61; --card-depth: #857044; }
 .lobby-profile-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-width: 0; max-width: 50%; }
 .lobby-profile-actions .profile-chip { max-width: 100%; font: inherit; cursor: pointer; }
 .profile-chip:focus-visible { outline: 3px solid #fff4cc; outline-offset: 4px; }
-.game-card-art { display: block; width: min(100%, 140px); aspect-ratio: 4 / 3; margin: 6px auto 9px; filter: saturate(.82) drop-shadow(0 4px 5px #26333b40); }
+.game-card-art { display: block; width: min(100%, 140px); aspect-ratio: 4 / 3; margin: 6px auto 9px; filter: drop-shadow(0 4px 5px #26333b40); }
 .hub-game-grid .game-card-art { position: relative; aspect-ratio: 1; flex: none; }
 .hub-game-grid .game-card-art :deep(.game-icon) { position: absolute; inset: 0; }
 .game-card-copy { display: flex; flex-direction: column; gap: 8px; }
@@ -2418,6 +2419,60 @@ onBeforeUnmount(() => {
   .card-arrow { display: none; }
   .room-lobby-panel { gap: 14px; padding: 13px 16px; }
   .room-lobby-art > .game-icon { max-width: 132px; }
+}
+
+/* 大厅按窗口剩余高度分配卡片，不让固定图标尺寸把月月挤出屏幕。 */
+.multi-root.hub-fullscreen {
+  --hub-gap: clamp(8px, 1.5cqh, 18px);
+  padding: clamp(10px, 2cqh, 24px) clamp(14px, 2cqw, 36px);
+  gap: var(--hub-gap);
+  overflow: hidden;
+}
+.hub-fullscreen > .top-bar, .hub-fullscreen > .game-hub-panel { max-width: none; }
+.hub-fullscreen > .game-hub-panel {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.hub-fullscreen .lobby-section-heading { flex: none; margin-bottom: var(--hub-gap); align-items: center; }
+.hub-fullscreen .hub-game-grid {
+  flex: 1 1 0;
+  min-height: 0;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: var(--hub-gap);
+}
+.hub-fullscreen .hub-game-grid > .game-card {
+  min-height: 0;
+  padding: clamp(8px, 1.4cqh, 18px);
+  gap: clamp(4px, 1cqh, 10px);
+  justify-content: center;
+  container-type: size;
+}
+.hub-fullscreen .game-card-art {
+  width: min(65cqw, 210px, max(32px, calc(100cqh - 65px)));
+  height: auto;
+  margin: 0;
+  max-width: none;
+}
+.hub-fullscreen .game-card-copy { flex: none; gap: 5px; }
+.hub-fullscreen .game-name { font-size: clamp(18px, calc(var(--activity-height) * .026), 28px); }
+.hub-fullscreen .game-desc { font-size: clamp(10px, calc(var(--activity-height) * .014), 13px); }
+.hub-fullscreen .lobby-footnote { flex: none; margin: var(--hub-gap) 0 0; }
+.hub-fullscreen > .yueyue-mascot { max-width: none; flex: none; margin: 0; }
+.hub-fullscreen > .yueyue-mascot :deep(.yueyue-mascot-button) { --mascot-width: clamp(58px, 17cqh, 154px); }
+@container activity-viewport (max-height: 600px) {
+  .hub-fullscreen .hub-game-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .hub-fullscreen .hub-game-grid > .game-card { flex-direction: row; text-align: left; gap: 7px; }
+  .hub-fullscreen .game-card-art { width: min(32cqw, 72cqh, 76px); }
+  .hub-fullscreen .game-card-copy { flex: 1; gap: 4px; }
+  .hub-fullscreen .game-name { font-size: 16px; letter-spacing: 0; }
+  .hub-fullscreen .game-desc { font-size: 10px; line-height: 1.4; }
+  .hub-fullscreen .lobby-footnote { font-size: 9px; }
+}
+@container activity-viewport (max-width: 700px) and (max-height: 600px) {
+  .hub-fullscreen .hub-game-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

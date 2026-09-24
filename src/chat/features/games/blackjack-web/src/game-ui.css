@@ -11,7 +11,7 @@
   --game-paper-line: #c6b9a1;
   --game-paper-ink: #35434e;
   --game-paper-muted: #746b5e;
-  --game-accent: #b87650;
+  --game-accent: #c27a45;
 }
 .game-button {
   position: relative;
@@ -24,7 +24,7 @@
   padding: 8px 16px;
   border: 1px solid #a9b5bf;
   border-radius: 24px;
-  background-color: #536d86;
+  background-color: #466f96;
   background-image: linear-gradient(180deg, #71889a66, #344b6655);
   background-size: 100% 100%;
   color: #f8f3e9;
@@ -39,7 +39,7 @@
   touch-action: manipulation;
   transition: background-color .15s, border-color .15s, filter .15s;
 }
-.game-button.gold { background-color: #af704f; background-image: linear-gradient(180deg, #ce966866, #8f503f33); border-color: #dab092; color: #fff5e4; text-shadow: 0 1px 1px #70493188; box-shadow: inset 0 1px 0 #fff0d42e, 0 2px 0 #653f36, 0 3px 6px #17212a33; }
+.game-button.gold { background-color: #bb7546; background-image: linear-gradient(180deg, #dba06066, #934a3533); border-color: #dab092; color: #fff5e4; text-shadow: 0 1px 1px #70493188; box-shadow: inset 0 1px 0 #fff0d42e, 0 2px 0 #653f36, 0 3px 6px #17212a33; }
 .game-button.quiet { background-color: #586978; background-image: linear-gradient(180deg, #9ca9b02e, #36465533); border-color: #96a1a9; color: #f5eee1; }
 .game-button:hover:not(:disabled) { filter: brightness(1.08); border-color: #d9cbb3; }
 .game-button:active:not(:disabled) { filter: brightness(.98); }

@@ -205,6 +205,39 @@ test('常见手机竖屏自动旋转后可以播种，弹窗不会被侧栏裁�
   await expect(dialog).not.toBeVisible();
 });
 
+test('嵌入农场随窗口铺满安全矩形，横屏避右边且竖屏避底部', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await mountFarm(page, farm(), { integrated: true });
+  await page.evaluate(async () => {
+    history.replaceState({}, '', `${location.pathname}?frame_id=farm-viewport`);
+    const viewport = await import('/src/activityViewport.ts' as string);
+    viewport.updateActivityViewport();
+  });
+  for (const { width, height } of [{ width: 1280, height: 720 }, { width: 844, height: 390 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize({ width, height });
+    const portrait = height > width;
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.activityRotated)).toBe(String(portrait));
+    await expect.poll(() => page.locator('.game-viewport-stage').evaluate(element => ({ width: element.clientWidth, height: element.clientHeight }))).toEqual({ width: portrait ? height - 64 : width - 64, height: portrait ? width : height });
+    const contentWidth = width - (portrait ? 0 : 64);
+    const contentHeight = height - (portrait ? 64 : 0);
+    const farmBox = (await page.locator('.farm-game').boundingBox())!;
+    expect(farmBox.x).toBeCloseTo(0, 1);
+    expect(farmBox.y).toBeCloseTo(0, 1);
+    expect(farmBox.width).toBeCloseTo(contentWidth, 1);
+    expect(farmBox.height).toBeCloseTo(contentHeight, 1);
+    expect(await page.locator('.farm-game').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await page.getByRole('article', { name: /1号灵田/ }).getByRole('button', { name: '播种', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '选一粒灵种' });
+    const box = (await dialog.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(-1);
+    expect(box.y).toBeGreaterThanOrEqual(-1);
+    expect(box.x + box.width).toBeLessThanOrEqual(contentWidth + 1);
+    expect(box.y + box.height).toBeLessThanOrEqual(contentHeight + 1);
+    await dialog.getByRole('button', { name: '关闭播种面板', exact: true }).click();
+    await page.screenshot({ path: `test-results-farm/farm-safe-viewport-${width}.png` });
+  }
+});
+
 test('成熟素材成功加载后替换图形，失败回退且幼苗保留原生动效', async ({ page }) => {
   await page.route('**/ui/farm/plants/huangjing.webp', route => route.fulfill({ status: 404, body: '' }));
   await page.route('**/ui/farm/plants/zihou.webp', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="140"><circle cx="80" cy="70" r="30" fill="green"/></svg>' }));

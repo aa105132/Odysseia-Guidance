@@ -11,13 +11,16 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 844, height: 390 
     await expect(cards).toHaveCount(8);
     const layout = await cards.evaluateAll(items => items.map(item => ({ top: (item as HTMLElement).offsetTop, width: (item as HTMLElement).offsetWidth, height: (item as HTMLElement).offsetHeight })));
     expect(new Set(layout.map(item => item.top)).size).toBeGreaterThan(1);
-    expect(layout.every(item => item.width >= 140 && item.height >= 90)).toBe(true);
+    const logicalHeight = Math.min(viewport.width, viewport.height);
+    const minimumHeight = logicalHeight <= 600 ? 72 : 90;
+    expect(layout.every(item => item.width >= 140 && item.height >= minimumHeight)).toBe(true);
     expect(await page.locator('.hub-game-grid').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await expect(page.getByRole('button', { name: /修仙灵圃/ })).toBeVisible();
     await expect(page.locator('.yueyue-mascot-sprite')).toBeVisible();
     expect(await page.locator('.yueyue-mascot-preload').evaluate(image => [(image as HTMLImageElement).naturalWidth, (image as HTMLImageElement).naturalHeight])).toEqual([1536, 2288]);
     const mascot = page.getByRole('button', { name: '和月月打招呼' });
-    await mascot.scrollIntoViewIfNeeded();
+    await expect(mascot).toBeInViewport({ ratio: 1 });
+    expect(await page.locator('.multi-root').evaluate(element => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
     await mascot.click();
     await expect(page.locator('.yueyue-mascot-sprite')).toHaveAttribute('data-animation', 'waving');
     await expect(page.locator('.yueyue-mascot-speech')).toContainText('我在呢，今天想玩什么？');
