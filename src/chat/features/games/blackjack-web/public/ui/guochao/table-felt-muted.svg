@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" preserveAspectRatio="none">
+<defs>
+ <linearGradient id="rim" x2="0" y2="1"><stop stop-color="#bfae8b"/><stop offset=".23" stop-color="#87745a"/><stop offset=".5" stop-color="#c6b491"/><stop offset=".75" stop-color="#725e48"/><stop offset="1" stop-color="#463d34"/></linearGradient>
+ <radialGradient id="felt" cx="50%" cy="45%" r="70%"><stop stop-color="#47596f"/><stop offset=".55" stop-color="#3c4b61"/><stop offset="1" stop-color="#273544"/></radialGradient>
+ <pattern id="cloud" width="160" height="90" patternUnits="userSpaceOnUse"><g fill="none" stroke="#b1c9ee" stroke-width="2" opacity=".08"><path d="M0 44c12-23 28-29 40-18 9 8 4 18-5 18-6 0-9-6-5-10M40 44c12-23 28-29 40-18 9 8 4 18-5 18-6 0-9-6-5-10M80 44c12-23 28-29 40-18 9 8 4 18-5 18-6 0-9-6-5-10M120 44c12-23 28-29 40-18M0 55h160M0 62h160"/></g></pattern>
+ <clipPath id="table"><ellipse cx="800" cy="615" rx="768" ry="422"/></clipPath>
+ <g id="fan" fill="#e1c789" stroke="#ad8e54" stroke-width="1.4"><path d="M0 0-40-70Q0-100 40-70Z"/><path d="M0 0-30-79M0 0-17-87M0 0V-90M0 0 17-87M0 0 30-79"/></g>
+</defs>
+<ellipse cx="800" cy="644" rx="795" ry="453" fill="#171933" opacity=".7"/>
+<ellipse cx="800" cy="615" rx="795" ry="448" fill="url(#rim)" stroke="#43332e" stroke-width="7"/>
+<ellipse cx="800" cy="615" rx="777" ry="431" fill="#897c64" stroke="#b5a487" stroke-width="2"/>
+<ellipse cx="800" cy="615" rx="768" ry="422" fill="url(#felt)" stroke="#252c52" stroke-width="4"/>
+<g clip-path="url(#table)"><ellipse cx="800" cy="615" rx="761" ry="414" fill="none" stroke="#688096" stroke-width="9" opacity=".3"/><ellipse cx="800" cy="615" rx="723" ry="381" fill="none" stroke="url(#cloud)" stroke-width="70"/><ellipse cx="800" cy="615" rx="720" ry="374" fill="none" stroke="#98b4de" stroke-width="2" opacity=".2"/><ellipse cx="800" cy="615" rx="712" ry="366" fill="none" stroke="#abc2de" stroke-width="1" opacity=".22"/></g>
+<use href="#fan" transform="translate(36 594) rotate(90) scale(.62 1)"/><use href="#fan" transform="translate(1564 594) rotate(-90) scale(.62 1)"/>
+<g fill="none" stroke="#9e7d49" stroke-width="3"><path d="M688 173c25-15 46-12 60 1 15 14 35 14 52-2 17 16 37 16 52 2 14-13 35-16 60-1"/><path d="M717 175c10-7 20-7 29 1m108 0c9-8 19-8 29-1M782 178q18-24 36 0"/></g>
+</svg>

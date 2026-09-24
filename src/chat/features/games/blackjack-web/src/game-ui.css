@@ -1,11 +1,17 @@
-/* 国潮茶楼共用按钮：金边、亮面和厚底保持各玩法一致。 */
+/* 茶楼共用色板：蓝灰、暖纸与陶土色，保持牌面和头像的原始颜色。 */
 :root {
-  --game-ink: #fff0ce;
-  --game-muted: #cfcae6;
-  --game-gold: #f1cf88;
-  --game-gold-deep: #ab753c;
-  --game-ocean: #404d85;
-  --game-line: #efd29d70;
+  --game-ink: #f5eee1;
+  --game-muted: #c8cdd3;
+  --game-gold: #d4bd8b;
+  --game-gold-deep: #897554;
+  --game-ocean: #344453;
+  --game-line: #aa967766;
+  --game-paper: #eee7d9;
+  --game-paper-raised: #f8f3e9;
+  --game-paper-line: #c6b9a1;
+  --game-paper-ink: #35434e;
+  --game-paper-muted: #746b5e;
+  --game-accent: #b87650;
 }
 .game-button {
   position: relative;
@@ -16,26 +22,26 @@
   min-width: 0;
   min-height: 40px;
   padding: 8px 16px;
-  border: 1px solid #efd89a;
+  border: 1px solid #a9b5bf;
   border-radius: 24px;
-  background-color: #367fb5;
-  background-image: linear-gradient(180deg, #81c5eec4 0%, #419acf80 39%, #2368a41a 41%, #285787b3 100%);
+  background-color: #536d86;
+  background-image: linear-gradient(180deg, #71889a66, #344b6655);
   background-size: 100% 100%;
-  color: #fff4d5;
-  box-shadow: inset 0 2px 0 #f0f5ee70, inset 0 -2px 0 #15366680, 0 3px 0 #38334b, 0 4px 6px #251f4440;
+  color: #f8f3e9;
+  box-shadow: inset 0 1px 0 #f3f0e326, 0 2px 0 #283340, 0 3px 6px #17212a33;
   font: inherit;
   font-size: 13px;
   font-weight: 700;
-  text-shadow: 0 1px 1px #263d6b, 0 -1px 0 #35527c80;
+  text-shadow: 0 1px 1px #27394788;
   line-height: 1.25;
   white-space: nowrap;
   cursor: pointer;
   touch-action: manipulation;
   transition: background-color .15s, border-color .15s, filter .15s;
 }
-.game-button.gold { background-color: #ed9234; background-image: linear-gradient(180deg, #ffe577 0%, #ffc051 38%, #fca13c 40%, #e96c29 78%, #cd4725 100%); border-color: #fff0a9; color: #fff3ca; text-shadow: 0 1px 1px #96401a, 1px 0 1px #96401a, -1px 0 1px #96401a; box-shadow: inset 0 2px 0 #fff3b4ba, inset 0 -2px 0 #ab391b99, 0 3px 0 #7f3c32, 0 4px 7px #251f4440; }
-.game-button.quiet { background-color: #667cac; background-image: linear-gradient(180deg, #adc2e777, #788aba33 40%, #3e457655); border-color: #e8d69d; color: #fff1d4; }
-.game-button:hover:not(:disabled) { filter: brightness(1.1); border-color: #fff0b4; }
+.game-button.gold { background-color: #af704f; background-image: linear-gradient(180deg, #ce966866, #8f503f33); border-color: #dab092; color: #fff5e4; text-shadow: 0 1px 1px #70493188; box-shadow: inset 0 1px 0 #fff0d42e, 0 2px 0 #653f36, 0 3px 6px #17212a33; }
+.game-button.quiet { background-color: #586978; background-image: linear-gradient(180deg, #9ca9b02e, #36465533); border-color: #96a1a9; color: #f5eee1; }
+.game-button:hover:not(:disabled) { filter: brightness(1.08); border-color: #d9cbb3; }
 .game-button:active:not(:disabled) { filter: brightness(.98); }
 .game-button:focus-visible { outline: 2px solid #f0d99c; outline-offset: 3px; }
 .game-button:disabled { opacity: .5; filter: saturate(.5); cursor: not-allowed; }

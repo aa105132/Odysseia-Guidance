@@ -23,8 +23,10 @@ async function expectReachable(control: Locator) {
 
 async function expectControlsReachable(page: Page) {
   await waitForTableMotion(page);
-  const stage = (await page.locator('.game-viewport-stage').boundingBox())!;
   const viewport = page.viewportSize()!;
+  // setViewportSize 返回时，visualViewport 的 resize 回调可能仍待处理。
+  await expect.poll(() => page.locator('.game-viewport-stage').evaluate(el => Math.round(el.getBoundingClientRect().width))).toBe(viewport.width);
+  const stage = (await page.locator('.game-viewport-stage').boundingBox())!;
   const hasMessage = await page.locator('.table-fullscreen > .status-message, .table-fullscreen > .error-message').count();
   expect(stage.x, '牌桌从窗口左边缘开始').toBeCloseTo(0, 0);
   expect(stage.y, '牌桌从窗口顶部开始').toBeCloseTo(0, 0);

@@ -40,11 +40,11 @@ onMounted(() => panel.value?.showModal());
 </template>
 
 <style scoped>
-.room-invite { box-sizing: border-box; width: min(510px, calc(var(--activity-width, 100vw) - 24px)); max-height: calc(var(--activity-height, 100dvh) - 20px); overflow: auto; margin: auto; padding: 20px; border: 3px solid #eac77c; border-radius: 18px; background: url('/ui/guochao/cloud-pattern.svg') center / 180px, #fff0d5; color: #4b3e68; box-shadow: 0 10px 45px #17132899; }
+.room-invite { box-sizing: border-box; width: min(510px, calc(var(--activity-width, 100vw) - 24px)); max-height: calc(var(--activity-height, 100dvh) - 20px); overflow: auto; margin: auto; padding: 20px; border: 1px solid #b6a58b; border-radius: 18px; background: #eee7d9; color: #35434e; box-shadow: 0 10px 45px #17132899; }
 .room-invite::backdrop { background: #171328a6; }
 header, .invite-code, .invite-actions { display: flex; align-items: center; gap: 12px; }
 header { justify-content: space-between; margin-bottom: 15px; } h2 { margin: 2px 0 0; font-size: 23px; }
-.invite-code { flex-wrap: wrap; padding: 12px; background: #fff9eb; border: 1px solid #dcb570; border-radius: 10px; }
+.invite-code { flex-wrap: wrap; padding: 12px; background: #f8f3e9; border: 1px solid #c6b9a1; border-radius: 10px; }
 .invite-code strong { flex: 1; font-size: 26px; letter-spacing: 3px; }
 .room-invite p { font-size: 13px; line-height: 1.5; }.room-invite small { color: #866743; font-size: 11px; }
 .invite-summary { white-space: pre-line; }

@@ -137,7 +137,7 @@ test('发送快捷语音在自己头像旁显示且轮询不重播，离房成�
   await page.getByRole('button', { name: '你是MM还是GG？', exact: true }).click();
   await expect(page.locator('[data-notice-user="one"]')).toHaveText('自己：你是MM还是GG？');
   await page.clock.runFor(1600);
-  expect(await page.evaluate(() => (window as any).__voice.filter((src: string) => src.endsWith('/mm_or_gg.mp3')).length)).toBe(1);
+  expect(await page.evaluate(() => (window as any).__voice.filter((src: string) => new URL(src, location.origin).pathname.endsWith('/mm_or_gg.mp3')).length)).toBe(1);
   await page.keyboard.press('Escape');
   await assertAnchored(page, 'one');
   await queue(page, 'two', '马上离开'); await page.clock.runFor(1500);

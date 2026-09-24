@@ -1,4 +1,5 @@
 import dialogue from './dialogue.json';
+import { yueyueVoiceLines } from './yueyueVoiceLines';
 
 export const quickVoiceLines = [
   { id: 'hurry', text: '快点吧，我等到花儿都谢了' },
@@ -16,4 +17,4 @@ export const quickVoiceLines = [
 export const welcomeVoiceLines = dialogue.welcome.map((text, index) => ({ id: `welcome_${index}`, text }));
 export const welcomeVoiceByText: Record<string, string> = Object.fromEntries(welcomeVoiceLines.map(line => [line.text, line.id]));
 export const actionVoiceIds = ['raise', 'call', 'check', 'fold', 'all_in', 'look', 'compare', 'bid', 'no_bid', 'play', 'pass', 'bomb', 'rocket', 'discard', 'pung', 'kong', 'win', 'hit', 'stand'] as const;
-export const gameVoiceIds = new Set<string>([...quickVoiceLines.map(line => line.id), ...welcomeVoiceLines.map(line => line.id), ...actionVoiceIds]);
+export const gameVoiceIds = new Set<string>([...quickVoiceLines.map(line => line.id), ...welcomeVoiceLines.map(line => line.id), ...actionVoiceIds, ...yueyueVoiceLines.map(line => line.id)]);

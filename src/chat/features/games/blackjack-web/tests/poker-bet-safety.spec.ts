@@ -81,6 +81,22 @@ test('滑条数值同步，最大加注和用完筹码的跟注都先确认', as
   expect(posts).toHaveLength(1);
 });
 
+test('炸金花短屏跟注比牌费用不叠住加注金额说明', async ({ page }) => {
+  await openTable(page, makeRoom('golden_flower', 5));
+  for (const viewport of [{ width: 844, height: 390 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await expect(page.locator('.tg-bet-cost')).toBeVisible();
+    const label = await page.locator('.tg-raise-control > label').boundingBox();
+    const cost = await page.locator('.tg-bet-cost').boundingBox();
+    expect(label).not.toBeNull();
+    expect(cost).not.toBeNull();
+    const overlap = Math.min(label!.x + label!.width, cost!.x + cost!.width) > Math.max(label!.x, cost!.x)
+      && Math.min(label!.y + label!.height, cost!.y + cost!.height) > Math.max(label!.y, cost!.y);
+    expect(overlap, '跟注和比牌费用应与加注标签分开显示').toBe(false);
+    await expect(page.locator('.tg-bet-cost')).toBeInViewport({ ratio: 1 });
+  }
+});
+
 test('炸金花看牌后的实际双倍费用用完筹码也确认', async ({ page }) => {
   const room = makeRoom('golden_flower');
   room.game.players[0]!.stack = 98;

@@ -16,7 +16,7 @@
   min-height: 0;
   overflow: hidden;
   container-type: size;
-  background: linear-gradient(#2f23474f, #241c4a9c), url('/ui/guochao/teahouse-room.webp') center / cover;
+  background: linear-gradient(#2634404f, #1726359c), url('/ui/guochao/teahouse-room-muted.webp') center / cover;
 }
 .game-viewport-stage {
   position: relative;

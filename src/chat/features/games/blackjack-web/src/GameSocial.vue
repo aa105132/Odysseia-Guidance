@@ -238,14 +238,14 @@ onBeforeUnmount(() => { disposed = true; epoch++; clearTimeout(pollTimer); clear
 </template>
 
 <style scoped>
-.game-social { position: absolute; inset: 0; z-index: 10000; font-size: 13px; color: #463b5c; pointer-events: none; --social-edge: 14px; --social-bottom: 32px; }
+.game-social { position: absolute; inset: 0; z-index: 10000; font-size: 13px; color: #35434e; pointer-events: none; --social-edge: 14px; --social-bottom: 32px; }
 .game-social.has-toggle { --social-bottom: 78px; }
 .game-social > .social-toggle, .game-social > .social-panel { pointer-events: auto; }
-.game-social button { cursor: pointer; min-height: 34px; font: inherit; color: inherit; border: 1px solid #c6a66c; border-radius: 9px; background: #fff5dc; box-shadow: none; text-shadow: none; padding: 7px 10px; }
+.game-social button { cursor: pointer; min-height: 34px; font: inherit; color: inherit; border: 1px solid #c6b9a1; border-radius: 9px; background: #f8f3e9; box-shadow: none; text-shadow: none; padding: 7px 10px; }
 .game-social button:disabled { opacity: .6; cursor: default; }
 .game-social button:focus-visible, .game-social select:focus-visible { outline: 3px solid #477ca3; outline-offset: 2px; }
-.game-social .social-toggle { position: absolute; right: var(--social-edge); bottom: 32px; border: 2px solid #efcf92; color: #fff8df; background: linear-gradient(#7191ae, #3d547e); border-radius: 20px; box-shadow: 0 3px 8px #0005; }
-.game-social > .social-panel { position: absolute; left: auto; top: auto; right: var(--social-edge); bottom: var(--social-bottom); margin: 0; transform: none; width: min(330px, calc(var(--activity-width, 100vw) - 28px)); max-height: min(430px, calc(var(--activity-height, 100dvh) - var(--social-bottom) - 14px)); overflow-y: auto; padding: 12px; box-sizing: border-box; border: 2px solid #d5ae69; border-radius: 15px; background: #fff1d9f5; box-shadow: 0 12px 40px #1e172777; }
+.game-social .social-toggle { position: absolute; right: var(--social-edge); bottom: 32px; border: 1px solid #a9b5bf; color: #fff8df; background: linear-gradient(#657d90, #3e546d); border-radius: 20px; box-shadow: 0 3px 8px #0005; }
+.game-social > .social-panel { position: absolute; left: auto; top: auto; right: var(--social-edge); bottom: var(--social-bottom); margin: 0; transform: none; width: min(330px, calc(var(--activity-width, 100vw) - 28px)); max-height: min(430px, calc(var(--activity-height, 100dvh) - var(--social-bottom) - 14px)); overflow-y: auto; padding: 12px; box-sizing: border-box; border: 1px solid #b6a58b; border-radius: 15px; background: #eee7d9fa; box-shadow: 0 12px 40px #1e172777; }
 .social-panel header { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .social-panel header strong { overflow-wrap: anywhere; }
 .social-panel header button { padding: 4px 8px; flex: none; }
@@ -254,9 +254,9 @@ onBeforeUnmount(() => { disposed = true; epoch++; clearTimeout(pollTimer); clear
 .social-quick { display: grid; grid-template-columns: 1fr; gap: 6px; }
 .social-quick button { text-align: left; }
 .social-target { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; }
-.social-target select { flex: 1; min-width: 0; min-height: 34px; border-radius: 8px; border: 1px solid #c6a66c; color: inherit; background: #fffaf0; padding: 4px; }
+.social-target select { flex: 1; min-width: 0; min-height: 34px; border-radius: 8px; border: 1px solid #c6b9a1; color: inherit; background: #fffaf0; padding: 4px; }
 .social-notices { position: absolute; inset: 0; pointer-events: none; }
-.social-notices p { position: absolute; width: max-content; max-width: min(240px, calc(var(--activity-width, 100vw) - 16px)); max-height: calc(var(--activity-height, 100dvh) - 16px); overflow: hidden; margin: 0; padding: 7px 10px; border-radius: 12px; border: 1px solid #ebca83; background: #fff2d9f5; box-shadow: 0 3px 10px #1e172744; line-height: 1.5; overflow-wrap: anywhere; text-align: left; pointer-events: none; }
+.social-notices p { position: absolute; width: max-content; max-width: min(240px, calc(var(--activity-width, 100vw) - 16px)); max-height: calc(var(--activity-height, 100dvh) - 16px); overflow: hidden; margin: 0; padding: 7px 10px; border-radius: 12px; border: 1px solid #c6b9a1; background: #f4eee1fa; box-shadow: 0 3px 10px #1e172744; line-height: 1.5; overflow-wrap: anywhere; text-align: left; pointer-events: none; }
 .interaction-options { display: flex; gap: 7px; }
 .interaction-options button { flex: 1; padding: 6px; display: flex; flex-direction: column; align-items: center; gap: 5px; }
 .interaction-icon { width: 60px; height: 60px; display: block; }

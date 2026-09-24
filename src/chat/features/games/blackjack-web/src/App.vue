@@ -2,6 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import dialogueConfig from "./dialogue.json";
 import TableGames from "./TableGames.vue";
+import FarmGame from "./FarmGame.vue";
+import YueyueMascot from "./YueyueMascot.vue";
+import FarmPlant from "./FarmPlant.vue";
 import GameTools from "./GameTools.vue";
 import GameStatsPanel from "./GameStatsPanel.vue";
 import { mountGameAudio, unmountGameAudio, playGameSound, setGameAudioScene, playRoundMusic, playGameVoice, stopGameVoice } from "./gameAudio";
@@ -28,6 +31,7 @@ type ViewMode =
   | "lobby"
   | "table_games"
   | "noname"
+  | "farm"
   | "table";
 type RoomStage = "waiting" | "playing" | "dealer_turn" | "finished";
 
@@ -158,6 +162,7 @@ let motionToken = 0;
 let lastCardMotionEnd = 0;
 const dealerSpeech = ref("月月正在观察牌局...");
 let dealerSpeechTimer: number | null = null;
+let mascotSpeechUntil = 0;
 
 const queryParams = new URLSearchParams(window.location.search);
 const isEmbedded = queryParams.get("frame_id") != null;
@@ -608,6 +613,7 @@ function resolveDealerDialogueCategory(): string {
 }
 
 function refreshDealerSpeech() {
+  if (Date.now() < mascotSpeechUntil) return;
   const category = resolveDealerDialogueCategory();
   const lines = extractDialogueList(category);
   const fallback = "月月正在观察牌局...";
@@ -1442,14 +1448,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div :class="['multi-root', { 'table-fullscreen': viewMode === 'single' || viewMode === 'table' || viewMode === 'table_games' || viewMode === 'noname' }]">
+  <div :class="['multi-root', { 'table-fullscreen': ['single', 'table', 'table_games', 'noname', 'farm'].includes(viewMode) }]">
     <div v-if="viewMode === 'loading'" class="panel loading-panel">
       <h2>月月游戏中心</h2>
       <p>{{ loadingText }}</p>
     </div>
 
     <template v-else>
-      <header v-if="viewMode !== 'single' && viewMode !== 'table' && viewMode !== 'table_games' && viewMode !== 'noname'" class="top-bar">
+      <header v-if="!['single', 'table', 'table_games', 'noname', 'farm'].includes(viewMode)" class="top-bar">
         <div class="title-group">
           <span class="lobby-eyebrow">茶香一盏 · 好牌一局</span>
           <h1>月月游戏中心</h1>
@@ -1483,7 +1489,7 @@ onBeforeUnmount(() => {
 
       <section v-if="viewMode === 'game_hub'" class="lobby-panel game-hub-panel">
         <div class="lobby-section-heading"><h3>今晚，玩点什么？</h3><button class="game-button" @click="openRoomDirectory()">房间列表</button></div>
-        <div class="game-grid hub-game-grid" :style="{ '--hub-columns': nonameAvailable ? 8 : 7 }">
+        <div class="game-grid hub-game-grid">
           <button v-if="nonameAvailable" class="game-card" @click="viewMode = 'noname'">
             <span class="game-card-art"><svg viewBox="0 0 160 140" aria-hidden="true"><path d="M20 30 80 10l60 20v55l-60 45-60-45z" fill="#684877" stroke="#edc278" stroke-width="5"/><path d="m45 35 72 66m-2-67-70 69" stroke="#ffe5a3" stroke-width="8"/><text x="80" y="85" text-anchor="middle" fill="#fff1ca" font-size="42">杀</text></svg></span>
             <span class="game-card-copy"><span class="game-name">三国杀</span><span class="game-desc">无名杀 · 娱乐试玩</span></span>
@@ -1498,6 +1504,11 @@ onBeforeUnmount(() => {
             <span class="game-card-copy"><span class="game-name">{{ tableGameRules[gameType].title }}</span><span class="game-desc">单人挑战 / 多人同桌</span></span>
             <span class="card-arrow" aria-hidden="true">◆</span>
           </button>
+          <button class="game-card farm-card" @click="viewMode = 'farm'">
+            <span class="game-card-art"><FarmPlant name="黄精芝" icon="huangjing" /></span>
+            <span class="game-card-copy"><span class="game-name">修仙灵圃</span><span class="game-desc">种灵草 / 逛好友农场</span></span>
+            <span class="card-arrow" aria-hidden="true">◆</span>
+          </button>
           <button class="game-card leaderboard-card" @click="lobbyStatsPanel = 'leaderboard'">
             <span class="game-card-art"><GameIcon name="leaderboard" /></span>
             <span class="game-card-copy"><span class="game-name">排行榜</span><span class="game-desc">当日盈利 / 总计盈利</span></span>
@@ -1507,6 +1518,9 @@ onBeforeUnmount(() => {
         <p class="lobby-footnote"><span aria-hidden="true">◆</span> 棋牌游戏使用账户灵石<template v-if="nonameAvailable"> · 三国杀为免费娱乐模式</template></p>
       </section>
 
+      <GameViewport v-else-if="viewMode === 'farm' && profile">
+        <FarmGame :profile="profile" :api-call="apiCall" @back="enterGameHub" @balance="profile.balance = $event" />
+      </GameViewport>
       <GameViewport v-else-if="viewMode === 'noname' && profile">
         <NonameGame :username="profile.username" :api-call="apiCall" @back="enterGameHub" />
       </GameViewport>
@@ -1551,7 +1565,7 @@ onBeforeUnmount(() => {
 
         <div class="table-scroll" tabindex="0" aria-label="牌桌与手牌">
           <div class="casino-stage single-board-content">
-            <img class="felt-table" src="/ui/guochao/table-felt.svg" alt="" aria-hidden="true">
+            <img class="felt-table" src="/ui/guochao/table-felt-muted.svg" alt="" aria-hidden="true">
             <section class="hand-area dealer-seat">
               <BustBurst v-if="bustBursts['single:dealer']" :key="bustBursts['single:dealer']" />
               <div class="dealer-identity">
@@ -1685,7 +1699,7 @@ onBeforeUnmount(() => {
 
         <div class="table-scroll" tabindex="0" aria-label="多人牌桌">
           <div class="casino-stage multiplayer-board">
-            <img class="felt-table" src="/ui/guochao/table-felt.svg" alt="" aria-hidden="true">
+            <img class="felt-table" src="/ui/guochao/table-felt-muted.svg" alt="" aria-hidden="true">
             <section class="hand-area dealer-seat table-dealer-cards">
               <BustBurst v-if="bustBursts['multi:dealer']" :key="bustBursts['multi:dealer']" />
               <div class="dealer-identity">
@@ -1749,19 +1763,11 @@ onBeforeUnmount(() => {
       </section>
       </GameViewport>
 
-      <div
+      <YueyueMascot
         v-if="viewMode === 'game_hub' || viewMode === 'blackjack_mode_select'"
-        class="home-dealer-section dealer-section"
-      >
-        <img
-          :src="withAssetVersion('/character/normal.webp')"
-          alt="看板娘"
-          class="dealer-image"
-        />
-        <div v-if="dealerSpeech" class="dialogue-box">
-          <p>{{ dealerSpeech }}</p>
-        </div>
-      </div>
+        :message="dealerSpeech"
+        @interact="mascotSpeechUntil = Date.now() + 7000"
+      />
 
       <GameStatsPanel v-if="lobbyStatsPanel && profile" :profile="profile" :api-call="apiCall" :initial-tab="lobbyStatsPanel" @close="lobbyStatsPanel = null" />
       <div v-if="statusMessage" class="status-message" role="status">{{ statusMessage }}</div>
@@ -1804,7 +1810,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 16px;
   color: #fff1ce;
-  background: linear-gradient(180deg, #381e360a, #391c395c), #b6684c url("/ui/guochao/teahouse-room.webp") center / cover fixed;
+  background: linear-gradient(180deg, #28344424, #25354785), #645a56 url("/ui/guochao/teahouse-room-soft.webp") center / cover fixed;
 }
 
 /* 横屏桌面按剩余高度分配牌桌空间，操作区不随牌桌滚动。 */
@@ -1839,9 +1845,9 @@ onBeforeUnmount(() => {
 
 .table-toolbar {
   padding: 4px max(14px, env(safe-area-inset-right)) 4px max(14px, env(safe-area-inset-left));
-  border-bottom: 2px solid #efd293;
-  background: linear-gradient(180deg, #ad493b, #732f36);
-  box-shadow: 0 3px 12px #41244559, inset 0 1px #fff0b980;
+  border-bottom: 1px solid #bba88a;
+  background: #344653;
+  box-shadow: 0 2px 8px #14273230;
   overflow: hidden;
 }
 
@@ -1865,7 +1871,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   container-type: size;
   padding: 0;
-  background: linear-gradient(180deg, #33224205, #34274c30), #bc7657 url("/ui/guochao/teahouse-room.webp") center / cover;
+  background: linear-gradient(180deg, #27384910, #22344430), #645a56 url("/ui/guochao/teahouse-room-soft.webp") center / cover;
 }
 
 .casino-stage {
@@ -1927,9 +1933,9 @@ onBeforeUnmount(() => {
   justify-content: center;
   min-width: 20px;
   padding: 1px 5px;
-  border: 1px solid #f4ce87;
+  border: 1px solid #bca988;
   border-radius: 5px;
-  background: linear-gradient(180deg, #5c73b6, #343c80);
+  background: #40576e;
   color: #fff2bb;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -2004,7 +2010,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 .table-brand { color: #f4d5a9; font-size: 9px; letter-spacing: 4px; text-shadow: 0 1px 3px #39285b; }
-.table-game-name { color: #ffe19c; font-family: "STKaiti", "KaiTi", serif; font-size: clamp(16px, 6cqh, 34px); letter-spacing: 5px; font-weight: 800; text-shadow: -1px -1px #393267, 1px -1px #393267, -1px 1px #393267, 1px 2px #393267, 0 3px 0 #a47654; }
+.table-game-name { color: #e1cfad; font-family: "STKaiti", "KaiTi", serif; font-size: clamp(16px, 6cqh, 34px); letter-spacing: 5px; font-weight: 700; text-shadow: 0 2px 4px #24344480; }
 .table-chip-stack { position: relative; width: 58px; height: 24px; margin-top: 3px; }
 .table-chip-stack i,
 .seat-bet i {
@@ -2041,10 +2047,10 @@ onBeforeUnmount(() => {
   gap: 2px;
   min-width: 68px;
   padding: 7px 12px;
-  border: 2px solid #f2cf86;
+  border: 1px solid #bcaa8b;
   border-radius: 10px;
-  background: url("/ui/guochao/cloud-pattern.svg") center / 100px, linear-gradient(150deg, #6884c9, #3e3d83);
-  box-shadow: inset 0 0 0 1px #fbeba24d, 0 3px 0 #9e6e43, 0 5px 12px #31204c73;
+  background: #42586d;
+  box-shadow: 0 4px 10px #1c2f3d40;
   color: #fff2ba;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -2064,14 +2070,14 @@ onBeforeUnmount(() => {
   max-width: 100%;
   padding: 5px 9px 5px 5px;
   margin: 0;
-  border: 2px solid #eec582;
+  border: 1px solid #b8a68b;
   border-radius: 10px 10px 6px 6px;
-  background: linear-gradient(160deg, #6584bc, #3e427f);
-  box-shadow: inset 0 1px #d5e4ff66, 0 3px 0 #92613d, 0 5px 8px #39294b55;
+  background: #40576d;
+  box-shadow: inset 0 1px #d5e4ff1a, 0 4px 8px #26374440;
   text-align: left;
 }
 .turn-active .player-info-tag,
-.player-info-tag.turn-active { border-color: #ffe695; box-shadow: inset 0 1px #ffffdd80, 0 0 0 2px #e6a44c6b, 0 0 18px #ffcf6659; }
+.player-info-tag.turn-active { border-color: #e1c08a; box-shadow: 0 0 0 2px #d9b56c55, 0 4px 8px #26374440; }
 .viewer-seat .player-info-tag { border-color: #ffe09b; }
 .seat-player-avatar { width: var(--avatar-size); height: var(--avatar-size); flex: 0 0 var(--avatar-size); border: 1px solid #ffe6a4; border-radius: 6px; object-fit: cover; object-position: center 22%; background: #677bba; }
 .seat-player-info { min-width: 0; }
@@ -2157,9 +2163,9 @@ onBeforeUnmount(() => {
 .top-bar { max-width: 1120px; width: 100%; margin-inline: auto; flex-shrink: 0; }
 .title-group { text-align: left; text-shadow: 0 1px 3px #66353b; }
 .lobby-eyebrow { display: block; margin-bottom: 6px; color: #ffe8ab; font-size: 9px; font-weight: 600; letter-spacing: 4px; }
-.title-group h1 { margin: 0; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-size: 26px; font-weight: 800; color: #fff1b5; letter-spacing: 2px; text-shadow: -1px -1px #794149, 1px -1px #794149, -1px 1px #794149, 1px 2px #794149, 0 3px #b77848; }
+.title-group h1 { margin: 0; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-size: 28px; font-weight: 700; color: #f7ead6; letter-spacing: 2px; text-shadow: 0 2px 5px #26363a80; }
 .title-group p { margin: 6px 0 0; font-size: 12px; color: #fff2d8; }
-.multi-root .profile-chip { display: flex; align-items: center; gap: 10px; background: url("/ui/guochao/cloud-pattern.svg") center / 110px, linear-gradient(145deg, #677caf, #404075); border: 2px solid #f5d088; border-radius: 13px 13px 7px 7px; padding: 9px 14px 9px 9px; min-width: 0; max-width: 42%; box-shadow: inset 0 1px #d3e3ff66, 0 3px 0 #975d3e, 0 5px 15px #5135404d; }
+.multi-root .profile-chip { display: flex; align-items: center; gap: 10px; background: #344653ed; border: 1px solid #b3a28a; border-radius: 12px; padding: 9px 14px 9px 9px; min-width: 0; max-width: 42%; box-shadow: 0 4px 12px #20333c33; }
 .profile-avatar { width: 39px; height: 39px; border-radius: 8px; object-fit: cover; object-position: center 22%; border: 1px solid #ffe5a8; background: #7988ba; }
 .profile-meta { min-width: 0; text-align: left; }
 .profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: #fff1cd; }
@@ -2173,11 +2179,11 @@ onBeforeUnmount(() => {
 .lobby-panel .toolbar-actions { margin-top: 18px; }
 .lobby-actions { display: flex; flex-direction: column; gap: 11px; }
 .game-grid { display: grid; gap: 14px; }
-.hub-game-grid { grid-template-columns: repeat(var(--hub-columns, 6), minmax(0, 1fr)); }
+.hub-game-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
 .multi-root .game-card {
-  --card-accent: #ffde93;
-  --card-shade: #ac4e4b;
-  --card-depth: #743347;
+  --card-accent: #b8a487;
+  --card-shade: #816365;
+  --card-depth: #5c4d58;
   position: relative;
   isolation: isolate;
   display: flex;
@@ -2186,34 +2192,35 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   gap: 0;
-  padding: 12px 12px 20px;
+  padding: 15px 16px 22px;
   overflow: hidden;
-  border: 3px solid var(--card-accent);
-  border-radius: 24px 24px 18px 18px;
-  background: url("/ui/guochao/cloud-pattern.svg") center / 130px, radial-gradient(ellipse at 50% 28%, #ffe7bd47, transparent 65%), linear-gradient(160deg, var(--card-shade), var(--card-depth));
-  box-shadow: inset 0 0 0 2px #9b663e, inset 0 0 0 4px #f9d589b8, 0 4px 0 #945837, 0 8px 16px #61374866;
+  border: 1px solid var(--card-accent);
+  border-radius: 18px;
+  background: linear-gradient(150deg, var(--card-shade), var(--card-depth));
+  box-shadow: inset 0 1px 0 #fff9e51a, 0 6px 16px #1d303b40;
   font: inherit;
   text-align: center;
   white-space: normal;
-  transition: border-color .18s, filter .18s;
+  transition: border-color .18s, transform .18s, box-shadow .18s;
 }
-.multi-root .game-card::before { content: ''; position: absolute; inset: 8px; z-index: -1; border: 1px solid #ffe4a866; border-radius: 17px 17px 11px 11px; background: linear-gradient(135deg, #ffe0a6 0 6px, transparent 6px) top left / 15px 15px no-repeat, linear-gradient(225deg, #ffe0a6 0 6px, transparent 6px) top right / 15px 15px no-repeat, linear-gradient(45deg, #ffe0a6 0 6px, transparent 6px) bottom left / 15px 15px no-repeat, linear-gradient(315deg, #ffe0a6 0 6px, transparent 6px) bottom right / 15px 15px no-repeat; }
-.multi-root .game-card::after { content: ''; position: absolute; width: 68%; height: 8px; left: 16%; bottom: 4px; z-index: -1; border-top: 1px solid #ffe3a694; border-bottom: 1px solid #ffe3a640; border-radius: 50%; }
-.multi-root .game-card:hover { border-color: #fff0b8; background: url("/ui/guochao/cloud-pattern.svg") center / 130px, radial-gradient(ellipse at 50% 28%, #ffe7bd59, transparent 65%), linear-gradient(160deg, var(--card-shade), var(--card-depth)); filter: brightness(1.07); }
-.multi-root .blackjack-card { --card-shade: #bb5956; --card-depth: #71324d; }
-.multi-root .texas-card { --card-shade: #577fb2; --card-depth: #3d3e80; }
-.multi-root .landlord-card { --card-shade: #d98545; --card-depth: #a7463e; }
-.multi-root .mahjong-card { --card-shade: #58a3a7; --card-depth: #3b577e; }
-.multi-root .golden_flower-card { --card-shade: #aa7098; --card-depth: #633d76; }
-.multi-root .leaderboard-card { --card-shade: #b99349; --card-depth: #765047; }
+.multi-root .game-card::before { content: ''; position: absolute; inset: 6px; z-index: -1; border: 1px solid #e7dac121; border-radius: 12px; pointer-events: none; }
+.multi-root .game-card:hover { border-color: #e2ceb0; transform: translateY(-2px); box-shadow: inset 0 1px 0 #fff9e52b, 0 9px 22px #1d303b55; }
+.multi-root .blackjack-card { --card-shade: #866766; --card-depth: #634f58; }
+.multi-root .texas-card { --card-shade: #5c778d; --card-depth: #414f66; }
+.multi-root .landlord-card { --card-shade: #a17c60; --card-depth: #795e51; }
+.multi-root .mahjong-card { --card-shade: #628781; --card-depth: #46676b; }
+.multi-root .golden_flower-card { --card-shade: #897189; --card-depth: #63566f; }
+.multi-root .guandan-card { --card-shade: #866d72; --card-depth: #615864; }
+.multi-root .farm-card { --card-shade: #698574; --card-depth: #455e56; }
+.multi-root .leaderboard-card { --card-shade: #948367; --card-depth: #6d6156; }
 .lobby-profile-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-width: 0; max-width: 50%; }
 .lobby-profile-actions .profile-chip { max-width: 100%; font: inherit; cursor: pointer; }
 .profile-chip:focus-visible { outline: 3px solid #fff4cc; outline-offset: 4px; }
-.game-card-art { display: block; width: min(100%, 170px); aspect-ratio: 4 / 3; margin: 6px auto 9px; filter: drop-shadow(0 5px 5px #39284c66); }
+.game-card-art { display: block; width: min(100%, 140px); aspect-ratio: 4 / 3; margin: 6px auto 9px; filter: saturate(.82) drop-shadow(0 4px 5px #26333b40); }
 .hub-game-grid .game-card-art { position: relative; aspect-ratio: 1; flex: none; }
 .hub-game-grid .game-card-art :deep(.game-icon) { position: absolute; inset: 0; }
 .game-card-copy { display: flex; flex-direction: column; gap: 8px; }
-.game-name { color: #fff0bb; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-size: 21px; font-weight: 800; letter-spacing: 2px; text-shadow: -1px -1px #58345b, 1px -1px #58345b, -1px 1px #58345b, 1px 2px #58345b, 0 3px #9b6a42; }
+.game-name { color: #f6ecd9; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-size: 23px; font-weight: 700; letter-spacing: 2px; text-shadow: 0 2px 4px #28384255; }
 .game-desc { color: #fff0d6; font-size: 11px; font-weight: 500; letter-spacing: .3px; text-shadow: 0 1px 2px #533c57; }
 .card-arrow { position: absolute; right: 12px; top: 9px; color: #ffe1a0; font-size: 13px; font-weight: 400; text-shadow: 0 1px #865b38; }
 .lobby-footnote { margin: 18px 0 0; color: #fff0cf; font-size: 11px; letter-spacing: .5px; text-align: center; text-shadow: 0 1px 3px #683b49; }
@@ -2237,10 +2244,6 @@ onBeforeUnmount(() => {
 .join-group input { flex: 1 1 120px; width: 100%; min-width: 0; }
 .hint-text { margin: 12px 0 0; font-size: 12px; line-height: 1.6; color: #756078; overflow-wrap: anywhere; }
 .dealer-dialogue { margin-top: 12px; font-size: 12px; line-height: 1.5; color: #a25742; }
-.home-dealer-section { display: flex; flex-direction: row-reverse; align-items: center; gap: 10px; width: 100%; max-width: 1120px; margin: auto auto 0; pointer-events: none; }
-.home-dealer-section .dealer-image { width: clamp(80px, 12vw, 150px); height: auto; filter: drop-shadow(0 5px 10px #61374755); }
-.home-dealer-section .dialogue-box { max-width: 330px; padding: 10px 14px; color: #74516a; background: linear-gradient(135deg, #fff4dbee, #f1d6b2ee); border: 2px solid #e7b77d; border-radius: 14px 14px 4px 14px; box-shadow: 0 3px 0 #955b4366; font-size: 12px; line-height: 1.6; }
-.home-dealer-section .dialogue-box p { margin: 0; }
 .status-message,
 .error-message { flex-shrink: 0; border: 1px solid #f1cb89; border-radius: 8px; padding: 6px 12px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; max-height: calc(var(--activity-height, 100dvh) * .16); overflow: auto; }
 .status-message { color: #fff0d4; background: linear-gradient(180deg, #607dad, #464580); }
@@ -2373,6 +2376,11 @@ onBeforeUnmount(() => {
   .lobby-section-heading h3 { font-size: 14px; }
   .lobby-section-heading > span { font-size: 9px; }
   .game-grid { gap: 9px; }
+  .hub-game-grid .game-card { min-height: 102px; flex-direction: row; gap: 8px; text-align: left; padding: 10px; }
+  .hub-game-grid .game-card-art { width: 62px; margin: 0; }
+  .hub-game-grid .game-card-copy { min-width: 0; }
+  .hub-game-grid .game-name { font-size: 17px; letter-spacing: 0; }
+  .hub-game-grid .game-desc { font-size: 10px; line-height: 1.5; }
   .multi-root .game-card { padding: 6px 6px 12px; border-radius: 18px 18px 12px 12px; }
   .multi-root .game-card::before { inset: 6px; border-radius: 11px 11px 7px 7px; }
   .game-card-art { width: min(100%, 125px); margin: 1px auto 4px; }
@@ -2381,9 +2389,6 @@ onBeforeUnmount(() => {
   .game-desc { font-size: 9px; letter-spacing: 0; }
   .card-arrow { right: 8px; top: 5px; font-size: 12px; }
   .lobby-footnote { margin-top: 10px; font-size: 9px; }
-  .home-dealer-section { min-height: 0; flex: 1; gap: 8px; }
-  .home-dealer-section .dealer-image { width: auto; height: min(calc(var(--activity-height, 100dvh) * .15), 80px); object-fit: contain; }
-  .home-dealer-section .dialogue-box { font-size: 10px; padding: 6px 10px; max-width: 280px; }
   .multi-root .mode-card { min-height: 116px; padding: 8px 18px 8px 8px; }
   .mode-card .game-card-art { max-width: 135px; }
   .lobby-panel .toolbar-actions { margin-top: 12px; }
@@ -2396,9 +2401,17 @@ onBeforeUnmount(() => {
   .dealer-dialogue { font-size: 10px; margin-top: 8px; }
 }
 
+@container activity-viewport (max-width: 1000px) and (min-height: 601px) {
+  .hub-game-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@container activity-viewport (max-width: 780px) {
+  .hub-game-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 @container activity-viewport (max-width: 680px) {
   .multi-root:not(.table-fullscreen) { padding-inline: 12px; gap: 8px; }
-  .hub-game-grid { gap: 7px; }
+  .hub-game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .game-name { font-size: 15px; }
   .game-desc { font-size: 8px; }
   .game-card-art { max-width: 90px; }

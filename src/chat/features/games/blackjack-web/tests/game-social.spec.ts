@@ -13,7 +13,8 @@ async function mountSocial(page: Page, single = false) {
     }
     (window as any).Audio = TestAudio;
   });
-  await page.goto('/');
+  await page.route('**/social-component-test', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/src/style.css"></head><body><div id="app"></div></body></html>' }));
+  await page.goto('/social-component-test');
   await page.evaluate(async ({ single }) => {
     const compiled = await (await fetch('/src/GameSocial.vue')).text();
     const vuePath = compiled.match(/from ["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
@@ -91,7 +92,7 @@ test('用户音乐按场景切换、语音压低背景且遵守独立开关', as
   await expect.poll(() => page.evaluate(() => (window as any).__audioCalls.some((call: any) => call.kind === 'create' && call.src.endsWith('/Normal.mp3')))).toBe(true);
   await page.evaluate(() => (window as any).__socialTest.audio.playGameVoice('hello'));
   expect(await page.evaluate(() => (window as any).__audioCalls.filter((call: any) => call.kind === 'create' && call.src.endsWith('/Normal.mp3')).at(-1).audio.volume)).toBe(0.10);
-  await page.evaluate(() => (window as any).__socialTest.audio.setSoundEnabled(false));
+  await page.evaluate(() => (window as any).__socialTest.audio.setVoiceEnabled(false));
   expect(await page.evaluate(() => (window as any).__audioCalls.filter((call: any) => call.kind === 'create' && call.src.endsWith('/Normal.mp3')).at(-1).audio.volume)).toBe(0.36);
   const before = await page.evaluate(() => (window as any).__audioCalls.length);
   await page.evaluate(() => (window as any).__socialTest.audio.playGameVoice('thanks'));
@@ -112,7 +113,7 @@ test('568×320互动菜单不溢出并可滚动使用全部快捷句', async ({ 
   await mountSocial(page, true);
   await page.getByRole('button', { name: '打开牌桌聊天' }).click();
   await page.getByRole('button', { name: '你是MM还是GG？', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => (window as any).__audioCalls.some((call: any) => call.kind === 'play' && call.src.endsWith('/mm_or_gg.mp3')))).toBe(true);
+  await expect.poll(() => page.evaluate(() => (window as any).__audioCalls.some((call: any) => call.kind === 'play' && new URL(call.src, location.origin).pathname.endsWith('/mm_or_gg.mp3')))).toBe(true);
   await page.getByRole('button', { name: '再来一局吧', exact: true }).scrollIntoViewIfNeeded();
   await expect(page.getByRole('button', { name: '再来一局吧', exact: true })).toBeInViewport({ ratio: 1 });
   await page.evaluate(() => (window as any).__socialTest.instance.value.openInteraction('two'));

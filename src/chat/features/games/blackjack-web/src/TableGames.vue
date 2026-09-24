@@ -1098,15 +1098,15 @@ onBeforeUnmount(() => {
 .tg-interact-avatar { padding: 0; cursor: pointer; background: none; color: inherit; }
 .tg-interact-avatar:disabled { cursor: default; opacity: 1; }
 /* 使用独立的横屏安全区：背景延展，头像、手牌与操作始终留在视窗内。 */
-.table-games { position: relative; flex: 1; min-width: 0; min-height: 0; width: 100%; color: #fff2cc; background: #634665; container-type: size; text-align: center; --gold: #f4d28b; --card-height: clamp(68px, 24cqh, 172px); }
+.table-games { position: relative; flex: 1; min-width: 0; min-height: 0; width: 100%; color: #f3eee3; background: #34414f; container-type: size; text-align: center; --gold: #d5bd8b; --card-height: clamp(68px, 24cqh, 172px); }
 .table-games, .table-games * { box-sizing: border-box; }
-.tg-toolbar { position: absolute; inset: 0 0 auto; height: 48px; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px max(14px, env(safe-area-inset-right)) 5px max(14px, env(safe-area-inset-left)); background: linear-gradient(90deg, #743e3de8, #5f4561c9 52%, #73433be8); border-bottom: 1px solid #eac991; box-shadow: inset 0 -3px #542d3433, 0 2px 8px #4f273d55; }
+.tg-toolbar { position: absolute; inset: 0 0 auto; height: 48px; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px max(14px, env(safe-area-inset-right)) 5px max(14px, env(safe-area-inset-left)); background: linear-gradient(90deg, #4b4243f5, #4a4652ed 52%, #4b4243f5); border-bottom: 1px solid #a39479; box-shadow: 0 2px 8px #19242c44; }
 .tg-title { min-width: 0; text-align: left; }
 .tg-title h2 { color: #ffe5a3; margin: 0; font-size: 16px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px #59374d, 1px 0 #59374d; }
 .tg-title p { color: #f3d5b7; margin: 2px 0 0; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .tg-actions { display: flex; justify-content: center; align-items: center; gap: 7px; min-width: 0; flex-wrap: wrap; }
 .tg-toolbar .tg-actions { flex-shrink: 0; flex-wrap: nowrap; }
-.table-games button:not(.game-button, .tg-tier-card, .tg-mode-card, .tg-hand-card), .table-games input, .table-games select { min-width: 0; max-width: 100%; min-height: 38px; margin: 0; padding: 8px 16px; border: 1px solid #d6ab66; border-radius: 8px; color: #34355b; background: linear-gradient(#fff9e8, #efdab1); font: inherit; font-size: 13px; line-height: 1.2; letter-spacing: 0; text-transform: none; box-shadow: inset 0 2px 4px #9b64352b; touch-action: manipulation; }
+.table-games button:not(.game-button, .tg-tier-card, .tg-mode-card, .tg-hand-card), .table-games input, .table-games select { min-width: 0; max-width: 100%; min-height: 38px; margin: 0; padding: 8px 16px; border: 1px solid #baab91; border-radius: 8px; color: #35434e; background: linear-gradient(#f8f3e9, #e4d9c7); font: inherit; font-size: 13px; line-height: 1.2; letter-spacing: 0; text-transform: none; box-shadow: inset 0 2px 4px #9b64352b; touch-action: manipulation; }
 .table-games .game-button { margin: 0; max-width: 100%; letter-spacing: 0; text-transform: none; }
 .table-games button { white-space: nowrap; }
 .table-games button:hover { filter: brightness(1.15); }
@@ -1114,7 +1114,7 @@ onBeforeUnmount(() => {
 .table-games :focus-visible { outline: 2px solid #fbe2a7; outline-offset: 2px; }
 .tg-toolbar button { min-height: 36px; font-size: 11px; padding: 6px 12px; }
 .tg-tier-tag { display: inline-block; margin-left: 8px; color: #ffdfa2; font-size: 10px; letter-spacing: 0; }
-.tg-lobby { position: absolute; inset: 48px 0 0; overflow: auto; padding: clamp(12px, 3cqh, 28px) clamp(16px, 4cqw, 54px); background: linear-gradient(#78374918, #2c2b5bad), url('/ui/guochao/teahouse-room.webp') center/cover, #a76b63; }
+.tg-lobby { position: absolute; inset: 48px 0 0; overflow: auto; padding: clamp(12px, 3cqh, 28px) clamp(16px, 4cqw, 54px); background: linear-gradient(#27354318, #202d41ad), url('/ui/guochao/teahouse-room-muted.webp') center/cover, #a76b63; }
 .tg-lobby-inner { display: flex; flex-direction: column; gap: clamp(9px, 2cqh, 18px); width: min(100%, 1040px); min-height: 100%; margin-inline: auto; justify-content: center; }
 .tg-lobby-heading { display: flex; justify-content: space-between; align-items: center; gap: 14px; text-align: left; }
 .tg-eyebrow { color: #ffe3aa; font-size: 11px; letter-spacing: 3px; text-shadow: 0 1px 3px #493252; }
@@ -1125,27 +1125,27 @@ onBeforeUnmount(() => {
 .tg-variant-tabs { display: flex; gap: 8px; margin: 5px 0; }
 .tg-variant-tabs .game-button { min-height: 36px; padding: 6px 14px; font-size: 13px; }
 .tg-tier-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(10px, 2cqw, 22px); }
-.table-games .tg-tier-card { --tier-accent: #ffda88; position: relative; height: clamp(150px, 34cqh, 278px); padding: 20px 16px 14px; border: 1px solid #ffdb94; border-radius: 20px 20px 12px 12px; overflow: hidden; text-align: left; white-space: normal; background: radial-gradient(ellipse at 82% 24%, #ffd08c99, transparent 58%), url('/ui/guochao/cloud-pattern.svg') center/150px, linear-gradient(155deg, #d57c68, #914855); box-shadow: inset 0 0 0 4px #733b4366, inset 0 0 0 6px #ffd49c77, 0 6px 0 #623a53, 0 12px 20px #30204355; }
-.table-games .tg-tier-intermediate { --tier-accent: #ffdfa1; background: radial-gradient(ellipse at 82% 24%, #d4e5e699, transparent 60%), url('/ui/guochao/cloud-pattern.svg') center/150px, linear-gradient(155deg, #6a9ec0, #4c568a); }
-.table-games .tg-tier-advanced { --tier-accent: #ffe096; background: radial-gradient(ellipse at 82% 24%, #f7c68999, transparent 60%), url('/ui/guochao/cloud-pattern.svg') center/150px, linear-gradient(155deg, #af7390, #71476e); }
-.table-games .tg-tier-card.selected { outline: 2px solid #fff1b3; outline-offset: 2px; box-shadow: inset 0 0 0 4px #8d544266, inset 0 0 0 6px #ffe1a6aa, 0 6px 0 #623a53, 0 0 22px #ffca7160; }
-.tg-scroll-frame { position: absolute; inset: 0; width: 100%; height: 100%; color: #ffe2a3; opacity: .82; pointer-events: none; }
+.table-games .tg-tier-card { --tier-accent: #ffda88; position: relative; height: clamp(150px, 34cqh, 278px); padding: 20px 16px 14px; border: 1px solid #bba687; border-radius: 20px 20px 12px 12px; overflow: hidden; text-align: left; white-space: normal; background: radial-gradient(ellipse at 82% 24%, #d3b5973d, transparent 60%), linear-gradient(155deg, #947665, #594c4d); box-shadow: inset 0 0 0 1px #fff3dc22, 0 3px 0 #493e3f, 0 8px 18px #17232e55; }
+.table-games .tg-tier-intermediate { --tier-accent: #ffdfa1; background: radial-gradient(ellipse at 82% 24%, #d1dce22e, transparent 60%), linear-gradient(155deg, #627e8f, #3d4e63); }
+.table-games .tg-tier-advanced { --tier-accent: #ffe096; background: radial-gradient(ellipse at 82% 24%, #d1b8c030, transparent 60%), linear-gradient(155deg, #857585, #534b61); }
+.table-games .tg-tier-card.selected { outline: 2px solid #dbc59b; outline-offset: 2px; box-shadow: inset 0 0 0 1px #fff0d24d, 0 3px 0 #493e3f, 0 8px 18px #17232e55; }
+.tg-scroll-frame { position: absolute; inset: 0; width: 100%; height: 100%; color: #d1b994; opacity: .38; pointer-events: none; }
 .tg-tier-art { position: absolute; right: -3%; top: 2%; width: 76%; height: 73%; filter: drop-shadow(0 8px 7px #001b2f44); pointer-events: none; }
 .tg-tier-heading { position: absolute; left: 16px; top: 18px; display: flex; flex-direction: column; gap: 6px; z-index: 1; text-shadow: 0 2px #453655, 1px 0 #453655, -1px 0 #453655; }
 .tg-tier-heading > span { color: var(--tier-accent); font-size: 11px; letter-spacing: 2px; }
 .tg-tier-heading strong { color: #fff0b4; font-size: clamp(22px, 4.6cqh, 36px); font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-weight: 900; letter-spacing: 2px; }
 .tg-tier-terms { position: absolute; left: 14px; right: 14px; bottom: 37px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; font-size: 10px; color: #fff1d5; text-shadow: 0 1px 2px #60394f; }
 .tg-tier-terms b { color: #ffe699; font-size: 13px; font-weight: 700; }
-.tg-tier-selected { position: absolute; bottom: 0; left: 0; right: 0; display: grid; place-items: center; height: 27px; border-top: 1px solid #f1c17b; background: linear-gradient(#a26349, #764347); font-size: 10px; color: #ffe4ab; letter-spacing: 2px; }
+.tg-tier-selected { position: absolute; bottom: 0; left: 0; right: 0; display: grid; place-items: center; height: 27px; border-top: 1px solid #b09c7e; background: #51494ade; font-size: 10px; color: #ffe4ab; letter-spacing: 2px; }
 .tg-entry-row { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(10px, 2cqw, 22px); }
-.table-games .tg-mode-card { display: flex; align-items: center; gap: 12px; min-height: 96px; width: 100%; padding: 6px 16px 6px 6px; border: 1px solid #f3cf8a; border-radius: 48px 14px 14px 48px; background: linear-gradient(115deg, #dfa967, #b86956 65%, #915160); box-shadow: inset 0 2px #ffe4ac, inset 0 -3px #7c454a80, 0 3px 0 #58364d; text-align: left; }
+.table-games .tg-mode-card { display: flex; align-items: center; gap: 12px; min-height: 96px; width: 100%; padding: 6px 16px 6px 6px; border: 1px solid #b7ad97; border-radius: 48px 14px 14px 48px; background: linear-gradient(115deg, #b58e6c, #986d59 65%, #74575a); box-shadow: inset 0 1px #fff0da33, 0 2px 0 #4d3c3f; text-align: left; }
 .tg-mode-card > .game-icon { width: 105px; height: 80px; flex-shrink: 0; }
 .tg-mode-card > span:not(.tg-entry-arrow) { display: flex; flex-direction: column; gap: 7px; }
 .tg-mode-card strong { font-size: 19px; color: #fff0b8; text-shadow: 0 2px #62415b; }
 .tg-mode-card small { font-size: 11px; color: #fff0d4; text-shadow: 0 1px #734559; }
 .tg-entry-arrow { margin-left: auto; color: #ffe8a7; font-size: 35px; font-weight: 300; }
 .tg-friends-entry { position: relative; }
-.table-games .tg-friends-entry .tg-mode-card { background: linear-gradient(115deg, #78acc5, #507ba2 65%, #535782); border-color: #f3cf8a; }
+.table-games .tg-friends-entry .tg-mode-card { background: linear-gradient(115deg, #7695a4, #526d80 65%, #48576b); border-color: #b7ad97; }
 .tg-friends-entry .tg-check { position: absolute; right: 14px; bottom: 9px; font-size: 9px; gap: 5px; color: #fff0d2; }
 .tg-lobby-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .tg-lobby-footer > p { margin: 0; font-size: 11px; color: #fff0d0; text-shadow: 0 1px 3px #453151; }
@@ -1154,11 +1154,11 @@ onBeforeUnmount(() => {
 .tg-muted { font-size: 11px; line-height: 1.4; color: #f8e5c7; margin: 0; text-shadow: 0 1px 3px #353254; }
 .tg-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .table-games .tg-check input { min-height: 16px; height: 16px; width: 16px; padding: 0; margin: 0; accent-color: #d6b771; }
-.tg-scroll { position: absolute; inset: 48px 0 26px; min-height: 0; overflow: hidden; background: linear-gradient(#c9856326, #49396070), url('/ui/guochao/teahouse-room.webp') center/cover, #a76b63; }
+.tg-scroll { position: absolute; inset: 48px 0 26px; min-height: 0; overflow: hidden; background: linear-gradient(#26354338, #1b2b4478), url('/ui/guochao/teahouse-room-muted.webp') center/cover, #a76b63; }
 .tg-table-status { position: absolute; top: 41%; left: 23%; right: 23%; z-index: 5; display: flex; justify-content: center; align-items: center; gap: 10px; pointer-events: none; }
 .tg-notice { margin: 0; max-width: 75%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #fff1d4; text-shadow: 0 1px 3px #393057; }
 .tg-turn { color: #ffe2a0; font-size: 11px; white-space: nowrap; }
-.tg-turn b { display: inline-grid; place-items: center; min-width: 25px; height: 25px; border-radius: 50%; border: 1px solid #f4d58d; background: linear-gradient(#7475b1, #434b86); box-shadow: inset 0 1px #ded2f199, 0 2px 2px #42335680; margin-left: 5px; }
+.tg-turn b { display: inline-grid; place-items: center; min-width: 25px; height: 25px; border-radius: 50%; border: 1px solid #b5a489; background: #3d5165; box-shadow: 0 1px 2px #1d273380; margin-left: 5px; }
 .tg-arena { position: absolute; inset: 0; isolation: isolate; }
 .tg-deal-layer { position: absolute; inset: 0; z-index: 8; pointer-events: none; overflow: hidden; }
 .tg-deal-card { position: absolute; display: block; width: clamp(18px, 5cqh, 36px); aspect-ratio: 5 / 7; margin-left: -12px; border: 1px solid #f6d798; border-radius: 3px; background: #586096; box-shadow: 0 3px 6px #3b285760; opacity: 0; animation: tg-deal-flight 420ms cubic-bezier(.15,.6,.3,1) both; }
@@ -1185,7 +1185,7 @@ onBeforeUnmount(() => {
   65% { opacity: 1; }
   100% { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
 }
-.tg-felt { position: absolute; inset: 7% 0 0; background: url('/ui/guochao/table-felt.svg') center/100% 100% no-repeat; filter: drop-shadow(0 8px 5px #49324955); }
+.tg-felt { position: absolute; inset: 7% 0 0; background: url('/ui/guochao/table-felt-muted.svg') center/100% 100% no-repeat; filter: drop-shadow(0 8px 5px #17232e55); }
 .tg-center { position: absolute; top: 51%; left: 50%; width: 48%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: clamp(3px, 1.2cqh, 10px); text-align: center; z-index: 1; }
 /* 提示、底池与公共牌使用同一纵向流，避免独立百分比定位叠字。 */
 .tg-center > .tg-poker-status { position: static; width: 100%; min-width: 0; gap: 8px; }
@@ -1213,7 +1213,7 @@ onBeforeUnmount(() => {
 .tg-public-cards { display: flex; align-items: center; justify-content: center; gap: 5px; max-width: 100%; }
 .tg-board-card { width: clamp(31px, 10cqh, 65px); aspect-ratio: 5 / 7; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #fff8e9; border-radius: 5px; color: #222; box-shadow: 0 3px 7px #352b5966; overflow: hidden; }
 .tg-board-card img { width: 100%; height: 100%; object-fit: contain; }
-.tg-board-card.tg-card-slot { border: 1px solid #e4cda36b; background: #45427470; box-shadow: inset 0 1px 5px #35265666; color: #e7d4b164; font-size: 27px; }
+.tg-board-card.tg-card-slot { border: 1px solid #e4cda36b; background: #27374688; box-shadow: inset 0 1px 5px #35265666; color: #e7d4b164; font-size: 27px; }
 .tg-table-caption { font-size: 10px; color: #f3e2d4; margin: 0; text-shadow: 0 1px 2px #493457; }
 .tg-bottom-cards, .tg-last-play { display: flex; flex-direction: column; gap: 5px; align-items: center; max-width: 100%; }
 .tg-bottom-cards > small, .tg-last-play > small { color: #ffe8b5; font-size: 10px; text-shadow: 0 1px 2px #3d345c; }
@@ -1224,8 +1224,8 @@ onBeforeUnmount(() => {
 .tg-played-cards .tg-board-card + .tg-board-card { margin-left: calc(var(--public-width) * -.62); }
 .tg-seats { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
 .tg-seat, .tg-empty-seat { position: absolute; left: var(--seat-x); top: var(--seat-y); transform: translate(-50%, -50%); width: clamp(80px, 12cqw, 168px); text-align: center; pointer-events: auto; }
-.tg-player { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; align-items: center; gap: 2px 7px; padding: 6px 8px 6px 6px; border: 1px solid #ebc986; border-radius: 9px; background: linear-gradient(#6588b9f5, #435484f5); box-shadow: inset 0 1px #d9ddf780, inset 0 -3px #343d6559, 0 3px 0 #735d68, 0 5px 10px #49335466; text-align: left; }
-.tg-avatar { position: relative; grid-row: 1 / 3; width: clamp(28px, 7.5cqh, 56px); height: clamp(28px, 7.5cqh, 56px); border: 2px solid #f2cc83; border-radius: 7px; background: #d8bca2; box-shadow: 0 1px 4px #42335988; }
+.tg-player { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; align-items: center; gap: 2px 7px; padding: 6px 8px 6px 6px; border: 1px solid #a3957b; border-radius: 9px; background: linear-gradient(#3c4b5cf5, #293747f5); box-shadow: inset 0 1px #e9e8dd1a, 0 3px 8px #14202b55; text-align: left; }
+.tg-avatar { position: relative; grid-row: 1 / 3; width: clamp(28px, 7.5cqh, 56px); height: clamp(28px, 7.5cqh, 56px); border: 2px solid #bcad94; border-radius: 7px; background: #d8bca2; box-shadow: 0 1px 4px #42335988; }
 .tg-avatar img { display: block; width: 100%; height: 100%; border-radius: 3px; object-fit: cover; }
 .table-games button.tg-avatar.tg-interact-avatar { display: block; min-height: 0; padding: 0; opacity: 1; }
 .tg-host-badge { position: absolute; right: -5px; bottom: -3px; width: 14px; height: 14px; border-radius: 50%; background: #ffe1a0; color: #995044; font-size: 9px; text-align: center; box-shadow: 0 1px 2px #5e3d5c88; }
@@ -1239,23 +1239,23 @@ onBeforeUnmount(() => {
 .tg-seat-tag, .tg-role { color: #f9dbb1; font-size: 9px; flex-shrink: 0; }
 .tg-seat-state { margin: 0; font-size: 10px; color: #f4e3d0; }
 .tg-seat-state.tg-ready { color: #ffe394; }
-.tg-seat > .tg-seat-state { display: inline-block; background: #535586e8; border: 1px solid #e7c59480; border-radius: 5px; padding: 2px 6px; margin-top: 3px; }
+.tg-seat > .tg-seat-state { display: inline-block; background: #354759e8; border: 1px solid #e7c59480; border-radius: 5px; padding: 2px 6px; margin-top: 3px; }
 .tg-seat-chips { display: flex; gap: 3px; align-items: center; margin: 0; color: #f5da7a; font-size: clamp(11px, 2.2cqh, 17px); font-variant-numeric: tabular-nums; }
 .tg-seat-chips small { font-size: 8px; color: #f0dfca; white-space: nowrap; }
 .tg-seat-chips i { width: 13px; height: 13px; background: url('/table-assets/chip-red.png') center/contain no-repeat; }
-.tg-current .tg-player { border-color: #fff1aa; box-shadow: inset 0 1px #fff5c488, 0 0 0 2px #f6d68180, 0 0 18px #ffe0976b; }
-.tg-self .tg-player { border-color: #f4d492; }
-.tg-has-won .tg-player { border-color: #ffe1a0; background: linear-gradient(#ad784df5, #865472f5); }
+.tg-current .tg-player { border-color: #e1c69a; box-shadow: 0 0 0 2px #d1b37f88, 0 3px 8px #14202b55; }
+.tg-self .tg-player { border-color: #c7b08a; }
+.tg-has-won .tg-player { border-color: #d0b68d; background: linear-gradient(#80694ff5, #594d4ff5); }
 .game-sichuan_mahjong .tg-seat { width: clamp(68px, 12cqw, 168px); }
 .game-sichuan_mahjong .tg-avatar { grid-row: 1; }
 .tg-sichuan-pending { grid-column: 1 / -1; margin: 0; color: #ffe5a9; font-size: clamp(8px, 1.5cqh, 11px); white-space: nowrap; text-align: center; }
 .tg-sichuan-seat-status { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 2px 4px; margin: 3px 0 0; color: #ffeac2; font-size: 9px; }
-.tg-sichuan-seat-status > * { padding: 1px 4px; border: 1px solid #edcb8799; border-radius: 4px; background: #5c558adc; white-space: nowrap; }
+.tg-sichuan-seat-status > * { padding: 1px 4px; border: 1px solid #edcb8799; border-radius: 4px; background: #435268dc; white-space: nowrap; }
 .tg-sichuan-seat-status strong { color: #ffe392; background: #9a534bdc; }
 .tg-folded .tg-player, .tg-folded .tg-hidden-hand { opacity: .48; }
 .tg-hand-name { margin: 3px 0 0; font-size: 10px; color: #f4d87f; }
-.tg-settled { margin: 3px 0 0; padding: 3px; border: 1px solid #dcc19580; border-radius: 5px; color: #ffe1d4; background: #6a4d74ed; font-size: 10px; }
-.tg-settled.tg-positive { color: #ffe69b; background: #485581ed; }
+.tg-settled { margin: 3px 0 0; padding: 3px; border: 1px solid #dcc19580; border-radius: 5px; color: #ffe1d4; background: #5d4d59ed; font-size: 10px; }
+.tg-settled.tg-positive { color: #ffe69b; background: #354c60ed; }
 .tg-hidden-hand, .tg-opponent-hand { display: flex; align-items: center; justify-content: center; margin-top: 7px; padding-left: 12px; }
 .tg-hidden-hand { width: fit-content; max-width: 100%; margin-inline: auto; }
 .tg-hidden-hand i { display: block; flex: 0 0 auto; width: clamp(22px, 6.8cqh, 44px); height: clamp(30px, 9.4cqh, 62px); border: 1px solid #e1e3d5; border-radius: 3px; margin-left: -9px; background: url('/table-assets/card-back.png') center/100% 100% no-repeat; box-shadow: 0 2px 4px #0006; }
@@ -1285,7 +1285,7 @@ onBeforeUnmount(() => {
 .tg-waiting .tg-control-panel { left: 18%; right: 18%; bottom: 26%; justify-content: center; }
 .tg-waiting .tg-control-panel > .tg-actions:first-child { flex-basis: 100%; }
 .tg-control-panel > .tg-muted { font-size: 10px; }
-.tg-wallet-strip { position: absolute; bottom: 0; left: 0; right: 0; height: 26px; margin: 0; padding: 5px 18px; background: linear-gradient(90deg, #874f49ed, #5e466be8, #875748ed); border-top: 1px solid #eac68b99; text-align: right; color: #ffebc8; font-size: 11px; }
+.tg-wallet-strip { position: absolute; bottom: 0; left: 0; right: 0; height: 26px; margin: 0; padding: 5px 18px; background: linear-gradient(90deg, #534446f5, #494552f0, #534446f5); border-top: 1px solid #9c8b7199; text-align: right; color: #ffebc8; font-size: 11px; }
 .tg-field { display: flex; align-items: center; gap: 6px; font-size: 11px; max-width: 100%; }
 .tg-field input { width: 84px; }
 .tg-field select { max-width: 122px; }
@@ -1301,11 +1301,11 @@ onBeforeUnmount(() => {
 .tg-bet-fields { pointer-events: none; }
 .tg-bet-fields .tg-field { pointer-events: auto; }
 .tg-error { position: absolute; bottom: 26px; left: 20%; right: 20%; z-index: 12; margin: 0; padding: 8px 12px; background: #6e2828ee; border: 1px solid #e7b0a3; border-radius: 6px; max-height: 20cqh; overflow: auto; color: #ffe8de; font-size: 12px; }
-.tg-modal { width: min(560px, calc(var(--activity-width, 100vw) - 28px)); max-height: calc(var(--activity-height, 100dvh) - 24px); margin: auto; padding: 20px; border: 2px solid #d1a469; border-radius: 18px; background: radial-gradient(ellipse at top left, #fff9e7, transparent 72%), #f1dcba; box-shadow: 0 20px 80px #36263f99, inset 0 0 0 3px #fff0cd, inset 0 0 0 5px #dcb57c99; color: #49405e; text-align: left; overflow: auto; }
+.tg-modal { width: min(560px, calc(var(--activity-width, 100vw) - 28px)); max-height: calc(var(--activity-height, 100dvh) - 24px); margin: auto; padding: 20px; border: 1px solid #b6a58b; border-radius: 18px; background: #eee7d9; box-shadow: 0 20px 80px #17232c80; color: #35434e; text-align: left; overflow: auto; }
 .tg-modal::backdrop { background: #3a284d9e; backdrop-filter: blur(4px); }
-.tg-modal-head { display: flex; align-items: center; gap: 10px; margin: -5px 0 16px; position: sticky; top: -20px; z-index: 2; background: #f7e8cb; border-bottom: 1px solid #d4ad77; padding-block: 5px 10px; }
+.tg-modal-head { display: flex; align-items: center; gap: 10px; margin: -5px 0 16px; position: sticky; top: -20px; z-index: 2; background: #eee7d9; border-bottom: 1px solid #d4ad77; padding-block: 5px 10px; }
 .tg-modal-head > .game-icon { width: 72px; height: 55px; flex-shrink: 0; }
-.tg-modal-head h2 { margin: 3px 0 0; color: #595181; font-size: 22px; letter-spacing: 2px; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-weight: 900; text-shadow: 0 1px #fff7e5; }
+.tg-modal-head h2 { margin: 3px 0 0; color: #415466; font-size: 22px; letter-spacing: 2px; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-weight: 900; text-shadow: 0 1px #fff7e5; }
 .tg-modal-head small { color: #97664b; font-size: 10px; }
 .table-games .tg-modal-head > button { margin-left: auto; }
 .tg-setting-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -1327,24 +1327,24 @@ onBeforeUnmount(() => {
 .tg-modal-footer > span { color: #806144; font-size: 11px; }
 .tg-modal-error { margin: 12px 0; padding: 8px; border: 1px solid #c97d6399; border-radius: 6px; background: #ffe3cc; color: #9b443f; font-size: 12px; }
 .tg-room-terms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 18px 0; }
-.tg-room-terms > div { border: 1px solid #d4ae77; border-radius: 8px; padding: 14px 8px; text-align: center; background: linear-gradient(#fff4dc, #ecd1ab); box-shadow: inset 0 1px #fff9e9; }
+.tg-room-terms > div { border: 1px solid #d4ae77; border-radius: 8px; padding: 14px 8px; text-align: center; background: #f8f3e9; box-shadow: inset 0 1px #fff9e9; }
 .tg-room-terms dt { color: #806447; font-size: 11px; }
 .tg-room-terms dd { color: #655183; font-size: 17px; font-weight: 700; margin: 10px 0 0; }
 .tg-bot-add { display: flex; align-items: flex-end; justify-content: space-between; gap: 15px; }
 .tg-bot-add label { display: flex; align-items: center; gap: 10px; color: #514563; font-size: 12px; }
 .tg-bot-add select { min-width: 110px; }
 .tg-bot-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
-.tg-bot-list li { display: flex; align-items: center; gap: 10px; border: 1px solid #d3b284; border-radius: 8px; padding: 8px 10px; background: #ffefd0; box-shadow: inset 0 1px #fff9eb; }
+.tg-bot-list li { display: flex; align-items: center; gap: 10px; border: 1px solid #d3b284; border-radius: 8px; padding: 8px 10px; background: #f8f3e9; box-shadow: inset 0 1px #fff9eb; }
 .tg-bot-list img { width: 38px; height: 38px; border: 2px solid #e7bd76; border-radius: 8px; object-fit: cover; }
 .tg-bot-list li > div { display: flex; flex-direction: column; gap: 4px; }
 .tg-bot-list strong { color: #514e7b; font-size: 13px; }
 .tg-bot-list small { color: #8b6a4c; font-size: 10px; }
 .table-games .tg-bot-list button { margin-left: auto; }
 .tg-bots-empty { font-size: 12px; color: #816847; padding: 20px 0; text-align: center; }
-.tg-rules { width: min(680px, calc(var(--activity-width, 100vw) - 24px)); max-height: calc(var(--activity-height, 100dvh) - 24px); margin: auto; border: 2px solid #d1a469; border-radius: 16px; padding: 18px; background: #f6e5c5; box-shadow: 0 15px 65px #392a4c88, inset 0 0 0 3px #fff3d7, inset 0 0 0 5px #dcb57c88; color: #4d4261; text-align: left; overflow: auto; }
+.tg-rules { width: min(680px, calc(var(--activity-width, 100vw) - 24px)); max-height: calc(var(--activity-height, 100dvh) - 24px); margin: auto; border: 1px solid #b6a58b; border-radius: 16px; padding: 18px; background: #eee7d9; box-shadow: 0 15px 65px #17232c80; color: #35434e; text-align: left; overflow: auto; }
 .tg-rules::backdrop { background: #3a284da3; }
-.tg-rules-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -18px; background: #f6e5c5; border-bottom: 1px solid #d4ae77; padding: 6px 0; }
-.tg-rules h2 { margin: 0; font-size: 20px; color: #595181; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-weight: 900; }
+.tg-rules-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -18px; background: #eee7d9; border-bottom: 1px solid #d4ae77; padding: 6px 0; }
+.tg-rules h2 { margin: 0; font-size: 20px; color: #415466; font-family: "STKaiti", "KaiTi", "Microsoft YaHei", serif; font-weight: 900; }
 .tg-rules h3 { font-size: 15px; color: #9d5b49; margin: 16px 0 6px; }
 .tg-rules p { font-size: 13px; line-height: 1.65; margin: 6px 0; }
 .tg-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -1356,7 +1356,7 @@ onBeforeUnmount(() => {
 .game-landlord .tg-seat:not(.tg-self) .tg-player { margin-top: 8cqh; }
 .game-landlord .tg-hidden-hand { position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; padding: 0; white-space: nowrap; }
 .game-landlord .tg-hidden-hand i { display: none; }
-.game-landlord .tg-hidden-hand span { margin-left: 0; font-size: clamp(10px, 2cqh, 14px); padding: 2px 6px; border: 1px solid #efd094b3; background: #626591e3; border-radius: 5px; }
+.game-landlord .tg-hidden-hand span { margin-left: 0; font-size: clamp(10px, 2cqh, 14px); padding: 2px 6px; border: 1px solid #efd094b3; background: #3a5063e3; border-radius: 5px; }
 .game-landlord .tg-hand-shelf { left: 16%; right: 3%; bottom: 30px; }
 .game-landlord .tg-my-hand { --card-height: clamp(65px, 27cqh, 205px); }
 .game-landlord .tg-control-panel { left: 40%; right: 12%; bottom: calc(28cqh + 33px); justify-content: center; }
@@ -1376,13 +1376,13 @@ onBeforeUnmount(() => {
 .tg-seat-play .tg-played-cards { --public-width: min(44px, 7cqh, calc((100cqw - 10px) / (1 + (var(--public-count) - 1) * .38))); }
 .tg-countdown { position: absolute; left: 18%; bottom: calc(28cqh + 41px); display: flex; align-items: center; flex-direction: row-reverse; gap: 7px; color: #ffe9ac; text-shadow: 0 1px 2px #413359; }
 .tg-countdown span { font-size: 11px; max-width: min(130px, 17cqw); white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
-.tg-countdown strong { display: grid; place-items: center; width: clamp(35px, 7cqh, 52px); height: clamp(35px, 7cqh, 52px); border: 2px solid #f7d58b; border-radius: 50%; background: linear-gradient(#7f9bc5, #4c5c91); box-shadow: inset 0 2px #e2e3ed80, 0 3px 0 #655168, 0 5px 7px #3c2c5666; color: #fff5cf; font-size: clamp(19px, 4cqh, 29px); font-variant-numeric: tabular-nums; }
+.tg-countdown strong { display: grid; place-items: center; width: clamp(35px, 7cqh, 52px); height: clamp(35px, 7cqh, 52px); border: 1px solid #b9a98d; border-radius: 50%; background: linear-gradient(#697f91, #40556c); box-shadow: inset 0 1px #e2e3ed2e, 0 2px 0 #303d49, 0 4px 7px #17232c44; color: #fff5cf; font-size: clamp(19px, 4cqh, 29px); font-variant-numeric: tabular-nums; }
 
 /* 麻将：四向牌墙与弃牌，底部大手牌；方位随观察者旋转。 */
-.game-mahjong .tg-felt { inset: 4% 3% 0; background-image: url('/ui/guochao/mahjong-felt.svg'); }
+.game-mahjong .tg-felt { inset: 4% 3% 0; background-image: url('/ui/guochao/mahjong-felt-muted.svg'); }
 .game-mahjong .tg-table-status { top: 3%; left: 25%; right: 25%; }
 .tg-center-mahjong { top: 45%; height: 46%; width: 44%; justify-content: center; }
-.tg-mahjong-compass { width: clamp(48px, 12cqh, 85px); height: clamp(45px, 11cqh, 79px); border: 2px solid #e4c084; border-radius: 10px; background: linear-gradient(135deg, #8989b4, #535482); box-shadow: inset 0 1px #eae0f080, 0 3px 0 #806269, 0 5px 8px #4a355c80; display: grid; grid-template-columns: 1fr 1fr; align-content: center; gap: 3px; padding: 7px; z-index: 2; }
+.tg-mahjong-compass { width: clamp(48px, 12cqh, 85px); height: clamp(45px, 11cqh, 79px); border: 1px solid #b4a58d; border-radius: 10px; background: linear-gradient(135deg, #697e8e, #3e5166); box-shadow: inset 0 1px #eae0f02e, 0 2px 0 #303d49, 0 4px 7px #17232c44; display: grid; grid-template-columns: 1fr 1fr; align-content: center; gap: 3px; padding: 7px; z-index: 2; }
 .tg-mahjong-compass > span { grid-row: span 2; align-self: center; font-size: clamp(16px, 4cqh, 26px); color: #ffe3a6; }
 .tg-mahjong-compass strong { font-size: clamp(16px, 3.4cqh, 22px); color: #fff1ca; }
 .tg-mahjong-compass small { font-size: 9px; color: #f5dfcc; }
@@ -1516,6 +1516,8 @@ onBeforeUnmount(() => {
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-raise-control { position: relative; grid-template-columns: 1fr; align-items: flex-start; gap: 0; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-raise-control > label { position: absolute; bottom: calc(100% + 1px); display: flex; flex-direction: row; align-items: center; gap: 5px; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-bet-cost { left: auto; right: 0; text-align: right; }
+  /* 短屏的费用提示放在比牌对象上方，避免叠住左侧加注标签。 */
+  .game-golden_flower:not(.tg-waiting) .tg-bet-cost { left: auto; right: 0; max-width: none; text-align: right; top: calc(100% - 2px); }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-center { top: 44%; }
   .game-texas:is(:not(.tg-waiting), .tg-finished) .tg-center .tg-board-card { width: clamp(25px, 8cqh, 38px); }
   .game-golden_flower:not(.tg-finished):not(.tg-waiting) .tg-center { display: grid; grid-template-columns: auto auto; justify-content: center; gap: 5px 10px; }

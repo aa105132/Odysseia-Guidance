@@ -254,7 +254,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; detailSequence++; panel.val
 </template>
 
 <style scoped>
-.game-stats-panel { box-sizing: border-box; width: min(760px, calc(var(--activity-width, 100vw) - 24px)); max-width: none; max-height: calc(var(--activity-height, 100dvh) - 24px); margin: auto; padding: 20px; border: 3px solid #efc882; border-radius: 20px; color: #463e69; background: url('/ui/guochao/cloud-pattern.svg') center / 190px, linear-gradient(125deg, #fff3d9, #eed3ac); box-shadow: inset 0 0 0 2px #b98557, 0 14px 65px #17152bb0; }
+.game-stats-panel { box-sizing: border-box; width: min(760px, calc(var(--activity-width, 100vw) - 24px)); max-width: none; max-height: calc(var(--activity-height, 100dvh) - 24px); margin: auto; padding: 20px; border: 1px solid #b6a58b; border-radius: 20px; color: #35434e; background: #eee7d9; box-shadow: 0 14px 65px #17232c80; }
 .game-stats-panel[open] { display: flex; flex-direction: column; gap: 14px; }
 .game-stats-panel::backdrop { background: #151125b5; }
 .game-stats-panel .game-button { min-height: 36px; font-size: 13px; padding: 7px 15px; }
@@ -263,19 +263,19 @@ onBeforeUnmount(() => { disposed = true; sequence++; detailSequence++; panel.val
 .stats-heading h2 { margin: 2px 0 0; font-size: 25px; }
 .stats-controls { display: flex; align-items: center; gap: 12px; flex: none; flex-wrap: wrap; }
 .stats-tabs, .stats-period { display: flex; gap: 8px; align-items: center; flex: none; }
-.game-stats-panel button[aria-pressed='true'] { background: linear-gradient(#d9b56b, #a97638); color: #fff9df; }
+.game-stats-panel button[aria-pressed='true'] { background: #ad7855; color: #fff9df; }
 .stats-game-filter { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 13px; }
-.stats-game-filter select { box-sizing: border-box; min-height: 36px; padding: 7px; max-width: 132px; border: 1px solid #b28b66; border-radius: 8px; background: #fff8e8; color: #493d67; font-size: 13px; }
+.stats-game-filter select { box-sizing: border-box; min-height: 36px; padding: 7px; max-width: 132px; border: 1px solid #b28b66; border-radius: 8px; background: #f8f3e9; color: #493d67; font-size: 13px; }
 .stats-period span { color: #79674e; font-size: 12px; margin-left: auto; }
 .stats-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
-.stats-profile { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: #fff8e8bb; }
+.stats-profile { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: #f8f3e9cc; }
 .stats-profile img { width: 48px; height: 48px; border: 2px solid #ccab73; border-radius: 10px; object-fit: cover; }
 .stats-profile > div { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .stats-profile strong { overflow-wrap: anywhere; }
 .stats-profile span { font-size: 12px; color: #79674e; }
 .stats-balance { margin-left: auto; white-space: nowrap; }
 .stats-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
-.stats-metrics > div { padding: 15px; border: 1px solid #cba872; border-radius: 12px; background: #fff8e8cc; }
+.stats-metrics > div { padding: 15px; border: 1px solid #c6b9a1; border-radius: 12px; background: #f8f3e9cc; }
 .stats-metrics dt { font-size: 13px; color: #79674e; }
 .stats-metrics dd { margin: 7px 0 0; font-size: 28px; font-weight: 700; overflow-wrap: anywhere; }
 .stats-metrics small, .stats-profit small { font-size: 12px; font-weight: 400; margin-left: 5px; }
@@ -287,8 +287,8 @@ onBeforeUnmount(() => { disposed = true; sequence++; detailSequence++; panel.val
 .stats-notes { margin-top: 14px; }
 .stats-notes p { margin: 5px 0 0; }
 .stats-ranking { list-style: none; margin: 0; padding: 0; }
-.stats-ranking li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 7px; border: 1px solid #d6bc91; border-radius: 10px; background: #fff8e8cc; }
-.stats-ranking li.stats-is-self { border: 2px solid #b38338; background: #ffe8b4dd; }
+.stats-ranking li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 7px; border: 1px solid #c6b9a1; border-radius: 10px; background: #f8f3e9cc; }
+.stats-ranking li.stats-is-self { border: 2px solid #b38338; background: #e4d9c1dd; }
 .stats-rank { width: 32px; flex: none; text-align: center; font-size: 19px; font-weight: 700; }
 .stats-top-three { color: #9a5b12; }
 .stats-ranking img { width: 38px; height: 38px; border-radius: 8px; object-fit: cover; }
@@ -299,13 +299,13 @@ onBeforeUnmount(() => { disposed = true; sequence++; detailSequence++; panel.val
 .stats-profit { font-size: 18px; font-weight: 700; text-align: right; overflow-wrap: anywhere; max-width: 45%; }
 .profit-positive { color: #287052; }
 .profit-negative { color: #a03743; }
-.stats-self-rank { display: flex; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid #b38338; border-radius: 10px; background: #f7e2baff; font-size: 13px; flex-wrap: wrap; }
+.stats-self-rank { display: flex; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid #b38338; border-radius: 10px; background: #e4d9c1; font-size: 13px; flex-wrap: wrap; }
 .stats-self-rank strong { margin-left: 8px; }
 .stats-empty { text-align: center; padding: 32px 12px; color: #79674e; }
 .stats-error { color: #a03743; }
-.stats-no-rounds { margin-top: 12px; padding: 10px; font-size: 13px; background: #fff8e8bb; border-radius: 8px; }
+.stats-no-rounds { margin-top: 12px; padding: 10px; font-size: 13px; background: #f8f3e9cc; border-radius: 8px; }
 .stats-extremes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
-.stats-extremes > div { border: 1px solid #d6bc91; border-radius: 10px; padding: 10px; background: #fff8e888; min-width: 0; }
+.stats-extremes > div { border: 1px solid #c6b9a1; border-radius: 10px; padding: 10px; background: #f8f3e999; min-width: 0; }
 .stats-extremes dt { font-size: 12px; color: #79674e; }
 .stats-extremes dd { margin: 6px 0 0; font-size: 19px; font-weight: 700; overflow-wrap: anywhere; }
 .stats-extremes small { font-size: 11px; margin-left: 4px; font-weight: 400; }
@@ -315,16 +315,16 @@ onBeforeUnmount(() => { disposed = true; sequence++; detailSequence++; panel.val
 .history-section-heading > span { font-size: 12px; color: #79674e; }
 .history-list, .transaction-list, .round-actions { margin: 0; padding: 0; list-style: none; }
 .history-list li { margin: 8px 0; }
-.game-stats-panel .history-round { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid #d6bc91; border-radius: 10px; background: #fff8e8cc; color: inherit; box-shadow: none; text-shadow: none; text-align: left; cursor: pointer; }
+.game-stats-panel .history-round { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid #c6b9a1; border-radius: 10px; background: #f8f3e9cc; color: inherit; box-shadow: none; text-shadow: none; text-align: left; cursor: pointer; }
 .history-round > span { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .history-round > span:last-child { text-align: right; }
 .history-round strong { font-size: 14px; }
 .history-round time, .history-round small, .transaction-list time, .round-detail-summary time { font-size: 12px; color: #79674e; }
 .history-round b { font-size: 15px; overflow-wrap: anywhere; }
-.history-notice { padding: 12px; border-radius: 8px; background: #fff8e888; font-size: 12px; color: #79674e; line-height: 1.6; }
+.history-notice { padding: 12px; border-radius: 8px; background: #f8f3e999; font-size: 12px; color: #79674e; line-height: 1.6; }
 .history-notice p { margin: 0 0 8px; }
 .history-more { display: block; margin: 12px auto; }
-.transactions-heading { display: flex; justify-content: space-between; align-items: center; background: #fff8e8cc; border-radius: 12px; padding: 16px; }
+.transactions-heading { display: flex; justify-content: space-between; align-items: center; background: #f8f3e9cc; border-radius: 12px; padding: 16px; }
 .transactions-heading strong { font-size: 26px; }
 .transactions-heading small { font-size: 13px; }
 .transaction-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid #ccb38b; padding: 14px 5px; }
@@ -332,15 +332,15 @@ onBeforeUnmount(() => { disposed = true; sequence++; detailSequence++; panel.val
 .transaction-list strong { font-size: 13px; overflow-wrap: anywhere; font-weight: 500; }
 .transaction-list b { flex: none; font-size: 17px; }
 .transaction-list small { font-size: 11px; font-weight: 400; margin-left: 4px; }
-.round-detail-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px; margin-bottom: 10px; background: #fff8e8cc; border-radius: 10px; }
+.round-detail-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px; margin-bottom: 10px; background: #f8f3e9cc; border-radius: 10px; }
 .round-detail-summary b { margin-left: auto; font-size: 20px; }
 .round-funds { flex-wrap: wrap; gap: 14px; }
 .round-funds dd { font-size: 16px; }
 .recorded-hand { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 12px 0; }
 .recorded-hand strong { width: 100%; font-size: 13px; margin-bottom: 3px; }
-.recorded-hand span { display: inline-block; padding: 6px; border: 1px solid #d6bc91; border-radius: 5px; background: #fffaf0; font-size: 14px; }
+.recorded-hand span { display: inline-block; padding: 6px; border: 1px solid #c6b9a1; border-radius: 5px; background: #fffaf0; font-size: 14px; }
 .recorded-hand small { font-size: 12px; }
-.round-actions li { display: flex; gap: 10px; padding: 12px 4px; border-bottom: 1px solid #d6bc91; }
+.round-actions li { display: flex; gap: 10px; padding: 12px 4px; border-bottom: 1px solid #c6b9a1; }
 .action-index { flex: none; font-size: 12px; color: #96754a; min-width: 18px; }
 .round-actions li > div { flex: 1; min-width: 0; }
 .round-actions strong { font-size: 12px; }

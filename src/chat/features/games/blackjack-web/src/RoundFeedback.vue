@@ -58,10 +58,10 @@ withDefaults(defineProps<{
 
 <style scoped>
 .round-feedback {
-  --result-accent: #ffdc91;
-  --result-ink: #fff1b9;
-  --result-base: #77508b;
-  --result-edge: #c2944a;
+  --result-accent: #d7bd8d;
+  --result-ink: #f6edda;
+  --result-base: #48546b;
+  --result-edge: #96805f;
   position: relative;
   isolation: isolate;
   width: 100%;
@@ -73,9 +73,9 @@ withDefaults(defineProps<{
   pointer-events: none;
   filter: drop-shadow(0 6px 8px #00151d80);
 }
-.round-feedback[data-tone="loss"] { --result-accent: #edc3a6; --result-ink: #fff0db; --result-base: #8f5363; --result-edge: #bb9569; }
-.round-feedback[data-tone="push"] { --result-accent: #f0d59f; --result-ink: #fff1d2; --result-base: #486da1; --result-edge: #b89357; }
-.round-feedback[data-tone="mahjong"] { --result-accent: #ffe295; --result-ink: #fff1bb; --result-base: #b96548; --result-edge: #d3a34c; }
+.round-feedback[data-tone="loss"] { --result-accent: #edc3a6; --result-ink: #fff0db; --result-base: #725660; --result-edge: #bb9569; }
+.round-feedback[data-tone="push"] { --result-accent: #f0d59f; --result-ink: #fff1d2; --result-base: #465e75; --result-edge: #b89357; }
+.round-feedback[data-tone="mahjong"] { --result-accent: #ffe295; --result-ink: #fff1bb; --result-base: #9a6c50; --result-edge: #d3a34c; }
 .result-frame, .result-sparks { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: -1; }
 .result-ribbon { fill: var(--result-edge); stroke: var(--result-accent); stroke-width: 1; }
 .result-plate { fill: var(--result-base); stroke: var(--result-edge); stroke-width: 2; }

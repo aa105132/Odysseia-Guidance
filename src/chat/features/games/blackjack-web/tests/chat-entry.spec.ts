@@ -51,7 +51,7 @@ async function expectChat(page: Page, sends: number, screenshot?: string) {
   await line.scrollIntoViewIfNeeded();
   await line.click();
   await expect(page.locator('.social-notices')).toContainText('你是MM还是GG？');
-  await expect.poll(() => page.evaluate(() => (window as any).__voicePlays.filter((src: string) => src.endsWith('/mm_or_gg.mp3')).length)).toBe(sends);
+  await expect.poll(() => page.evaluate(() => (window as any).__voicePlays.filter((src: string) => new URL(src, location.origin).pathname.endsWith('/mm_or_gg.mp3')).length)).toBe(sends);
   if (screenshot) await page.screenshot({ path: `../../../../../tmp/jev-ui-${screenshot}.png` });
   await page.keyboard.press('Escape');
   await expect(button).toHaveAttribute('aria-expanded', 'false');

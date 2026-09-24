@@ -22,7 +22,7 @@ async function mockAudio(page: Page) {
 }
 
 const trackCount = (page: Page, ending: string) => page.evaluate(
-  suffix => (window as any).__tracks.filter((track: any) => track.original.endsWith(suffix)).length, ending,
+  suffix => (window as any).__tracks.filter((track: any) => new URL(track.original, location.origin).pathname.endsWith(suffix.split('?')[0])).length, ending,
 );
 const activeTracks = (page: Page, category: string) => page.evaluate(
   prefix => (window as any).__tracks.filter((track: any) => !track.paused && track.original.includes(prefix)).map((track: any) => track.original), category,
@@ -197,7 +197,7 @@ test('真实21点真人与陪玩语音只播一次，胜负插曲与新局场景
   await page.getByRole('button', { name: '同步', exact: true }).click();
   await expect.poll(() => activeTracks(page, '/music/')).toEqual(['/audio/music/Normal.mp3']);
   await page.getByRole('button', { name: '要牌', exact: true }).click();
-  await expect.poll(() => activeTracks(page, '/voice/')).toEqual(['/audio/voice/hit.mp3']);
+  await expect.poll(() => activeTracks(page, '/voice/')).toEqual(['/audio/voice/hit.mp3?v=doubao-20260924']);
   await page.getByRole('button', { name: '离开房间', exact: true }).click();
   await expect.poll(() => activeTracks(page, '/voice/')).toEqual([]);
 });

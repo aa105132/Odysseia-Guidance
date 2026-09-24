@@ -85,7 +85,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; clearInterval(timer); panel
 </template>
 
 <style scoped>
-.room-directory { box-sizing: border-box; width: min(850px, calc(var(--activity-width, 100vw) - 28px)); max-width: none; height: min(660px, calc(var(--activity-height, 100dvh) - 24px)); max-height: none; margin: auto; padding: 18px; border: 3px solid #efc882; border-radius: 20px; color: #463e69; background: url('/ui/guochao/cloud-pattern.svg') center / 190px, linear-gradient(125deg, #fff3d9, #eed3ac); box-shadow: inset 0 0 0 2px #b98557, 0 14px 65px #17152bb0; }
+.room-directory { box-sizing: border-box; width: min(850px, calc(var(--activity-width, 100vw) - 28px)); max-width: none; height: min(660px, calc(var(--activity-height, 100dvh) - 24px)); max-height: none; margin: auto; padding: 18px; border: 1px solid #b6a58b; border-radius: 20px; color: #35434e; background: #eee7d9; box-shadow: 0 14px 65px #17232c80; }
 .room-directory[open] { display: flex; flex-direction: column; gap: 12px; }
 .room-directory::backdrop { background: #151125b5; }
 .directory-heading { display: flex; align-items: center; gap: 12px; flex: none; }
@@ -95,10 +95,10 @@ onBeforeUnmount(() => { disposed = true; sequence++; clearInterval(timer); panel
 .directory-heading h2 { margin: 2px 0 0; font-size: 24px; }
 .directory-filters { display: flex; align-items: center; gap: 16px; flex: none; font-size: 13px; }
 .directory-filters label { display: flex; align-items: center; gap: 6px; }
-.directory-filters select { border: 1px solid #b28b66; border-radius: 8px; padding: 8px; background: #fff8e8; color: #493d67; max-width: 180px; }
+.directory-filters select { border: 1px solid #b28b66; border-radius: 8px; padding: 8px; background: #f8f3e9; color: #493d67; max-width: 180px; }
 .directory-open { flex: 1; }
 .directory-list { overflow-y: auto; min-height: 0; flex: 1; padding: 2px 4px 8px 0; overscroll-behavior: contain; }
-.directory-room { display: flex; align-items: center; gap: 12px; padding: 12px; margin-bottom: 9px; border: 1px solid #c8a06a; border-radius: 12px; background: #fff8e8cc; box-shadow: 0 2px 0 #c69c6740; }
+.directory-room { display: flex; align-items: center; gap: 12px; padding: 12px; margin-bottom: 9px; border: 1px solid #c6b9a1; border-radius: 12px; background: #f8f3e9cc; box-shadow: 0 2px 0 #c69c6740; }
 .directory-room > .game-icon { width: 66px; height: 63px; object-fit: contain; flex: none; }
 .directory-room-info { flex: 1; min-width: 0; }
 .directory-room h3 { margin: 0 0 5px; font-size: 16px; }
