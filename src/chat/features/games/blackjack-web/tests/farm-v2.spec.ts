@@ -60,7 +60,7 @@ async function mount(page: Page, state = fixture(), options: { failFirst?: boole
     await page.route('**/api/profile', route => route.fulfill({ json: { success: true, ...state.owner, balance: 5000 } }));
     await page.route('**/api/config', route => route.fulfill({ json: { noname_available: false } }));
     await page.goto(`/?dev_user_id=${state.owner.user_id}`);
-    await page.getByRole('button', { name: '修仙灵圃', exact: true }).click();
+    await page.getByRole('button', { name: /^修仙灵圃/ }).click();
   } else await page.goto('/farm-v2-test');
   await expect(page.getByRole('heading', { name: '灵草洞天', exact: true })).toBeVisible();
   return { calls, state };

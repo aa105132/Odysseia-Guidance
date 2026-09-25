@@ -4,7 +4,7 @@ import dialogueConfig from "./dialogue.json";
 import TableGames from "./TableGames.vue";
 import FarmGame from "./FarmGame.vue";
 import YueyueMascot from "./YueyueMascot.vue";
-import LobbyWorld from "./LobbyWorld.vue";
+import FarmPlant from "./FarmPlant.vue";
 import GameTools from "./GameTools.vue";
 import GameStatsPanel from "./GameStatsPanel.vue";
 import { mountGameAudio, unmountGameAudio, playGameSound, setGameAudioScene, playRoundMusic, playGameVoice, stopGameVoice } from "./gameAudio";
@@ -21,7 +21,7 @@ import GameIcon from "./GameIcon.vue";
 import RoundFeedback from "./RoundFeedback.vue";
 import BustBurst from "./BustBurst.vue";
 import "./game-ui.css";
-import type { TableGameType } from "./tableGameRules";
+import { tableGameRules, type TableGameType } from "./tableGameRules";
 
 type ViewMode =
   | "loading"
@@ -124,6 +124,7 @@ const viewMode = ref<ViewMode>("loading");
 const lobbyStatsPanel = ref<'stats' | 'leaderboard' | null>(null);
 const nonameAvailable = ref(false);
 const selectedTableGame = ref<TableGameType>('texas');
+const availableTableGames: TableGameType[] = ['texas', 'landlord', 'mahjong', 'golden_flower', 'guandan'];
 const loadingText = ref("初始化中...");
 const statusMessage = ref("");
 const errorMessage = ref("");
@@ -1454,7 +1455,7 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
-      <header v-if="!['game_hub', 'single', 'table', 'table_games', 'noname', 'farm'].includes(viewMode)" class="top-bar">
+      <header v-if="!['single', 'table', 'table_games', 'noname', 'farm'].includes(viewMode)" class="top-bar">
         <div class="title-group">
           <span class="lobby-eyebrow">茶香一盏 · 好牌一局</span>
           <h1>月月游戏中心</h1>
@@ -1486,12 +1487,36 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <LobbyWorld v-if="viewMode === 'game_hub'" :profile="profile" :noname-available="nonameAvailable" :request-in-flight="requestInFlight"
-        @blackjack="enterBlackjackModeSelect" @table="openTableGame" @farm="viewMode = 'farm'"
-        @rank="lobbyStatsPanel = 'leaderboard'" @rooms="openRoomDirectory()" @profile="lobbyStatsPanel = 'stats'" @noname="viewMode = 'noname'">
-        <template #audio><GameTools v-if="profile" :profile="profile" :api-call="apiCall" audio-only /></template>
-        <template #mascot><YueyueMascot :message="dealerSpeech" @interact="mascotSpeechUntil = Date.now() + 7000" /></template>
-      </LobbyWorld>
+      <section v-if="viewMode === 'game_hub'" class="lobby-panel game-hub-panel">
+        <div class="lobby-section-heading"><h3>今晚，玩点什么？</h3><button class="game-button" @click="openRoomDirectory()">房间列表</button></div>
+        <div class="game-grid hub-game-grid">
+          <button v-if="nonameAvailable" class="game-card" @click="viewMode = 'noname'">
+            <span class="game-card-art"><svg viewBox="0 0 160 140" aria-hidden="true"><path d="M20 30 80 10l60 20v55l-60 45-60-45z" fill="#684877" stroke="#edc278" stroke-width="5"/><path d="m45 35 72 66m-2-67-70 69" stroke="#ffe5a3" stroke-width="8"/><text x="80" y="85" text-anchor="middle" fill="#fff1ca" font-size="42">杀</text></svg></span>
+            <span class="game-card-copy"><span class="game-name">三国杀</span><span class="game-desc">无名杀 · 娱乐试玩</span></span>
+          </button>
+          <button class="game-card blackjack-card" :disabled="requestInFlight" @click="enterBlackjackModeSelect">
+            <span class="game-card-art"><GameIcon name="blackjack" /></span>
+            <span class="game-card-copy"><span class="game-name">21点</span><span class="game-desc">立即游玩</span></span>
+            <span class="card-arrow" aria-hidden="true">◆</span>
+          </button>
+          <button v-for="gameType in availableTableGames" :key="gameType" :class="['game-card', `${gameType}-card`]" :disabled="requestInFlight" @click="openTableGame(gameType)">
+            <span class="game-card-art"><GameIcon :name="gameType" /></span>
+            <span class="game-card-copy"><span class="game-name">{{ tableGameRules[gameType].title }}</span><span class="game-desc">单人挑战 / 多人同桌</span></span>
+            <span class="card-arrow" aria-hidden="true">◆</span>
+          </button>
+          <button class="game-card farm-card" @click="viewMode = 'farm'">
+            <span class="game-card-art"><FarmPlant name="黄精芝" icon="huangjing" /></span>
+            <span class="game-card-copy"><span class="game-name">修仙灵圃</span><span class="game-desc">种灵草 / 逛好友农场</span></span>
+            <span class="card-arrow" aria-hidden="true">◆</span>
+          </button>
+          <button class="game-card leaderboard-card" @click="lobbyStatsPanel = 'leaderboard'">
+            <span class="game-card-art"><GameIcon name="leaderboard" /></span>
+            <span class="game-card-copy"><span class="game-name">排行榜</span><span class="game-desc">当日盈利 / 总计盈利</span></span>
+            <span class="card-arrow" aria-hidden="true">◆</span>
+          </button>
+        </div>
+        <p class="lobby-footnote"><span aria-hidden="true">◆</span> 棋牌游戏使用账户灵石<template v-if="nonameAvailable"> · 三国杀为免费娱乐模式</template></p>
+      </section>
 
       <GameViewport v-else-if="viewMode === 'farm' && profile">
         <FarmGame :profile="profile" :api-call="apiCall" @back="enterGameHub" @balance="profile.balance = $event" />
@@ -1739,7 +1764,7 @@ onBeforeUnmount(() => {
       </GameViewport>
 
       <YueyueMascot
-        v-if="viewMode === 'blackjack_mode_select'"
+        v-if="viewMode === 'game_hub' || viewMode === 'blackjack_mode_select'"
         :message="dealerSpeech"
         @interact="mascotSpeechUntil = Date.now() + 7000"
       />

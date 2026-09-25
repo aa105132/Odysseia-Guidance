@@ -63,7 +63,7 @@ async function mountFarm(page: Page, initial = farm(), options: { failFirst?: bo
     await page.route('**/api/profile', route => route.fulfill({ json: { success: true, user_id: uid, username: '灵圃主人', avatar_url: '/ui/player-avatar.svg', balance: 5000 } }));
     await page.route('**/api/config', route => route.fulfill({ json: { noname_available: false } }));
     await page.goto(`/?dev_user_id=${uid}`);
-    await page.getByRole('button', { name: '修仙灵圃', exact: true }).click();
+    await page.getByRole('button', { name: /^修仙灵圃/ }).click();
   } else await page.goto('/farm-test');
   await expect(page.getByRole('heading', { name: '灵草洞天', exact: true })).toBeVisible();
   await expect(page.getByRole('article', { name: /1号灵田/ })).toBeVisible();
@@ -183,8 +183,8 @@ test('正常大厅入口进入农场并同步余额，返回大厅可继续选�
   await expect(page.locator('.farm-wallet')).toContainText('4,976');
   await page.screenshot({ path: 'test-results-farm/farm-app-1440.png', fullPage: true });
   await page.getByRole('button', { name: '游戏大厅', exact: true }).click();
-  await expect(page.getByRole('navigation', { name: '选择玩法' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '查看个人信息与统计' })).toContainText('4,976');
+  await expect(page.locator('.hub-game-grid > .game-card')).toHaveCount(8);
+  await expect(page.getByRole('button', { name: '查看个人信息与统计' })).toContainText('4976');
 });
 
 test('客户端时间偏差不提前开放收获，成熟由服务端确认', async ({ page }) => {
