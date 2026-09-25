@@ -192,7 +192,7 @@ async def test_visitor_hides_wallet_inventory_and_cannot_change_owner(farm):
     visiting = await farm.service.get_farm(VISITOR, 1)
     assert visiting["is_owner"] is False
     assert visiting["balance"] is None
-    assert visiting["inventory"] == {"seeds": [], "produce": []}
+    assert visiting["inventory"] == {"seeds": [], "produce": [], "items": []}
     assert visiting["farm"]["stats"] is None
     with pytest.raises(module.FarmError, match="自己"):
         await act(farm, "harvest", profile=VISITOR, target_user_id=1, plot_id=1)
@@ -318,3 +318,353 @@ def test_economy_progression_has_positive_regular_yield_and_source_attribution()
     assert catalog.AURA_LEVELS[-1]["growth_multiplier"] == 1.5
     assert "游戏改编" in catalog.RULES["pricing_note"]
     assert "原著无种子" in catalog.CROP_BY_ID["yusui"]["description"]
+
+class CountingRandom:
+    def __init__(self, value):
+        self.value = value
+        self.calls = 0
+
+    def random(self):
+        self.calls += 1
+        return self.value
+
+
+async def mature_public_plot(farm, plot_id=1):
+    await act(farm, "plant", plot_id=plot_id, crop_id="huangjing")
+    edit_state(farm, lambda state: state.update(created_at=farm.clock() - 90000))
+    farm.clock.advance(1800)
+
+
+@pytest.mark.asyncio
+async def test_old_json_state_and_old_receipt_need_no_migration(farm):
+    await act(farm, "plant", plot_id=1, crop_id="huangjing", request_id="pre-v2-plant")
+    def remove_v2(state):
+        for key in ("pets", "items", "equipped_pet"):
+            state.pop(key)
+        for key in ("guarded", "caught"):
+            state["stats"].pop(key)
+        for key in ("theft_attempted_by", "dew_used", "ward_used"):
+            state["plots"][0].pop(key)
+    edit_state(farm, remove_v2)
+    replay = await act(farm, "plant", plot_id=1, crop_id="huangjing", request_id="pre-v2-plant")
+    assert replay["result"]["replayed"] is True
+    assert replay["guardian"] is None and replay["pets"] == []
+    assert replay["inventory"]["items"] == []
+    assert replay["plots"][0]["dew_used"] is False
+    assert replay["plots"][0]["ward_active"] is False
+    assert replay["farm"]["stats"]["guarded"] == 0
+    assert replay["inventory"]["seeds"][0]["quantity"] == 5
+
+
+@pytest.mark.asyncio
+async def test_pet_purchase_levels_equipment_and_independent_feeding_clock(farm):
+    await farm.service.get_farm(OWNER)
+    with pytest.raises(module.FarmError, match="达到 2"):
+        await act(farm, "buy_pet", pet_id="mountain_hound")
+    with pytest.raises(module.FarmError, match="尚未拥有"):
+        await act(farm, "equip_pet", pet_id="qingling_fox")
+    fox = await act(farm, "buy_pet", pet_id="qingling_fox")
+    assert fox["balance"] == 700
+    assert fox["guardian"]["pet_id"] == "qingling_fox"
+    fox_until = fox["guardian"]["guard_until"]
+    assert fox_until == farm.clock() + 86400
+    with pytest.raises(module.FarmError, match="已经拥有"):
+        await act(farm, "buy_pet", pet_id="qingling_fox")
+    edit_state(farm, lambda state: state.update(xp=80))
+    farm.clock.advance(300)
+    hound = await act(farm, "buy_pet", pet_id="mountain_hound")
+    assert hound["balance"] == 50
+    assert hound["guardian"]["pet_id"] == "qingling_fox"
+    equipped = await act(farm, "equip_pet", pet_id="mountain_hound")
+    assert sum(pet["equipped"] for pet in equipped["pets"]) == 1
+    assert equipped["guardian"]["guard_chance"] == 0.4
+    assert equipped["guardian"]["guard_until"] == farm.clock() + 86400
+    restored = await act(farm, "equip_pet", pet_id="qingling_fox")
+    assert restored["guardian"]["guard_until"] == fox_until
+    assert ledger(farm.path) == (50, -950)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action,params", [
+    ("buy_pet", {"pet_id": "qingling_fox"}),
+    ("buy_item", {"item_id": "pet_food", "quantity": 3}),
+])
+async def test_companion_purchase_failure_rolls_back_money_inventory_and_receipt(farm, action, params):
+    before = await farm.service.get_farm(OWNER)
+    with sqlite3.connect(farm.path) as connection:
+        connection.execute("CREATE TRIGGER fail_coin BEFORE INSERT ON coin_transactions BEGIN SELECT RAISE(ABORT,'ledger failed'); END")
+    with pytest.raises(sqlite3.IntegrityError):
+        await act(farm, action, request_id="v2-rollback", **params)
+    after = await farm.service.get_farm(OWNER)
+    assert after["pets"] == before["pets"]
+    assert after["inventory"] == before["inventory"]
+    assert after["guardian"] == before["guardian"]
+    assert ledger(farm.path) == (1000, 0)
+    with sqlite3.connect(farm.path) as connection:
+        assert connection.execute("SELECT count(*) FROM farm_actions").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_pet_concurrent_purchase_retry_only_charges_once(farm):
+    responses = await asyncio.gather(*(act(farm, "buy_pet", pet_id="qingling_fox", request_id="buy-fox-once") for _ in range(6)))
+    assert sum(bool(response["result"].get("replayed")) for response in responses) == 5
+    assert all(response["balance"] == 700 for response in responses)
+    assert ledger(farm.path) == (700, -300)
+    with pytest.raises(module.FarmError) as error:
+        await act(farm, "buy_pet", pet_id="mountain_hound", request_id="buy-fox-once")
+    assert error.value.status == 409
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action,params", [
+    ("buy_pet", {"pet_id": "qingling_fox", "quantity": 2}),
+    ("buy_pet", {"pet_id": "missing"}),
+    ("buy_pet", {"pet_id": []}),
+    ("buy_item", {"item_id": "pet_food", "quantity": True}),
+    ("buy_item", {"item_id": "pet_food", "quantity": 100}),
+    ("buy_item", {"item_id": "pet_food", "quantity": 0}),
+    ("buy_item", {"item_id": "missing"}),
+    ("use_item", {"item_id": "pet_food", "quantity": 2}),
+])
+async def test_invalid_companion_requests_do_not_change_money(farm, action, params):
+    with pytest.raises(module.FarmError):
+        await act(farm, action, **params)
+    assert ledger(farm.path) == (1000, 0)
+
+
+@pytest.mark.asyncio
+async def test_food_expiry_and_seventy_two_hour_cap_preserve_unused_food(farm):
+    await act(farm, "buy_item", item_id="pet_food", quantity=4)
+    with pytest.raises(module.FarmError, match="先结缘"):
+        await act(farm, "use_item", item_id="pet_food")
+    await act(farm, "buy_pet", pet_id="qingling_fox")
+    await act(farm, "use_item", item_id="pet_food", request_id="first-food")
+    full = await act(farm, "use_item", item_id="pet_food")
+    assert full["guardian"]["remaining_seconds"] == 72 * 3600
+    assert full["inventory"]["items"] == [{"item_id": "pet_food", "quantity": 2}]
+    replay = await act(farm, "use_item", item_id="pet_food", request_id="first-food")
+    assert replay["guardian"]["remaining_seconds"] == 72 * 3600
+    with pytest.raises(module.FarmError, match="72小时"):
+        await act(farm, "use_item", item_id="pet_food")
+    farm.clock.advance(72 * 3600)
+    expired = await farm.service.get_farm(OWNER)
+    assert expired["guardian"]["active"] is False
+    assert expired["guardian"]["remaining_seconds"] == 0
+    assert expired["inventory"]["items"][0]["quantity"] == 2
+    fed = await act(farm, "use_item", item_id="pet_food")
+    assert fed["guardian"]["active"] is True
+    assert fed["guardian"]["remaining_seconds"] == 86400
+    assert ledger(farm.path) == (540, -460)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pet_id,chance", [("qingling_fox", 0.25), ("mountain_hound", 0.4), ("dew_crane", 0.15)])
+@pytest.mark.parametrize("difference,caught", [(-0.00001, True), (0, False)])
+async def test_guard_probability_boundary_for_each_pet(farm, pet_id, chance, difference, caught):
+    await farm.service.get_farm(OWNER)
+    edit_state(farm, lambda state: state.update(xp=240))
+    await act(farm, "buy_pet", pet_id=pet_id)
+    await mature_public_plot(farm)
+    rng = CountingRandom(chance + difference)
+    farm.service.rng = rng
+    result = await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1)
+    assert result["result"]["caught"] is caught
+    assert result["result"]["quantity"] == (0 if caught else 1)
+    assert result["plots"][0]["yield_remaining"] == (4 if caught else 3)
+    assert result["plots"][0]["theft_attempted"] is True
+    assert rng.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_guard_does_not_roll_or_catch(farm):
+    await act(farm, "buy_pet", pet_id="qingling_fox")
+    await mature_public_plot(farm)
+    farm.clock.advance(86400)
+    rng = CountingRandom(0)
+    farm.service.rng = rng
+    result = await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1)
+    assert result["guardian"]["active"] is False
+    assert result["result"]["caught"] is False
+    assert result["result"]["quantity"] == 1
+    assert rng.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_caught_attempt_is_atomic_idempotent_and_records_both_sides_without_produce(farm):
+    await act(farm, "buy_pet", pet_id="qingling_fox")
+    await mature_public_plot(farm)
+    rng = CountingRandom(0)
+    farm.service.rng = rng
+    attempts = await asyncio.gather(*(act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1, request_id="catch-once") for _ in range(5)))
+    assert all(attempt["result"]["caught"] for attempt in attempts)
+    assert sum(bool(attempt["result"].get("replayed")) for attempt in attempts) == 4
+    assert rng.calls == 1
+    with pytest.raises(module.FarmError, match="本茬已尝试"):
+        await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1)
+    assert rng.calls == 1
+    owner = await farm.service.get_farm(OWNER)
+    visitor = await farm.service.get_farm(VISITOR)
+    assert owner["farm"]["stats"]["guarded"] == 1
+    assert visitor["farm"]["stats"]["caught"] == 1
+    assert visitor["farm"]["stats"]["stolen"] == 0
+    assert visitor["inventory"]["produce"] == []
+    assert owner["plots"][0]["stolen_count"] == 0
+    assert owner["activity"][0]["action"] == "steal_caught"
+    assert visitor["activity"][0]["action"] == "caught"
+    with sqlite3.connect(farm.path) as connection:
+        assert connection.execute("SELECT action,count(*) FROM farm_events WHERE action IN ('steal_caught','caught') GROUP BY action").fetchall() == [("caught", 1), ("steal_caught", 1)]
+    # 被抓不占掉产物份额，其他人仍能在本茬尝试。
+    farm.service.rng = CountingRandom(0.9)
+    other = await act(farm, "steal", profile={"user_id": "3"}, target_user_id=1, plot_id=1)
+    assert other["result"]["quantity"] == 1
+    assert (await act(farm, "harvest", plot_id=1))["result"]["quantity"] == 3
+    await act(farm, "plant", plot_id=1, crop_id="huangjing")
+    farm.clock.advance(1800)
+    assert (await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1))["result"]["quantity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_caught_attempt_uses_daily_limit_once_and_rejected_attempt_does_not_roll(farm):
+    await act(farm, "buy_pet", pet_id="qingling_fox")
+    await mature_public_plot(farm)
+    await act(farm, "plant", plot_id=2, crop_id="huangjing")
+    farm.clock.advance(1800)
+    with sqlite3.connect(farm.path) as connection:
+        for _ in range(9):
+            connection.execute("INSERT INTO farm_events(owner_id,actor_id,action,message,created_at) VALUES (1,2,'steal','历史偷取',?)", (farm.clock(),))
+    rng = CountingRandom(0)
+    farm.service.rng = rng
+    await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1, request_id="daily-catch")
+    await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1, request_id="daily-catch")
+    with pytest.raises(module.FarmError, match="今日已经偷取 10 次"):
+        await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=2)
+    assert rng.calls == 1
+    farm.clock.advance(86400)
+    assert (await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=2))["result"]["quantity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_catch_event_rolls_back_attempt_and_statistics(farm):
+    await act(farm, "buy_pet", pet_id="qingling_fox")
+    await mature_public_plot(farm)
+    farm.service.rng = CountingRandom(0)
+    with sqlite3.connect(farm.path) as connection:
+        connection.execute("CREATE TRIGGER fail_event BEFORE INSERT ON farm_events WHEN NEW.action='caught' BEGIN SELECT RAISE(ABORT,'event failed'); END")
+    with pytest.raises(sqlite3.IntegrityError):
+        await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1, request_id="catch-fails")
+    owner = await farm.service.get_farm(OWNER)
+    public = await farm.service.get_farm(VISITOR, 1)
+    assert owner["farm"]["stats"]["guarded"] == 0
+    assert public["plots"][0]["can_steal"] is True
+    assert public["plots"][0]["theft_attempted"] is False
+    with sqlite3.connect(farm.path) as connection:
+        assert connection.execute("SELECT count(*) FROM farm_events WHERE action='steal_caught'").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM farm_actions WHERE request_id='catch-fails'").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [True, False])
+async def test_crane_water_bonus_only_while_fed_and_dew_only_once(farm, active):
+    await farm.service.get_farm(OWNER)
+    edit_state(farm, lambda state: state.update(xp=240))
+    await act(farm, "buy_pet", pet_id="dew_crane")
+    await act(farm, "buy_item", item_id="spirit_dew", quantity=2)
+    if not active:
+        farm.clock.advance(86400)
+    planted = await act(farm, "plant", plot_id=1, crop_id="huangjing")
+    initial = planted["plots"][0]["mature_at"]
+    watered = await act(farm, "water", plot_id=1)
+    assert watered["plots"][0]["mature_at"] == initial - (270 if active else 180)
+    dewed = await act(farm, "use_item", item_id="spirit_dew", plot_id=1, request_id="dew-once")
+    assert dewed["plots"][0]["mature_at"] == initial - (450 if active else 360)
+    assert dewed["plots"][0]["dew_used"] is True
+    retry = await act(farm, "use_item", item_id="spirit_dew", plot_id=1, request_id="dew-once")
+    assert retry["plots"][0]["mature_at"] == dewed["plots"][0]["mature_at"]
+    with pytest.raises(module.FarmError, match="已经使用过灵露"):
+        await act(farm, "use_item", item_id="spirit_dew", plot_id=1)
+    assert (await farm.service.get_farm(OWNER))["inventory"]["items"][0]["quantity"] == 1
+    farm.clock.advance(1800)
+    await act(farm, "harvest", plot_id=1)
+    again = await act(farm, "plant", plot_id=1, crop_id="huangjing")
+    assert again["plots"][0]["dew_used"] is False
+
+
+@pytest.mark.asyncio
+async def test_dew_never_moves_maturity_before_now_and_cannot_use_on_empty_or_mature_plot(farm):
+    await act(farm, "buy_item", item_id="spirit_dew", quantity=3)
+    with pytest.raises(module.FarmError, match="还没有种植"):
+        await act(farm, "use_item", item_id="spirit_dew", plot_id=1)
+    await act(farm, "plant", plot_id=1, crop_id="huangjing")
+    farm.clock.advance(1799)
+    dewed = await act(farm, "use_item", item_id="spirit_dew", plot_id=1)
+    assert dewed["plots"][0]["mature_at"] == farm.clock()
+    assert dewed["plots"][0]["status"] == "mature"
+    with pytest.raises(module.FarmError, match="已经成熟"):
+        await act(farm, "use_item", item_id="spirit_dew", plot_id=1)
+    assert (await farm.service.get_farm(OWNER))["inventory"]["items"][0]["quantity"] == 2
+
+
+@pytest.mark.asyncio
+async def test_talisman_blocks_attempts_then_expires_without_repeat_use(farm):
+    await mature_public_plot(farm)
+    await act(farm, "buy_item", item_id="ward_talisman", quantity=2)
+    ward = await act(farm, "use_item", item_id="ward_talisman", plot_id=1, request_id="ward-once")
+    assert ward["plots"][0]["ward_active"] is True
+    assert ward["plots"][0]["ward_until"] == farm.clock() + 3600
+    farm.clock.advance(10)
+    retry = await act(farm, "use_item", item_id="ward_talisman", plot_id=1, request_id="ward-once")
+    assert retry["plots"][0]["ward_until"] == ward["plots"][0]["ward_until"]
+    with pytest.raises(module.FarmError, match="处于保护"):
+        await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1)
+    with sqlite3.connect(farm.path) as connection:
+        assert connection.execute("SELECT count(*) FROM farm_events WHERE actor_id=2").fetchone()[0] == 0
+    farm.clock.advance(3590)
+    public = await farm.service.get_farm(VISITOR, 1)
+    assert public["plots"][0]["ward_active"] is False
+    assert public["plots"][0]["can_steal"] is True
+    with pytest.raises(module.FarmError, match="已经使用过护田符"):
+        await act(farm, "use_item", item_id="ward_talisman", plot_id=1)
+    assert (await act(farm, "steal", profile=VISITOR, target_user_id=1, plot_id=1))["result"]["quantity"] == 1
+    assert (await farm.service.get_farm(OWNER))["inventory"]["items"][0]["quantity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_companions_items_and_purchase_events_are_private_and_target_actions_rejected(farm):
+    await farm.service.get_farm(OWNER)
+    edit_state(farm, lambda state: state.update(xp=240))
+    await act(farm, "buy_pet", pet_id="qingling_fox")
+    await act(farm, "buy_pet", pet_id="dew_crane")
+    await act(farm, "buy_item", item_id="pet_food", quantity=2)
+    await act(farm, "use_item", item_id="pet_food")
+    public = await farm.service.get_farm(VISITOR, 1)
+    assert public["pets"] == []
+    assert public["inventory"] == {"seeds": [], "produce": [], "items": []}
+    assert public["balance"] is None and public["farm"]["stats"] is None
+    assert public["guardian"]["pet_id"] == "qingling_fox"
+    assert public["guardian"]["remaining_seconds"] == 48 * 3600
+    assert public["activity"] == []
+    for action, kwargs in [("buy_pet", {"pet_id": "qingling_fox"}),
+                           ("equip_pet", {"pet_id": "dew_crane"}),
+                           ("buy_item", {"item_id": "pet_food"}),
+                           ("use_item", {"item_id": "ward_talisman", "plot_id": 1})]:
+        with pytest.raises(module.FarmError, match="自己的"):
+            await act(farm, action, profile=VISITOR, target_user_id=1, **kwargs)
+    assert ledger(farm.path, 2) == (1000, 0)
+    visits = (await farm.service.list_farms(VISITOR))["entries"]
+    assert all("pets" not in visit and "items" not in visit and "balance" not in visit for visit in visits)
+
+@pytest.mark.asyncio
+async def test_item_event_failure_rolls_back_consumption_effect_and_receipt(farm):
+    await act(farm, "buy_item", item_id="spirit_dew")
+    before = await act(farm, "plant", crop_id="huangjing", plot_id=1)
+    with sqlite3.connect(farm.path) as connection:
+        connection.execute("CREATE TRIGGER fail_item_event BEFORE INSERT ON farm_events WHEN NEW.action='use_item' BEGIN SELECT RAISE(ABORT,'event failed'); END")
+    with pytest.raises(sqlite3.IntegrityError):
+        await act(farm, "use_item", item_id="spirit_dew", plot_id=1, request_id="rollback-dew")
+    after = await farm.service.get_farm(OWNER)
+    assert after["plots"][0]["mature_at"] == before["plots"][0]["mature_at"]
+    assert after["plots"][0]["dew_used"] is False
+    assert after["inventory"]["items"] == [{"item_id": "spirit_dew", "quantity": 1}]
+    with sqlite3.connect(farm.path) as connection:
+        assert connection.execute("SELECT count(*) FROM farm_actions WHERE request_id='rollback-dew'").fetchone()[0] == 0
+    assert ledger(farm.path) == (980, -20)

@@ -82,6 +82,15 @@ class FarmService:
     def get_catalog():
         return catalog.get_catalog()
 
+    @staticmethod
+    def _extend_state(state):
+        # 旧灵圃按需补齐 JSON 字段，不做强制数据迁移。
+        state.setdefault("pets", {})
+        state.setdefault("equipped_pet", None)
+        state.setdefault("items", {})
+        state["stats"].setdefault("guarded", 0)
+        state["stats"].setdefault("caught", 0)
+
     def _load(self, connection, uid, now, profile=None):
         row = connection.execute("SELECT * FROM farm_profiles WHERE user_id = ?", (uid,)).fetchone()
         if row is None:
@@ -91,6 +100,7 @@ class FarmService:
                      "seeds": {"huangjing": 6}, "produce": {},
                      "plots": [{"plot_id": index} for index in range(1, 4)],
                      "stats": {"harvests": 0, "stolen": 0, "earned": 0, "spent": 0, "mutations": 0}}
+            self._extend_state(state)
             farm = {"user_id": uid, "username": str(profile.get("username") or uid)[:100],
                     "avatar_url": str(profile.get("avatar_url") or "")[:1000], "state": state}
             # 新账号也可领入门灵种，初始化钱包不会赠送灵石。
@@ -99,6 +109,7 @@ class FarmService:
             return farm
         farm = dict(row)
         farm["state"] = json.loads(farm["state"])
+        self._extend_state(farm["state"])
         if profile is not None:
             farm["username"] = str(profile.get("username") or uid)[:100]
             farm["avatar_url"] = str(profile.get("avatar_url") or "")[:1000]
@@ -145,6 +156,32 @@ class FarmService:
         return crop
 
     @staticmethod
+    def _pet(pet_id):
+        pet = catalog.PET_BY_ID.get(pet_id) if isinstance(pet_id, str) else None
+        if pet is None:
+            raise FarmError("没有这种灵兽")
+        return pet
+
+    @staticmethod
+    def _item(item_id):
+        item = catalog.ITEM_BY_ID.get(item_id) if isinstance(item_id, str) else None
+        if item is None:
+            raise FarmError("没有这种道具")
+        return item
+
+    @staticmethod
+    def _guardian(state, now):
+        pet_id = state.get("equipped_pet")
+        owned = state.get("pets", {}).get(pet_id)
+        pet = catalog.PET_BY_ID.get(pet_id)
+        if owned is None or pet is None:
+            return None
+        until = owned["guard_until"]
+        return {"pet_id": pet_id, "name": pet["name"], "guard_chance": pet["guard_chance"],
+                "water_bonus": pet["water_bonus"], "active": until > now,
+                "guard_until": until, "remaining_seconds": max(0, until - now)}
+
+    @staticmethod
     def _plot(state, plot_id):
         if isinstance(plot_id, bool) or not isinstance(plot_id, int) or not 1 <= plot_id <= state["unlocked_plots"]:
             raise FarmError("这块灵田尚未开辟")
@@ -165,6 +202,8 @@ class FarmService:
             viewer_id != farm["user_id"] and plot.get("crop_id")
             and now >= farm["state"]["created_at"] + catalog.RULES["newcomer_protection_seconds"]
             and now >= plot["mature_at"] and str(viewer_id) not in plot["stolen_by"]
+            and str(viewer_id) not in plot.get("theft_attempted_by", [])
+            and now >= plot.get("ward_until", 0)
             and plot["stolen_count"] < self._steal_limit(plot)
             and self._yield(plot, now) - plot["stolen_count"] > 1
         )
@@ -182,6 +221,8 @@ class FarmService:
                               "mature_at": None, "progress": 0, "watered": False,
                               "has_pest": False, "pest_cleared": False, "quality": None,
                               "yield_total": 0, "yield_remaining": 0, "stolen_count": 0,
+                              "dew_used": False, "ward_used": False, "ward_until": None,
+                              "ward_active": False, "theft_attempted": False,
                               "mutation_chance": catalog.RULES["base_mutation_chance"] + aura["mutation_bonus"]})
                 continue
             crop = self._crop(plot["crop_id"])
@@ -198,17 +239,23 @@ class FarmService:
                 "yield_total": total, "yield_remaining": total - plot["stolen_count"],
                 "stolen_count": plot["stolen_count"], "can_steal": self._can_steal(farm, plot, viewer_id, now),
                 "mutation_chance": plot["mutation_chance"],
+                "dew_used": plot.get("dew_used", False), "ward_used": plot.get("ward_used", False),
+                "ward_until": plot.get("ward_until"), "ward_active": now < plot.get("ward_until", 0),
+                "theft_attempted": not own and str(viewer_id) in (plot.get("theft_attempted_by", []) + plot["stolen_by"]),
             })
-        inventory = {"seeds": [], "produce": []}
+        inventory = {"seeds": [], "produce": [], "items": []}
         if own:
+            inventory["items"] = [{"item_id": item_id, "quantity": quantity} for item_id, quantity in state["items"].items()]
             inventory["seeds"] = [{"crop_id": cid, "quantity": quantity} for cid, quantity in state["seeds"].items()]
             for key, quantity in state["produce"].items():
                 cid, quality = key.split(":")
                 inventory["produce"].append({"crop_id": cid, "quality": quality, "quantity": quantity,
                                               "unit_price": self._crop(cid)["sale_price"] * catalog.QUALITY_MULTIPLIERS[quality]})
         activity = [dict(row) for row in connection.execute(
-            "SELECT event_id, action, message, created_at FROM farm_events WHERE owner_id = ? ORDER BY event_id DESC LIMIT 20",
-            (farm["user_id"],)).fetchall()]
+            """SELECT event_id, action, message, created_at FROM farm_events WHERE owner_id = ?
+            AND (? OR action NOT IN ('buy_pet', 'equip_pet', 'buy_item', 'use_item', 'caught'))
+            ORDER BY event_id DESC LIMIT 20""",
+            (farm["user_id"], own)).fetchall()]
         return {
             "server_time": now, "is_owner": own,
             "owner": {"user_id": str(farm["user_id"]), "username": farm["username"], "avatar_url": farm["avatar_url"]},
@@ -220,6 +267,12 @@ class FarmService:
                      "protected_until": state["created_at"] + catalog.RULES["newcomer_protection_seconds"],
                      "stats": dict(state["stats"]) if own else None},
             "balance": self._balance(connection, farm["user_id"]) if own else None,
+            "guardian": self._guardian(state, now),
+            "pets": [{"pet_id": pet_id, "equipped": state["equipped_pet"] == pet_id,
+                      "guard_until": pet_state["guard_until"],
+                      "remaining_seconds": max(0, pet_state["guard_until"] - now),
+                      "active": pet_state["guard_until"] > now}
+                     for pet_id, pet_state in state["pets"].items()] if own else [],
             "plots": plots, "inventory": inventory, "catalog": self.get_catalog(), "activity": activity,
         }
 
@@ -266,7 +319,71 @@ class FarmService:
         crop_id, plot_id = params["crop_id"], params["plot_id"]
         quantity, quality = params["quantity"], params["quality"]
         result = {"action": action}
-        if action == "buy_seed":
+        if action in {"buy_pet", "equip_pet"}:
+            pet = self._pet(params.get("pet_id"))
+            self._integer(quantity, 1, 1, "灵兽数量")
+            pet_id = pet["id"]
+            if action == "buy_pet":
+                if pet_id in state["pets"]:
+                    raise FarmError("已经拥有这只灵兽")
+                if level < pet["unlock_level"]:
+                    raise FarmError(f"灵圃达到 {pet['unlock_level']} 级才能结缘{pet['name']}")
+                self._coins(connection, farm, -pet["price"], f"结缘{pet['name']}")
+                state["pets"][pet_id] = {"guard_until": now + catalog.RULES["pet_food_seconds"]}
+                if state["equipped_pet"] is None:
+                    state["equipped_pet"] = pet_id
+                result["message"] = f"与{pet['name']}结缘，附赠24小时守护"
+            else:
+                if pet_id not in state["pets"]:
+                    raise FarmError("尚未拥有这只灵兽")
+                state["equipped_pet"] = pet_id
+                result["message"] = f"{pet['name']}开始照看灵圃"
+            result["pet_id"] = pet_id
+        elif action == "buy_item":
+            item = self._item(params.get("item_id"))
+            self._integer(quantity, 1, 99, "购买数量")
+            if level < item["unlock_level"]:
+                raise FarmError(f"灵圃达到 {item['unlock_level']} 级才能购买{item['name']}")
+            self._coins(connection, farm, -item["price"] * quantity, f"购买{item['name']}×{quantity}")
+            self._add_inventory(state["items"], item["id"], quantity)
+            result.update({"message": f"买入{item['name']} × {quantity}", "item_id": item["id"], "quantity": quantity})
+        elif action == "use_item":
+            item = self._item(params.get("item_id"))
+            self._integer(quantity, 1, 1, "使用数量")
+            item_id = item["id"]
+            if item_id == "pet_food":
+                if plot_id is not None:
+                    raise FarmError("灵兽口粮不需要指定灵田")
+                guardian = self._guardian(state, now)
+                if guardian is None:
+                    raise FarmError("请先结缘并装备一只灵兽")
+                until = max(now, guardian["guard_until"]) + catalog.RULES["pet_food_seconds"]
+                if until > now + catalog.RULES["pet_guard_max_seconds"]:
+                    raise FarmError("灵兽最多积攒72小时守护，晚些再喂吧")
+                self._add_inventory(state["items"], item_id, -1)
+                state["pets"][guardian["pet_id"]]["guard_until"] = until
+                result.update({"pet_id": guardian["pet_id"], "message": f"{guardian['name']}吃饱啦，守护延长24小时"})
+            else:
+                plot = self._plot(state, plot_id)
+                if not plot.get("crop_id"):
+                    raise FarmError("这块灵田还没有种植")
+                if item_id == "spirit_dew":
+                    if now >= plot["mature_at"]:
+                        raise FarmError("灵植已经成熟，无需使用灵露")
+                    if plot.get("dew_used", False):
+                        raise FarmError("这一茬已经使用过灵露")
+                    self._add_inventory(state["items"], item_id, -1)
+                    plot["dew_used"] = True
+                    plot["mature_at"] = max(now, plot["mature_at"] - plot["duration"] * catalog.RULES["spirit_dew_reduction"])
+                    result["message"] = "灵露滋养，生长时间进一步缩短了"
+                else:
+                    if plot.get("ward_used", False):
+                        raise FarmError("这一茬已经使用过护田符")
+                    self._add_inventory(state["items"], item_id, -1)
+                    plot.update({"ward_used": True, "ward_until": now + catalog.RULES["ward_seconds"]})
+                    result["message"] = "护田符已生效，这块灵田受到1小时保护"
+            result.update({"item_id": item_id, "quantity": 1})
+        elif action == "buy_seed":
             crop = self._crop(crop_id)
             self._integer(quantity, 1, 99, "购买数量")
             if level < crop["unlock_level"]:
@@ -291,7 +408,8 @@ class FarmService:
                          "mature_at": now + duration, "duration": duration, "watered": False,
                          "has_pest": self.rng.random() < catalog.RULES["pest_chance"],
                          "pest_at": now + duration * 0.35, "pest_cleared": False,
-                         "quality": quality, "mutation_chance": mutation_chance, "stolen_count": 0, "stolen_by": []})
+                         "quality": quality, "mutation_chance": mutation_chance, "stolen_count": 0, "stolen_by": [],
+                         "theft_attempted_by": [], "dew_used": False, "ward_used": False})
             result["message"] = f"种下了{crop['name']}"
         elif action in {"water", "pest", "harvest"}:
             plot = self._plot(state, plot_id)
@@ -304,7 +422,10 @@ class FarmService:
                 if plot["watered"]:
                     raise FarmError("这一茬已经浇过灵泉")
                 plot["watered"] = True
-                plot["mature_at"] = max(now, plot["mature_at"] - plot["duration"] * catalog.RULES["water_time_reduction"])
+                guardian = self._guardian(state, now)
+                bonus = guardian["water_bonus"] if guardian and guardian["active"] else 0
+                reduction = catalog.RULES["water_time_reduction"] + bonus
+                plot["mature_at"] = max(now, plot["mature_at"] - plot["duration"] * reduction)
                 result["message"] = "灵泉滋养，生长时间缩短了"
             elif action == "pest":
                 if not plot["has_pest"] or plot["pest_cleared"] or now < plot["pest_at"]:
@@ -366,18 +487,27 @@ class FarmService:
                 raise FarmError("不能偷自己的灵植")
             plot = self._plot(target["state"], plot_id)
             if not self._can_steal(target, plot, farm["user_id"], now):
-                raise FarmError("这块灵田暂时不能偷取：尚未成熟、处于新手保护或本茬已被采摘")
+                raise FarmError("这块灵田暂时不能偷取：尚未成熟、处于保护、本茬已尝试或已被采摘")
             today = datetime.fromtimestamp(now, timezone(timedelta(hours=8))).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-            count = connection.execute("SELECT count(*) FROM farm_events WHERE actor_id=? AND action='steal' AND created_at>=?",
+            count = connection.execute("SELECT count(*) FROM farm_events WHERE actor_id=? AND action IN ('steal','steal_caught') AND created_at>=?",
                                        (farm["user_id"], today)).fetchone()[0]
             if count >= catalog.RULES["steal_daily_limit"]:
                 raise FarmError("今日已经偷取 10 次，明天再来吧")
             crop = self._crop(plot["crop_id"])
+            # 每次偷取无论成败都固定这次尝试；回执重放不会重新抽概率。
+            plot.setdefault("theft_attempted_by", []).append(str(farm["user_id"]))
+            guardian = self._guardian(target["state"], now)
+            if guardian and guardian["active"] and self.rng.random() < guardian["guard_chance"]:
+                state["stats"]["caught"] += 1
+                target["state"]["stats"]["guarded"] += 1
+                result.update({"message": f"被{guardian['name']}抓住啦，这次没能摘走灵植", "caught": True,
+                               "quantity": 0, "pet_id": guardian["pet_id"], "crop_id": crop["id"]})
+                return result
             self._add_inventory(state["produce"], f"{crop['id']}:{plot['quality']}", 1)
             plot["stolen_count"] += 1
             plot["stolen_by"].append(str(farm["user_id"]))
             state["stats"]["stolen"] += 1
-            result.update({"message": f"悄悄摘走了{crop['name']} × 1", "quantity": 1, "crop_id": crop["id"], "quality": plot["quality"]})
+            result.update({"message": f"悄悄摘走了{crop['name']} × 1", "caught": False, "quantity": 1, "crop_id": crop["id"], "quality": plot["quality"]})
         else:
             raise FarmError("不支持这个灵圃操作")
         return result
@@ -391,7 +521,10 @@ class FarmService:
         target_id = self._user_id(params["target_user_id"]) if params["target_user_id"] is not None else None
         if action == "steal" and target_id is None:
             raise FarmError("请选择要拜访的道友")
-        fingerprint = self._dump({"action": action, **params, "target_user_id": target_id})
+        # 新增的可选字段缺省不写指纹，部署前的幂等回执仍可重放。
+        fingerprint_params = {key: value for key, value in params.items()
+                              if key not in {"pet_id", "item_id"} or value is not None}
+        fingerprint = self._dump({"action": action, **fingerprint_params, "target_user_id": target_id})
         now = self.clock()
         with self._transaction() as connection:
             farm = self._load(connection, uid, now, profile)
@@ -411,7 +544,11 @@ class FarmService:
                     self._save(connection, target, now)
                 event_owner = target["user_id"] if target is not None else uid
                 message = f"{farm['username']}：{result['message']}" if target is not None else result["message"]
-                self._event(connection, event_owner, uid, action, message, now)
+                event_action = "steal_caught" if action == "steal" and result.get("caught") else action
+                self._event(connection, event_owner, uid, event_action, message, now)
+                if event_action == "steal_caught":
+                    # 偷取者的私有回执事件不重复计入每日偷取额度。
+                    self._event(connection, uid, uid, "caught", f"拜访{target['username']}：{result['message']}", now)
                 connection.execute("INSERT INTO farm_actions (user_id, request_id, fingerprint, result, created_at) VALUES (?, ?, ?, ?, ?)",
                                    (uid, request_id, fingerprint, self._dump(result), now))
             response = self._render(connection, target or farm, uid, now)
@@ -420,7 +557,7 @@ class FarmService:
             return response
 
     async def act(self, profile, action, *, request_id, plot_id=None, crop_id=None,
-                  quantity=1, quality="normal", target_user_id=None):
+                  quantity=1, quality="normal", target_user_id=None, pet_id=None, item_id=None):
         params = {"plot_id": plot_id, "crop_id": crop_id, "quantity": quantity,
-                  "quality": quality, "target_user_id": target_user_id}
+                  "quality": quality, "target_user_id": target_user_id, "pet_id": pet_id, "item_id": item_id}
         return await asyncio.to_thread(self._act, profile, action, params, request_id)

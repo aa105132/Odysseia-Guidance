@@ -50,6 +50,27 @@ AURA_LEVELS = tuple(
     for level, required, cost in ((0, 1, 0), (1, 2, 300), (2, 4, 1200),
                                   (3, 6, 4000), (4, 8, 10000), (5, 10, 24000))
 )
+PETS = (
+    {"id": "qingling_fox", "name": "青团灵狐", "price": 300, "unlock_level": 1,
+     "guard_chance": 0.25, "water_bonus": 0.0, "icon_key": "qingling_fox",
+     "description": "守护期间有25%概率抓住偷菜者，轻巧机灵的灵圃伙伴。"},
+    {"id": "mountain_hound", "name": "巡山灵犬", "price": 650, "unlock_level": 2,
+     "guard_chance": 0.40, "water_bonus": 0.0, "icon_key": "mountain_hound",
+     "description": "守护期间有40%概率抓住偷菜者，擅长巡查田间。"},
+    {"id": "dew_crane", "name": "衔露仙鹤", "price": 500, "unlock_level": 3,
+     "guard_chance": 0.15, "water_bonus": 0.05, "icon_key": "dew_crane",
+     "description": "守护期间有15%概率抓偷；浇水额外缩短5%基础生长期。"},
+)
+PET_BY_ID = {pet["id"]: pet for pet in PETS}
+ITEMS = (
+    {"id": "pet_food", "name": "灵兽口粮", "price": 40, "unlock_level": 1,
+     "icon_key": "pet_food", "description": "喂给当前灵兽，增加24小时守护，最多积攒72小时。"},
+    {"id": "spirit_dew", "name": "灵露", "price": 20, "unlock_level": 1,
+     "icon_key": "spirit_dew", "description": "缩短一茬基础生长期的10%，每茬可用一次。"},
+    {"id": "ward_talisman", "name": "护田符", "price": 35, "unlock_level": 1,
+     "icon_key": "ward_talisman", "description": "保护一块已种植灵田1小时，每茬可用一次。"},
+)
+ITEM_BY_ID = {item["id"]: item for item in ITEMS}
 QUALITY_MULTIPLIERS = {"normal": 1, "spirit": 2, "celestial": 5}
 RULES = {
     "starter_plots": 3, "starter_seed_id": "huangjing", "starter_seeds": 6,
@@ -57,10 +78,14 @@ RULES = {
     "celestial_mutation_chance": 0.004, "pest_chance": 0.25,
     "newcomer_protection_seconds": 86400, "steal_daily_limit": 10,
     "steal_per_harvest_limit": 1,
+    "pet_food_seconds": 86400, "pet_guard_max_seconds": 259200,
+    "spirit_dew_reduction": 0.10, "ward_seconds": 3600,
+    "pet_note": "最多装备一只灵兽；购置附24小时守护，喂口粮每份延长24小时，最多剩余72小时。守护过期后灵兽休息。",
+    "item_note": "灵露每茬一次，缩短10%基础生长期；护田符每茬一次，保护1小时。灵兽与道具均为灵圃玩法原创。",
     "quality_multipliers": QUALITY_MULTIPLIERS,
     "pricing_note": "名称与稀有度参考《凡人修仙传》灵草资料；灵种、售价、成长时间及变异为游戏改编，并非原著定价。",
     "care_note": "每茬浇水一次，缩短10%基础生长期；虫害减产1份，除虫可恢复。成熟后不会枯萎。",
-    "steal_note": "新灵圃24小时保护；每人每日最多偷10次；同一茬所有访客合计最多偷1份。无虫留给主人至少3份，有虫未处理则至少2份。",
+    "steal_note": "新灵圃24小时保护；每人每日最多偷10次；被灵兽抓住也计入次数，同一人同一茬仅可尝试一次；同一茬所有访客合计最多偷1份。无虫留给主人至少3份，有虫未处理则至少2份。",
 }
 
 
@@ -70,6 +95,7 @@ def farm_level(xp):
 
 def get_catalog():
     return {"crops": [dict(crop) for crop in CROPS],
+            "pets": [dict(pet) for pet in PETS], "items": [dict(item) for item in ITEMS],
             "land_levels": [dict(level) for level in LAND_LEVELS],
             "aura_levels": [dict(level) for level in AURA_LEVELS],
             "rules": dict(RULES), "level_xp": list(LEVEL_XP)}

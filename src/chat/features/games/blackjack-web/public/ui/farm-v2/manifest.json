@@ -1,0 +1,643 @@
+{
+  "schema": 1,
+  "model": "chatgpt-gpt-image-2.5-sunburst",
+  "provider": "https://bufan.live/v1",
+  "reference": "用户提供的云梦洞府参考图",
+  "assets": [
+    {
+      "file": "garden-world.webp",
+      "source": "garden-world.png",
+      "source_sha256": "9a5e12986f4911df685a9ee2d49b4d53bec2590ad6a0aa24ba85d1de206e7411",
+      "size": [
+        1536,
+        1024
+      ],
+      "bytes": 532418,
+      "sha256": "97e93fed125202cddd590b293ff0a545ed1cbe06318219ffd4e9f0d00877f276",
+      "alpha": false
+    },
+    {
+      "file": "lobby-world.webp",
+      "source": "lobby-world.png",
+      "source_sha256": "e00184908193d3d434c3351a73af387c0d74041d29cec4d26ac7b70b28fb1f03",
+      "size": [
+        1536,
+        1024
+      ],
+      "bytes": 662684,
+      "sha256": "a6baf9dd164f6879ca84a14606bc0b4b2f8b98fac24cab4c461150a1a88651d0",
+      "alpha": false
+    },
+    {
+      "file": "soil-tile.webp",
+      "source": "soil-tile.png",
+      "source_sha256": "94889e756ff467badfdf3f79045d353d1b96d94c387776a53b8fb7200af8a383",
+      "size": [
+        640,
+        400
+      ],
+      "bytes": 58948,
+      "sha256": "d9297deb3e3d149e95530c52db4adfcc06cce315b742db7dbbdde3e66db22920",
+      "alpha": true
+    },
+    {
+      "file": "items/pet_food.webp",
+      "source": "items-sheet.png",
+      "source_sha256": "4d67e3556f8bb70b57976089caee73e6282d4baabe5a703dc0818cc9f14d3c89",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 19604,
+      "sha256": "08c60533af47e748cf5f134ccde8232842fda6cd7761665b11b9cf43d01c5962",
+      "alpha": true
+    },
+    {
+      "file": "items/spirit_dew.webp",
+      "source": "items-sheet.png",
+      "source_sha256": "4d67e3556f8bb70b57976089caee73e6282d4baabe5a703dc0818cc9f14d3c89",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 25352,
+      "sha256": "217d12d752968627af6371b95d937981f6cc7f3f788f366d67be8b88b1d8f3ff",
+      "alpha": true
+    },
+    {
+      "file": "items/ward_talisman.webp",
+      "source": "items-sheet.png",
+      "source_sha256": "4d67e3556f8bb70b57976089caee73e6282d4baabe5a703dc0818cc9f14d3c89",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 21894,
+      "sha256": "bbe1e527dbe801e1b5eb3de7de10162ff3724e42a76a52fc66dcef8c292b07ff",
+      "alpha": true
+    },
+    {
+      "file": "items/watering_can.webp",
+      "source": "items-sheet.png",
+      "source_sha256": "4d67e3556f8bb70b57976089caee73e6282d4baabe5a703dc0818cc9f14d3c89",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 22328,
+      "sha256": "20f4e812d9e2c46f583b8cf90d4256a3d39243d333c424835cc298c54274c188",
+      "alpha": true
+    },
+    {
+      "file": "items/harvest_basket.webp",
+      "source": "items-sheet.png",
+      "source_sha256": "4d67e3556f8bb70b57976089caee73e6282d4baabe5a703dc0818cc9f14d3c89",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 27242,
+      "sha256": "c0bc8f7c3aa5e0a22d5f0df0a816f4850e0ecf325db759cf9b71426e6a13e5a0",
+      "alpha": true
+    },
+    {
+      "file": "items/seed_bag.webp",
+      "source": "items-sheet.png",
+      "source_sha256": "4d67e3556f8bb70b57976089caee73e6282d4baabe5a703dc0818cc9f14d3c89",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 25888,
+      "sha256": "ae0c0854fbdb91401b8aa59a3cd61562da6339ece2d4261a55dab2ae82248457",
+      "alpha": true
+    },
+    {
+      "file": "icons/seed.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 14080,
+      "sha256": "c16b050784c5a69354bef964848306cfd1b70694d03632737a596f98ee86b8ac",
+      "alpha": true
+    },
+    {
+      "file": "icons/harvest.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 17686,
+      "sha256": "ed4565e451d9808451d52dbfec5470c345109fb0579bfb5585fb132bce82ef90",
+      "alpha": true
+    },
+    {
+      "file": "icons/pet.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 14636,
+      "sha256": "22a8461fa00f4fbcc24a2c19aaaf862b62e5d5efcff4d2c2a7c39fe880d78508",
+      "alpha": true
+    },
+    {
+      "file": "icons/bag.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 15248,
+      "sha256": "cfc471401f612a7e762688ad14ef152c8e855c6a02ddbf970badfc4e26a432e9",
+      "alpha": true
+    },
+    {
+      "file": "icons/visits.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 15294,
+      "sha256": "a4916a1a6482608231d7f48bfbde0ab291f5181548dbd7bb1cf671afc29c1f6a",
+      "alpha": true
+    },
+    {
+      "file": "icons/upgrade.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 17172,
+      "sha256": "4845fce9032558c7d3bf718005c7c6d925b06c1e7fa528e273afe10274884e4c",
+      "alpha": true
+    },
+    {
+      "file": "icons/guide.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 14720,
+      "sha256": "1fc26ab71ea5084bd98d61f1206ae9a5615dca70887f4382fdddfa929cfeebc9",
+      "alpha": true
+    },
+    {
+      "file": "icons/water.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 15994,
+      "sha256": "92010ac66125ae7c466cdc67b09e99ce0ecd5d6913b00a34954548c50c0caab2",
+      "alpha": true
+    },
+    {
+      "file": "icons/sound.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 15880,
+      "sha256": "a73c2c2a3f1866da2813be4224592e0e8ee5b4e545932bf86d33a2315850a218",
+      "alpha": true
+    },
+    {
+      "file": "icons/back.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 13050,
+      "sha256": "75df732a15ab259d1abb71790fec674851acacff7e88db91347738eef2336082",
+      "alpha": true
+    },
+    {
+      "file": "icons/close.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 13002,
+      "sha256": "ce2195c52939292bfd91e51457a2a7b7d3242249bae277e79c368ee7c15d74a8",
+      "alpha": true
+    },
+    {
+      "file": "icons/refresh.webp",
+      "source": "icons-sheet.png",
+      "source_sha256": "30bf70216f58ba7ce28cf5c0dc3d4c0e0438fec6d2bbde317829503afe1f6708",
+      "size": [
+        192,
+        192
+      ],
+      "bytes": 13508,
+      "sha256": "7925a2e6b668c25a5a74ba24298692321fab47d75a122ba6da42b87b8a407588",
+      "alpha": true
+    },
+    {
+      "file": "games/blackjack.webp",
+      "source": "games-sheet.png",
+      "source_sha256": "a9a79b14422151ac6990288d9628676a8f6240a262b5553587a6c317a723e849",
+      "size": [
+        320,
+        320
+      ],
+      "bytes": 39560,
+      "sha256": "8eb39a167b913bbbc2c481f3e8f03ae7d5c875036086c3a45577783a0e1dbce8",
+      "alpha": true
+    },
+    {
+      "file": "games/golden_flower.webp",
+      "source": "games-sheet.png",
+      "source_sha256": "a9a79b14422151ac6990288d9628676a8f6240a262b5553587a6c317a723e849",
+      "size": [
+        320,
+        320
+      ],
+      "bytes": 45014,
+      "sha256": "aef21a80be5360fb588fb44a35add1b3629d044e26ac780a49e3ffadc66c5a69",
+      "alpha": true
+    },
+    {
+      "file": "games/texas.webp",
+      "source": "games-sheet.png",
+      "source_sha256": "a9a79b14422151ac6990288d9628676a8f6240a262b5553587a6c317a723e849",
+      "size": [
+        320,
+        320
+      ],
+      "bytes": 39984,
+      "sha256": "eeb6054e1f580ae1d7341633834987898f79fd2e17a435af9380c81f4ff2e67a",
+      "alpha": true
+    },
+    {
+      "file": "games/landlord.webp",
+      "source": "games-sheet.png",
+      "source_sha256": "a9a79b14422151ac6990288d9628676a8f6240a262b5553587a6c317a723e849",
+      "size": [
+        320,
+        320
+      ],
+      "bytes": 36192,
+      "sha256": "ce55c1296df2074564baaabf21fa89c3f3240700eff8e62b9cf3da4ca078d43d",
+      "alpha": true
+    },
+    {
+      "file": "games/mahjong.webp",
+      "source": "games-sheet.png",
+      "source_sha256": "a9a79b14422151ac6990288d9628676a8f6240a262b5553587a6c317a723e849",
+      "size": [
+        320,
+        320
+      ],
+      "bytes": 38168,
+      "sha256": "f7068dee7555aac55bf79fe893db214c8f0ba188abe4aad6a6ecc401dc8bcca3",
+      "alpha": true
+    },
+    {
+      "file": "games/guandan.webp",
+      "source": "games-sheet.png",
+      "source_sha256": "a9a79b14422151ac6990288d9628676a8f6240a262b5553587a6c317a723e849",
+      "size": [
+        320,
+        320
+      ],
+      "bytes": 41150,
+      "sha256": "bd09b768af87b5810de57f86e36ebff02fefb40b0a241473310afa1c0465187c",
+      "alpha": true
+    },
+    {
+      "file": "games/noname.webp",
+      "source": "games-sheet.png",
+      "source_sha256": "a9a79b14422151ac6990288d9628676a8f6240a262b5553587a6c317a723e849",
+      "size": [
+        320,
+        320
+      ],
+      "bytes": 41346,
+      "sha256": "4e4edd20c7f892a899c29196e6afd5e69556b12b7990cf9ff9f07ebe56cc5419",
+      "alpha": true
+    },
+    {
+      "file": "games/tea.webp",
+      "source": "games-sheet.png",
+      "source_sha256": "a9a79b14422151ac6990288d9628676a8f6240a262b5553587a6c317a723e849",
+      "size": [
+        320,
+        320
+      ],
+      "bytes": 41114,
+      "sha256": "37dda72f609cb8d91da680eac7b8486f991f759e9c709793e890d3ecfd268572",
+      "alpha": true
+    },
+    {
+      "file": "frames/nameplate.webp",
+      "source": "ui-frames-sheet.png",
+      "source_sha256": "4963da999f9447a6fb2b0e9120b485c6faf3052090ce6f44b88f1491df06ad12",
+      "size": [
+        640,
+        300
+      ],
+      "bytes": 28058,
+      "sha256": "1857a1580c5224afe490a8cb17d410bbc6ef562d5905ca2cb92e5e493e9f578d",
+      "alpha": true
+    },
+    {
+      "file": "frames/wood-sign.webp",
+      "source": "ui-frames-sheet.png",
+      "source_sha256": "4963da999f9447a6fb2b0e9120b485c6faf3052090ce6f44b88f1491df06ad12",
+      "size": [
+        640,
+        300
+      ],
+      "bytes": 63462,
+      "sha256": "cf3eb556ecfc3196db9e58908fce996cbf0834b149b60934abb4b9dd48ac940f",
+      "alpha": true
+    },
+    {
+      "file": "frames/resource.webp",
+      "source": "ui-frames-sheet.png",
+      "source_sha256": "4963da999f9447a6fb2b0e9120b485c6faf3052090ce6f44b88f1491df06ad12",
+      "size": [
+        640,
+        300
+      ],
+      "bytes": 25046,
+      "sha256": "a177d096a0407dfc1cdb1984933f27a45598c56cc103b656ac7c82b69a6eb181",
+      "alpha": true
+    },
+    {
+      "file": "frames/portrait.webp",
+      "source": "ui-frames-sheet.png",
+      "source_sha256": "4963da999f9447a6fb2b0e9120b485c6faf3052090ce6f44b88f1491df06ad12",
+      "size": [
+        640,
+        300
+      ],
+      "bytes": 44810,
+      "sha256": "1c936e1eef702732f0fe6edf3f032d98ca0c2bc725fc6e0af6eede143fcd6b45",
+      "alpha": true
+    },
+    {
+      "file": "frames/primary.webp",
+      "source": "ui-frames-sheet.png",
+      "source_sha256": "4963da999f9447a6fb2b0e9120b485c6faf3052090ce6f44b88f1491df06ad12",
+      "size": [
+        640,
+        300
+      ],
+      "bytes": 26198,
+      "sha256": "d4437c6d2d60538f2287a20d350ac15c6d9b26772073d4cf00206ed955bbbd6e",
+      "alpha": true
+    },
+    {
+      "file": "frames/secondary.webp",
+      "source": "ui-frames-sheet.png",
+      "source_sha256": "4963da999f9447a6fb2b0e9120b485c6faf3052090ce6f44b88f1491df06ad12",
+      "size": [
+        640,
+        300
+      ],
+      "bytes": 27606,
+      "sha256": "c9a9df9176d8460f96718029fa0ace2fb4082265ff8b6605d93240267e30811f",
+      "alpha": true
+    },
+    {
+      "file": "animations/water.webp",
+      "source": "water-sheet.png",
+      "source_sha256": "3f6b3c9a76365c857f90151c68c6ce87180a83b7a45e83d783312943316bf5e9",
+      "size": [
+        2048,
+        256
+      ],
+      "bytes": 121572,
+      "sha256": "ace5e991c027822eeb8d1063642f7462712eb050bcd5467cc282809fcf806a7c",
+      "alpha": true,
+      "frames": 8,
+      "frame_size": [
+        256,
+        256
+      ],
+      "frame_delta": [
+        31.789,
+        71.602,
+        47.44,
+        41.062,
+        36.444,
+        48.391,
+        48.62,
+        34.007
+      ]
+    },
+    {
+      "file": "animations/growth.webp",
+      "source": "growth-sheet.png",
+      "source_sha256": "90ec422d5f9de97747ff7b48eb9130071ba778fb548f28b55f37e3b8818cdeba",
+      "size": [
+        2048,
+        256
+      ],
+      "bytes": 111658,
+      "sha256": "8fff6738819727680264c3dd019c94c375f266e7591a4308fbdeccd8deeebb88",
+      "alpha": true,
+      "frames": 8,
+      "frame_size": [
+        256,
+        256
+      ],
+      "frame_delta": [
+        10.204,
+        24.829,
+        37.296,
+        60.01,
+        42.747,
+        46.061,
+        108.011,
+        172.098
+      ]
+    },
+    {
+      "file": "growth-stages.webp",
+      "source": "growth-sheet.png",
+      "source_sha256": "90ec422d5f9de97747ff7b48eb9130071ba778fb548f28b55f37e3b8818cdeba",
+      "size": [
+        2048,
+        256
+      ],
+      "bytes": 111658,
+      "sha256": "8fff6738819727680264c3dd019c94c375f266e7591a4308fbdeccd8deeebb88",
+      "alpha": true,
+      "frames": 8,
+      "frame_size": [
+        256,
+        256
+      ]
+    },
+    {
+      "file": "animations/harvest.webp",
+      "source": "harvest-sheet.png",
+      "source_sha256": "9b0656258f4f443ccf3767eb1b0e5c924160a282fe04842fa19f01450c8a96a1",
+      "size": [
+        2048,
+        256
+      ],
+      "bytes": 95548,
+      "sha256": "e6d21a63fb863e57a1ed20adcb8959f601c8e7557e213645e29ae08165a6d27c",
+      "alpha": true,
+      "frames": 8,
+      "frame_size": [
+        256,
+        256
+      ],
+      "frame_delta": [
+        43.736,
+        64.775,
+        108.701,
+        71.657,
+        35.094,
+        54.258,
+        49.252,
+        35.455
+      ]
+    },
+    {
+      "file": "animations/fox-idle.webp",
+      "source": "fox-idle-sheet.png",
+      "source_sha256": "f27522214719b7f1ad8f0f1ac0285dd4752d62c60bb3a0ca80bb9405b1e3d845",
+      "size": [
+        2048,
+        256
+      ],
+      "bytes": 127274,
+      "sha256": "aa3c0e461b28c49751bd2f2b0b36ac298cb353dc56158c6d32c0092bfb871d3d",
+      "alpha": true,
+      "frames": 8,
+      "frame_size": [
+        256,
+        256
+      ],
+      "frame_delta": [
+        52.13,
+        0.0,
+        51.34,
+        82.546,
+        54.144,
+        56.211,
+        17.048,
+        71.37
+      ]
+    },
+    {
+      "file": "pets/qingling_fox.webp",
+      "source": "fox-idle-sheet.png",
+      "source_sha256": "f27522214719b7f1ad8f0f1ac0285dd4752d62c60bb3a0ca80bb9405b1e3d845",
+      "size": [
+        384,
+        384
+      ],
+      "bytes": 35258,
+      "sha256": "8ca0d8ebb1289a23a7773a8d0df8759e36506157dc601e7bbf9a30d29bedc945",
+      "alpha": true
+    },
+    {
+      "file": "animations/hound-idle.webp",
+      "source": "hound-idle-sheet.png",
+      "source_sha256": "cb77cf6553099ee1bb4c004b918cf28f53fa3aeecc419414ba1cf0a6b39b6c4a",
+      "size": [
+        2048,
+        256
+      ],
+      "bytes": 148646,
+      "sha256": "1ada32f1df30257bda3c73ebd08e4f861e847e0930963384774f249089e80954",
+      "alpha": true,
+      "frames": 8,
+      "frame_size": [
+        256,
+        256
+      ],
+      "frame_delta": [
+        38.255,
+        44.78,
+        72.055,
+        81.586,
+        29.985,
+        68.762,
+        38.441,
+        75.27
+      ]
+    },
+    {
+      "file": "pets/mountain_hound.webp",
+      "source": "hound-idle-sheet.png",
+      "source_sha256": "cb77cf6553099ee1bb4c004b918cf28f53fa3aeecc419414ba1cf0a6b39b6c4a",
+      "size": [
+        384,
+        384
+      ],
+      "bytes": 37962,
+      "sha256": "f45675c8bf7881301edf27d4f0234511b5ef5fe91ff06a29d247cc22f9cf894e",
+      "alpha": true
+    },
+    {
+      "file": "animations/crane-idle.webp",
+      "source": "crane-idle-sheet.png",
+      "source_sha256": "2bfbfd229419ba6699f57df26b9a3eaf86dcbef8b3681f89e8047cf062a85a9b",
+      "size": [
+        2048,
+        256
+      ],
+      "bytes": 143406,
+      "sha256": "6327d3462846c3c9616cfa28c8b5f9ff7eb6dfe9276f4d0667881d49e9d62d7c",
+      "alpha": true,
+      "frames": 8,
+      "frame_size": [
+        256,
+        256
+      ],
+      "frame_delta": [
+        43.667,
+        45.902,
+        52.341,
+        125.637,
+        101.678,
+        77.751,
+        60.887,
+        61.202
+      ]
+    },
+    {
+      "file": "pets/dew_crane.webp",
+      "source": "crane-idle-sheet.png",
+      "source_sha256": "2bfbfd229419ba6699f57df26b9a3eaf86dcbef8b3681f89e8047cf062a85a9b",
+      "size": [
+        384,
+        384
+      ],
+      "bytes": 34446,
+      "sha256": "0061db654c4cebf95dbe64186b76bb3c6334d5cec121299aaa837867bfa23395",
+      "alpha": true
+    }
+  ]
+}

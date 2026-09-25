@@ -15,10 +15,12 @@ FarmError = _farm_module.FarmError
 class FarmActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["buy_seed", "plant", "water", "pest", "harvest", "sell", "expand", "upgrade_aura", "steal"]
+    action: Literal["buy_seed", "plant", "water", "pest", "harvest", "sell", "expand", "upgrade_aura", "steal", "buy_pet", "equip_pet", "buy_item", "use_item"]
     request_id: Annotated[StrictStr, Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")]
     plot_id: Annotated[StrictInt, Field(ge=1, le=12)] | None = None
     crop_id: Annotated[StrictStr, Field(min_length=1, max_length=32, pattern=r"^[a-z_]+$")] | None = None
+    pet_id: Annotated[StrictStr, Field(min_length=1, max_length=32, pattern=r"^[a-z_]+$")] | None = None
+    item_id: Annotated[StrictStr, Field(min_length=1, max_length=32, pattern=r"^[a-z_]+$")] | None = None
     quantity: Annotated[StrictInt, Field(ge=1, le=9999)] = 1
     quality: Literal["normal", "spirit", "celestial"] = "normal"
     target_user_id: StrictInt | StrictStr | None = None
@@ -35,6 +37,10 @@ class FarmActionRequest(BaseModel):
             "expand": (set(), set()),
             "upgrade_aura": (set(), set()),
             "steal": ({"plot_id", "target_user_id"}, {"plot_id", "target_user_id"}),
+            "buy_pet": ({"pet_id"}, {"pet_id"}),
+            "equip_pet": ({"pet_id"}, {"pet_id"}),
+            "buy_item": ({"item_id"}, {"item_id", "quantity"}),
+            "use_item": ({"item_id"}, {"item_id", "plot_id"}),
         }
         required, allowed = fields[self.action]
         supplied = self.model_fields_set - {"action", "request_id"}
@@ -44,6 +50,13 @@ class FarmActionRequest(BaseModel):
             raise ValueError("此操作缺少必要参数")
         if self.action == "buy_seed" and self.quantity > 99:
             raise ValueError("每次最多购买99粒灵种")
+        if self.action == "buy_item" and self.quantity > 99:
+            raise ValueError("每次最多购买99件道具")
+        if self.action == "use_item":
+            if self.item_id == "pet_food" and "plot_id" in supplied:
+                raise ValueError("灵兽口粮不需要指定灵田")
+            if self.item_id in {"spirit_dew", "ward_talisman"} and self.plot_id is None:
+                raise ValueError("请指定要使用道具的灵田")
         if self.target_user_id is not None:
             try:
                 self.target_user_id = FarmService._user_id(self.target_user_id)

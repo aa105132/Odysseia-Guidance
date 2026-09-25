@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-const props = withDefaults(defineProps<{ name?: string; icon?: string; stage?: 'seed' | 'sprout' | 'grown'; quality?: string | null }>(), { name: '', icon: '', stage: 'grown', quality: 'normal' });
+import FarmSprite from './FarmSprite.vue';
+const props = withDefaults(defineProps<{ name?: string; icon?: string; stage?: 'seed' | 'sprout' | 'grown'; quality?: string | null; paused?: boolean }>(), { name: '', icon: '', stage: 'grown', quality: 'normal' });
 const paintedLoaded = ref(false);
 const paintedFailed = ref(false);
 const paintedSource = computed(() => /^[a-z_]+$/.test(props.icon) ? `/ui/farm/plants/${props.icon}.webp` : '');
@@ -18,7 +19,8 @@ const shape = computed(() => {
 </script>
 
 <template>
-  <span class="farm-plant" :class="[`plant-${shape}`, `plant-${stage}`, { 'plant-mutated': quality && quality !== 'normal' }]" aria-hidden="true">
+  <span class="farm-plant" :class="[`plant-${shape}`, `plant-${stage}`, { 'plant-mutated': quality && quality !== 'normal', 'plant-paused': paused }]" aria-hidden="true">
+  <FarmSprite v-if="stage !== 'grown'" :key="stage" class="painted-stage" src="/ui/farm-v2/growth-stages.webp" :frame="stage === 'seed' ? 0 : 3" :paused="paused" />
   <img v-if="paintedSource && stage === 'grown' && !paintedFailed" class="painted-plant" :class="{ loaded: paintedLoaded }" :src="paintedSource" alt="" draggable="false" @load="paintedLoaded = true" @error="paintedFailed = true; paintedLoaded = false">
   <svg v-show="!paintedLoaded || stage !== 'grown'" class="plant-fallback" viewBox="0 0 160 140" focusable="false">
     <ellipse cx="80" cy="123" rx="48" ry="8" fill="#193c28" opacity=".16" />
@@ -60,6 +62,7 @@ const shape = computed(() => {
 </template>
 
 <style scoped>
+.painted-stage { animation: stage-emerge .9s ease-out both; transform-origin: center 85%; position: absolute; inset: 0; z-index: 1; }.painted-stage.sprite-loaded ~ .plant-fallback { visibility: hidden; }.plant-paused * { animation-play-state: paused !important; }
 .farm-plant { position: relative; display: block; width: 100%; height: 100%; overflow: visible; }
 .plant-fallback { display: block; width: 100%; height: 100%; overflow: visible; }
 .painted-plant { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; visibility: hidden; transform-origin: center 90%; animation: plant-breeze 5.5s ease-in-out infinite; filter: drop-shadow(0 3px 2px #39513b20); }.painted-plant.loaded { visibility: visible; }
@@ -67,7 +70,8 @@ const shape = computed(() => {
 .plant-body { transform-origin: 80px 124px; animation: plant-breeze 4.8s ease-in-out infinite; }
 .plant-mushroom .plant-body { animation-duration: 6s; }
 .plant-sparkles { animation: plant-shimmer 2.8s ease-in-out infinite alternate; }
+@keyframes stage-emerge { from { opacity: .2; transform: scale(.78) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 @keyframes plant-breeze { 0%, 100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.2deg); } }
 @keyframes plant-shimmer { from { opacity: .35; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .plant-body, .plant-sparkles, .painted-plant, .painted-sparkles { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .plant-body, .plant-sparkles, .painted-plant, .painted-sparkles, .painted-stage { animation: none; } }
 </style>

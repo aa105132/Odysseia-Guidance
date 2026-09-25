@@ -16,7 +16,7 @@ async function openLobby(page: Page, embedded: boolean) {
     return route.fulfill({ json: { success: true } });
   });
   await page.goto(embedded ? '/?frame_id=window-fit' : `/?dev_user_id=${uid}`);
-  await expect(page.locator('.hub-game-grid > .game-card')).toHaveCount(8);
+  await expect(page.locator('.lobby-world-place')).toHaveCount(8);
   await expect(page.locator('.yueyue-mascot-sprite')).toBeVisible();
 }
 
@@ -32,8 +32,8 @@ async function expectLobbyFits(page: Page, width: number, height: number, embedd
   const layout = await page.evaluate(() => {
     const app = document.querySelector('#app') as HTMLElement;
     const root = document.querySelector('.multi-root') as HTMLElement;
-    const grid = document.querySelector('.hub-game-grid') as HTMLElement;
-    const cards = Array.from(grid.querySelectorAll<HTMLElement>('.game-card'));
+    const grid = document.querySelector('.lobby-world') as HTMLElement;
+    const cards = Array.from(grid.querySelectorAll<HTMLElement>('.lobby-world-place'));
     // 在任何点击或滚动前量取所有内容，防止 scrollIntoView 掩盖初始裁切。
     const bounds = (element: Element) => {
       const rect = element.getBoundingClientRect();
@@ -43,16 +43,24 @@ async function expectLobbyFits(page: Page, width: number, height: number, embedd
       appHeight: app.clientHeight,
       rootHeight: root.clientHeight,
       rootScroll: { x: root.scrollWidth - root.clientWidth, y: root.scrollHeight - root.clientHeight, top: root.scrollTop },
-      gridFraction: grid.clientWidth / app.clientWidth,
+      worldFraction: grid.clientWidth / app.clientWidth,
       rows: new Set(cards.map(card => card.offsetTop)).size,
-      visibleContent: Array.from(document.querySelectorAll('.top-bar, .hub-game-grid > .game-card, .lobby-footnote, .yueyue-mascot-button, .yueyue-mascot-speech')).map(bounds),
-      cardContent: cards.map(card => ({ card: bounds(card), copy: bounds(card.querySelector('.game-card-copy')!) })),
+      visibleContent: Array.from(document.querySelectorAll('.lobby-world-header, .lobby-world-place, .lobby-world-note, .yueyue-mascot-button, .yueyue-mascot-speech')).map(bounds),
+      // 雕花铭牌允许装饰边外扩；标题和说明文字必须完整留在可点击范围内。
+      cardContent: cards.flatMap(card => Array.from(card.querySelectorAll('.lobby-world-sign strong, .lobby-world-sign small')).map(copy => ({ card: bounds(card), copy: bounds(copy) }))),
       mascot: bounds(document.querySelector('.yueyue-mascot-button')!),
+      reachable: cards.map(card => { const rect = card.getBoundingClientRect(); const at = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2); return Boolean(at && (at === card || card.contains(at))); }),
+      map: bounds(document.querySelector('.lobby-world-map')!), world: bounds(grid),
     };
   });
   expect(layout.rootHeight, '大厅高度随可用窗口变化').toBe(logical.height);
   expect(layout.rootScroll, '初始画面应完整排入窗口，无需滚动才能找到月月').toEqual({ x: 0, y: 0, top: 0 });
-  expect(layout.gridFraction, '卡片网格使用窗口宽度，宽屏不锁死在 1120px').toBeGreaterThan(.88);
+  expect(layout.worldFraction, '场景铺满窗口宽度，宽屏不锁死在 1120px').toBe(1);
+  expect(layout.map.left).toBeLessThanOrEqual(layout.world.left + 1);
+  expect(layout.map.top).toBeLessThanOrEqual(layout.world.top + 1);
+  expect(layout.map.right).toBeGreaterThanOrEqual(layout.world.right - 1);
+  expect(layout.map.bottom).toBeGreaterThanOrEqual(layout.world.bottom - 1);
+  expect(layout.reachable.every(Boolean), '所有入口中心都可直接点击').toBe(true);
   expect(layout.rows).toBeGreaterThan(1);
   for (const box of layout.visibleContent) {
     expect(box.left).toBeGreaterThanOrEqual(-1);
@@ -63,11 +71,11 @@ async function expectLobbyFits(page: Page, width: number, height: number, embedd
   for (const { card, copy } of layout.cardContent) {
     expect(copy.left).toBeGreaterThanOrEqual(card.left);
     expect(copy.top).toBeGreaterThanOrEqual(card.top);
-    expect(copy.right, '卡片文字未被横向裁切').toBeLessThanOrEqual(card.right);
-    expect(copy.bottom, '卡片文字未被纵向裁切').toBeLessThanOrEqual(card.bottom);
+    expect(copy.right, '场景铭牌未被横向裁切').toBeLessThanOrEqual(card.right);
+    expect(copy.bottom, '场景铭牌未被纵向裁切').toBeLessThanOrEqual(card.bottom);
     const horizontalOverlap = Math.min(card.right, layout.mascot.right) - Math.max(card.left, layout.mascot.left);
     const verticalOverlap = Math.min(card.bottom, layout.mascot.bottom) - Math.max(card.top, layout.mascot.top);
-    expect(horizontalOverlap > 1 && verticalOverlap > 1, '月月按钮不覆盖游戏卡片').toBe(false);
+    expect(horizontalOverlap > 1 && verticalOverlap > 1, '月月按钮不覆盖场景入口').toBe(false);
   }
 }
 

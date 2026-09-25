@@ -63,7 +63,7 @@ async function mountFarm(page: Page, initial = farm(), options: { failFirst?: bo
     await page.route('**/api/profile', route => route.fulfill({ json: { success: true, user_id: uid, username: '灵圃主人', avatar_url: '/ui/player-avatar.svg', balance: 5000 } }));
     await page.route('**/api/config', route => route.fulfill({ json: { noname_available: false } }));
     await page.goto(`/?dev_user_id=${uid}`);
-    await page.locator('.farm-card').click();
+    await page.getByRole('button', { name: '修仙灵圃', exact: true }).click();
   } else await page.goto('/farm-test');
   await expect(page.getByRole('heading', { name: '灵草洞天', exact: true })).toBeVisible();
   await expect(page.getByRole('article', { name: /1号灵田/ })).toBeVisible();
@@ -72,16 +72,20 @@ async function mountFarm(page: Page, initial = farm(), options: { failFirst?: bo
 
 test('灵田完成播种、浇水、除虫、收获与出售的经营循环', async ({ page }) => {
   const { calls } = await mountFarm(page);
+  await page.getByRole('button', { name: /^选择1号灵田/ }).click();
   await page.getByRole('article', { name: /1号灵田/ }).getByRole('button', { name: '播种', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '选一粒灵种' });
   await dialog.getByRole('button', { name: /黄精芝.*播种/ }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.getByRole('article', { name: /1号灵田 黄精芝/ })).toBeVisible();
+  await page.getByRole('button', { name: /^选择2号灵田/ }).click();
   await page.getByRole('article', { name: /2号灵田/ }).getByRole('button', { name: '浇水', exact: true }).click();
   await expect(page.getByRole('article', { name: /2号灵田/ }).getByText('已浇水')).toHaveCount(0);
   await expect(page.getByRole('article', { name: /2号灵田/ }).getByRole('button', { name: '浇水', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /^选择2号灵田/ }).click();
   await page.getByRole('article', { name: /2号灵田/ }).getByRole('button', { name: '除虫', exact: true }).click();
   await expect(page.getByRole('article', { name: /2号灵田/ }).getByText('已照料 · 静待成熟')).toBeVisible();
+  await page.getByRole('button', { name: /^选择3号灵田/ }).click();
   await page.getByRole('article', { name: /3号灵田/ }).getByRole('button', { name: '收获 4 份' }).click();
   await expect(page.getByRole('article', { name: /3号灵田 空地/ })).toBeVisible();
   await page.getByRole('button', { name: /^仓库/ }).click();
@@ -94,6 +98,7 @@ test('灵田完成播种、浇水、除虫、收获与出售的经营循环', as
 
 test('购买校验数量和解锁，扩地消耗灵石前必须确认', async ({ page }) => {
   const { calls } = await mountFarm(page);
+  await page.getByRole('button', { name: '种子铺', exact: true }).click();
   const quantity = page.getByRole('spinbutton', { name: '黄精芝购买数量' });
   await quantity.fill('2');
   await page.getByRole('button', { name: '48 灵石 · 购买', exact: true }).click();
@@ -115,6 +120,7 @@ test('购买校验数量和解锁，扩地消耗灵石前必须确认', async ({
 
 test('丢失写入回包后使用相同 request_id 核对，防止重复购买', async ({ page }) => {
   const { calls } = await mountFarm(page, farm(), { failFirst: true });
+  await page.getByRole('button', { name: '种子铺', exact: true }).click();
   await page.getByRole('button', { name: '24 灵石 · 购买', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('同一次操作不会重复扣款');
   await expect(page.getByRole('button', { name: '24 灵石 · 购买', exact: true })).toBeDisabled();
@@ -132,6 +138,8 @@ test('串门隐藏库存及升级入口，偷菜发送目标用户且不能重�
   await expect(page.getByRole('button', { name: '播种', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: /^仓库/ }).click();
   await expect(page.getByText('邻居的仓库只对本人开放。')).toBeVisible();
+  await page.getByRole('button', { name: '收起经营面板', exact: true }).click();
+  await page.getByRole('button', { name: /^选择3号灵田/ }).click();
   await page.getByRole('button', { name: '偷采 1 份', exact: true }).click();
   await expect(page.getByRole('button', { name: '偷采 1 份', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '本轮不可偷采', exact: true })).toBeDisabled();
@@ -159,21 +167,24 @@ test('桌面农场的地块与经营栏可见并保留真实尺寸', async ({ pa
   await page.setViewportSize({ width: 1440, height: 900 });
   await mountFarm(page);
   const garden = await page.locator('.farm-garden').boundingBox();
-  const panel = await page.locator('.farm-panel').boundingBox();
-  expect(garden!.x + garden!.width).toBeLessThanOrEqual(panel!.x);
-  expect(await page.locator('.farm-plot').first().evaluate(element => element.clientWidth)).toBeGreaterThan(170);
+  expect(garden!.width).toBeGreaterThan(1300);
+  await expect(page.locator('.farm-panel')).not.toBeVisible();
+  await page.getByRole('button', { name: '种子铺', exact: true }).click();
+  await expect(page.locator('.farm-panel')).toBeVisible();
+  expect(await page.locator('.farm-plot').first().evaluate(element => element.clientWidth)).toBeGreaterThan(150);
   await page.screenshot({ path: 'test-results-farm/farm-1440.png', fullPage: true });
 });
 
 test('正常大厅入口进入农场并同步余额，返回大厅可继续选择玩法', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await mountFarm(page, farm(), { integrated: true });
+  await page.getByRole('button', { name: '种子铺', exact: true }).click();
   await page.getByRole('button', { name: '24 灵石 · 购买', exact: true }).click();
   await expect(page.locator('.farm-wallet')).toContainText('4,976');
   await page.screenshot({ path: 'test-results-farm/farm-app-1440.png', fullPage: true });
-  await page.getByRole('button', { name: '‹ 游戏大厅', exact: true }).click();
-  await expect(page.locator('.hub-game-grid')).toBeVisible();
-  await expect(page.locator('.profile-chip')).toContainText('4976');
+  await page.getByRole('button', { name: '游戏大厅', exact: true }).click();
+  await expect(page.getByRole('navigation', { name: '选择玩法' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看个人信息与统计' })).toContainText('4,976');
 });
 
 test('客户端时间偏差不提前开放收获，成熟由服务端确认', async ({ page }) => {
@@ -192,6 +203,7 @@ test('常见手机竖屏自动旋转后可以播种，弹窗不会被侧栏裁�
   await expect(page.locator('html')).toHaveAttribute('data-activity-rotated', 'true');
   const overflow = await page.locator('.farm-game').evaluate(element => element.scrollWidth > element.clientWidth + 1);
   expect(overflow).toBe(false);
+  await page.getByRole('button', { name: /^选择1号灵田/ }).click();
   await page.getByRole('article', { name: /1号灵田/ }).getByRole('button', { name: '播种', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '选一粒灵种' });
   await expect(dialog).toBeVisible();
@@ -226,6 +238,7 @@ test('嵌入农场随窗口铺满安全矩形，横屏避右边且竖屏避底�
     expect(farmBox.width).toBeCloseTo(contentWidth, 1);
     expect(farmBox.height).toBeCloseTo(contentHeight, 1);
     expect(await page.locator('.farm-game').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await page.getByRole('button', { name: /^选择1号灵田/ }).click();
     await page.getByRole('article', { name: /1号灵田/ }).getByRole('button', { name: '播种', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '选一粒灵种' });
     const box = (await dialog.boundingBox())!;
@@ -238,7 +251,8 @@ test('嵌入农场随窗口铺满安全矩形，横屏避右边且竖屏避底�
   }
 });
 
-test('成熟素材成功加载后替换图形，失败回退且幼苗保留原生动效', async ({ page }) => {
+test('成熟素材成功加载后替换图形，失败回退且阶段素材失败时保留原生动效', async ({ page }) => {
+  await page.route('**/ui/farm-v2/growth-stages.webp', route => route.fulfill({ status: 404, body: '' }));
   await page.route('**/ui/farm/plants/huangjing.webp', route => route.fulfill({ status: 404, body: '' }));
   await page.route('**/ui/farm/plants/zihou.webp', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="140"><circle cx="80" cy="70" r="30" fill="green"/></svg>' }));
   await mountFarm(page);
@@ -246,6 +260,7 @@ test('成熟素材成功加载后替换图形，失败回退且幼苗保留原�
   await expect(mature.locator('.painted-plant.loaded')).toBeVisible();
   await expect(mature.locator('.plant-fallback')).not.toBeVisible();
   await expect(mature.locator('.painted-sparkles')).toBeVisible();
+  await page.getByRole('button', { name: '种子铺', exact: true }).click();
   await expect(page.locator('.crop-shop-item').first().locator('.plant-fallback')).toBeVisible();
   await expect(page.getByRole('article', { name: /2号灵田/ }).locator('.plant-fallback')).toBeVisible();
   await expect(page.getByRole('article', { name: /2号灵田/ }).locator('.painted-plant')).toHaveCount(0);
@@ -269,8 +284,10 @@ test('成功照料播放月月语音，变异收获优先惊喜语音，静音�
   });
   await mountFarm(page, farm(), { integrated: true });
   const played = (name: string) => page.evaluate(id => (window as any).__farmTracks.filter((track: any) => new URL(track.original, location.origin).pathname.endsWith(`/${id}.mp3`)).length, name);
+  await page.getByRole('button', { name: /^选择2号灵田/ }).click();
   await page.getByRole('article', { name: /2号灵田/ }).getByRole('button', { name: '浇水', exact: true }).click();
   await expect.poll(() => played('farm_water')).toBe(1);
+  await page.getByRole('button', { name: /^选择3号灵田/ }).click();
   await page.getByRole('article', { name: /3号灵田/ }).getByRole('button', { name: '收获 4 份' }).click();
   await expect.poll(() => played('farm_mutation')).toBe(1);
   expect(await played('farm_harvest')).toBe(0);
@@ -278,6 +295,7 @@ test('成功照料播放月月语音，变异收获优先惊喜语音，静音�
   const audioPanel = page.getByRole('dialog', { name: '声音设置', exact: true });
   await audioPanel.getByRole('checkbox', { name: /月月与聊天语音/ }).uncheck();
   await audioPanel.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: /^选择2号灵田/ }).click();
   await page.getByRole('article', { name: /2号灵田/ }).getByRole('button', { name: '除虫', exact: true }).click();
   await expect(page.getByRole('article', { name: /2号灵田/ }).getByText('已照料 · 静待成熟')).toBeVisible();
   expect(await played('farm_pest')).toBe(0);
