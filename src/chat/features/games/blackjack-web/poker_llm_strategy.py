@@ -170,6 +170,7 @@ def golden_flower_strategy(state: dict, you: str) -> dict:
                                              for player in opponents],
             })
     result = {
+        "risk_policy": poker.golden_bot_policy(state, you),
         "active_opponents": len(opponents),
         "unseen_opponents": [player["user_id"] for player in opponents if not player.get("seen")],
         "seen_opponents": [player["user_id"] for player in opponents if player.get("seen")],

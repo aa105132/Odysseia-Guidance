@@ -545,6 +545,34 @@ class TexasHoldemGame:
         return {"action": "fold"}
 
 
+def golden_bot_policy(state: dict, user_id: str) -> dict:
+    """陪玩风险边界，只读自身已看牌和公开行为；不是玩家操作规则。"""
+    own = next(player for player in state["players"] if player["user_id"] == user_id)
+    opponents = [player for player in state["players"] if player["user_id"] != user_id and not player["folded"]]
+    seen_raisers = [player["user_id"] for player in opponents if player.get("seen_raises", 0) > 0]
+    ante = state["ante"]
+    seen = bool(own["seen"])
+    category = evaluate_golden_hand(own["hand"])[0] if seen else None
+    strong = category is not None and category >= 3
+    # 底池变大不等于跟注更安全：炸金花跟注不会结束下注，也没有新牌可改善。
+    weak_budget = min(ante * 6, state["buy_in"] * 0.10)
+    call_cost = state["call_amount"]
+    return {
+        "strong_hand_minimum": "金花（同花）",
+        "is_strong_hand": strong if seen else None,
+        "seen_raise_opponents": seen_raisers,
+        "must_look_before_paying": not seen and (
+            bool(seen_raisers) or state["action_count"] >= len(state["players"])
+            or state["base_bet"] > ante * 2 or call_cost > own["stack"] / 30
+        ),
+        "weak_hand_must_fold": seen and not strong and (
+            bool(seen_raisers) or call_cost > min(ante * 4, own["stack"] * 0.05)
+            or own["total_bet"] + call_cost > weak_budget
+        ),
+        "weak_hand_total_budget": weak_budget,
+    }
+
+
 class GoldenFlowerGame:
     """炸金花，不启用 235 特例；不提供全下或边池。"""
 
@@ -573,6 +601,7 @@ class GoldenFlowerGame:
         self.winners: list[str] = []
         self._current_index = 0
         self.action_count = 0
+        self.seen_raises = {user_id: 0 for user_id in ids}
         self.message = f"每人底注 {self.ANTE}；暗牌按基础注，看牌后跟注和加注费用加倍。"
 
     @property
@@ -643,6 +672,8 @@ class GoldenFlowerGame:
             self.message = f"玩家 {player.user_id} 跟注 {paid}。"
         elif action == "raise":
             self.base_bet = amount
+            if player.seen:
+                self.seen_raises[player.user_id] += 1
             paid = self._cost(player)
             self._pay(player, paid)
             self.message = f"基础注提高至 {amount}，玩家 {player.user_id} 投入 {paid}。"
@@ -690,6 +721,7 @@ class GoldenFlowerGame:
                 "total_bet": player.total_bet,
                 "folded": player.folded,
                 "seen": player.seen,
+                "seen_raises": self.seen_raises.get(player.user_id, 0),
                 "payout": player.payout,
                 "score_delta": player.stack - self.buy_in if self.finished else 0,
                 "hand_name": GOLDEN_HAND_NAMES[evaluate_golden_hand(player.hand)[0]] if visible else "",
@@ -718,11 +750,40 @@ class GoldenFlowerGame:
             "settlement": {player.user_id: player.stack - self.buy_in for player in self.players} if self.finished else {},
         }
 
+    def guard_bot_action(self, user_id: str, action: dict) -> dict:
+        """模型和本地策略共用的付费保护；不干预玩家或免费弃牌。"""
+        if action.get("action") not in {"call", "raise", "compare"}:
+            return action
+        state = self.public_state(user_id)
+        policy = golden_bot_policy(state, user_id)
+        if policy["must_look_before_paying"]:
+            return {"action": "look"}
+        if policy["weak_hand_must_fold"]:
+            return {"action": "fold"}
+        own = self._player(user_id)
+        if action["action"] == "raise":
+            cost = action["amount"] * (2 if own.seen else 1)
+        elif action["action"] == "compare":
+            cost = state["compare_cost"]
+        else:
+            cost = state["call_amount"]
+        if not own.seen and cost > min(self.ANTE * 2, own.stack / 30):
+            return {"action": "look"}
+        if own.seen and not policy["is_strong_hand"] and (
+            cost > min(self.ANTE * 4, own.stack * 0.05)
+            or own.total_bet + cost > policy["weak_hand_total_budget"]
+        ):
+            return {"action": "fold"}
+        return action
+
     def suggest_action(self, user_id: str) -> dict:
         player = self._player(user_id)
         actions = self._legal_actions(player)
         if player.user_id != self.current_player_id or not actions:
             raise ValueError("当前没有可执行的操作")
+        guarded = self.guard_bot_action(user_id, {"action": "call"})
+        if guarded["action"] != "call":
+            return guarded
         if "look" in actions:
             # 暗牌阶段不能读取自己的手牌；只在首圈且底注很小时少量闷一手。
             if (
@@ -752,15 +813,15 @@ class GoldenFlowerGame:
             len(opponents) <= 2 and 0.8 <= rounds <= 5 and self.base_bet <= self.ANTE * 4
             and percentile < 0.65 and affordable_raise and roll < 0.075
         )
-        value_raise = equity >= (0.72 if len(opponents) == 1 else 0.55) and roll < 0.62
+        value_raise = own_rank[0] >= 3 and equity >= (0.72 if len(opponents) == 1 else 0.55) and roll < 0.62
         if "raise" in actions and (bluff or (value_raise and (affordable_raise or equity > 0.94))):
-            return {"action": "raise", "amount": self.base_bet * 2}
+            return self.guard_bot_action(user_id, {"action": "raise", "amount": self.base_bet * 2})
         # 高成本、后期或接近行动上限时主动比牌，避免强牌白白跟注耗尽筹码。
         if "compare" in actions and (
             equity > 0.58 and (rounds >= 2 or cost >= player.stack * 0.10 or roll < 0.24)
         ):
             targets = sorted(opponents, key=lambda other: (other.seen, other.total_bet))
-            return {"action": "compare", "target_id": targets[0].user_id}
+            return self.guard_bot_action(user_id, {"action": "compare", "target_id": targets[0].user_id})
         required = cost / max(1, self.pot + cost) + 0.08 + min(0.16, cost / max(1, player.stack) * 0.4)
         if "call" in actions and equity >= required and (percentile >= 0.45 or cost <= self.ANTE * 2):
             return {"action": "call"}

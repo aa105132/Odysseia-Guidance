@@ -147,6 +147,14 @@ class GameBotRunner:
                 trial = copy.deepcopy(room.engine)
                 payload = dict(action)
                 trial.act(user_id, payload.pop("action"), **payload)
+                if room.game_type == "golden_flower":
+                    guarded = room.engine.guard_bot_action(user_id, action)
+                    if guarded != action:
+                        log.info("炸金花陪玩风险保护：%s -> %s", action["action"], guarded["action"])
+                        action = guarded
+                        trial = copy.deepcopy(room.engine)
+                        payload = dict(action)
+                        trial.act(user_id, payload.pop("action"), **payload)
             except Exception as exc:
                 log.warning("陪玩模型动作非法，回退算法：%s %s", room.game_type, type(exc).__name__)
             else:

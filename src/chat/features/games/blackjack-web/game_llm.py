@@ -20,7 +20,7 @@ MAX_RESPONSE_BYTES = 32768
 MAX_CONTENT_BYTES = 4096
 RULES = {
     "texas": "无限注德州扑克。用自己的两张底牌和五张公共牌组成最佳五张牌，底牌从发下就已知，没有look动作，不必等翻牌才判断。raise.amount是本轮加注到的总额而非追加金额，遵守min_raise_to/max_raise_to；河牌仍有最后一轮下注。目标是长期筹码收益，而非只拿对子或确定能赢才入池。AK/AQ等高牌、同花连张、合适位置的同花A也有价值；小对子面对危险牌面不等于强牌。先看hand_analysis、位置、有效筹码和public_action_history，再比较跟注成本与范围胜率。equity_reference只是假设范围的摊牌参考：随机范围与较强范围对照均不是真实对手牌力；多人翻前仍未行动者可能弃牌，不要把全桌摊牌胜率直接套当前底池赔率导致好牌也弃。对手全下只说明下注尺度，不代表坚果；根据筹码深度、赔率和历史判断，用优势牌或足够赔率的牌接有利全下，不能一见all_in就fold，也不能无条件接。能免费check时不fold；强牌主动价值下注。后位未加注底池选择性偷盲；单挑或双对手示弱时，用阻断牌、合理下注故事或改善空间小额诈唬，同花/顺子听牌可以半诈唬；河牌错失听牌也可按阻断牌与历史诈唬，不能弱牌一律check/fold。对手已经全下时不靠诈唬逼退该玩家；多人强行动、大成本或缺乏合理范围时收紧。先判断机会合理且成本可控，再用mix_percentile混合：小额偷池约低于25执行，优质听牌半诈唬约低于40执行；其余正常过牌/跟注，价值下注不受阈值限制。",
-    "golden_flower": "炸金花。未看牌不能知道自己的三张牌；look免费且不结束回合，但以后跟加注成本加倍，并非必做动作。低成本首圈可以闷跟或选择性闷加，不要见别人加注就条件反射look。raise.amount是新的基础注总额，暗牌实际付amount、看牌者付2*amount；compare费用另见compare_cost，target_id必须来自compare_targets，同牌力时发起方负。看牌后不需要暴露真实强弱：弱牌可在有利单挑、小成本且公开行动支持时继续跟注或加注诈唬，强牌可价值加注或诱导，不能形成'看牌-弱牌就丢、对子才加'的固定模式。对手未看牌意味着其不知道自己牌力，盲加注本身不是强牌证据；已看牌也不等于必强，结合看牌后的公开行动、成本与人数判断。strategy提供随机三张牌范围的抽样基线，单张尤其高单张也可能领先盲打范围；不能把对手全部假定成对子以上。结合随机范围胜率、比牌费用和继续下注风险；单挑有利时可主动compare，尤其对反复抬价的盲打者，避免一直付跟注或无条件被吓退。多人compare只淘汰一人，不是立即收池；调用示例金额仍须在合法范围。先判断诈唬是否可信且便宜，再用mix_percentile约低于25时混合小额诈唬；强牌价值下注不受阈值限制，不为诈唬强行耗光筹码。",
+    "golden_flower": "炸金花。牌力从高到低：豹子、顺金（同花顺）、金花（同花）、顺子、对子、单张；金花及以上才定义为强牌，顺子、对子不是顶住明牌加注的强牌。未看牌不能知道自己的三张牌；look免费且不结束回合，看后费用加倍。只允许首圈、小成本、有预算的少量闷跟或闷加；超过首圈、成本升高或对手看牌后加注，先look再决策，不能无限盲跟。遵守strategy.risk_policy：must_look_before_paying时先look，weak_hand_must_fold时fold。seen_raises只记录对手看牌后加注；不要把先盲加后看牌误判为明牌加注。对看牌后加注者收紧范围，同花以下弃牌，不因底池大或已投入而硬跟。随机三张牌胜率仅适用于未知盲打基线，不是已看牌加注者的真实范围；跟注不会结束下注，没有新牌可改善。弱牌只在无明牌加注、低成本且未超过weak_hand_total_budget时少量试探，mix_percentile低于8才考虑小额诈唬；不得持续跟注耗光筹码。强牌主动价值加注或适时compare，仍须结合成本、人数和牌内大小，不保证同花必胜。raise.amount是新的基础注总额，暗牌付amount、看牌付2*amount；compare_cost是比牌费用，target_id来自compare_targets，同牌力发起方负。单挑比牌胜者立即收池，多人compare只淘汰一人；有利时比牌结束拉锯，不要永远call。",
     "landlord": "斗地主，地主对两名农民。bid 为 0 至 3 的叫分，play.cards 是要出的手牌；同类牌型比大小，炸弹和王炸例外。农民应配合队友，考虑剩余张数、保留炸弹和拆牌成本。",
     "guandan": "掼蛋，四人对家组队，双副108张。level是全桌当前级牌，红桃级牌可配非王；单对三、三带二、五张顺子、三连对、两连三、同点炸弹、同花顺和四王。同花顺大于五炸小于六炸。出完后若无人压，队友接风。优先从play_options选合法cards及combo，保留#0/#1区分两副；combo决定通配牌型，必须原样使用该牌组的合法combo，省略时引擎按最弱可压解释。自由领出先规划成组牌，保留自然炸弹，不能把四张J无故拆单。配合队友剩余张数和出牌顺序，队友快走完时让牌，自己立即走完或需要拦截下家对手末牌时除外。输出action、cards，可附合法combo。",
     "mahjong": "四人麻将。discard.tile 打牌，chow.tiles 选择 chow_options 中的顺子，kong.tile 来自 kong_options，pung 碰，win 胡，pass 跳过响应。只依据自身手牌、公开副露和弃牌。",
@@ -48,7 +48,7 @@ PUBLIC_FIELDS = set("""phase state finished current_player_id current_turn_user_
 players user_id hand hand_count stack round_bet total_bet folded all_in payout score_delta
 is_dealer is_small_blind is_big_blind hand_name buy_in base_stake small_blind big_blind
 legal_actions community_cards pot current_bet call_amount min_raise min_raise_to max_raise_to
-side_pots amount winners settlement ante seen base_bet compare_cost action_count max_actions
+side_pots amount winners settlement ante seen seen_raises base_bet compare_cost action_count max_actions
 compare_targets score role bid landlord_id highest_bid bids bid_options bottom_cards last_play
 cards kind rank size chain seat_actions action multiplier deal_count score_unit effective_stake
 melds tiles type concealed tile_count discards seat_wind wall_count last_discard tile chow_options
