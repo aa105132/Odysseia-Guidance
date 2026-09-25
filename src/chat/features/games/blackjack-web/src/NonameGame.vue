@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CopyRoomCode from './CopyRoomCode.vue';
 const props = defineProps<{ username: string; apiCall: <T>(path: string, method: 'GET' | 'POST', body?: unknown, retries?: number) => Promise<T> }>();
-const emit = defineEmits<{ back: [] }>();
+const emit = defineEmits<{ back: []; roomActive: [boolean] }>();
 const frame = ref<HTMLIFrameElement>();
 const started = ref(false);
 const busy = ref(false);
@@ -17,6 +17,8 @@ const preset = ref('classic');
 const capacity = ref(8);
 const pending = ref(false);
 let commandTimer: ReturnType<typeof setTimeout> | undefined;
+const roomActive = computed(() => started.value && (!online.value || ['waiting', 'playing'].includes(phase.value)));
+watch(roomActive, active => emit('roomActive', active), { immediate: true, flush: 'sync' });
 let launch: { type: string; username: string; mode: string };
 function reset() {
   clearTimeout(commandTimer); started.value = false; online.value = false; pending.value = false;

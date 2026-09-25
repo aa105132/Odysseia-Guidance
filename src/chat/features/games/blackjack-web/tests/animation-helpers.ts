@@ -26,7 +26,7 @@ export async function captureFinalScreenshot(page: Page, name: string) {
 }
 
 export async function expectIllustrationVisible(entry: Locator) {
-  const illustration = entry.locator('.game-icon');
+  const illustration = entry.locator('.game-icon, .game-card-art img');
   await expect(illustration).toBeVisible();
   await expect.poll(() => illustration.evaluate(element => {
     if (element instanceof HTMLImageElement) return element.complete && element.naturalWidth > 0;

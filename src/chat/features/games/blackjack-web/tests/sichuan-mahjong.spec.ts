@@ -238,14 +238,19 @@ for (const viewport of viewports) {
     await page.setViewportSize(viewport);
     const mock = await mockSichuan(page);
     await enterSichuan(page, false);
-    await controlsInStage(page, '.tg-variant-tabs button, .tg-tier-card, .tg-mode-card, .tg-lobby-footer button, .tg-toolbar button');
+    await expect(page.locator('.multi-root')).toHaveClass(/hub-fullscreen/);
+    for (const control of await page.locator('.tg-variant-tabs button, .tg-tier-card, .tg-mode-card, .tg-lobby-footer button, .tg-toolbar button').all()) {
+      await expect(control).toBeInViewport({ ratio: 1 });
+      expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(35.5);
+      await control.click({ trial: true });
+    }
     await page.getByRole('button', { name: '玩法规则', exact: true }).click();
     await expect(page.getByRole('dialog')).toContainText('108');
     await expect(page.getByRole('dialog')).toContainText('换三张');
     await page.getByRole('button', { name: '关闭规则', exact: true }).click();
     await page.getByRole('button', { name: '月月陪玩', exact: true }).click();
     expect(mock.requests.find(request => request.path.endsWith('/create'))?.body)
-      .toEqual({ game_type: 'sichuan_mahjong', mode: 'solo', include_yueyue: true, room_tier: 'beginner' });
+      .toEqual({ game_type: 'sichuan_mahjong', mode: 'solo', include_yueyue: true, room_tier: 'beginner', turn_timeout_seconds: 60 });
     await page.getByRole('button', { name: '准备', exact: true }).click();
     await page.getByRole('button', { name: '开始本局', exact: true }).click();
     await expectRealMotion(page.locator('.tg-hand-card'));

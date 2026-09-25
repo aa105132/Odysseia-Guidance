@@ -34,7 +34,9 @@ async function setup(page: Page, viewer = host) {
 
 test('建房携带所选等待时长，房主修改后提交秒数', async ({ page }) => {
   const { requests } = await setup(page);
+  await page.getByRole('button', { name: '入席设置', exact: true }).click();
   await page.locator('#create-turn-seconds').selectOption('120');
+  await page.getByRole('button', { name: '关闭入席设置' }).click();
   await page.getByRole('button', { name: '好友同桌', exact: true }).click();
   expect(requests[0]?.body.turn_timeout_seconds).toBe(120);
   await page.getByRole('button', { name: '房间设置', exact: true }).click();
@@ -47,14 +49,18 @@ test('建房携带所选等待时长，房主修改后提交秒数', async ({ pa
 
 test('单人建房使用相同时长设置', async ({ page }) => {
   const { requests } = await setup(page);
+  await page.getByRole('button', { name: '入席设置', exact: true }).click();
   await page.locator('#create-turn-seconds').selectOption('15');
+  await page.getByRole('button', { name: '关闭入席设置' }).click();
   await page.getByRole('button', { name: '月月陪玩', exact: true }).click();
   expect(requests[0]?.body).toMatchObject({ mode: 'solo', turn_timeout_seconds: 15 });
 });
 
 test('访客只能查看房间操作等待时长', async ({ page }) => {
   await setup(page, guest);
+  await page.getByRole('button', { name: '入席设置', exact: true }).click();
   await page.locator('#create-turn-seconds').selectOption('90');
+  await page.getByRole('button', { name: '关闭入席设置' }).click();
   await page.getByRole('button', { name: '好友同桌', exact: true }).click();
   await page.getByRole('button', { name: '房间设置', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '房间设置', exact: true });

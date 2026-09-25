@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "id": "yueyue-teahouse",
+      "file": "yueyue-teahouse.webp",
+      "usage": "Decorative lobby scene only. Navigation, game cards, counters and room directory are rendered by Vue/CSS.",
+      "dimensions": { "width": 1672, "height": 941 },
+      "bytes": 208814,
+      "sha256": "80499804e4ac9e71180e73ab0dbfc78713b4ac7d8637af61dcdb7fdc6a2e25a6",
+      "generation": {
+        "tool": "PI-Desktop GenerateImages",
+        "model": "chatgpt-gpt-image-2",
+        "sourceFilename": "generated-c5ac75d6-cc0e-41e7-ae6a-953ff4393e5d.png",
+        "styleReferenceFilename": "generated-019b5f6e-c487-44b9-95db-6af34f4c2f18.png",
+        "referenceUsage": "Character and atmosphere reference only; the concept screenshot is not shipped as a background.",
+        "promptSummary": "A clean warm Chinese teahouse illustration for a game lobby, adult silver-haired cat-eared Yueyue near the left third, uncluttered quiet right half, simple natural hands and connected wrists, waist-up framing with legs and feet outside the image. No UI, text, buttons, frames, labels or counters."
+      },
+      "processing": { "library": "Pillow", "format": "WebP", "quality": 88 },
+      "visualQA": "Inspected full image and enlarged hands/wrists in the browser preview: no baked-in UI or obvious extra/fused fingers or disconnected wrists observed. Feet are outside the composition."
+    }
+  ],
+  "uiDecorations": [
+    { "file": "card-frame.svg", "source": "code-native SVG", "usage": "Nine-slice gold double border with corner ornaments; never a baked-in UI screenshot." },
+    { "file": "card-brocade.svg", "source": "code-native SVG", "usage": "Subtle repeating brocade pattern beneath real card content." }
+  ],
+  "reusedAssets": "/ui/farm-v2/games/*.webp; original farm-v2 assets and manifest remain unchanged",
+  "sourceWorkflow": "Codex thread 01a0c854-22ea-74b0-96ce-006b128e8616: separate scene generation from UI/asset sheets, retain sources, compress runtime images and record a manifest."
+}

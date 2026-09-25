@@ -397,7 +397,12 @@ test('插画大厅与场次入口适配横屏，准入限制和创建参数一�
       await expectIllustrationVisible(entry);
       await entry.click({ trial: true });
     }
-    for (const control of await page.locator('.tg-lobby button').all()) await expect(control).toBeInViewport({ ratio: 1 });
+    // 固定透明右区：主要控件必须同时可见，不能先滚动再检查。
+    for (const control of await page.locator('.tg-lobby button').all()) {
+      await expect(control).toBeInViewport({ ratio: 1 });
+      await control.click({ trial: true });
+    }
+    expect(await page.locator('.tg-lobby').evaluate(el => [el.scrollWidth - el.clientWidth, el.scrollHeight - el.clientHeight, el.scrollTop])).toEqual([0, 0, 0]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(page.locator('.tg-lobby')).not.toContainText('带入');
     await captureFinalScreenshot(page, `lobby-tiers-${viewport.width}x${viewport.height}.png`);

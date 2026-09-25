@@ -45,7 +45,7 @@ async function setup(page: Page, rooms: Listed[], options: { joinError?: string;
 test('大厅列表筛选、满员、对局中与灵石不足状态', async ({ page }) => {
   const calls = await setup(page, [listed('OPEN01'), listed('BJ0001', 'blackjack'), listed('FULL01', 'texas', { can_join: false, player_count: 4 }), listed('PLAY01', 'mahjong', { can_join: false, state: 'playing' }), listed('RICH01', 'texas', { entry_min: 5000 })]);
   await page.getByRole('button', { name: '房间列表', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '房间列表' });
+  const dialog = page.locator('.game-hub-panel .room-directory-embedded');
   await expect(dialog.locator('.directory-room')).toHaveCount(5);
   await expect(dialog.getByRole('button', { name: '已满员 FULL01', exact: true })).toBeDisabled();
   await expect(dialog.getByRole('button', { name: '对局中 PLAY01', exact: true })).toBeDisabled();
@@ -60,7 +60,7 @@ test('大厅列表筛选、满员、对局中与灵石不足状态', async ({ pa
   await expect(dialog.locator('[data-room-id="FULL01"]')).toHaveCount(0);
   await expect(dialog.locator('[data-room-id="PLAY01"]')).toHaveCount(0);
   await expect(dialog.locator('[data-room-id="RICH01"]')).toHaveCount(0);
-  await page.getByRole('button', { name: '关闭房间列表' }).click();
+  await page.getByRole('button', { name: '精选玩法', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(calls.filter(call => call.path.endsWith('/join'))).toHaveLength(0);
 });
@@ -71,7 +71,7 @@ for (const game of ['blackjack', 'landlord', 'mahjong', 'sichuan_mahjong']) {
     const calls = await setup(page, [listed('JOIN01', game)]);
     await page.getByRole('button', { name: '房间列表', exact: true }).click();
     await page.getByRole('button', { name: '入座 JOIN01', exact: true }).click();
-    await expect(page.getByRole('dialog', { name: '房间列表' })).toHaveCount(0);
+    await expect(page.locator('.room-directory')).toHaveCount(0);
     await expect(page.locator(game === 'blackjack' ? '.multi-mode-view' : '.tg-scroll')).toBeVisible();
     for (const control of await page.locator('.table-toolbar button, .tg-toolbar button').all()) {
       await expect(control).toBeInViewport({ ratio: 1 });
@@ -94,7 +94,7 @@ test('入座失败保留列表并显示服务端原因', async ({ page }) => {
   await setup(page, [listed('GONE01', 'blackjack')], { joinError: '房间刚刚已满员，请选择其他房间' });
   await page.getByRole('button', { name: '房间列表', exact: true }).click();
   await page.getByRole('button', { name: '入座 GONE01', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '房间列表' });
+  const dialog = page.locator('.game-hub-panel .room-directory-embedded');
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('alert')).toContainText('房间刚刚已满员');
   await expect(dialog.getByRole('button', { name: '入座 GONE01', exact: true })).toBeEnabled();
@@ -104,7 +104,7 @@ test('空列表、刷新失败与分页控件都有明确反馈', async ({ page 
   const options = { listError: false, total: 101 };
   const calls = await setup(page, [], options);
   await page.getByRole('button', { name: '房间列表', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '房间列表' });
+  const dialog = page.locator('.game-hub-panel .room-directory-embedded');
   await expect(dialog.getByRole('status')).toContainText('暂时没有合适的房间');
   await expect(dialog.getByRole('button', { name: '上一页', exact: true })).toBeDisabled();
   await dialog.getByRole('button', { name: '下一页', exact: true }).click();
@@ -136,3 +136,29 @@ test('玩法大厅限定房间类型，窄横屏弹窗可滚动且控件可点�
   expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+for (const viewport of [{ width: 844, height: 390 }, { width: 390, height: 844 }, { width: 568, height: 320 }]) {
+  test(`嵌入房间列表完整入屏并在切回玩法时停止轮询 ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const calls = await setup(page, Array.from({ length: 12 }, (_, index) => listed(`ROOM${index}`)));
+    // 在组件创建定时器前接管时钟，避免依赖仍在走真实时间的旧 interval。
+    await page.clock.install();
+    await page.getByRole('button', { name: '房间列表', exact: true }).click();
+    const directory = page.locator('.game-hub-panel .room-directory-embedded');
+    await expect(directory.locator('.directory-room')).toHaveCount(12);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(directory).toBeInViewport({ ratio: 1 });
+    await expect(page.locator('.lobby-auxiliary')).toBeInViewport({ ratio: 1 });
+    expect(await directory.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await directory.locator('.directory-room').last().scrollIntoViewIfNeeded();
+    await directory.getByRole('button', { name: '入座 ROOM11', exact: true }).click({ trial: true });
+    const before = calls.filter(call => call.path === '/api/rooms').length;
+    await page.clock.fastForward(5100);
+    await expect.poll(() => calls.filter(call => call.path === '/api/rooms').length).toBeGreaterThan(before);
+    await page.getByRole('button', { name: '精选玩法', exact: true }).click();
+    const after = calls.filter(call => call.path === '/api/rooms').length;
+    await page.clock.fastForward(10100);
+    expect(calls.filter(call => call.path === '/api/rooms')).toHaveLength(after);
+    await expect(page.locator('.hub-game-grid > .game-card')).toHaveCount(6);
+  });
+}

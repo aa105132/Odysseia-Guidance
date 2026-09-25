@@ -61,14 +61,17 @@ type RoomTier = PublicTier | 'custom';
 type RoomEnvelope = { success: boolean; room: RoomState | null; viewer_balance?: number; room_exit_reason?: 'kicked' };
 type ApiCall = <T>(endpoint: string, method: 'GET' | 'POST', body?: unknown, retries?: number) => Promise<T>;
 
-const props = defineProps<{ gameType: TableGameType; profile: Profile; apiCall: ApiCall; initialRoomId?: string }>();
-const emit = defineEmits<{ back: []; balance: [number]; invite: [RoomInvite]; joinFailed: [string] }>();
+const props = defineProps<{ gameType: TableGameType; profile: Profile; apiCall: ApiCall; initialRoomId?: string; embedded?: boolean }>();
+const emit = defineEmits<{ back: []; balance: [number]; invite: [RoomInvite]; joinFailed: [string]; roomActive: [boolean]; entryBusy: [boolean] }>();
 const room = ref<RoomState | null>(null);
 const socialPanel = ref<InstanceType<typeof GameSocial> | null>(null);
 watch(() => room.value?.state, state => setGameAudioScene(state === 'playing' || state === 'finished' ? 'playing' : 'lobby'), { immediate: true, flush: 'sync' });
 const roomInput = ref('');
 const busy = ref(false);
 const recovering = ref(true);
+// Layout changes are notifications only: never remount to enter/leave a table.
+watch(() => Boolean(room.value), active => emit('roomActive', active), { immediate: true, flush: 'sync' });
+watch(() => busy.value || recovering.value, active => emit('entryBusy', active), { immediate: true, flush: 'sync' });
 const showRoomDirectory = ref(false);
 const error = ref('');
 const includeYueyue = ref(true);
@@ -81,6 +84,7 @@ const settingsBase = ref<number>(1);
 const settingsLimit = ref<number>(100);
 const settingsAutoStart = ref(false);
 const createTurnSeconds = ref(60);
+const entrySettingsDialog = ref<HTMLDialogElement | null>(null);
 const settingsTurnSeconds = ref(60);
 const turnTimeOptions = [15, 30, 60, 90, 120, 180, 300];
 const validTurnSeconds = (value: number) => Number.isInteger(value) && value >= 15 && value <= 300;
@@ -863,6 +867,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   cancelAllIn();
+  emit('entryBusy', false);
   stopGameVoice();
   setGameAudioScene('lobby');
   disposed = true;
@@ -877,11 +882,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="table-games" :data-dealing="isDealing" :class="[{ 'has-room': room, 'tg-waiting': room?.state !== 'playing', 'tg-finished': game?.finished, 'tg-playing-cards': game?.phase === 'playing' && !game.finished, 'game-mahjong': isMahjong, 'tg-dingque': game?.phase === 'dingque' }, `game-${currentGameType}`]">
+  <section class="table-games" :data-dealing="isDealing" :class="[{ 'embedded-selection': embedded && !room, 'has-room': room, 'tg-waiting': room?.state !== 'playing', 'tg-finished': game?.finished, 'tg-playing-cards': game?.phase === 'playing' && !game.finished, 'game-mahjong': isMahjong, 'tg-dingque': game?.phase === 'dingque' }, `game-${currentGameType}`]">
     <header class="tg-toolbar">
+      <img v-if="embedded && !room" class="tg-selection-icon" :src="`/ui/farm-v2/games/${props.gameType}.webp`" alt="" />
       <div class="tg-title"><h2>{{ rules.title }}<span v-if="room" class="tg-tier-tag">{{ tierNames[room.room_tier] }}</span></h2><p v-if="room" :title="game?.message">房间 {{ room.room_id }} · {{ room.state === 'waiting' ? '等待准备' : room.state === 'finished' ? '本局结束' : phaseLabel }}<span v-if="game && !game.finished && ['texas', 'golden_flower'].includes(currentGameType)" class="tg-compact-notice"> · {{ game.message }}</span></p><p v-else>{{ rules.summary }}</p></div>
       <div class="tg-actions">
-        <GameTools :profile="profile" :api-call="apiCall" :game-type="currentGameType" :rules-available="Boolean(room)" @rules="rulesDialog?.showModal()" />
+        <GameTools v-if="!embedded || room" :profile="profile" :api-call="apiCall" :game-type="currentGameType" :rules-available="Boolean(room)" @rules="rulesDialog?.showModal()" />
         <button v-if="room" class="game-button gold" aria-label="打开牌桌聊天" :aria-expanded="socialPanel?.chatOpen ?? false" aria-controls="game-social-chat" @click="socialPanel?.toggleChat()">聊天</button>
         <button v-else class="game-button quiet" @click="rulesDialog?.showModal()">玩法规则</button>
         <CopyRoomCode v-if="room" :room-id="room.room_id" />
@@ -908,10 +914,10 @@ onBeforeUnmount(() => {
         </div>
         <div class="tg-entry-row">
           <button class="tg-mode-card tg-solo-entry" aria-label="月月陪玩" :disabled="busy || !canEnterTier" @click="create('solo')"><GameIcon name="solo" /><span><strong>月月陪玩</strong><small>自动配齐，随时开局</small></span><span class="tg-entry-arrow" aria-hidden="true">›</span></button>
-          <div class="tg-friends-entry"><button class="tg-mode-card" aria-label="好友同桌" :disabled="busy || !canEnterTier" @click="create('multi')"><GameIcon name="friends" /><span><strong>好友同桌</strong><small>创建{{ tier.title }}，邀请朋友</small></span><span class="tg-entry-arrow" aria-hidden="true">›</span></button><label class="tg-check"><input v-model="includeYueyue" type="checkbox" :disabled="busy">邀请月月一起玩</label></div>
+          <div class="tg-friends-entry"><button class="tg-mode-card" aria-label="好友同桌" :disabled="busy || !canEnterTier" @click="create('multi')"><GameIcon name="friends" /><span><strong>好友同桌</strong><small>创建{{ tier.title }}，邀请朋友</small></span><span class="tg-entry-arrow" aria-hidden="true">›</span></button><label v-if="!embedded" class="tg-check"><input v-model="includeYueyue" type="checkbox" :disabled="busy">邀请月月一起玩</label></div>
         </div>
-        <div class="tg-turn-setting tg-turn-create"><label for="create-turn-seconds">操作等待时长（秒）</label><select id="create-turn-seconds" v-model.number="createTurnSeconds" :disabled="busy"><option v-for="seconds in turnTimeOptions" :key="seconds" :value="seconds">{{ seconds }} 秒</option></select><small>适用于单人和好友房间</small></div>
-        <div class="tg-lobby-footer"><p :class="{ 'tg-entry-insufficient': !canEnterTier }">{{ canEnterTier ? `${tier.title} · 底分 ${tier.base} · 准入 ${tier.entry} 灵石` : `进入${tier.title}还需 ${tier.entry - profile.balance} 灵石` }}</p><div class="tg-actions"><button class="game-button" :disabled="busy" @click="showRoomDirectory = true">房间列表</button><button class="game-button quiet" :disabled="busy" @click="error = ''; customDialog?.showModal()"><GameIcon name="room" />自定义房间</button><button class="game-button gold" :disabled="busy" @click="error = ''; joinDialog?.showModal()">加入房间</button></div></div>
+        <div v-if="!embedded" class="tg-turn-setting tg-turn-create"><label for="create-turn-seconds">操作等待时长（秒）</label><select id="create-turn-seconds" v-model.number="createTurnSeconds" :disabled="busy"><option v-for="seconds in turnTimeOptions" :key="seconds" :value="seconds">{{ seconds }} 秒</option></select><small>适用于单人和好友房间</small></div>
+        <div class="tg-lobby-footer"><p :class="{ 'tg-entry-insufficient': !canEnterTier }">{{ canEnterTier ? `${tier.title} · 底分 ${tier.base} · 准入 ${tier.entry} 灵石` : `进入${tier.title}还需 ${tier.entry - profile.balance} 灵石` }}</p><div class="tg-actions"><button v-if="embedded" class="game-button" :disabled="busy" @click="entrySettingsDialog?.showModal()">入席设置</button><button class="game-button" :disabled="busy" @click="showRoomDirectory = true">房间列表</button><button class="game-button quiet" :disabled="busy" @click="error = ''; customDialog?.showModal()"><GameIcon name="room" />自定义房间</button><button class="game-button gold" :disabled="busy" @click="error = ''; joinDialog?.showModal()">加入房间</button></div></div>
       </div>
     </div>
 
@@ -1044,6 +1050,13 @@ onBeforeUnmount(() => {
     </template>
 
     <p v-if="error" class="tg-error" role="alert">{{ error }}</p>
+
+    <dialog v-if="embedded && !room" ref="entrySettingsDialog" class="tg-modal tg-entry-settings" aria-labelledby="entry-settings-title">
+      <div class="tg-modal-head"><h2 id="entry-settings-title">入席设置</h2><button class="game-button quiet" aria-label="关闭入席设置" @click="entrySettingsDialog?.close()">完成</button></div>
+      <label class="tg-check"><input v-model="includeYueyue" type="checkbox" :disabled="busy">邀请月月一起玩</label>
+      <div class="tg-turn-setting"><label for="create-turn-seconds">操作等待时长（秒）</label><select id="create-turn-seconds" v-model.number="createTurnSeconds" :disabled="busy"><option v-for="seconds in turnTimeOptions" :key="seconds" :value="seconds">{{ seconds }} 秒</option></select></div>
+      <p class="tg-modal-hint">等待时长适用于单人和好友房间；邀请月月适用于好友同桌。</p>
+    </dialog>
 
     <dialog ref="allInDialog" class="tg-modal tg-all-in-confirm" aria-labelledby="all-in-confirm-title" aria-describedby="all-in-confirm-detail" @cancel.prevent="cancelAllIn" @close="pendingAllIn = null">
       <template v-if="pendingAllIn">
@@ -1708,3 +1721,5 @@ onBeforeUnmount(() => {
   .game-guandan.tg-finished .tg-seat[data-position="north"] { top: 17%; }
 }
 </style>
+
+<style scoped src="./lobby-table-select.css"></style>

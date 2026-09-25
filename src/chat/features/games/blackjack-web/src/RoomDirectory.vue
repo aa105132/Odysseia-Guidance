@@ -8,9 +8,9 @@ type ListedRoom = {
   base_stake: number | null; entry_min: number; loss_limit: number | null; is_member: boolean;
 };
 type ApiCall = <T>(endpoint: string, method: 'GET' | 'POST', body?: unknown, retries?: number) => Promise<T>;
-const props = defineProps<{ apiCall: ApiCall; balance: number; gameType?: string; restrictGame?: boolean; joinRoom: (room: ListedRoom) => Promise<boolean> }>();
+const props = defineProps<{ apiCall: ApiCall; balance: number; gameType?: string; restrictGame?: boolean; embedded?: boolean; joinRoom: (room: ListedRoom) => Promise<boolean> }>();
 const emit = defineEmits<{ close: [] }>();
-const panel = ref<HTMLDialogElement | null>(null);
+const panel = ref<HTMLElement | null>(null);
 const rooms = ref<ListedRoom[]>([]);
 const loading = ref(false);
 const joining = ref('');
@@ -60,14 +60,15 @@ async function join(room: ListedRoom) {
 function close() { if (!joining.value) emit('close'); }
 watch(filter, () => { offset.value = 0; void refresh(); });
 function changePage(direction: number) { offset.value = Math.max(0, offset.value + direction * 100); void refresh(); }
-onMounted(() => { panel.value?.showModal(); void refresh(); timer = setInterval(() => { if (!document.hidden) void refresh(); }, 5000); });
-onBeforeUnmount(() => { disposed = true; sequence++; clearInterval(timer); panel.value?.close(); });
+onMounted(() => { if (panel.value instanceof HTMLDialogElement) panel.value.showModal(); void refresh(); timer = setInterval(() => { if (!document.hidden) void refresh(); }, 5000); });
+onBeforeUnmount(() => { disposed = true; sequence++; clearInterval(timer); if (panel.value instanceof HTMLDialogElement) panel.value.close(); });
 </script>
 
 <template>
-  <Teleport to="#app">
-    <dialog ref="panel" class="room-directory" aria-labelledby="room-directory-title" @cancel.prevent="close">
-      <header class="directory-heading"><GameIcon name="room" /><div><small>月月茶楼 · 寻桌入席</small><h2 id="room-directory-title">房间列表</h2></div><button class="game-button quiet" :disabled="Boolean(joining)" aria-label="关闭房间列表" @click="close">关闭</button></header>
+  <Teleport to="#app" :disabled="embedded">
+    <component :is="embedded ? 'section' : 'dialog'" ref="panel" class="room-directory" :class="{ 'room-directory-embedded': embedded }" aria-labelledby="room-directory-title" @cancel.prevent="close">
+      <header v-if="!embedded" class="directory-heading"><GameIcon name="room" /><div><small>月月茶楼 · 寻桌入席</small><h2 id="room-directory-title">房间列表</h2></div><button class="game-button quiet" :disabled="Boolean(joining)" aria-label="关闭房间列表" @click="close">关闭</button></header>
+      <h2 v-else id="room-directory-title" class="embedded-directory-title">寻桌入席 <small>找一桌喜欢的玩法，和牌友一起开局</small></h2>
       <div class="directory-filters"><label>玩法 <select v-model="filter" :disabled="loading || Boolean(joining) || restrictGame" aria-label="筛选房间玩法"><option value="">全部玩法</option><option v-for="(name, id) in names" :key="id" :value="id">{{ name }}</option></select></label><label class="directory-open"><input v-model="onlyOpen" type="checkbox">只看可加入</label><button class="game-button" :disabled="loading || Boolean(joining)" @click="refresh">{{ loading ? '刷新中…' : '刷新' }}</button></div>
       <p v-if="error" class="directory-error" role="alert">{{ error }}</p>
       <div class="directory-list" :aria-busy="loading" aria-label="公开多人房间">
@@ -80,7 +81,7 @@ onBeforeUnmount(() => { disposed = true; sequence++; clearInterval(timer); panel
       </div>
       <nav v-if="total > 100 || offset" class="directory-pages" aria-label="房间列表分页"><button class="game-button" :disabled="!offset || loading || Boolean(joining)" @click="changePage(-1)">上一页</button><span>第 {{ offset / 100 + 1 }} 页 · 共 {{ total }} 桌</span><button class="game-button" :disabled="offset + 100 >= total || loading || Boolean(joining)" @click="changePage(1)">下一页</button></nav>
       <footer>多人房间对大厅公开 · 每 5 秒更新 · 入座不会自动下注</footer>
-    </dialog>
+    </component>
   </Teleport>
 </template>
 
@@ -114,4 +115,48 @@ onBeforeUnmount(() => { disposed = true; sequence++; clearInterval(timer); panel
 .directory-pages { display: flex; justify-content: center; align-items: center; gap: 12px; font-size: 12px; }
 @container activity-viewport (max-height: 450px) { .room-directory { padding: 10px 14px; border-radius: 14px; } .room-directory[open] { gap: 6px; } .directory-heading h2 { font-size: 18px; } .directory-heading > .game-icon { height: 36px; width: 43px; } .directory-heading small { font-size: 9px; } .directory-room { padding: 8px; gap: 9px; } .directory-room > .game-icon { width: 45px; height: 44px; } .directory-room h3 { font-size: 14px; } }
 @container activity-viewport (max-width: 620px) { .directory-filters { gap: 8px; font-size: 11px; } .directory-filters select { max-width: 120px; } .directory-room > .game-icon { width: 40px; } .directory-room > button { min-width: 66px; } }
+.room-directory-embedded { display: flex; flex-direction: column; gap: 12px; flex: 1 1 0; width: 100%; height: auto; min-width: 0; min-height: 0; margin: 0; padding: 12px; color: var(--game-paper-ink, #35434e); background: #f3ebdb; border-color: #cbb185; border-radius: 12px; box-shadow: inset 0 0 0 3px #a47a3410; }
+.embedded-directory-title { flex: none; margin: 0; font-size: 16px; color: #58482f; }
+.embedded-directory-title small { display: block; margin-top: 4px; font-size: 11px; font-weight: 400; color: #756346; }
+.room-directory-embedded .directory-filters { gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.room-directory-embedded .directory-filters label { min-width: 0; min-height: 36px; }
+.room-directory-embedded .directory-filters select { min-width: 0; min-height: 36px; padding: 6px; color: #554329; }
+.room-directory-embedded .directory-open { white-space: nowrap; }
+.room-directory-embedded .directory-open input { width: 16px; height: 16px; margin: 0; accent-color: #8d6234; }
+.room-directory-embedded .directory-list { scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #b79562 #e9dfcf; }
+.room-directory-embedded .directory-room { gap: 8px; padding: 10px; margin-bottom: 8px; background: #fffbf3; border-color: #d2bea0; box-shadow: 0 2px 4px #9a784d0c; }
+.room-directory-embedded .directory-room > .game-icon { width: 44px; height: 44px; }
+.room-directory-embedded .directory-room h3 { font-size: 15px; line-height: 1.4; }
+.room-directory-embedded .directory-host { white-space: normal; overflow: visible; overflow-wrap: anywhere; line-height: 1.5; color: #675a48; }
+.room-directory-embedded .directory-terms { gap: 4px 8px; color: #756346; line-height: 1.5; }
+.room-directory-embedded .directory-room > button { min-width: 64px; padding-inline: 10px; }
+.room-directory-embedded .game-button { min-height: 36px; font-size: 12px; border-radius: 8px; }
+.room-directory-embedded :focus-visible { outline: 3px solid #8f612e; outline-offset: 2px; }
+.room-directory-embedded .directory-empty { text-align: center; }
+.room-directory-embedded .directory-empty strong { font-size: 14px; color: #58482f; }
+.room-directory-embedded .directory-empty p { line-height: 1.6; }
+.room-directory-embedded footer { flex: none; line-height: 1.5; color: #756346; font-size: 10px; }
+.room-directory-embedded .directory-error { padding: 6px 8px; border: 1px solid #bc777955; border-radius: 6px; background: #fae6dc; overflow-wrap: anywhere; max-height: 64px; overflow-y: auto; }
+@container activity-viewport (max-height: 600px) {
+  .room-directory-embedded { padding: 8px; gap: 6px; }
+  .embedded-directory-title { display: none; }
+  .room-directory-embedded .directory-filters { font-size: 11px; }
+  .room-directory-embedded .directory-filters select { min-height: 32px; padding: 4px; max-width: 116px; }
+  .room-directory-embedded .directory-filters label, .room-directory-embedded .game-button { min-height: 32px; }
+  .room-directory-embedded .directory-room { padding: 8px; }
+  .room-directory-embedded .directory-room > .game-icon { width: 32px; height: 36px; }
+  .room-directory-embedded .directory-room h3 { font-size: 13px; }
+  .room-directory-embedded .directory-room > button { min-width: 56px; font-size: 11px; padding-inline: 8px; }
+  .room-directory-embedded .directory-empty { padding: 4px; gap: 3px; }
+  .room-directory-embedded .directory-empty .game-icon { width: 45px; height: 36px; }
+}
+@container activity-viewport (max-width: 640px) {
+  .room-directory-embedded { padding: 6px; }
+  .room-directory-embedded .directory-filters { gap: 4px; }
+  .room-directory-embedded .directory-filters select { max-width: 96px; }
+  .room-directory-embedded .directory-room { gap: 6px; padding: 6px; }
+  .room-directory-embedded .directory-room > .game-icon { display: none; }
+  .room-directory-embedded .directory-pages { gap: 6px; font-size: 10px; }
+  .room-directory-embedded .directory-pages .game-button { padding-inline: 6px; font-size: 11px; }
+}
 </style>

@@ -4,7 +4,6 @@ import dialogueConfig from "./dialogue.json";
 import TableGames from "./TableGames.vue";
 import FarmGame from "./FarmGame.vue";
 import YueyueMascot from "./YueyueMascot.vue";
-import FarmPlant from "./FarmPlant.vue";
 import GameTools from "./GameTools.vue";
 import GameStatsPanel from "./GameStatsPanel.vue";
 import { mountGameAudio, unmountGameAudio, playGameSound, setGameAudioScene, playRoundMusic, playGameVoice, stopGameVoice } from "./gameAudio";
@@ -122,6 +121,7 @@ type SingleGameEnvelope = {
 
 const viewMode = ref<ViewMode>("loading");
 const lobbyStatsPanel = ref<'stats' | 'leaderboard' | null>(null);
+const lobbyPage = ref<'games' | 'rooms'>('games');
 const nonameAvailable = ref(false);
 const selectedTableGame = ref<TableGameType>('texas');
 const availableTableGames: TableGameType[] = ['texas', 'landlord', 'mahjong', 'golden_flower', 'guandan'];
@@ -132,6 +132,28 @@ const roomInput = ref("");
 const showRoomDirectory = ref(false);
 const directoryGameType = ref('');
 const pendingTableRoom = ref('');
+// Keep pre-game choices and the actual table in one mounted branch.
+const tableRoomActive = ref(false);
+const tableEntryBusy = ref(false);
+const nonameRoomActive = ref(false);
+const lobbyFamily = computed(() => ['game_hub', 'blackjack_mode_select', 'lobby', 'table_games', 'noname'].includes(viewMode.value));
+const lobbyVisible = computed(() => lobbyFamily.value && !(viewMode.value === 'table_games' && tableRoomActive.value) && !(viewMode.value === 'noname' && nonameRoomActive.value));
+const panelDirection = ref('forward');
+const lastLobbyGame = ref('blackjack');
+watch(viewMode, (next, previous) => {
+  panelDirection.value = next === 'game_hub' || (next === 'blackjack_mode_select' && previous === 'lobby') ? 'back' : 'forward';
+  if (next !== 'table_games') tableRoomActive.value = false;
+  if (next !== 'noname') nonameRoomActive.value = false;
+});
+function focusLobbyPanel(element: Element) {
+  if (blackjackEntryDialog.value?.open) return;
+  const target = viewMode.value === 'game_hub'
+    ? element.querySelector<HTMLElement>(`.${lastLobbyGame.value}-card`)
+    : element.querySelector<HTMLElement>('h2, h3');
+  if (!target) return;
+  if (!target.matches('button')) target.tabIndex = -1;
+  target.focus({ preventScroll: true });
+}
 const inviteTarget = ref<RoomInviteTarget | null>(null);
 let discordSdkInstance: DiscordSDK | null = null;
 let launchRoomTarget: RoomInviteTarget | null = null;
@@ -142,6 +164,26 @@ const singleGame = ref<SingleGameStatePayload | null>(null);
 const profile = ref<ProfileResponse | null>(null);
 const requestInFlight = ref(false);
 const blackjackRulesDialog = ref<HTMLDialogElement | null>(null);
+const blackjackEntryDialog = ref<HTMLDialogElement | null>(null);
+watch(viewMode, (mode, previous) => {
+  const dialog = blackjackEntryDialog.value;
+  if (mode === 'lobby') {
+    if (dialog && !dialog.open) dialog.showModal();
+  } else if (dialog?.open) dialog.close();
+  if (previous === 'lobby' && mode === 'blackjack_mode_select' && !showRoomDirectory.value) {
+    document.querySelector<HTMLButtonElement>('.mode-panel .friends-card')?.focus({ preventScroll: true });
+  }
+}, { flush: 'post' });
+function closeBlackjackEntry() {
+  if (requestInFlight.value) return;
+  clearNotices();
+  blackjackEntryDialog.value?.close();
+  if (viewMode.value === 'lobby') enterBlackjackModeSelect();
+}
+function browseBlackjackRooms() {
+  closeBlackjackEntry();
+  openRoomDirectory('blackjack');
+}
 const blackjackSocial = ref<InstanceType<typeof GameSocial> | null>(null);
 const singleSocial = ref<InstanceType<typeof GameSocial> | null>(null);
 const singleSocialMembers = computed(() => profile.value ? [{ user_id: profile.value.user_id, username: profile.value.username, avatar_url: profile.value.avatar_url, is_bot: false }, { user_id: 'dealer', username: '月月荷官', avatar_url: '/character/normal.webp', is_bot: true }] : []);
@@ -900,12 +942,14 @@ function enterGameHub() {
 }
 
 function enterBlackjackModeSelect() {
+  lastLobbyGame.value = 'blackjack';
   resetPresentation();
   stopRoomPolling();
   viewMode.value = "blackjack_mode_select";
 }
 
 function openTableGame(gameType: TableGameType) {
+  lastLobbyGame.value = gameType;
   pendingTableRoom.value = '';
   resetPresentation();
   clearNotices();
@@ -1046,6 +1090,7 @@ async function singleDouble() {
 }
 
 async function enterMultiMode() {
+  if (requestInFlight.value) return;
   clearNotices();
   if (roomState.value) {
     resetPresentation();
@@ -1069,6 +1114,7 @@ async function enterMultiMode() {
 
   if (isDiscordMode.value) {
     await autoJoinCurrentSession(true);
+    if (viewMode.value !== 'table') viewMode.value = 'lobby';
     return;
   }
 
@@ -1448,14 +1494,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div :class="['multi-root', { 'hub-fullscreen': viewMode === 'game_hub', 'table-fullscreen': ['single', 'table', 'table_games', 'noname', 'farm'].includes(viewMode) }]">
+  <div :class="['multi-root', { 'hub-fullscreen': lobbyVisible, 'table-fullscreen': !lobbyVisible && viewMode !== 'loading' }]">
     <div v-if="viewMode === 'loading'" class="panel loading-panel">
       <h2>月月游戏中心</h2>
       <p>{{ loadingText }}</p>
     </div>
 
     <template v-else>
-      <header v-if="!['single', 'table', 'table_games', 'noname', 'farm'].includes(viewMode)" class="top-bar">
+      <header v-show="lobbyVisible" class="top-bar">
         <div class="title-group">
           <span class="lobby-eyebrow">茶香一盏 · 好牌一局</span>
           <h1>月月游戏中心</h1>
@@ -1487,66 +1533,86 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <section v-if="viewMode === 'game_hub'" class="lobby-panel game-hub-panel">
-        <div class="lobby-section-heading"><h3>今晚，玩点什么？</h3><button class="game-button" @click="openRoomDirectory()">房间列表</button></div>
-        <div class="game-grid hub-game-grid">
-          <button v-if="nonameAvailable" class="game-card" @click="viewMode = 'noname'">
-            <span class="game-card-art"><svg viewBox="0 0 160 140" aria-hidden="true"><path d="M20 30 80 10l60 20v55l-60 45-60-45z" fill="#684877" stroke="#edc278" stroke-width="5"/><path d="m45 35 72 66m-2-67-70 69" stroke="#ffe5a3" stroke-width="8"/><text x="80" y="85" text-anchor="middle" fill="#fff1ca" font-size="42">杀</text></svg></span>
-            <span class="game-card-copy"><span class="game-name">三国杀</span><span class="game-desc">无名杀 · 娱乐试玩</span></span>
-          </button>
-          <button class="game-card blackjack-card" :disabled="requestInFlight" @click="enterBlackjackModeSelect">
-            <span class="game-card-art"><GameIcon name="blackjack" /></span>
-            <span class="game-card-copy"><span class="game-name">21点</span><span class="game-desc">立即游玩</span></span>
-            <span class="card-arrow" aria-hidden="true">◆</span>
-          </button>
-          <button v-for="gameType in availableTableGames" :key="gameType" :class="['game-card', `${gameType}-card`]" :disabled="requestInFlight" @click="openTableGame(gameType)">
-            <span class="game-card-art"><GameIcon :name="gameType" /></span>
-            <span class="game-card-copy"><span class="game-name">{{ tableGameRules[gameType].title }}</span><span class="game-desc">单人挑战 / 多人同桌</span></span>
-            <span class="card-arrow" aria-hidden="true">◆</span>
-          </button>
-          <button class="game-card farm-card" @click="viewMode = 'farm'">
-            <span class="game-card-art"><FarmPlant name="黄精芝" icon="huangjing" /></span>
-            <span class="game-card-copy"><span class="game-name">修仙灵圃</span><span class="game-desc">种灵草 / 逛好友农场</span></span>
-            <span class="card-arrow" aria-hidden="true">◆</span>
-          </button>
-          <button class="game-card leaderboard-card" @click="lobbyStatsPanel = 'leaderboard'">
-            <span class="game-card-art"><GameIcon name="leaderboard" /></span>
-            <span class="game-card-copy"><span class="game-name">排行榜</span><span class="game-desc">当日盈利 / 总计盈利</span></span>
-            <span class="card-arrow" aria-hidden="true">◆</span>
-          </button>
-        </div>
-        <p class="lobby-footnote"><span aria-hidden="true">◆</span> 棋牌游戏使用账户灵石<template v-if="nonameAvailable"> · 三国杀为免费娱乐模式</template></p>
+      <section v-if="lobbyFamily" class="lobby-panel game-hub-panel" :class="{ 'rooms-open': viewMode === 'game_hub' && lobbyPage === 'rooms', 'secondary-open': viewMode !== 'game_hub', 'lobby-table-active': !lobbyVisible }" aria-label="月月茶馆大厅">
+        <nav v-show="lobbyVisible" class="lobby-auxiliary" aria-label="休闲与个人中心">
+          <span class="auxiliary-heading" aria-hidden="true">茶馆闲趣</span>
+          <button class="game-button farm-entry" :disabled="requestInFlight || tableEntryBusy" @click="viewMode = 'farm'"><img src="/ui/farm-v2/icons/seed.webp" alt="" /><span>修仙灵圃</span></button>
+          <span class="auxiliary-divider" aria-hidden="true"></span>
+          <button class="game-button" @click="lobbyStatsPanel = 'stats'"><img src="/ui/farm-v2/icons/guide.webp" alt="" /><span>我的战绩</span></button>
+          <button class="game-button" @click="lobbyStatsPanel = 'leaderboard'"><img src="/ui/farm-v2/icons/upgrade.webp" alt="" /><span>排行榜</span></button>
+        </nav>
+
+        <section v-show="lobbyVisible" class="lobby-scene" aria-label="月月的茶馆">
+          <p class="scene-invitation"><span aria-hidden="true">月月茶馆</span>茶已沏好，等你入席。</p>
+          <YueyueMascot @interact="mascotSpeechUntil = Date.now() + 7000" />
+        </section>
+
+        <section class="lobby-gameplay" aria-label="玩法与入席选择">
+          <div class="lobby-panel-stage" :class="`panel-${panelDirection}`">
+          <Transition name="lobby-panel" mode="out-in" @after-enter="focusLobbyPanel">
+          <div v-if="viewMode === 'game_hub'" key="games" class="lobby-home-panel">
+          <header class="lobby-section-heading">
+            <div class="gameplay-heading-copy"><span class="gameplay-eyebrow">以牌会友 · 闲坐一局</span><h2 id="lobby-gameplay-title">{{ lobbyPage === 'games' ? '入席开局' : '寻桌入席' }}</h2></div>
+            <div class="lobby-view-switch" role="group" aria-label="玩法区视图">
+              <button class="game-button" :aria-pressed="lobbyPage === 'games'" @click="lobbyPage = 'games'">精选玩法</button>
+              <button class="game-button" :aria-pressed="lobbyPage === 'rooms'" @click="lobbyPage = 'rooms'">房间列表</button>
+            </div>
+          </header>
+          <div v-if="lobbyPage === 'games'" class="game-grid hub-game-grid" :class="{ 'has-noname': nonameAvailable }" aria-label="精选玩法">
+            <button class="game-card blackjack-card" :disabled="requestInFlight" @click="enterBlackjackModeSelect">
+              <span class="game-card-art"><img src="/ui/farm-v2/games/blackjack.webp" alt="" /></span>
+              <span class="game-card-copy"><span class="game-name">21点</span><span class="game-desc">立即游玩</span></span>
+              <span class="card-arrow" aria-hidden="true">›</span>
+            </button>
+            <button v-for="gameType in availableTableGames" :key="gameType" :class="['game-card', `${gameType}-card`]" :aria-label="`${tableGameRules[gameType].title} 单人挑战 / 多人同桌`" :disabled="requestInFlight" @click="openTableGame(gameType)">
+              <span class="game-card-art"><img :src="`/ui/farm-v2/games/${gameType}.webp`" alt="" /></span>
+              <span class="game-card-copy"><span class="game-name">{{ tableGameRules[gameType].title }}</span><span class="game-desc">单人 / 多人</span></span>
+              <span class="card-arrow" aria-hidden="true">›</span>
+            </button>
+            <button v-if="nonameAvailable" class="game-card noname-card" :disabled="requestInFlight" @click="lastLobbyGame = 'noname'; viewMode = 'noname'">
+              <span class="game-card-art"><img src="/ui/farm-v2/games/noname.webp" alt="" /></span>
+              <span class="game-card-copy"><span class="game-name">三国杀</span><span class="game-desc">无名杀 · 免费娱乐试玩</span></span>
+              <span class="card-arrow" aria-hidden="true">›</span>
+            </button>
+          </div>
+          <RoomDirectory v-else-if="profile" embedded :api-call="apiCall" :balance="profile.balance" :join-room="joinListedRoom" @close="lobbyPage = 'games'" />
+          <p v-else class="lobby-waiting" role="status">正在加载牌友信息…</p>
+          <p class="lobby-footnote"><span aria-hidden="true">◆</span> 棋牌游戏使用账户灵石<template v-if="nonameAvailable"> · 三国杀免费娱乐</template></p>
+          </div>
+
+          <section v-else-if="viewMode === 'blackjack_mode_select' || viewMode === 'lobby'" key="blackjack-modes" class="secondary-panel mode-panel">
+            <header class="secondary-heading"><img src="/ui/farm-v2/games/blackjack.webp" alt="" /><div><span>精选玩法 / 21点</span><h3>21点 · 选个座位</h3></div><button class="game-button quiet" :disabled="requestInFlight" @click="enterGameHub">返回上一级</button></header>
+            <p class="secondary-intro">独享与月月的对局，或邀好友共坐一桌。</p>
+            <div class="game-grid mode-game-grid">
+              <button class="game-card mode-card solo-card" :disabled="requestInFlight" @click="enterSingleMode">
+                <span class="game-card-art"><GameIcon name="solo" /></span>
+                <span class="game-card-copy"><span class="game-name">单人对战</span><span class="game-desc">你 vs 月月</span></span>
+                <span class="card-arrow" aria-hidden="true">›</span>
+              </button>
+              <button class="game-card mode-card friends-card" :disabled="requestInFlight" @click="enterMultiMode">
+                <span class="game-card-art"><GameIcon name="friends" /></span>
+                <span class="game-card-copy"><span class="game-name">多人对战</span><span class="game-desc">最多3人同桌</span></span>
+                <span class="card-arrow" aria-hidden="true">›</span>
+              </button>
+            </div>
+            <footer class="secondary-footer"><button class="game-button quiet" @click="blackjackRulesDialog?.showModal()">玩法规则</button><button class="game-button" @click="openRoomDirectory('blackjack')">房间列表</button></footer>
+          </section>
+
+
+          <GameViewport v-else-if="viewMode === 'table_games' && profile" :key="`table-${selectedTableGame}`" :class="{ 'lobby-embedded-viewport': !tableRoomActive }">
+            <TableGames :game-type="selectedTableGame" :initial-room-id="pendingTableRoom" :profile="profile" :api-call="apiCall" :embedded="!tableRoomActive" @room-active="tableRoomActive = $event" @entry-busy="tableEntryBusy = $event" @back="enterGameHub" @balance="profile.balance = $event" @invite="openRoomInvite" @join-failed="enterGameHub(); errorMessage = $event" />
+          </GameViewport>
+          <GameViewport v-else-if="viewMode === 'noname' && profile" key="noname" :class="{ 'lobby-embedded-viewport': !nonameRoomActive }">
+            <NonameGame :username="profile.username" :api-call="apiCall" @room-active="nonameRoomActive = $event" @back="enterGameHub" />
+          </GameViewport>
+          </Transition>
+          </div>
+        </section>
       </section>
 
       <GameViewport v-else-if="viewMode === 'farm' && profile">
         <FarmGame :profile="profile" :api-call="apiCall" @back="enterGameHub" @balance="profile.balance = $event" />
       </GameViewport>
-      <GameViewport v-else-if="viewMode === 'noname' && profile">
-        <NonameGame :username="profile.username" :api-call="apiCall" @back="enterGameHub" />
-      </GameViewport>
-      <GameViewport v-else-if="viewMode === 'table_games' && profile">
-        <TableGames :key="selectedTableGame" :game-type="selectedTableGame" :initial-room-id="pendingTableRoom" :profile="profile" :api-call="apiCall" @back="enterGameHub" @balance="profile.balance = $event" @invite="openRoomInvite" @join-failed="enterGameHub(); errorMessage = $event" />
-      </GameViewport>
-
-      <section v-else-if="viewMode === 'blackjack_mode_select'" class="lobby-panel mode-panel">
-        <div class="lobby-section-heading"><h3>21点 · 选个座位</h3><button class="game-button" @click="openRoomDirectory('blackjack')">房间列表</button></div>
-        <div class="game-grid mode-game-grid">
-          <button class="game-card mode-card solo-card" :disabled="requestInFlight" @click="enterSingleMode">
-            <span class="game-card-art"><GameIcon name="solo" /></span>
-            <span class="game-card-copy"><span class="game-name">单人对战</span><span class="game-desc">你 vs 月月</span></span>
-            <span class="card-arrow" aria-hidden="true">◆</span>
-          </button>
-          <button class="game-card mode-card friends-card" :disabled="requestInFlight" @click="enterMultiMode">
-            <span class="game-card-art"><GameIcon name="friends" /></span>
-            <span class="game-card-copy"><span class="game-name">多人对战</span><span class="game-desc">最多3人同桌</span></span>
-            <span class="card-arrow" aria-hidden="true">◆</span>
-          </button>
-        </div>
-        <div class="toolbar-actions">
-          <button class="game-button quiet" @click="blackjackRulesDialog?.showModal()">玩法规则</button>
-          <button class="game-button" :disabled="requestInFlight" @click="enterGameHub">返回上一级</button>
-        </div>
-      </section>
 
       <GameViewport v-else-if="viewMode === 'single'">
       <section class="blackjack-table single-mode-view" :class="{ 'has-round-result': resultVisible && blackjackResult }" :data-dealing="hasDealingCards()" aria-label="单人21点牌桌">
@@ -1622,62 +1688,6 @@ onBeforeUnmount(() => {
       </section>
       </GameViewport>
 
-      <section v-else-if="viewMode === 'lobby'" class="lobby-panel room-lobby-panel">
-        <div class="room-lobby-art"><GameIcon name="room" /><span>好友相聚，好牌开场</span></div>
-        <div class="room-lobby-content">
-        <div class="lobby-section-heading"><h3>多人房间大厅</h3><span>21点 · 最多3人</span></div>
-        <button class="game-button" @click="openRoomDirectory('blackjack')">房间列表</button>
-        <label class="blackjack-time-setting">操作等待时长（秒）<input v-model.number="blackjackTurnSeconds" aria-label="21点建房等待时长" type="number" min="15" max="300" step="1" :disabled="requestInFlight"></label>
-
-        <template v-if="isDiscordMode">
-          <p class="hint-text">已连接 Discord 活动，可重连当前会话房间，或直接输入房间号加入。</p>
-          <div class="lobby-actions">
-            <button class="game-button gold" :disabled="requestInFlight" @click="autoJoinCurrentSession(true)">
-              连接当前会话
-            </button>
-            <div class="join-group">
-              <input
-                v-model="roomInput"
-                maxlength="16"
-                placeholder="输入房间号"
-                :disabled="requestInFlight"
-              />
-              <button class="game-button gold" :disabled="requestInFlight" @click="joinRoom">
-                按房间号加入
-              </button>
-            </div>
-            <button class="game-button quiet" :disabled="requestInFlight" @click="enterBlackjackModeSelect">
-              返回模式选择
-            </button>
-          </div>
-        </template>
-
-        <template v-else>
-          <div class="lobby-actions">
-            <button class="game-button gold" :disabled="requestInFlight || !validBlackjackTurnSeconds" @click="createRoom">
-              创建房间
-            </button>
-            <div class="join-group">
-              <input
-                v-model="roomInput"
-                maxlength="16"
-                placeholder="输入房间号"
-                :disabled="requestInFlight"
-              />
-              <button class="game-button gold" :disabled="requestInFlight" @click="joinRoom">
-                加入房间
-              </button>
-            </div>
-            <button class="game-button quiet" :disabled="requestInFlight" @click="enterBlackjackModeSelect">
-              返回模式选择
-            </button>
-          </div>
-
-          <p class="hint-text">创建房间后，将房间号分享给好友，即可一起入座。</p>
-        </template>
-        <div class="dealer-dialogue">{{ dealerSpeech }}</div>
-        </div>
-      </section>
 
       <GameViewport v-else-if="viewMode === 'table' && roomState">
       <section class="blackjack-table multi-mode-view" :class="{ 'has-round-result': resultVisible && blackjackResult }" :data-dealing="hasDealingCards()" aria-label="多人21点牌桌">
@@ -1763,17 +1773,27 @@ onBeforeUnmount(() => {
       </section>
       </GameViewport>
 
-      <YueyueMascot
-        v-if="viewMode === 'game_hub' || viewMode === 'blackjack_mode_select'"
-        :message="dealerSpeech"
-        @interact="mascotSpeechUntil = Date.now() + 7000"
-      />
 
       <GameStatsPanel v-if="lobbyStatsPanel && profile" :profile="profile" :api-call="apiCall" :initial-tab="lobbyStatsPanel" @close="lobbyStatsPanel = null" />
-      <div v-if="statusMessage" class="status-message" role="status">{{ statusMessage }}</div>
-      <div v-if="errorMessage" class="error-message" role="alert">{{ errorMessage }}</div>
+      <div v-if="statusMessage && viewMode !== 'lobby'" class="status-message" role="status">{{ statusMessage }}</div>
+      <div v-if="errorMessage && viewMode !== 'lobby'" class="error-message" role="alert">{{ errorMessage }}</div>
       <GameSocial v-if="viewMode === 'single' && profile" ref="singleSocial" scope-type="single" hide-toggle :room-id="`single-${viewerUserId}`" :viewer-id="viewerUserId" :members="singleSocialMembers" :api-call="apiCall" />
       <GameSocial v-if="viewMode === 'table' && roomState && profile" ref="blackjackSocial" scope-type="blackjack" hide-toggle :room-id="roomState.room_id" :viewer-id="viewerUserId" :members="roomState.players" :api-call="apiCall" />
+      <dialog ref="blackjackEntryDialog" class="blackjack-entry-dialog" aria-labelledby="blackjack-entry-title" @cancel.prevent="closeBlackjackEntry" @close="viewMode === 'lobby' && enterBlackjackModeSelect()">
+        <header class="entry-dialog-heading"><img src="/ui/farm-v2/games/blackjack.webp" alt="" /><div><span>邀好友，同坐一桌</span><h2 id="blackjack-entry-title">21点房间设置</h2></div><button class="game-button quiet" aria-label="关闭21点房间设置" :disabled="requestInFlight" @click="closeBlackjackEntry">关闭</button></header>
+        <form class="entry-dialog-create" @submit.prevent="isDiscordMode ? autoJoinCurrentSession(true) : createRoom()">
+          <label for="entry-turn-seconds">创建新房 <small>操作等待 15–300 秒</small></label>
+          <div class="entry-dialog-fields"><input id="entry-turn-seconds" v-model.number="blackjackTurnSeconds" autofocus aria-label="21点建房等待时长" type="number" min="15" max="300" step="1" :disabled="requestInFlight" /><span>秒</span><button class="game-button gold" :disabled="requestInFlight || !validBlackjackTurnSeconds">{{ isDiscordMode ? '连接当前会话' : '创建房间' }}</button></div>
+        </form>
+        <form class="entry-dialog-join" @submit.prevent="joinRoom">
+          <label for="entry-room-code">加入好友房 <small>已有房间号？直接入座</small></label>
+          <div class="entry-dialog-fields"><input id="entry-room-code" v-model="roomInput" aria-label="21点房间号" maxlength="16" placeholder="输入房间号" autocomplete="off" :disabled="requestInFlight" /><button class="game-button gold" :disabled="requestInFlight || !roomInput.trim()">加入房间</button></div>
+        </form>
+        <p v-if="errorMessage" class="entry-dialog-error" role="alert">{{ errorMessage }}</p>
+        <p v-else-if="statusMessage" class="entry-dialog-error" role="status">{{ statusMessage }}</p>
+        <footer class="entry-dialog-footer"><span>最多3人同桌 · 入座后再下注</span><button class="game-button quiet" :disabled="requestInFlight" @click="browseBlackjackRooms">房间列表</button></footer>
+      </dialog>
+
       <dialog ref="blackjackSettingsDialog" class="blackjack-rules" aria-labelledby="blackjack-settings-title">
         <div class="rules-heading"><h2 id="blackjack-settings-title">21点房间设置</h2><button class="game-button" @click="blackjackSettingsDialog?.close()">关闭</button></div>
         <form @submit.prevent="saveBlackjackSettings"><label class="blackjack-time-setting">操作等待时长（秒）<input v-model.number="blackjackTurnSeconds" aria-label="21点操作等待时长" type="number" min="15" max="300" step="1" :disabled="!isHost || !isRoomBettingStage || requestInFlight"></label><p>可设 15–300 秒。房主可在等待或结算完成后修改，修改后真人需重新准备。</p><p v-if="errorMessage" role="alert">{{ errorMessage }}</p><button v-if="isHost" class="game-button gold" :disabled="!isRoomBettingStage || requestInFlight || !validBlackjackTurnSeconds">保存设置</button></form>
@@ -2421,62 +2441,11 @@ onBeforeUnmount(() => {
   .room-lobby-art > .game-icon { max-width: 132px; }
 }
 
-/* 大厅按窗口剩余高度分配卡片，不让固定图标尺寸把月月挤出屏幕。 */
-.multi-root.hub-fullscreen {
-  --hub-gap: clamp(8px, 1.5cqh, 18px);
-  padding: clamp(10px, 2cqh, 24px) clamp(14px, 2cqw, 36px);
-  gap: var(--hub-gap);
-  overflow: hidden;
-}
-.hub-fullscreen > .top-bar, .hub-fullscreen > .game-hub-panel { max-width: none; }
-.hub-fullscreen > .game-hub-panel {
-  flex: 1 1 0;
-  min-height: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-}
-.hub-fullscreen .lobby-section-heading { flex: none; margin-bottom: var(--hub-gap); align-items: center; }
-.hub-fullscreen .hub-game-grid {
-  flex: 1 1 0;
-  min-height: 0;
-  grid-auto-rows: minmax(0, 1fr);
-  gap: var(--hub-gap);
-}
-.hub-fullscreen .hub-game-grid > .game-card {
-  min-height: 0;
-  padding: clamp(8px, 1.4cqh, 18px);
-  gap: clamp(4px, 1cqh, 10px);
-  justify-content: center;
-  container-type: size;
-}
-.hub-fullscreen .game-card-art {
-  width: min(65cqw, 210px, max(32px, calc(100cqh - 65px)));
-  height: auto;
-  margin: 0;
-  max-width: none;
-}
-.hub-fullscreen .game-card-copy { flex: none; gap: 5px; }
-.hub-fullscreen .game-name { font-size: clamp(18px, calc(var(--activity-height) * .026), 28px); }
-.hub-fullscreen .game-desc { font-size: clamp(10px, calc(var(--activity-height) * .014), 13px); }
-.hub-fullscreen .lobby-footnote { flex: none; margin: var(--hub-gap) 0 0; }
-.hub-fullscreen > .yueyue-mascot { max-width: none; flex: none; margin: 0; }
-.hub-fullscreen > .yueyue-mascot :deep(.yueyue-mascot-button) { --mascot-width: clamp(58px, 17cqh, 154px); }
-@container activity-viewport (max-height: 600px) {
-  .hub-fullscreen .hub-game-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .hub-fullscreen .hub-game-grid > .game-card { flex-direction: row; text-align: left; gap: 7px; }
-  .hub-fullscreen .game-card-art { width: min(32cqw, 72cqh, 76px); }
-  .hub-fullscreen .game-card-copy { flex: 1; gap: 4px; }
-  .hub-fullscreen .game-name { font-size: 16px; letter-spacing: 0; }
-  .hub-fullscreen .game-desc { font-size: 10px; line-height: 1.4; }
-  .hub-fullscreen .lobby-footnote { font-size: 9px; }
-}
-@container activity-viewport (max-width: 700px) and (max-height: 600px) {
-  .hub-fullscreen .hub-game-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .playing-card { transition: none; animation: none !important; }
   .multi-root .game-card { transition: none; }
 }
 </style>
+
+<style scoped src="./lobby-hub.css"></style>
