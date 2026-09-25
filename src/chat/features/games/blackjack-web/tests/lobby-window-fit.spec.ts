@@ -39,6 +39,12 @@ async function expectLobbyFits(page: Page, width: number, height: number, embedd
       const rect = element.getBoundingClientRect();
       return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
     };
+    // offset 链使用逻辑横屏坐标，避免竖屏旋转后把物理左侧当作场景左侧。
+    const logicalLeft = (element: HTMLElement) => {
+      let left = 0;
+      for (let node: HTMLElement | null = element; node; node = node.offsetParent as HTMLElement | null) left += node.offsetLeft;
+      return left;
+    };
     return {
       appHeight: app.clientHeight,
       rootHeight: root.clientHeight,
@@ -48,6 +54,9 @@ async function expectLobbyFits(page: Page, width: number, height: number, embedd
       visibleContent: Array.from(document.querySelectorAll('.top-bar, .hub-game-grid > .game-card, .lobby-auxiliary, .lobby-footnote, .yueyue-mascot-button, .yueyue-mascot-speech')).map(bounds),
       cardContent: cards.map(card => ({ card: bounds(card), copy: bounds(card.querySelector('.game-card-copy')!), touchHeight: card.offsetHeight })),
       mascot: bounds(document.querySelector('.yueyue-mascot-button')!),
+      mascotLeftInset: logicalLeft(document.querySelector('.yueyue-mascot-button')!) - logicalLeft(document.querySelector('.lobby-scene')!),
+      speech: bounds(document.querySelector('.yueyue-mascot-speech')!),
+      navigation: Array.from(document.querySelectorAll('.lobby-auxiliary button')).map(bounds),
     };
   });
   expect(layout.rootHeight, '大厅高度随可用窗口变化').toBe(logical.height);
@@ -55,6 +64,14 @@ async function expectLobbyFits(page: Page, width: number, height: number, embedd
   expect(layout.gridFraction, '横条玩法区约占宽屏四成，留出人物场景').toBeGreaterThan(.35);
   expect(layout.gridFraction, '玩法网格不覆盖整幅场景').toBeLessThan(logical.height > 600 ? .5 : .75);
   expect(layout.rows).toBeGreaterThan(1);
+  expect(Math.abs(layout.mascotLeftInset), '宠物固定靠场景左边，不随对白长度或窗口大小居中').toBeLessThanOrEqual(1);
+  for (const control of layout.navigation) {
+    for (const companion of [layout.mascot, layout.speech]) {
+      const overlapX = Math.min(control.right, companion.right) - Math.max(control.left, companion.left);
+      const overlapY = Math.min(control.bottom, companion.bottom) - Math.max(control.top, companion.top);
+      expect(overlapX > 1 && overlapY > 1, '宠物和对白均不遮挡左侧导航').toBe(false);
+    }
+  }
   for (const box of layout.visibleContent) {
     expect(box.left).toBeGreaterThanOrEqual(-1);
     expect(box.top).toBeGreaterThanOrEqual(-1);
@@ -76,6 +93,7 @@ async function expectLobbyFits(page: Page, width: number, height: number, embedd
 for (const { width, height, embedded } of [
   { width: 1243, height: 775, embedded: true },
   { width: 1280, height: 720, embedded: true },
+  { width: 1440, height: 900, embedded: false },
   { width: 1920, height: 1080, embedded: false },
   { width: 1024, height: 768, embedded: false },
   { width: 844, height: 390, embedded: true },
@@ -87,7 +105,7 @@ for (const { width, height, embedded } of [
     await page.setViewportSize({ width, height });
     await openLobby(page, embedded);
     await expectLobbyFits(page, width, height, embedded);
-    await page.screenshot({ path: fileURLToPath(new URL(`../../../../../../screenshots/lobby-redesign/window-fit-${width}x${height}.png`, import.meta.url)) });
+    await page.screenshot({ path: fileURLToPath(new URL(`../../../../../../screenshots/lobby-redesign/mascot-left-${width}x${height}.png`, import.meta.url)) });
     const mascot = (await page.getByRole('button', { name: '和月月打招呼' }).boundingBox())!;
     // 按当前坐标点击，不允许 Playwright 自动滚动后才认为控件可用。
     await page.mouse.click(mascot.x + mascot.width / 2, mascot.y + mascot.height / 2);

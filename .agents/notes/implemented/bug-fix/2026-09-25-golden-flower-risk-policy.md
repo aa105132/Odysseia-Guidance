@@ -1,4 +1,4 @@
-# Agent Note: 炸金花陪玩停止持续盲跟与弱牌接明牌加注
+# Agent Note: 炸金花陪玩混合决策与持续投入保护
 
 Status: implemented
 
@@ -6,33 +6,38 @@ Status: implemented
 
 用户反馈玩家看牌后弱牌弃、强牌加，月月仍持续跟注。本地代码能看牌并正确识别牌型，但旧提示鼓励弱牌继续跟注/诈唬，参考胜率主要针对随机三张牌；兜底算法对已看牌玩家只做温和范围收紧。模型出口只校验动作合法性，没有控制连续盲跟或弱牌累计成本。未查询线上模型日志，因此不认定用户某局具体由模型还是兜底产生。
 
+用户随后指出“同花以下遇明牌加注必弃”同样容易被利用。70b7bad 的硬门槛已部署；本次本地修正将牌力分类与动作分离，保留风险边界，不再把公开加注直接映射为确定性弃牌。
+
 ## Decision
 
 将金花（同花，category >= 3）、顺金、豹子定义为强牌，仅用于陪玩策略，不改变牌型顺序或人类玩家的合法操作。
 
 - GoldenFlowerGame 按实际动作时的 seen 状态记录 seen_raises，公开且按局初始化；先盲加后看牌不计为明牌加注，已弃牌者不构成当前压力。
-- golden_bot_policy 只读自身已看牌和公开信息。首圈之后、面对明牌加注、基础注超过两倍底注或单次成本超过剩余筹码的 1/30，暗牌付费动作必须先 look。look 不支付筹码、不结束回合，下次重新决策。
-- 同花以下遇到仍在局的明牌加注者弃牌；单次继续成本不得超过 min(4 倍底注, 剩余筹码 5%)，包含底注的累计投入不得超过 min(6 倍底注, 初始买入 10%)。底池再大也不放宽这条边界，因为 call 既不结束下注也不改善手牌。
-- 模型付费动作先在副本上验证合法，再应用 guard_bot_action，并验证替换动作；会话记实际动作。模型失败/禁用走同一边界的本地 suggest_action。低成本无压力局面保留少量诈唬；价值加注需同花以上。德州策略不变。
-- game_llm 白名单增加 seen_raises，strategy.risk_policy 提供匿名同源判断；同步收紧提示，不再只依赖提示词自觉。
+- golden_bot_policy 只读自身已看牌、人数、轮次、成本、底池和公开 seen_raises，为 look/call/raise/compare/fold 生成权重。明牌加注、重复加注和多人数提高弱牌弃牌权重；低成本仍保留抓诈唬、反加与比牌。强牌混合跟注、加注与比牌；弱同花面对重复明加也可退出。
+- 暗牌看牌概率随轮次和压力上升；三圈或单次成本超过 min(4 倍底注, 剩余筹码 8%) 时必须看牌。暗牌累计付费预算 min(8 倍底注, 买入 12%)。同花以下单次成本上限 min(8 倍底注, 剩余筹码 10%)，累计投入上限 min(12 倍底注, 买入 20%)；大底池不能突破预算。仅成本/预算失控触发硬弃牌，明牌加注本身不再触发。
+- guard_bot_action 与本地 suggest_action 共用私有 strategy_rng 加权抽样；发牌 rng 不消耗，生产无固定 seed，测试可注入 seed。模型合法建议仅将对应权重乘 1.25，不能用恒定 call/fold 消除混合；加注额度在合法且预算允许的 2～3 倍基础注内随机，比牌目标按公开压力加权选择。
+- 每个玩家最多缓存一个可见局面的实际决策，返回副本；重复轮询、建议变化不会重抽，局面变化后重新计算。缓存和随机状态不进入 public_state/模型上下文。模型动作仍经副本验证，替换动作再验证，会话保存实际动作。德州策略不变。
+- game_llm 提示和 strategy.risk_policy 使用同源权重/风险边界，明确混合不等于必胜。
 
 ## Verification
 
-新增 tests/test_golden_flower_risk.py：六种牌型、看牌前后加注顺序、持续盲跟、不同底注预算、所有付费动作、隐藏信息边界、人类操作不受限、恒定 call 模型与禁用模型的 look→fold、真实执行前不变更牌局、筹码守恒和会话记录。
+当前 14 个测试文件合计 **432 passed**（181 条既有弃用警告）：test_golden_flower_risk、test_poker_bot_strategy、test_poker_llm_strategy、test_game_bot_runner、test_game_llm、test_table_poker_games、test_game_llm_integration、test_texas_llm_strategy、test_texas_action_memory、test_game_jev、test_table_room_settings、test_custom_room_caps、test_table_multiplayer_api、test_table_statistics。
 
-以下 14 个测试文件合计 **426 passed**：test_golden_flower_risk、test_poker_bot_strategy、test_poker_llm_strategy、test_game_bot_runner、test_game_llm、test_table_poker_games、test_game_llm_integration、test_texas_llm_strategy、test_texas_action_memory、test_game_jev、test_table_room_settings、test_custom_room_caps、test_table_multiplayer_api、test_table_statistics。
+覆盖六种牌型每场景400个固定种子的动作分布、恒定模型建议仍有混合、重复明加/多人数收紧、同局面重试不重抽且返回对象不能污染缓存、强牌加注额度变化、低筹码只能跟注时不误弃、隐藏牌/牌堆与发牌随机数隔离、不同底注弱牌预算，以及180局完整对战合法性/非负筹码/守恒。模型启用和回退路径均验证高成本look→fold及会话实际动作。
 
-初次扩展检查为 381 passed / 45 setup errors，原因是本机缺 cachetools。在会话 scratch/golden-test-deps 临时安装并通过 PYTHONPATH 加载后，同一批 426 全通过；没有修改项目依赖或全局 Python。仍有既有 audioop/FastAPI on_event 弃用警告。测试为本地固定牌局、模拟模型与 API 集成，不代表线上真实模型胜率评估。
+首次本轮测试193 passed / 1 failed：旧测试限定诈唬额度只能2，与新增2～3倍随机力度冲突；更新该断言并新增成本上限，原频率限制仍保留。最终432全通过。测试使用scratch/golden-test-deps中cachetools，未变更项目依赖或服务器。结果不代表真实模型收益或最优策略。
 
 ## Alternatives considered
 
 - 只改提示词：模型不遵守或客户端回退时仍会持续跟，故使用共享执行边界。
-- 所有同花以下立即弃牌：会丢掉对盲牌的小成本机会；保留严格预算内试探。
+- 同花以下遇明牌加注必弃：上一版曾采用，用户指出可预测性后替换为情境混合。强牌分类仍保留，但不直接决定动作。
+ - 无条件均匀随机：会让弱牌大额送钱，故按牌力/压力加权并受预算约束。
+ - 每次轮询重新抽样或用公开局面哈希作为随机结果：前者可重试刷动作，后者可预测；使用服务端私有随机源和单决策缓存。
 - 用已看牌状态直接当强牌信号：会误伤先盲加后看牌者；记录加注当时状态。
 - 使用对手底牌修正胜率：违反信息边界，拒绝。
 
 ## Consequences
 
-减少被紧手玩家用明牌加注持续收取弱牌筹码的情况，并保证两条陪玩路径一致。代价是策略更保守，明确的同花门槛可能被主动诈唬者利用；不是均衡策略，也不保证同花必胜。暂未引入跨局玩家画像或线上学习。公开状态新增兼容字段 seen_raises，无余额、数据库、结算规则修改。
+减少“加注就能让月月必弃”和“模型总是跟注”两种确定性漏洞，代价是可解释启发式仍存在统计倾向，硬风险预算仍可被观察；不声称不可利用或均衡最优。当前只依据本局公开行为，未引入跨局玩家画像或在线学习。随机不会改变牌型、玩家合法操作、数据库或结算。
 
-本次未部署、未重启服务；之前宠物靠左的本地 CSS/测试改动保持原样。后端策略上线需要单独受控发布，不能仅替换前端静态文件。
+70b7bad硬门槛版已完成受控部署，记录见 screenshots/lobby-redesign/2026-09-25-golden-risk-deployment.md。本次混合修正未部署、未重启服务；宠物靠左本地改动保持原样。

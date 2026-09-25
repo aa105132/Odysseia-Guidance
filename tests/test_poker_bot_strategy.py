@@ -156,7 +156,8 @@ def test_golden_can_bluff_but_frequency_and_cost_are_limited():
         action = candidate.suggest_action("月月")
         if action["action"] == "raise":
             raises += 1
-            assert action["amount"] == 2
+            assert 2 <= action["amount"] <= 3
+            assert action["amount"] * 2 <= min(candidate.ANTE * 8, candidate.players[0].stack * .10)
             candidate.act("月月", **action)
     assert 1 <= raises <= 16
 

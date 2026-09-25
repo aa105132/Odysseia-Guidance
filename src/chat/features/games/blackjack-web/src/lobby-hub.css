@@ -35,7 +35,7 @@
 .hub-fullscreen .lobby-scene { display: flex; flex-direction: column; justify-content: space-between; min-width: 0; min-height: 0; padding: 10px 0 4px; }
 .hub-fullscreen .scene-invitation { align-self: flex-end; margin: 12px 8px 0 0; padding: 8px 12px; text-align: right; color: #ffe5b5; font-size: 12px; letter-spacing: 2px; line-height: 1.8; text-shadow: 0 2px 5px #682c24, 0 0 14px #54201b; }
 .hub-fullscreen .scene-invitation > span { display: block; color: #ffecc1; font-family: "STKaiti", "KaiTi", serif; font-size: clamp(23px, 2.5cqw, 36px); letter-spacing: 3px; }
-.hub-fullscreen .lobby-scene > .yueyue-mascot { flex-direction: row; align-items: flex-end; justify-content: flex-end; gap: 8px; margin: auto 0 0; max-width: 100%; }
+.hub-fullscreen .lobby-scene > .yueyue-mascot { flex-direction: row; align-items: flex-end; justify-content: flex-start; gap: 8px; margin: auto 0 0; max-width: 100%; }
 .hub-fullscreen .lobby-scene :deep(.yueyue-mascot-button) { --mascot-width: clamp(72px, 17cqh, 156px); }
 .hub-fullscreen .lobby-scene :deep(.yueyue-mascot-speech) { margin-bottom: 12px; padding: 12px; border: 1px solid #bc874b; border-radius: 12px 12px 12px 3px; background: linear-gradient(135deg, #fff8e9, #f1d7aa); box-shadow: inset 0 0 0 3px #fff3d2, 0 4px 16px #29101540; }
 .hub-fullscreen .lobby-scene :deep(.yueyue-mascot-name) { color: #864026; }
@@ -143,7 +143,7 @@
   .hub-fullscreen > .game-hub-panel { grid-template-columns: 56px minmax(0, .76fr) minmax(0, 1.24fr); }
   .hub-fullscreen .lobby-scene > .yueyue-mascot { gap: 4px; }
   .hub-fullscreen .lobby-scene :deep(.yueyue-mascot-speech) { padding: 6px 8px; }
-  .hub-fullscreen .rooms-open .lobby-scene > .yueyue-mascot { flex-direction: column; align-items: center; }
+  .hub-fullscreen .rooms-open .lobby-scene > .yueyue-mascot { flex-direction: column; align-items: flex-start; }
   .hub-fullscreen .rooms-open .lobby-scene :deep(.yueyue-mascot-speech) { order: -1; margin-bottom: 0; }
 }
 @container activity-viewport (max-width: 640px) {
@@ -158,7 +158,7 @@
   .hub-fullscreen .lobby-auxiliary img { width: 26px; height: 26px; }
   .hub-fullscreen .scene-invitation { font-size: 9px; letter-spacing: 0; }
   .hub-fullscreen .scene-invitation > span { font-size: 20px; letter-spacing: 1px; }
-  .hub-fullscreen .lobby-scene > .yueyue-mascot { flex-direction: column; align-items: center; gap: 4px; }
+  .hub-fullscreen .lobby-scene > .yueyue-mascot { flex-direction: column; align-items: flex-start; gap: 4px; }
   .hub-fullscreen .lobby-scene :deep(.yueyue-mascot-speech) { order: -1; margin-bottom: 0; padding: 6px; }
   .hub-fullscreen .lobby-scene :deep(.yueyue-mascot-button) { --mascot-width: 60px; }
   .hub-fullscreen .lobby-scene :deep(.yueyue-mascot-speech p) { font-size: 10px; }

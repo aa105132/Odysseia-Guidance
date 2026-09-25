@@ -1,6 +1,7 @@
 """桌游活动的德州扑克与炸金花规则；筹码对应房间冻结的灵石。"""
 
 import itertools
+import json
 import random
 from collections import Counter
 from dataclasses import dataclass, field
@@ -546,30 +547,77 @@ class TexasHoldemGame:
 
 
 def golden_bot_policy(state: dict, user_id: str) -> dict:
-    """陪玩风险边界，只读自身已看牌和公开行为；不是玩家操作规则。"""
+    """公开信息形成动作权重；权重不是已知对手牌力，也不是均衡解。"""
     own = next(player for player in state["players"] if player["user_id"] == user_id)
-    opponents = [player for player in state["players"] if player["user_id"] != user_id and not player["folded"]]
-    seen_raisers = [player["user_id"] for player in opponents if player.get("seen_raises", 0) > 0]
-    ante = state["ante"]
+    opponents = [p for p in state["players"] if p["user_id"] != user_id and not p["folded"]]
+    raisers = [p for p in opponents if p.get("seen_raises", 0)]
+    ante, cost, stack = state["ante"], state["call_amount"], own["stack"]
     seen = bool(own["seen"])
-    category = evaluate_golden_hand(own["hand"])[0] if seen else None
+    rank = evaluate_golden_hand(own["hand"]) if seen else None
+    category = rank[0] if rank else None
     strong = category is not None and category >= 3
-    # 底池变大不等于跟注更安全：炸金花跟注不会结束下注，也没有新牌可改善。
-    weak_budget = min(ante * 6, state["buy_in"] * 0.10)
-    call_cost = state["call_amount"]
+    rounds = state["action_count"] / max(1, len(state["players"]))
+    pressure = min(3, sum(p.get("seen_raises", 0) for p in opponents))
+    # 跟注并不结束下注；底池和沉没成本不能无限扩大弱牌预算。
+    budget = min(ante * 12, state["buy_in"] * .20)
+    max_cost = min(ante * 8, stack * .10)
+    must_look = not seen and (rounds >= 3 or cost > min(ante * 4, stack * .08))
+    must_fold = seen and not strong and (cost > max_cost or own["total_bet"] + cost > budget)
+    if not seen:
+        look = min(96, 58 + rounds * 12 + pressure * 12 + max(0, len(opponents) - 1) * 4)
+        weights = {"look": look, "call": 100 - look, "raise": 3 if not pressure and rounds < 1 else 0}
+        if must_look:
+            weights = {"look": 1}
+    elif must_fold:
+        weights = {"fold": 1}
+    else:
+        # 小额单挑允许抓诈唬；人数、重复明加与成本共同收紧，而非见明加必弃。
+        strength = (rank[1] - 2) / 12
+        if category == 0:
+            weights = {"fold": 50 - 15 * strength, "call": 38 + 15 * strength, "raise": 7, "compare": 5}
+        elif category == 1:
+            weights = {"fold": 18 - 8 * strength, "call": 52, "raise": 10 + 8 * strength, "compare": 20}
+        elif category == 2:
+            weights = {"fold": 8, "call": 42, "raise": 20, "compare": 30}
+        else:
+            weights = {"fold": 0, "call": 24, "raise": 48, "compare": 28}
+        if not strong:
+            risk = 1 + pressure * 1.5 + max(0, len(opponents) - 1) * .8 + max(0, cost / ante - 2) * .35 + rounds * .12
+            weights["fold"] *= risk
+            weights["call"] /= risk ** .5
+            weights["raise"] /= risk
+            weights["compare"] /= risk
+            if len(opponents) > 2 or rounds > 5:
+                weights["raise"] = 0
+        else:
+            # 高成本时少付拉锯跟注，优先比牌；同花不是必胜牌。
+            if rounds >= 2 or cost >= stack * .10:
+                weights["compare"] += 35
+                weights["call"] = 0 if category >= 4 and "compare" in state["legal_actions"] else 8
+            if category == 3 and pressure >= 2:
+                weights["fold"] = 8 + (1 - strength) * 20
+                weights["raise"] *= .35
+        if len(opponents) > 1:
+            weights["compare"] /= len(opponents)
+        # 赔率仅小幅调整，避免大底池诱导无上限跟注。
+        weights["call"] *= 1 + min(.25, state["pot"] / max(1, cost) * .01)
+    legal = state["legal_actions"]
+    weights = {action: weight for action, weight in weights.items() if action in legal and weight > 0}
+    for action in list(weights):
+        paid = cost * 2 if action in {"raise", "compare"} else cost
+        if action in {"call", "raise", "compare"} and (
+            (not seen and (paid > min(ante * 4, stack * .08) or own["total_bet"] + paid > min(ante * 8, state["buy_in"] * .12)))
+            or (seen and not strong and (paid > max_cost or own["total_bet"] + paid > budget))
+        ):
+            del weights[action]
+    if not weights:
+        weights = {"look" if "look" in legal else "fold": 1}
     return {
-        "strong_hand_minimum": "金花（同花）",
-        "is_strong_hand": strong if seen else None,
-        "seen_raise_opponents": seen_raisers,
-        "must_look_before_paying": not seen and (
-            bool(seen_raisers) or state["action_count"] >= len(state["players"])
-            or state["base_bet"] > ante * 2 or call_cost > own["stack"] / 30
-        ),
-        "weak_hand_must_fold": seen and not strong and (
-            bool(seen_raisers) or call_cost > min(ante * 4, own["stack"] * 0.05)
-            or own["total_bet"] + call_cost > weak_budget
-        ),
-        "weak_hand_total_budget": weak_budget,
+        "strong_hand_minimum": "金花（同花）", "is_strong_hand": strong if seen else None,
+        "seen_raise_opponents": [p["user_id"] for p in raisers],
+        "must_look_before_paying": must_look, "weak_hand_must_fold": must_fold,
+        "weak_hand_total_budget": budget, "weak_hand_max_cost": max_cost,
+        "action_weights": weights,
     }
 
 
@@ -602,6 +650,7 @@ class GoldenFlowerGame:
         self._current_index = 0
         self.action_count = 0
         self.seen_raises = {user_id: 0 for user_id in ids}
+        self._bot_decisions: dict[str, tuple[str, dict]] = {}
         self.message = f"每人底注 {self.ANTE}；暗牌按基础注，看牌后跟注和加注费用加倍。"
 
     @property
@@ -750,79 +799,42 @@ class GoldenFlowerGame:
             "settlement": {player.user_id: player.stack - self.buy_in for player in self.players} if self.finished else {},
         }
 
-    def guard_bot_action(self, user_id: str, action: dict) -> dict:
-        """模型和本地策略共用的付费保护；不干预玩家或免费弃牌。"""
-        if action.get("action") not in {"call", "raise", "compare"}:
-            return action
+    def guard_bot_action(self, user_id: str, action: dict | None) -> dict:
+        """私有策略随机源抽样；同一可见局面缓存一次，轮询/重试不重抽。"""
         state = self.public_state(user_id)
+        if user_id != self.current_player_id or not state["legal_actions"]:
+            raise ValueError("当前没有可执行的操作")
+        key = json.dumps(state, sort_keys=True, ensure_ascii=False)
+        cached = self._bot_decisions.get(user_id)
+        if cached and cached[0] == key:
+            return dict(cached[1])
         policy = golden_bot_policy(state, user_id)
-        if policy["must_look_before_paying"]:
-            return {"action": "look"}
-        if policy["weak_hand_must_fold"]:
-            return {"action": "fold"}
-        own = self._player(user_id)
-        if action["action"] == "raise":
-            cost = action["amount"] * (2 if own.seen else 1)
-        elif action["action"] == "compare":
-            cost = state["compare_cost"]
-        else:
-            cost = state["call_amount"]
-        if not own.seen and cost > min(self.ANTE * 2, own.stack / 30):
-            return {"action": "look"}
-        if own.seen and not policy["is_strong_hand"] and (
-            cost > min(self.ANTE * 4, own.stack * 0.05)
-            or own.total_bet + cost > policy["weak_hand_total_budget"]
-        ):
-            return {"action": "fold"}
-        return action
+        weights = dict(policy["action_weights"])
+        proposed = action.get("action") if action else None
+        # 模型只提供有限倾向，恒定call/fold也不能压倒当前风险与混合频率。
+        if proposed in weights:
+            weights[proposed] *= 1.25
+        chosen = self.strategy_rng.choices(list(weights), weights=list(weights.values()))[0]
+        result = {"action": chosen}
+        if chosen == "raise":
+            limit = min(state["max_raise_to"], self.base_bet * 3)
+            own = self._player(user_id)
+            multiplier = 2 if own.seen else 1
+            if not own.seen:
+                limit = min(limit, int(min(self.ANTE * 4, own.stack * .08,
+                            min(self.ANTE * 8, self.buy_in * .12) - own.total_bet)))
+            elif not policy["is_strong_hand"]:
+                limit = min(limit, int(min(policy["weak_hand_max_cost"],
+                            policy["weak_hand_total_budget"] - own.total_bet) / multiplier))
+            result["amount"] = self.strategy_rng.randint(state["min_raise_to"], limit)
+        elif chosen == "compare":
+            targets = [p for p in state["players"] if p["user_id"] in state["compare_targets"]]
+            result["target_id"] = self.strategy_rng.choices(
+                [p["user_id"] for p in targets],
+                weights=[1 / (1 + p.get("seen_raises", 0) + bool(p["seen"])) for p in targets],
+            )[0]
+        self._bot_decisions[user_id] = (key, dict(result))
+        return result
 
     def suggest_action(self, user_id: str) -> dict:
-        player = self._player(user_id)
-        actions = self._legal_actions(player)
-        if player.user_id != self.current_player_id or not actions:
-            raise ValueError("当前没有可执行的操作")
-        guarded = self.guard_bot_action(user_id, {"action": "call"})
-        if guarded["action"] != "call":
-            return guarded
-        if "look" in actions:
-            # 暗牌阶段不能读取自己的手牌；只在首圈且底注很小时少量闷一手。
-            if (
-                "call" in actions and self.action_count < len(self.players)
-                and self._cost(player) <= min(self.ANTE * 2, player.stack // 30)
-                and self.strategy_rng.random() < 0.12
-            ):
-                return {"action": "call"}
-            return {"action": "look"}
-        opponents = [other for other in self._active() if other.user_id != player.user_id]
-        known = set(player.hand)
-        unseen = [card for card in create_deck() if card not in known]
-        own_rank = evaluate_golden_hand(player.hand)
-        # 对随机三张牌的胜率只是基线：持续跟注的明牌对手用更紧的范围估计。
-        wins = sum(own_rank > evaluate_golden_hand(self.strategy_rng.sample(unseen, 3)) for _ in range(192))
-        percentile = wins / 192
-        rounds = self.action_count / len(self.players)
-        equity = 1.0
-        for other in opponents:
-            tightness = min(0.45, (0.12 if other.seen else 0) + rounds * 0.035 + (0.12 if self.base_bet >= 4 * self.ANTE else 0))
-            equity *= max(0.0, (percentile - tightness) / (1 - tightness))
-        cost = self._cost(player)
-        compare_cost = cost * 2
-        roll = self.strategy_rng.random()
-        affordable_raise = compare_cost <= min(player.stack * 0.18, self.buy_in * 0.16)
-        bluff = (
-            len(opponents) <= 2 and 0.8 <= rounds <= 5 and self.base_bet <= self.ANTE * 4
-            and percentile < 0.65 and affordable_raise and roll < 0.075
-        )
-        value_raise = own_rank[0] >= 3 and equity >= (0.72 if len(opponents) == 1 else 0.55) and roll < 0.62
-        if "raise" in actions and (bluff or (value_raise and (affordable_raise or equity > 0.94))):
-            return self.guard_bot_action(user_id, {"action": "raise", "amount": self.base_bet * 2})
-        # 高成本、后期或接近行动上限时主动比牌，避免强牌白白跟注耗尽筹码。
-        if "compare" in actions and (
-            equity > 0.58 and (rounds >= 2 or cost >= player.stack * 0.10 or roll < 0.24)
-        ):
-            targets = sorted(opponents, key=lambda other: (other.seen, other.total_bet))
-            return self.guard_bot_action(user_id, {"action": "compare", "target_id": targets[0].user_id})
-        required = cost / max(1, self.pot + cost) + 0.08 + min(0.16, cost / max(1, player.stack) * 0.4)
-        if "call" in actions and equity >= required and (percentile >= 0.45 or cost <= self.ANTE * 2):
-            return {"action": "call"}
-        return {"action": "fold"}
+        return self.guard_bot_action(user_id, None)
