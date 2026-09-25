@@ -115,3 +115,18 @@ for (const width of [568, 1440]) {
     await page.screenshot({ path: `../../../../../tmp/game-history-transactions-${width}.png` });
   });
 }
+
+test('冲正牌局同时显示原盈利、撤销额和有效盈利，保留原始返还', async ({ page }) => {
+  await mocks(page);
+  await page.route('**/api/tables/history/round-1', route => route.fulfill({ json: { round: {
+    ...round(1), profit: 0, original_profit: 120, adjustment: -120,
+    adjustment_reason: '撤销高额自定义房间异常盈利', details: {},
+  } } }));
+  const panel = await openStats(page);
+  await panel.locator('.history-round').first().click();
+  const notice = panel.getByRole('note');
+  await expect(notice).toContainText('本局原盈利 +120 灵石，已冲正 -120 灵石');
+  await expect(notice).toContainText('有效盈利 0 灵石，已同步统计与排行榜');
+  await expect(notice).toContainText('撤销高额自定义房间异常盈利');
+  await expect(panel.locator('.round-funds')).toContainText('620 灵石');
+});

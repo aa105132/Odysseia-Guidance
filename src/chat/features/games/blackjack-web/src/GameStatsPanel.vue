@@ -6,7 +6,7 @@ type Stats = { rounds: number; wins: number; losses: number; draws: number; win_
 type Entry = { rank: number; user_id: string; username: string; avatar_url: string; net_profit: number; rounds: number };
 type StatsResponse = { stats: Stats; timezone: string };
 type BoardResponse = { entries: Entry[]; self: Entry | null; timezone: string; legacy_rounds: number };
-type RoundEntry = { round_key: string; game_type: string | null; profit: number; settled_at: string | null; legacy: boolean; stake: number | null; payout: number | null; has_details: boolean };
+type RoundEntry = { round_key: string; game_type: string | null; profit: number; settled_at: string | null; legacy: boolean; stake: number | null; payout: number | null; has_details: boolean; original_profit?: number; adjustment?: number; adjustment_reason?: string | null };
 type RoundAction = { user_id: string; action: string; name?: string; combo?: string; time?: number; amount?: number; cards?: string[]; tile?: string; tiles?: string[]; bid?: number; target_id?: string; phase?: string; pot?: number; stack?: number; round_bet?: number; total_bet?: number };
 type RoundDetails = { room_id?: string; started_at?: number; players?: { user_id: string; username: string; is_bot?: boolean }[]; final_state?: { community_cards?: string[]; players?: { user_id: string; hand?: string[]; hand_name?: string; score_delta?: number }[] }; actions?: RoundAction[]; history_truncated?: boolean };
 type RoundDetail = RoundEntry & { details: RoundDetails };
@@ -207,7 +207,8 @@ onBeforeUnmount(() => { disposed = true; sequence++; detailSequence++; panel.val
           <template v-else-if="detail">
             <div class="round-detail-summary"><strong>{{ roundName(detail) }}</strong><time>{{ dateLabel(detail.settled_at) }}</time><b :class="profitClass(detail.profit)">{{ profit(detail.profit) }} 灵石</b></div>
             <dl class="stats-outcomes round-funds"><div><dt>本局投入</dt><dd>{{ detail.stake === null ? '未保存' : `${number(detail.stake)} 灵石` }}</dd></div><div><dt>结算返还</dt><dd>{{ detail.payout === null ? '未保存' : `${number(detail.payout)} 灵石` }}</dd></div></dl>
-            <p class="stats-explanation">结算返还包含退回本金及赢得的灵石，净盈利为返还减去投入。</p>
+            <p v-if="detail.adjustment" class="history-notice" role="note">本局原盈利 {{ profit(detail.original_profit ?? (detail.profit - detail.adjustment)) }} 灵石，已冲正 {{ profit(detail.adjustment) }} 灵石。有效盈利 {{ profit(detail.profit) }} 灵石，已同步统计与排行榜。原因：{{ detail.adjustment_reason }}</p>
+            <p class="stats-explanation">结算返还包含当时退回的本金及赢得的灵石；若有冲正，净盈利还包含上方调整。</p>
             <p v-if="!detail.has_details" class="history-notice">该历史牌局仅有结算数据，未保存出牌过程。</p>
             <template v-else>
               <p v-if="detail.details.players?.length" class="stats-explanation">同桌：{{ detail.details.players.map(item => item.username || '牌友').join('、') }}</p>

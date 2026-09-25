@@ -60,6 +60,20 @@ class TableWallet:
                     PRIMARY KEY(round_key, user_id)
                 )
             """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS table_game_adjustments (
+                    round_key TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    operation_id TEXT NOT NULL,
+                    original_profit INTEGER NOT NULL CHECK(original_profit > 0),
+                    profit_delta INTEGER NOT NULL CHECK(profit_delta = -original_profit),
+                    reason TEXT NOT NULL,
+                    evidence_sha256 TEXT NOT NULL,
+                    coin_transaction_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(round_key, user_id)
+                )
+            """)
             yield connection
             connection.commit()
         except BaseException:
@@ -184,11 +198,17 @@ class TableWallet:
     def _results_cte() -> str:
         # 旧托管记录没有日期和游戏类型，只参与全部游戏的累计统计。
         return """WITH results AS (
-            SELECT round_key, user_id, game_type, username, avatar_url, profit,
-                   settled_at, settled_day, 0 AS legacy FROM table_game_results
+            SELECT r.round_key, r.user_id, r.game_type, r.username, r.avatar_url,
+                   r.profit + COALESCE(a.profit_delta, 0) AS profit,
+                   r.settled_at, r.settled_day, 0 AS legacy,
+                   r.profit AS original_profit, COALESCE(a.profit_delta, 0) AS adjustment,
+                   a.reason AS adjustment_reason
+            FROM table_game_results r
+            LEFT JOIN table_game_adjustments a
+              ON a.round_key = r.round_key AND a.user_id = r.user_id
             UNION ALL
             SELECT e.round_key, e.user_id, NULL, CAST(e.user_id AS TEXT), '',
-                   e.payout - e.stake, '', NULL, 1
+                   e.payout - e.stake, '', NULL, 1, e.payout - e.stake, 0, NULL
             FROM table_game_escrow e WHERE e.status = 'settled'
               AND NOT EXISTS (SELECT 1 FROM table_game_results r
                               WHERE r.round_key = e.round_key AND r.user_id = e.user_id)
@@ -285,12 +305,14 @@ class TableWallet:
     def _history_entry(row):
         return {"round_key": row[0], "game_type": row[1], "profit": row[2],
                 "settled_at": row[3] or None, "legacy": bool(row[4]), "stake": row[5],
-                "payout": row[6], "has_details": bool(row[7] and row[7] != "{}")}
+                "payout": row[6], "has_details": bool(row[7] and row[7] != "{}"),
+                "original_profit": row[8], "adjustment": row[9], "adjustment_reason": row[10]}
 
     @staticmethod
     def _history_select():
         return """SELECT r.round_key, r.game_type, r.profit, r.settled_at, r.legacy,
-                   COALESCE(d.stake, e.stake), COALESCE(d.payout, e.payout), d.details
+                   COALESCE(d.stake, e.stake), COALESCE(d.payout, e.payout), d.details,
+                   r.original_profit, r.adjustment, r.adjustment_reason
             FROM results r
             LEFT JOIN table_round_details d ON d.round_key = r.round_key AND d.user_id = r.user_id
             LEFT JOIN table_game_escrow e ON e.round_key = r.round_key AND e.user_id = r.user_id
