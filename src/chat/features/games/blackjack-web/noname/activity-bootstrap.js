@@ -15,6 +15,9 @@ parent.postMessage({ type: 'noname-ready' }, parentOrigin);
 window.odysseiaLaunchReady = ready;
 window.odysseiaConfigure = async ({ lib, game }) => {
   const data = await ready;
+  const { configureClassic, restrictClassicPackage, isClassicRoom } = await import('./classic-policy.js');
+  configureClassic(lib, game);
+  window.odysseiaFilterPackage = pack => restrictClassicPackage(pack, data.mode === 'online');
   game.saveConfig('connect_nickname', String(data.username || '茶楼牌友').slice(0, 24));
   game.saveConfig('show_splash', 'off');
   game.saveConfig('mode', data.mode === 'online' ? 'connect' : 'identity');
@@ -30,7 +33,7 @@ window.odysseiaConfigure = async ({ lib, game }) => {
     let roomList = [];
     let pending = false;
     const rooms = list => {
-      roomList = list.filter(Array.isArray);
+      roomList = list.filter(room => Array.isArray(room) && isClassicRoom(room[2]));
       publish({ type: 'noname-rooms', rooms: roomList.map(([host, , config, count, id]) => ({
         id: String(id), host: String(host || '牌友'), count: Number(count),
         capacity: Number(config.number || config.player_number || 8), playing: Boolean(config.gameStarted),
@@ -39,8 +42,8 @@ window.odysseiaConfigure = async ({ lib, game }) => {
     for (const name of ['roomlist', 'updaterooms']) {
       const original = lib.message.client[name];
       lib.message.client[name] = function (list, ...args) {
-        const result = original.call(this, list, ...args);
         rooms(list);
+        const result = original.call(this, roomList, ...args);
         return result;
       };
     }
@@ -74,19 +77,18 @@ window.odysseiaConfigure = async ({ lib, game }) => {
       if (!ui.rooms || pending) return;
       if (command.action === 'create') {
         pending = true;
-        const classic = command.preset !== 'expanded';
         const capacity = [2, 4, 6, 8].includes(command.capacity) ? command.capacity : 8;
         game.saveConfig('connect_identity_mode', 'normal', 'identity');
         game.saveConfig('connect_player_number', String(capacity), 'identity');
-        game.saveConfig('connect_characters', classic ? lib.connectCharacterPack.filter(pack => pack !== 'standard') : []);
-        game.saveConfig('connect_cards', lib.connectCardPack.filter(pack => !['standard', ...(classic ? [] : ['extra'])].includes(pack)));
+        game.saveConfig('connect_characters', lib.connectCharacterPack.filter(pack => pack !== 'standard'));
+        game.saveConfig('connect_cards', lib.connectCardPack.filter(pack => pack !== 'standard'));
         game.saveConfig('new_tutorial', true);
         lib.configOL.mode = 'identity';
         game.send('server', 'create', game.onlineKey, get.connectNickname(), lib.config.connect_avatar);
       } else if (command.action === 'join') {
         const room = roomList.find(room => String(room[4]) === String(command.id));
         if (!room || room[2].gameStarted || Number(room[3]) >= Number(room[2].number || room[2].player_number || 8)) {
-          publish({ type: 'noname-error', message: '房间不存在、已满或已开局' }); return;
+          publish({ type: 'noname-error', message: '房间不是经典标准包、已满或已开局' }); return;
         }
         pending = true;
         game.roomId = room[4];

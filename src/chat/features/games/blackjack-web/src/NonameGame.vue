@@ -13,7 +13,6 @@ const phase = ref('loading');
 const rooms = ref<{ id: string; host: string; count: number; capacity: number; playing: boolean }[]>([]);
 const room = ref({ roomId: '', host: false, players: [] as string[], capacity: 8 });
 const roomCode = ref('');
-const preset = ref('classic');
 const capacity = ref(8);
 const pending = ref(false);
 let commandTimer: ReturnType<typeof setTimeout> | undefined;
@@ -27,7 +26,7 @@ function reset() {
 function command(action: string, id?: string) {
   if (pending.value) return;
   error.value = ''; pending.value = true;
-  frame.value?.contentWindow?.postMessage({ type: 'noname-command', action, id, preset: preset.value, capacity: capacity.value }, location.origin);
+  frame.value?.contentWindow?.postMessage({ type: 'noname-command', action, id, preset: 'classic', capacity: capacity.value }, location.origin);
   clearTimeout(commandTimer);
   commandTimer = setTimeout(() => { pending.value = false; error.value = '操作未完成，请返回重试'; }, 20000);
 }
@@ -75,10 +74,10 @@ onBeforeUnmount(() => { window.removeEventListener('message', message); clearTim
     <header><strong>三国杀 · 无名杀</strong><span>娱乐模式 · 不扣灵石</span><button class="game-button" @click="emit('back')">返回大厅</button></header>
     <div v-if="!started" class="noname-entry">
       <svg viewBox="0 0 160 140" aria-hidden="true"><path d="M20 30 80 10l60 20v55l-60 45-60-45z" fill="#684877" stroke="#edc278" stroke-width="5"/><path d="m45 35 72 66m-2-67-70 69" stroke="#ffe5a3" stroke-width="8"/><text x="80" y="85" text-anchor="middle" fill="#fff1ca" font-size="42" font-family="serif">杀</text></svg>
-      <h2>群雄相聚，各显神通</h2><p>单机对战 AI，或创建房间邀请好友同桌。</p>
+      <h2>群雄相聚，各显神通</h2><p>经典身份 · 标准武将与标准牌。单机对战 AI，或邀请好友同桌。</p>
       <label><input v-model="accepted" type="checkbox"> 我已阅读并接受下方 GPL-3.0 许可说明</label>
       <div class="noname-modes"><button class="game-button gold" :disabled="busy || !accepted" @click="start('solo')">单机试玩</button><button class="game-button" :disabled="busy || !accepted" @click="start('online')">好友联机</button></div>
-      <p class="noname-license">基于无名杀 GPL-3.0，保留原版玩法与界面。<a href="https://github.com/libnoname/noname" target="_blank" rel="noopener">项目源码</a> · <a href="/noname/LICENSE" target="_blank">许可证</a> · <a href="/noname/upstream-source.tar.gz">对应源码</a></p>
+      <p class="noname-license">基于无名杀 GPL-3.0，保留原版经典身份玩法与界面。<a href="https://github.com/libnoname/noname" target="_blank" rel="noopener">项目源码</a> · <a href="/noname/LICENSE" target="_blank">许可证</a> · <a href="/noname/upstream-source.tar.gz">对应源码</a></p>
       <small>联机由房主主持；房主退出会结束房间。这版不参与灵石结算。</small>
     </div>
     <div v-else class="noname-stage">
@@ -87,7 +86,7 @@ onBeforeUnmount(() => { window.removeEventListener('message', message); clearTim
         <div class="room-heading"><h2>{{ phase === 'waiting' ? '等候牌友' : '三国杀 · 好友房' }}</h2><button class="game-button" @click="reset">{{ phase === 'waiting' ? '离开房间' : '返回' }}</button></div>
         <p v-if="phase === 'loading'" role="status">正在连接牌桌…</p>
         <template v-else-if="phase === 'lobby'">
-          <div class="room-controls"><label>玩法 <select v-model="preset"><option value="classic">经典身份 · 标准包</option><option value="expanded">扩展身份 · 全武将</option></select></label><label>人数 <select v-model="capacity"><option v-for="n in [2, 4, 6, 8]" :key="n" :value="n">{{ n }} 人</option></select></label><button class="game-button gold" :disabled="pending" @click="command('create')">创建房间</button></div>
+          <div class="room-controls"><span>经典身份 · 标准包</span><label>人数 <select v-model="capacity"><option v-for="n in [2, 4, 6, 8]" :key="n" :value="n">{{ n }} 人</option></select></label><button class="game-button gold" :disabled="pending" @click="command('create')">创建房间</button></div>
           <form class="room-controls" @submit.prevent="command('join', roomCode.trim())"><input v-model="roomCode" placeholder="粘贴房间号" aria-label="三国杀房间号" maxlength="80"><button class="game-button" :disabled="pending || !roomCode.trim()">加入房间</button></form>
           <div class="noname-room-list" aria-label="三国杀房间列表"><article v-for="item in rooms" :key="item.id"><div><strong>{{ item.host }} 的房间</strong><p>{{ item.count }}/{{ item.capacity }} 人 · {{ item.playing ? '对局中' : '等待开局' }}</p></div><button class="game-button" :disabled="pending || item.playing || item.count >= item.capacity" @click="command('join', item.id)">入座</button></article><p v-if="!rooms.length">还没有房间，开一桌等朋友吧。</p></div>
         </template>

@@ -18,6 +18,7 @@ test('三国杀入口、许可确认和缺少资源提示', async ({ page }) => 
   await page.goto('/?frame_id=noname-test');
   await page.getByRole('button', { name: '三国杀 无名杀 · 免费娱乐试玩' }).click();
   await expect(page.getByRole('button', { name: '单机试玩' })).toBeDisabled();
+  await expect(page.getByText('经典身份 · 标准武将与标准牌。单机对战 AI，或邀请好友同桌。')).toBeVisible();
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: '单机试玩' }).click();
   await expect(page.getByRole('alert')).toContainText('资源正在准备');
@@ -51,8 +52,13 @@ test('隔离嵌入子游戏，只发昵称与按需票据，不传身份令牌',
   expect(calls.some(path => /\/(bet|start|ready|action)$/.test(path))).toBe(false);
   await frame.evaluate(() => parent.postMessage({ type: 'noname-state', phase: 'lobby', roomId: '', host: false, players: [], capacity: 8 }, location.origin));
   await expect(page.getByRole('button', { name: '创建房间', exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: '玩法' })).toHaveCount(0);
+  await expect(page.locator('option[value="expanded"]')).toHaveCount(0);
+  await expect(page.getByText('经典身份 · 标准包', { exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: '人数' }).locator('option')).toHaveText(['2 人', '4 人', '6 人', '8 人']);
+  await page.getByRole('combobox', { name: '人数' }).selectOption('4');
   await page.getByRole('button', { name: '创建房间', exact: true }).click();
-  await expect.poll(() => frame.evaluate(() => (window as any).received.at(-1))).toMatchObject({ type: 'noname-command', action: 'create', preset: 'classic', capacity: 8 });
+  await expect.poll(() => frame.evaluate(() => (window as any).received.at(-1))).toMatchObject({ type: 'noname-command', action: 'create', preset: 'classic', capacity: 4 });
   await frame.evaluate(() => parent.postMessage({ type: 'noname-state', phase: 'waiting', roomId: 'sample-room', host: true, players: ['牌友'], capacity: 8 }, location.origin));
   await expect(page.getByRole('button', { name: '开始游戏', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '复制房间号 sample-room' })).toBeVisible();

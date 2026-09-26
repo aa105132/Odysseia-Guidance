@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 import websockets
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
-NONAME_DIST_DIR = Path(os.getenv("NONAME_DIST_DIR", str(Path(__file__).resolve().parents[5] / "data/noname/dist")))
+NONAME_DIST_DIR = Path(os.getenv("NONAME_DIST_DIR", str(Path(__file__).resolve().parents[5] / "data/noname/classic-dist")))
 MAX_MESSAGE = 1024 * 1024
 
 
