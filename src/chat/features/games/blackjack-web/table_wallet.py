@@ -74,6 +74,15 @@ class TableWallet:
                     PRIMARY KEY(round_key, user_id)
                 )
             """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS blackjack_waiting_refunds (
+                    refund_key TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    room_id TEXT NOT NULL,
+                    amount INTEGER NOT NULL CHECK(amount > 0),
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             yield connection
             connection.commit()
         except BaseException:
@@ -189,6 +198,32 @@ class TableWallet:
     async def settle_blackjack(self, round_key: str, user_id: str, stake: int,
                                payout: int, profile: dict | None = None, details: dict | None = None):
         return await asyncio.to_thread(self._settle_blackjack, round_key, user_id, stake, payout, profile, details)
+
+    def _refund_blackjack_waiting(self, refund_key: str, user_id: int, amount: int,
+                                 room_id: str, reason: str):
+        """已扣除的等待下注退款；标记、余额和流水同事务，不计牌局输赢。"""
+        if not refund_key or not room_id or type(amount) is not int or amount <= 0:
+            raise ValueError("等待下注退款参数不合法")
+        with self._transaction() as connection:
+            existing = connection.execute(
+                "SELECT user_id, room_id, amount FROM blackjack_waiting_refunds WHERE refund_key = ?",
+                (refund_key,),
+            ).fetchone()
+            if existing is not None:
+                if existing != (user_id, room_id, amount):
+                    raise ValueError("等待下注退款记录与当前请求不一致")
+                return
+            if connection.execute("SELECT 1 FROM user_coins WHERE user_id = ?", (user_id,)).fetchone() is None:
+                raise ValueError("退款账户不存在")
+            self._credit(connection, user_id, amount, reason)
+            connection.execute(
+                "INSERT INTO blackjack_waiting_refunds (refund_key, user_id, room_id, amount) VALUES (?, ?, ?, ?)",
+                (refund_key, user_id, room_id, amount),
+            )
+
+    async def refund_blackjack_waiting(self, refund_key: str, user_id: int, amount: int,
+                                      room_id: str, reason: str):
+        await asyncio.to_thread(self._refund_blackjack_waiting, refund_key, user_id, amount, room_id, reason)
 
     @staticmethod
     def _today() -> str:

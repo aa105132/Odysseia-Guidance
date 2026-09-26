@@ -111,6 +111,16 @@ def api(monkeypatch):
     class TestSettlementWallet:
         def __init__(self):
             self.results = {}
+            self.waiting_refunds = {}
+
+        async def refund_blackjack_waiting(self, key, user_id, amount, room_id, reason):
+            expected = (user_id, room_id, amount)
+            if key in self.waiting_refunds:
+                if self.waiting_refunds[key] != expected:
+                    raise ValueError("等待下注退款记录与当前请求不一致")
+                return
+            await coins.add_coins(user_id, amount, reason)
+            self.waiting_refunds[key] = expected
 
         async def settle_blackjack(self, round_key, user_id, stake, payout, profile=None, details=None):
             key = (round_key, str(user_id))

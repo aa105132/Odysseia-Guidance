@@ -75,6 +75,9 @@ class MultiplayerPlayerState:
     payout_amount: int = 0
     is_ready: bool = False
     is_bot: bool = False
+    last_seen_at: float = field(default_factory=lambda: time.monotonic())
+    waiting_refund_key: str = field(default_factory=lambda: uuid4().hex)
+    waiting_refund_pending: bool = False
 
 
 @dataclass
@@ -99,6 +102,7 @@ class MultiplayerRoom:
 class MultiplayerBlackjackService:
     MAX_PLAYERS = 3
     TURN_TIMEOUT_SECONDS = 60
+    WAITING_DISCONNECT_TIMEOUT_SECONDS = 300
     YUEYUE_USER_ID = -1
 
     def __init__(self):
@@ -107,6 +111,38 @@ class MultiplayerBlackjackService:
 
     def _touch(self, room: MultiplayerRoom) -> None:
         room.updated_at = time.time()
+
+    def heartbeat(self, room_id: str, user_id: int) -> None:
+        """仅本人认证请求续期；后台读取、房间列表及其他玩家不续期。"""
+        room = self._rooms.get(room_id)
+        player = room.players.get(user_id) if room else None
+        if player and not player.is_bot and not player.waiting_refund_pending:
+            player.last_seen_at = time.monotonic()
+
+    def expired_waiting_players(self, room_id: str) -> List[int]:
+        room = self._rooms.get(room_id)
+        if room is None or room.state != "waiting":
+            return []
+        now = time.monotonic()
+        return [p.user_id for p in room.players.values() if not p.is_bot and (
+            p.waiting_refund_pending or (p.bet_amount > 0 and
+                now - p.last_seen_at >= self.WAITING_DISCONNECT_TIMEOUT_SECONDS)
+        )]
+
+    def begin_waiting_refund(self, room_id: str, user_id: int) -> tuple[str, int]:
+        room = self._rooms.get(room_id)
+        player = room.players.get(user_id) if room else None
+        if room is None or room.state != "waiting" or player is None or player.is_bot:
+            raise ValueError("只能退还等待中真人的下注")
+        # 先冻结原下注和幂等键；数据库失败/响应取消后不允许改注或开局。
+        player.waiting_refund_pending = True
+        player.is_ready = False
+        return player.waiting_refund_key, player.bet_amount
+
+    @staticmethod
+    def _require_no_waiting_refund(player: MultiplayerPlayerState) -> None:
+        if player.waiting_refund_pending:
+            raise ValueError("等待下注正在退款，请稍后重新加入房间")
 
     def _generate_room_id(self) -> str:
         alphabet = string.ascii_uppercase + string.digits
@@ -291,6 +327,7 @@ class MultiplayerBlackjackService:
             raise PermissionError("只有房主可以修改房间设置")
         if room.state in ("playing", "dealer_turn"):
             raise ValueError("请在本局结束后修改等待时长")
+        self.heartbeat(room_id, user_id)
         if room.turn_timeout_seconds != turn_timeout_seconds:
             room.turn_timeout_seconds = turn_timeout_seconds
             for player in room.players.values():
@@ -305,6 +342,7 @@ class MultiplayerBlackjackService:
         room = self._get_room_or_raise(room_id)
 
         if user_id in room.players:
+            self.heartbeat(room_id, user_id)
             return self._to_room_state(room)
 
         if len(room.players) >= self.MAX_PLAYERS:
@@ -337,6 +375,7 @@ class MultiplayerBlackjackService:
             raise ValueError("本局进行中，不能增减月月陪玩")
         if room.state == "finished" and not room.payouts_committed:
             raise ValueError("本局仍在结算，请稍后配置月月陪玩")
+        self.heartbeat(room_id, host_user_id)
         if include_yueyue and self.YUEYUE_USER_ID not in room.players:
             if len(room.players) >= self.MAX_PLAYERS:
                 raise ValueError("房间人数已满（最多3人），请先腾出一个座位")
@@ -418,6 +457,7 @@ class MultiplayerBlackjackService:
         if player.is_bot:
             raise ValueError("月月陪玩的下注随房主自动调整")
 
+        self._require_no_waiting_refund(player)
         if amount <= 0:
             raise ValueError("下注金额必须大于0")
 
@@ -428,6 +468,8 @@ class MultiplayerBlackjackService:
         if room.state == "finished":
             self._reset_round(room)
 
+        self.heartbeat(room_id, user_id)
+        player.waiting_refund_key = uuid4().hex
         player.bet_amount = amount
         player.last_bet_amount = amount
         player.is_ready = False
@@ -442,6 +484,7 @@ class MultiplayerBlackjackService:
             raise ValueError("你不在该房间中")
         if player.is_bot:
             raise ValueError("月月陪玩自动准备")
+        self._require_no_waiting_refund(player)
 
         if room.state in ("playing", "dealer_turn"):
             raise ValueError("本局进行中，无法修改准备状态")
@@ -452,6 +495,7 @@ class MultiplayerBlackjackService:
         if ready and player.bet_amount <= 0:
             raise ValueError("请先下注再准备")
 
+        self.heartbeat(room_id, user_id)
         player.is_ready = bool(ready)
         self._touch(room)
         return self._to_room_state(room)
@@ -463,6 +507,7 @@ class MultiplayerBlackjackService:
             raise ValueError("你不在该房间中")
         if player.is_bot:
             raise ValueError("月月陪玩的下注随房主自动调整")
+        self._require_no_waiting_refund(player)
 
         if room.state in ("playing", "dealer_turn"):
             raise ValueError("本局进行中，暂时无法继续准备")
@@ -474,6 +519,8 @@ class MultiplayerBlackjackService:
         if room.state == "finished":
             self._reset_round(room)
 
+        self.heartbeat(room_id, user_id)
+        player.waiting_refund_key = uuid4().hex
         player.bet_amount = target_bet
         player.is_ready = True
         self._sync_bot_bet(room)
@@ -496,6 +543,7 @@ class MultiplayerBlackjackService:
 
         not_ready_names: List[str] = []
         for p in room.players.values():
+            self._require_no_waiting_refund(p)
             if p.bet_amount <= 0 or not p.is_ready:
                 not_ready_names.append(p.username)
 

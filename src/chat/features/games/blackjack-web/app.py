@@ -68,6 +68,42 @@ async def _settle_table(room_id: str):
         table_service._changed(room)
 
 
+async def _refund_waiting_blackjack_player(room_id: str, user_id: int, reason: str):
+    """调用者持有房间锁；先持久化退款，再删除内存席位。"""
+    key, amount = multiplayer_blackjack_service.begin_waiting_refund(room_id, user_id)
+    if amount > 0:
+        await _get_table_wallet().refund_blackjack_waiting(key, user_id, amount, room_id, reason)
+    result = multiplayer_blackjack_service.leave_room(room_id, user_id)
+    if result.get("room_closed"):
+        _unbind_session_by_room(room_id)
+    return result
+
+
+async def _expire_waiting_blackjack_players(room_id: str):
+    """调用者持有房间锁；一个账户暂时失败不阻塞其他到期成员退款。"""
+    for user_id in multiplayer_blackjack_service.expired_waiting_players(room_id):
+        try:
+            await _refund_waiting_blackjack_player(
+                room_id, user_id, f"多人21点房间{room_id}等待离线超时退还下注",
+            )
+        except Exception:
+            log.exception("多人21点房间 %s 等待下注退款失败，将重试", room_id)
+
+
+async def _tick_multiplayer_rooms():
+    # 不依赖模型开关，也不依赖浏览器轮询。
+    for room_id in list(multiplayer_blackjack_service._rooms):
+        async with room_locks[_room_lock_key(room_id)]:
+            try:
+                await _expire_waiting_blackjack_players(room_id)
+                if room_id not in multiplayer_blackjack_service._rooms:
+                    continue
+                multiplayer_blackjack_service._get_room_or_raise(room_id)
+                await _try_settle_multiplayer_round(room_id)
+            except Exception:
+                log.exception("多人21点房间 %s 推进失败，将在下一次重试", room_id)
+
+
 async def _tick_tables():
     """没有浏览器轮询时也推进超时/托管，退出不能逃避本局输赢。"""
     while True:
@@ -83,15 +119,8 @@ async def _tick_tables():
                 except Exception:
                     log.exception("桌游房间 %s 推进失败，将在下一次重试", room_id)
         table_service._cleanup()
+        await _tick_multiplayer_rooms()
         if game_bot_runner is not None:
-            # 多人 21 点也在无浏览器轮询时推进月月并提交完成的派彩。
-            for room_id in list(multiplayer_blackjack_service._rooms):
-                async with room_locks[_room_lock_key(room_id)]:
-                    try:
-                        multiplayer_blackjack_service._get_room_or_raise(room_id)
-                        await _try_settle_multiplayer_round(room_id)
-                    except Exception:
-                        log.exception("多人21点房间 %s 推进失败，将在下一次重试", room_id)
             game_bot_runner.prune(table_service.rooms, multiplayer_blackjack_service._rooms)
 
 
@@ -1374,23 +1403,17 @@ async def multi_leave_room(
             if not player_before:
                 raise ValueError("你不在该房间中")
 
-            # 等待阶段离开房间，退还已下注金额
             if room_before.get("state") == "waiting":
-                bet_amount = int(player_before.get("bet_amount") or 0)
-                if bet_amount > 0:
-                    await coin_service.add_coins(
-                        user_id,
-                        bet_amount,
-                        f"多人21点房间{room_id}离房退还下注",
-                    )
-
-            if room_before.get("state") in ("playing", "dealer_turn"):
-                room = multiplayer_blackjack_service._get_room_or_raise(room_id)
-                await _get_table_wallet().settle_blackjack(
-                    room.round_key, str(user_id), int(player_before["bet_amount"]), 0, user,
+                leave_result = await _refund_waiting_blackjack_player(
+                    room_id, user_id, f"多人21点房间{room_id}离房退还下注",
                 )
-
-            leave_result = multiplayer_blackjack_service.leave_room(room_id, user_id)
+            else:
+                if room_before.get("state") in ("playing", "dealer_turn"):
+                    room = multiplayer_blackjack_service._get_room_or_raise(room_id)
+                    await _get_table_wallet().settle_blackjack(
+                        room.round_key, str(user_id), int(player_before["bet_amount"]), 0, user,
+                    )
+                leave_result = multiplayer_blackjack_service.leave_room(room_id, user_id)
             # 离开者可能是最后一位尚未操作的玩家，此时引擎会立即结束本局。
             await _try_settle_multiplayer_round(room_id)
             if isinstance(leave_result, dict) and leave_result.get("room_closed"):
@@ -1421,6 +1444,7 @@ async def multi_get_room(
             room_state = multiplayer_blackjack_service.get_room_state(normalized_room_id)
             if not _find_player_in_room_state(room_state, user_id):
                 raise HTTPException(status_code=403, detail="你不在该房间中，请先加入房间")
+            multiplayer_blackjack_service.heartbeat(normalized_room_id, user_id)
 
             # 轮询也负责重试未完成的派彩，并结算超时自动停牌产生的结果。
             await _try_settle_multiplayer_round(normalized_room_id)
@@ -1457,6 +1481,9 @@ async def multi_set_bet(
             player_before = _find_player_in_room_state(room_before, user_id)
             if not player_before:
                 raise ValueError("你不在该房间中")
+            multiplayer_blackjack_service._require_no_waiting_refund(
+                multiplayer_blackjack_service._rooms[room_id].players[user_id],
+            )
 
             if room_before.get("state") not in ("waiting", "finished"):
                 raise ValueError("本局进行中，无法修改下注")
@@ -1583,6 +1610,10 @@ async def multi_continue_ready(
             player_before = _find_player_in_room_state(room_before, user_id)
             if not player_before:
                 raise ValueError("你不在该房间中")
+            multiplayer_blackjack_service._require_no_waiting_refund(
+                multiplayer_blackjack_service._rooms[room_id].players[user_id],
+            )
+            multiplayer_blackjack_service.heartbeat(room_id, user_id)
 
             room_stage = str(room_before.get("state") or "")
             if room_stage in ("playing", "dealer_turn"):
@@ -1680,6 +1711,11 @@ async def multi_start_round(
 
     async with room_locks[_room_lock_key(room_id)]:
         try:
+            before = multiplayer_blackjack_service._rooms.get(room_id)
+            if before is None or before.host_user_id != user_id:
+                raise ValueError("房间不存在或你不是房主")
+            multiplayer_blackjack_service.heartbeat(room_id, user_id)
+            await _expire_waiting_blackjack_players(room_id)
             multiplayer_blackjack_service.start_round(room_id, user_id)
             await _try_settle_multiplayer_round(room_id)
             room_state = multiplayer_blackjack_service.get_room_state(room_id)
