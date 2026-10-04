@@ -268,6 +268,13 @@ def build_action_candidates(context: dict) -> dict[str, dict]:
         if finishing:
             # 斗地主任一农民清手就是本队胜利，不能为让队友而放弃已经能赢的动作。
             return finishing
+    if kind == "golden_flower":
+        you = context["you"]
+        info = import_module("src.chat.features.games.blackjack-web.poker_games").golden_bot_policy(state, you)
+        candidates = {name: action for name, action in candidates.items()
+                      if poker_candidate_allowed(kind, state, you, action, info)}
+        if not candidates:
+            raise ValueError("没有合格的送评候选")
     return candidates
 
 
@@ -436,3 +443,34 @@ def selected_action(response: object, candidates: dict) -> dict:
     if probabilities[choice] <= 0 or abs(sum(probabilities.values()) - 1) > tolerance:
         raise ValueError("Jev 概率总和不合法")
     return dict(candidates[choice])
+
+
+def poker_candidate_allowed(kind: str, state: dict, you: str, action: dict, info=None) -> bool:
+    """仅供陪玩候选预算校验；不改变玩家合法动作，不按偏好重新抽样。"""
+    name = action["action"]
+    own = next(p for p in state["players"] if p["user_id"] == you)
+    if name not in state["legal_actions"]:
+        return False
+    if kind == "golden_flower":
+        poker = import_module("src.chat.features.games.blackjack-web.poker_games")
+        info = info or poker.golden_bot_policy(state, you)
+        if name == "look":
+            return info["must_look_before_paying"]
+        if name == "fold":
+            return not info["must_look_before_paying"]
+        if not own["seen"] and name != "call":
+            return False
+        if info["must_look_before_paying"] or info["weak_hand_must_fold"]:
+            return False
+        if info["compare_now_targets"]:
+            if name != "compare" or action.get("target_id") not in info["compare_now_targets"]:
+                return False
+        if not poker.golden_continuation_safe(state, you, name, action.get("amount")):
+            return False
+        paid = action.get("amount", 0) * (2 if own["seen"] else 1) if name == "raise" else state["compare_cost"] if name == "compare" else state["call_amount"]
+        if name == "raise" and action["amount"] > state["base_bet"] * 3:
+            return False
+        if not own["seen"]:
+            return paid <= min(state["ante"] * 4, own["stack"] * .08) and own["total_bet"] + paid <= min(state["ante"] * 8, state["buy_in"] * .12)
+        return info["is_strong_hand"] or (paid <= info["weak_hand_max_cost"] and own["total_bet"] + paid <= info["weak_hand_total_budget"])
+    raise ValueError('Scoped release supports golden_flower only')

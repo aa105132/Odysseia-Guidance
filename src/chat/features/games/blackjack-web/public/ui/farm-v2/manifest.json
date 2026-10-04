@@ -6,14 +6,14 @@
   "assets": [
     {
       "file": "garden-world.webp",
-      "source": "garden-world.png",
-      "source_sha256": "9a5e12986f4911df685a9ee2d49b4d53bec2590ad6a0aa24ba85d1de206e7411",
+      "source": "garden-world-v2.webp (edit of v1: field enclosure + alchemy pavilion)",
+      "source_sha256": "d2699da94181fff02b171d99d9f9e43b30b9335c694bc275609a6443b293bd94",
       "size": [
         1536,
         1024
       ],
-      "bytes": 532418,
-      "sha256": "97e93fed125202cddd590b293ff0a545ed1cbe06318219ffd4e9f0d00877f276",
+      "bytes": 420422,
+      "sha256": "d2699da94181fff02b171d99d9f9e43b30b9335c694bc275609a6443b293bd94",
       "alpha": false
     },
     {
@@ -637,6 +637,119 @@
       ],
       "bytes": 34446,
       "sha256": "0061db654c4cebf95dbe64186b76bb3c6334d5cec121299aaa837867bfa23395",
+      "alpha": true
+    },
+    {
+      "file": "alchemy/alchemy-room.webp",
+      "source": "generated-02bcdc6b-4f93-43bd-9900-140bf6c54047.png",
+      "source_sha256": "e5fb566a23b50507ebfc415e135ab2c18b6c71a4526632210999bfb7fbd68649",
+      "size": [
+        1536,
+        1024
+      ],
+      "bytes": 375510,
+      "sha256": "62e0260b50b51b2b591e72c0c14cef84afb2343a9b7abf16d3110ffd0bc5c856",
+      "alpha": false
+    },
+    {
+      "file": "alchemy/furnace.webp",
+      "source": "generated-6cbaabc5-4d61-4cbf-ab8f-e0c769f3c3be.png",
+      "source_sha256": "76648c3dd4f72d0e94b8ebe4af1bd560912832e1de6aae7b8ff2ae6e36e3213e",
+      "size": [
+        741,
+        768
+      ],
+      "bytes": 174624,
+      "sha256": "53ca7582fe5b46ef52152bd09fad9a24b97d7814163d13bbb4553d22d8b8c9fc",
+      "alpha": true
+    },
+    {
+      "file": "alchemy/alchemy.webp",
+      "source": "generated-bae195f2-fc74-470a-b6fb-f0df542579ed.png",
+      "source_sha256": "2571fd2b91da9a7ed19a82f1524a277cf580a5af7b2c344324e5349f771698a9",
+      "size": [
+        2048,
+        256
+      ],
+      "bytes": 105944,
+      "sha256": "bf6746b326dc77153e97da7dbdfdb6bf9ce175dfb33160e8363b3698b773f6cb",
+      "alpha": true,
+      "frames": 8,
+      "frame_size": [
+        256,
+        256
+      ]
+    },
+    {
+      "file": "alchemy/pill-green.webp",
+      "source": "generated-be7ab57f-0b86-4c66-9f66-26db6850f933.png",
+      "source_sha256": "124531cc768d3ef682809bab95e4ac8218ec7418ae1211f76320c0cee19adda9",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 27042,
+      "sha256": "6980714d4197c5c277555c5ab1e22de0094dd251ed1934af458295982566ae4c",
+      "alpha": true
+    },
+    {
+      "file": "alchemy/pill-gold.webp",
+      "source": "generated-be7ab57f-0b86-4c66-9f66-26db6850f933.png",
+      "source_sha256": "124531cc768d3ef682809bab95e4ac8218ec7418ae1211f76320c0cee19adda9",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 25934,
+      "sha256": "6c4460e2fc6a39bfc422dcfa1401dddb91c5113f90dbba1719e1f990a7dd2e33",
+      "alpha": true
+    },
+    {
+      "file": "alchemy/pill-blue.webp",
+      "source": "generated-be7ab57f-0b86-4c66-9f66-26db6850f933.png",
+      "source_sha256": "124531cc768d3ef682809bab95e4ac8218ec7418ae1211f76320c0cee19adda9",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 31012,
+      "sha256": "711d65fe9484f5d672c1e9472ca5b674e04f79a6db8c0676e371bd8d1af54979",
+      "alpha": true
+    },
+    {
+      "file": "alchemy/pill-red.webp",
+      "source": "generated-be7ab57f-0b86-4c66-9f66-26db6850f933.png",
+      "source_sha256": "124531cc768d3ef682809bab95e4ac8218ec7418ae1211f76320c0cee19adda9",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 27064,
+      "sha256": "6b8f69b1d742a511ca9c8be5d8c5cf4de0350427b6e3ac9bd6c864787c3b9f7b",
+      "alpha": true
+    },
+    {
+      "file": "alchemy/pill-silver.webp",
+      "source": "generated-be7ab57f-0b86-4c66-9f66-26db6850f933.png",
+      "source_sha256": "124531cc768d3ef682809bab95e4ac8218ec7418ae1211f76320c0cee19adda9",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 24150,
+      "sha256": "40572e9aea80c3f916d888292ba5b9b4a3047449b1ee866308447ed982995d63",
+      "alpha": true
+    },
+    {
+      "file": "alchemy/pill-waste.webp",
+      "source": "generated-be7ab57f-0b86-4c66-9f66-26db6850f933.png",
+      "source_sha256": "124531cc768d3ef682809bab95e4ac8218ec7418ae1211f76320c0cee19adda9",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 24282,
+      "sha256": "4dc1360b7f63593605080afa45224ef1ccc4a8df4017759df5598eac84a6f2c3",
       "alpha": true
     }
   ]

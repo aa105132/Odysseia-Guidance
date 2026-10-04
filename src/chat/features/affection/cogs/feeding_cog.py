@@ -80,8 +80,18 @@ class FeedingCog(commands.Cog):
             image_bytes = await image.read()
 
             # 构建包含月月人设的提示词
-            persona_part = extract_persona_prompt(
+            # 注意：不能用完整 persona——里面含大段绘图 NSFW 拒绝规则词表，
+            # 拼进看图请求会触发上游安全过滤，返回 200 但 content 为空（投喂假死）。
+            # 只取 <core_identity> 段（性格/外貌/喜好），画图规则留给画图任务用。
+            import re as _re
+            _raw_persona = extract_persona_prompt(
                 prompt_service.get_prompt("SYSTEM_PROMPT")
+            )
+            _core_match = _re.search(
+                r"<core_identity>(.*?)</core_identity>", _raw_persona, _re.DOTALL
+            )
+            persona_part = (
+                _core_match.group(1) if _core_match else _raw_persona
             )
             base_prompt = PROMPT_CONFIG.get("feeding_prompt", "")
             # 注入今日穿着到 image_prompt 描述要求中
@@ -195,7 +205,7 @@ class FeedingCog(commands.Cog):
 
             # --- 第二步：后台生成图片，完成后编辑消息贴上 ---
             fallback_image_prompt_text = (
-                "银白色长发扎成高马尾的可爱银狐少女月月正在认真观察用户投喂的参考图片，"
+                "银白色长发扎成高马尾的可爱成年银狐女性月月正在认真观察用户投喂的参考图片，"
                 "左眼淡绿色右眼淡蓝色异色瞳，白皙肤色，毛茸茸的白色狐耳内侧粉色，"
                 "银白色蓬松大尾巴，马尾处插着银色月牙发簪，两侧戴着细微尖三角形耳坠。"
                 "请以参考图内容为核心道具或画面主题：如果是食物就吃掉或评价；"

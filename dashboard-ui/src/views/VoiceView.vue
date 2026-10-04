@@ -140,6 +140,7 @@ const providerOptions = computed(() => {
     return list.map((p) => ({ value: p.id ?? '', label: p.name ?? p.id ?? '' }));
   }
   return [
+    { value: 'elevenlabs', label: 'ElevenLabs V3（银月）' },
     { value: 'doubao', label: '火山引擎（豆包）' },
     { value: 'siliconflow', label: '硅基流动（OpenAI 兼容）' },
     { value: 'custom', label: '自定义 OpenAI 兼容' },

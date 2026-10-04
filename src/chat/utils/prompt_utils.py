@@ -1,7 +1,11 @@
 import re
 import random
 from src.chat.config.prompts import SYSTEM_PROMPT
-from src.chat.config.emoji_config import EMOJI_MAPPINGS, FACTION_EMOJI_MAPPINGS
+from src.chat.config.emoji_config import (
+    EMOJI_MAPPINGS,
+    FACTION_EMOJI_MAPPINGS,
+    normalize_emotion_tag_wrappers,
+)
 from src.chat.services.event_service import event_service
 import logging
 
@@ -15,7 +19,7 @@ def replace_emojis(text: str) -> str:
     此函数现在会根据当前活动和派系动态选择表情包。
     """
     faction_info = event_service.get_selected_faction_info()
-    processed_text = text
+    processed_text = normalize_emotion_tag_wrappers(text)
 
     # 首先尝试使用派系专属表情包
     if faction_info:

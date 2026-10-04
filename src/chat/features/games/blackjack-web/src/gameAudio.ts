@@ -27,7 +27,7 @@ let context: AudioContext | null = null;
 let effects: GainNode | null = null;
 let users = 0;
 let unlocked = false;
-let scene: 'lobby' | 'playing' = 'lobby';
+let scene: 'lobby' | 'playing' | 'external' = 'lobby';
 let musicTrack: HTMLAudioElement | null = null;
 let voiceTrack: HTMLAudioElement | null = null;
 let musicName = '';
@@ -85,7 +85,7 @@ function selectSceneMusic() {
   return track;
 }
 function playMusic(name: string, interlude = false) {
-  if (!unlocked || !musicEnabled.value || document.hidden || !users) return;
+  if (scene === 'external' || !unlocked || !musicEnabled.value || document.hidden || !users) return;
   const epoch = ++musicEpoch;
   release(musicTrack);
   musicTrack = new Audio(`/audio/music/${name}.mp3`);
@@ -97,7 +97,7 @@ function playMusic(name: string, interlude = false) {
   void musicTrack.play().catch(() => { /* 浏览器尚未允许播放时，等待下一次真实手势。 */ });
 }
 function updateMusic() {
-  if (!musicEnabled.value || document.hidden || !unlocked || !users) { musicTrack?.pause(); return; }
+  if (scene === 'external' || !musicEnabled.value || document.hidden || !unlocked || !users) { musicTrack?.pause(); return; }
   if (!musicTrack || (!roundInterlude && ((scene === 'playing') !== (musicName === 'Normal')))) playMusic(selectSceneMusic());
   else { syncMusicVolume(); void musicTrack.play().catch(() => {}); }
 }
@@ -127,10 +127,11 @@ export function setMusicEnabled(enabled: boolean) {
   if (enabled) void unlock();
   updateMusic();
 }
-export function setGameAudioScene(next: 'lobby' | 'playing') {
+export function setGameAudioScene(next: 'lobby' | 'playing' | 'external') {
   // 新局可能仍属于playing场景，也必须停止上一局的胜负插曲。
   if (scene === next && !roundInterlude) return;
   scene = next;
+  if (next === 'external') stopGameVoice();
   if (roundInterlude) {
     musicEpoch++; release(musicTrack); musicTrack = null; musicName = ''; roundInterlude = false;
   }
@@ -145,7 +146,7 @@ export function stopGameVoice() {
   voiceEpoch++; release(voiceTrack); voiceTrack = null; syncMusicVolume();
 }
 export async function playGameVoice(id: string, options: { enqueue?: boolean } = {}) {
-  if (!voiceEnabled.value || !voiceVolume.value || document.hidden || !gameVoiceIds.has(id) || !users) return;
+  if (scene === 'external' || !voiceEnabled.value || !voiceVolume.value || document.hidden || !gameVoiceIds.has(id) || !users) return;
   if (!unlocked) return;
   if (options.enqueue && voiceTrack) {
     // 连续动作按发生顺序报牌，短时间内的机器人响应不能截断本人刚出的牌。
@@ -172,7 +173,7 @@ export async function playGameVoice(id: string, options: { enqueue?: boolean } =
   try { await track.play(); } catch { finish(); }
 }
 export function playGameSound(kind: 'click' | 'raise' | 'deal' | 'win' = 'click') {
-  if (!soundEnabled.value || !soundVolume.value || !context || !effects || context.state !== 'running' || document.hidden) return;
+  if (scene === 'external' || !soundEnabled.value || !soundVolume.value || !context || !effects || context.state !== 'running' || document.hidden) return;
   const now = context.currentTime;
   const notes = kind === 'raise' ? [660, 880, 1100] : kind === 'win' ? [523, 659, 784] : kind === 'deal' ? [440, 330] : [740];
   notes.forEach((frequency, index) => tone(frequency, now + index * .055, kind === 'click' ? .055 : .16, .14, effects!, 'triangle'));

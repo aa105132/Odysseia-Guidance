@@ -31,7 +31,8 @@ onMounted(() => panel.value?.showModal());
     <header><div><small>好友相聚 · 同桌开局</small><h2 id="room-invite-title">招募队友</h2></div><button class="game-button quiet" @click="emit('close')">关闭</button></header>
     <div class="invite-code"><span>房间号</span><strong>{{ room.room_id }}</strong><button class="game-button" @click="copy(room.room_id, '房间号')">复制房间号</button></div>
     <p class="invite-summary">{{ roomInviteDescription(room) }}</p>
-    <p>好友点击邀请链接，通过 Discord 打开小活动后自动尝试加入这间房。</p>
+    <p v-if="room.game_type === 'noname'">好友点击邀请打开三国杀，接受许可后点击“好友联机”加入这间房。</p>
+    <p v-else>好友点击邀请链接，通过 Discord 打开小活动后自动尝试加入这间房。</p>
     <div class="invite-actions"><button v-if="share" class="game-button gold" :disabled="busy" @click="recruit">{{ busy ? '正在打开…' : '选择好友或频道' }}</button><button class="game-button" @click="copyLink">复制邀请链接</button></div>
     <p v-if="notice" role="status">{{ notice }}</p>
     <input v-if="manual" ref="field" :value="manual" readonly aria-label="手动复制内容" @focus="field?.select()" @click="field?.select()">

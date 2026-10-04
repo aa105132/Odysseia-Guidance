@@ -285,3 +285,15 @@
   .entry-dialog-heading span { display: none; }
   .entry-dialog-footer { padding-top: 6px; }
 }
+
+/* Optional adventures share the existing extra-game row, without growing the lobby. */
+.hub-fullscreen .hub-game-grid > .pokerogue-card { --card-light: #bf5c38; --card-mid: #97462e; --card-dark: #512a30; }
+.hub-fullscreen .hub-game-grid.has-both-extras > :is(.noname-card, .pokerogue-card) { grid-column: auto; padding-inline: 8px; gap: 5px; }
+.hub-fullscreen .has-both-extras :is(.noname-card, .pokerogue-card) .game-card-art { width: clamp(27px, 5cqw, 60px); }
+.hub-fullscreen .has-both-extras :is(.noname-card, .pokerogue-card) .game-name { font-size: clamp(14px, 1.7cqw, 23px); letter-spacing: 0; }
+.hub-fullscreen .has-both-extras :is(.noname-card, .pokerogue-card) .game-desc { font-size: 10px; letter-spacing: 0; }
+.hub-fullscreen .has-both-extras :is(.noname-card, .pokerogue-card) .card-arrow { display: none; }
+@container activity-viewport (max-height: 600px) {
+  .hub-fullscreen .hub-game-grid.has-pokerogue:not(.has-both-extras) > .pokerogue-card { grid-column: 1 / -1; }
+  .hub-fullscreen .has-both-extras :is(.noname-card, .pokerogue-card) .game-card-art { width: 27px; }
+}

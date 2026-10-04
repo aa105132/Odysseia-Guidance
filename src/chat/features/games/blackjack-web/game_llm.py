@@ -56,7 +56,7 @@ kong_options drawn_tile mahjong_variant missing_suit has_won win_order win_fan w
 winning_tile max_fan missing_suit_options reaction_kind after_kong source_id from_user_id bet_amount status
 is_current_turn dealer level team_levels team finished_rank finish_order tribute_events
 match_finished match_winner_team level_gain play_options combo to_user_id target_id
-user_ids card automatic fallback""".split())
+user_ids card automatic fallback pending_players acted_at_bet""".split())
 
 
 def _texas_strategy(state: dict, you: str) -> dict:
@@ -110,7 +110,7 @@ def _context(game_type: str, public_state: dict, user_id: str) -> dict:
     seats = {uid: f"seat_{index + 1}" for index, uid in enumerate(identities)}
 
     identity_fields = {"user_id", "current_player_id", "current_turn_user_id", "landlord_id",
-                       "source_id", "from_user_id", "to_user_id", "target_id", "user_ids", "winners", "compare_targets", "finish_order"}
+                       "source_id", "from_user_id", "to_user_id", "target_id", "user_ids", "winners", "compare_targets", "finish_order", "pending_players"}
 
     def clean(value, field=""):
         if isinstance(value, dict):

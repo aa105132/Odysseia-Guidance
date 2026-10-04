@@ -90,6 +90,41 @@ class FarmService:
         state.setdefault("items", {})
         state["stats"].setdefault("guarded", 0)
         state["stats"].setdefault("caught", 0)
+        state.setdefault("pills", {})
+        state["stats"].setdefault("refines", 0)
+        state["stats"].setdefault("pills_made", 0)
+        state["stats"].setdefault("explosions", 0)
+        state.setdefault("furnace", None)
+        state.setdefault("alchemy_xp", 0)
+
+    @staticmethod
+    def _duration_label(seconds):
+        seconds = max(0, int(-(-seconds // 1)))
+        minutes, remainder = divmod(seconds, 60)
+        if minutes and remainder:
+            return f"{minutes} 分 {remainder} 秒"
+        return f"{minutes} 分钟" if minutes else f"{remainder} 秒"
+
+    @staticmethod
+    def _furnace_view(state, now):
+        furnace = state.get("furnace")
+        if not furnace:
+            return None
+        # 炉中结果开炉时已由服务端抽定，出炉前不下发，前端只拿到进度。
+        view = {"recipe_id": furnace["recipe_id"], "fire": furnace["fire"], "quality": furnace["quality"],
+                "catalyst": furnace.get("catalyst"), "started_at": furnace["started_at"],
+                "ready_at": furnace["ready_at"], "remaining_seconds": max(0, furnace["ready_at"] - now),
+                "ready": now >= furnace["ready_at"]}
+        for key in ("furnace_level", "alchemy_xp", "bonus_pills"):
+            if key in furnace:
+                # 固定经验/炉级加成与成败无关，可以公开；旧炉不伪造新规则快照。
+                view[key] = furnace[key]
+        if "yield_outcomes" in furnace:
+            # 公开整张可能产量表，绝不公开本炉抽中的数量或档位。
+            view["yield_outcomes"] = catalog.json_copy(furnace["yield_outcomes"])
+        else:
+            view["yield_quantity"] = furnace.get("yield_quantity", 1)
+        return view
 
     def _load(self, connection, uid, now, profile=None):
         row = connection.execute("SELECT * FROM farm_profiles WHERE user_id = ?", (uid,)).fetchone()
@@ -170,6 +205,27 @@ class FarmService:
         return item
 
     @staticmethod
+    def _recipe(recipe_id):
+        recipe = catalog.RECIPE_BY_ID.get(recipe_id) if isinstance(recipe_id, str) else None
+        if recipe is None:
+            raise FarmError("没有这张丹方")
+        return recipe
+
+    @staticmethod
+    def _fire(fire_id):
+        fire = catalog.FIRE_BY_ID.get(fire_id) if isinstance(fire_id, str) else None
+        if fire is None:
+            raise FarmError("火候不正确")
+        return fire
+
+    @staticmethod
+    def _pill_def(pill_id):
+        pill = catalog.PILL_BY_ID.get(pill_id) if isinstance(pill_id, str) else None
+        if pill is None:
+            raise FarmError("没有这种丹药")
+        return pill
+
+    @staticmethod
     def _guardian(state, now):
         pet_id = state.get("equipped_pet")
         owned = state.get("pets", {}).get(pet_id)
@@ -243,7 +299,7 @@ class FarmService:
                 "ward_until": plot.get("ward_until"), "ward_active": now < plot.get("ward_until", 0),
                 "theft_attempted": not own and str(viewer_id) in (plot.get("theft_attempted_by", []) + plot["stolen_by"]),
             })
-        inventory = {"seeds": [], "produce": [], "items": []}
+        inventory = {"seeds": [], "produce": [], "items": [], "pills": []}
         if own:
             inventory["items"] = [{"item_id": item_id, "quantity": quantity} for item_id, quantity in state["items"].items()]
             inventory["seeds"] = [{"crop_id": cid, "quantity": quantity} for cid, quantity in state["seeds"].items()]
@@ -251,9 +307,13 @@ class FarmService:
                 cid, quality = key.split(":")
                 inventory["produce"].append({"crop_id": cid, "quality": quality, "quantity": quantity,
                                               "unit_price": self._crop(cid)["sale_price"] * catalog.QUALITY_MULTIPLIERS[quality]})
+            for key, quantity in state["pills"].items():
+                pid, grade = key.split(":")
+                inventory["pills"].append({"pill_id": pid, "grade": grade, "quantity": quantity,
+                                           "unit_price": catalog.pill_price(pid, grade)})
         activity = [dict(row) for row in connection.execute(
             """SELECT event_id, action, message, created_at FROM farm_events WHERE owner_id = ?
-            AND (? OR action NOT IN ('buy_pet', 'equip_pet', 'buy_item', 'use_item', 'caught'))
+            AND (? OR action NOT IN ('buy_pet', 'equip_pet', 'buy_item', 'use_item', 'caught', 'refine', 'collect_pill', 'sell_pill'))
             ORDER BY event_id DESC LIMIT 20""",
             (farm["user_id"], own)).fetchall()]
         return {
@@ -267,6 +327,8 @@ class FarmService:
                      "protected_until": state["created_at"] + catalog.RULES["newcomer_protection_seconds"],
                      "stats": dict(state["stats"]) if own else None},
             "balance": self._balance(connection, farm["user_id"]) if own else None,
+            "furnace": self._furnace_view(state, now) if own else None,
+            "alchemy": catalog.alchemy_progress(state["alchemy_xp"]) if own else None,
             "guardian": self._guardian(state, now),
             "pets": [{"pet_id": pet_id, "equipped": state["equipped_pet"] == pet_id,
                       "guard_until": pet_state["guard_until"],
@@ -508,6 +570,110 @@ class FarmService:
             plot["stolen_by"].append(str(farm["user_id"]))
             state["stats"]["stolen"] += 1
             result.update({"message": f"悄悄摘走了{crop['name']} × 1", "caught": False, "quantity": 1, "crop_id": crop["id"], "quality": plot["quality"]})
+        elif action == "refine":
+            recipe = self._recipe(params.get("recipe_id"))
+            fire = self._fire(params.get("fire"))
+            self._integer(quantity, 1, 1, "开炉次数")
+            if quality not in catalog.QUALITY_MULTIPLIERS:
+                raise FarmError("灵植品质不正确")
+            if level < recipe["unlock_level"]:
+                raise FarmError(f"灵圃达到 {recipe['unlock_level']} 级才能炼制{recipe['name']}")
+            if state["furnace"] is not None:
+                raise FarmError("丹炉里还有一炉丹药，先收丹再开炉")
+            catalyst = self._crop(crop_id) if crop_id is not None else None
+            materials = dict(recipe["materials"])
+            if catalyst is not None:
+                materials[catalyst["id"]] = materials.get(catalyst["id"], 0) + 1
+            for cid, count in materials.items():
+                if state["produce"].get(f"{cid}:{quality}", 0) < count:
+                    raise FarmError(f"{self._crop(cid)['name']}不足，需要 {count} 份")
+            for cid, count in materials.items():
+                self._add_inventory(state["produce"], f"{cid}:{quality}", -count)
+            odds = catalog.refine_odds(recipe, fire["id"], catalyst["id"] if catalyst else None)
+            progression = catalog.alchemy_progress(state["alchemy_xp"])
+            seconds = catalog.alchemy_duration(recipe, state["alchemy_xp"])
+            yields = catalog.alchemy_yield_outcomes(recipe, progression["bonus_pills"])
+            # 药材先扣，结果开炉时由服务端抽定并封在炉中；回执重放不会重抽，出炉前也不下发结果。
+            roll = self.rng.random()
+            state["stats"]["refines"] += 1
+            if roll < odds["success"]:
+                grades = catalog.grade_odds(quality, odds["balance"] == 0)
+                grade_roll = self.rng.random()
+                grade = ("high" if grade_roll < grades["high"]
+                         else "mid" if grade_roll < round(grades["high"] + grades["mid"], 4) else "low")
+                sealed = {"pill_id": recipe["pill_id"], "grade": grade,
+                          **catalog.refine_yield({"yield_outcomes": yields}, self.rng.random())}
+            elif roll < round(odds["success"] + odds["explode"], 4):
+                sealed = {"outcome": "explode", "pill_id": None, "grade": None, "quantity": 0}
+            else:
+                sealed = {"outcome": "waste", "pill_id": "waste", "grade": "low", "quantity": 1}
+            minimum = min(choice["quantity"] for choice in yields)
+            maximum = max(choice["quantity"] for choice in yields)
+            state["furnace"] = {"recipe_id": recipe["id"], "fire": fire["id"], "quality": quality,
+                                "catalyst": catalyst["id"] if catalyst else None,
+                                "yield_outcomes": yields,
+                                "furnace_level": progression["level"], "alchemy_xp": recipe["alchemy_xp"],
+                                "bonus_pills": progression["bonus_pills"],
+                                "started_at": now, "ready_at": now + seconds, **sealed}
+            result.update({"recipe_id": recipe["id"], "fire": fire["id"], "heat": odds["balance"],
+                           "odds": odds, "materials": materials, "quality": quality,
+                           "ready_at": now + seconds, "refine_seconds": seconds,
+                           "furnace_level": progression["level"], "alchemy_xp": recipe["alchemy_xp"],
+                           "bonus_pills": progression["bonus_pills"],
+                           "yield_outcomes": catalog.json_copy(yields),
+                           "message": f"丹炉起火，{recipe['name']}约需 {self._duration_label(seconds)}炼成，成功可得 {minimum}～{maximum} 枚，收丹揭晓"})
+        elif action == "collect_pill":
+            self._integer(quantity, 1, 1, "收丹次数")
+            furnace = state["furnace"]
+            if furnace is None:
+                raise FarmError("丹炉是空的，先开一炉吧")
+            if now < furnace["ready_at"]:
+                raise FarmError(f"丹药尚未炼成，还需 {self._duration_label(furnace['ready_at'] - now)}")
+            recipe = catalog.RECIPE_BY_ID[furnace["recipe_id"]]
+            state["furnace"] = None
+            outcome = furnace["outcome"]
+            result.update({"recipe_id": recipe["id"], "fire": furnace["fire"], "quality": furnace["quality"],
+                           "outcome": outcome, "pill_id": furnace["pill_id"], "grade": furnace["grade"]})
+            if outcome in {"success", "great_success"}:
+                # 新炉随机数量早已封存；旧炉按历史固定数量，缺字段仍只发一枚。
+                produced = furnace["quantity"] if "yield_outcomes" in furnace else furnace.get("yield_quantity", 1)
+                self._add_inventory(state["pills"], f"{furnace['pill_id']}:{furnace['grade']}", produced)
+                state["stats"]["pills_made"] += produced
+                grade_name = catalog.PILL_GRADE_BY_ID[furnace["grade"]]["name"]
+                label = "大成功！" if outcome == "great_success" else "炼制成功！"
+                result.update({"quantity": produced, "message": f"{label}得{grade_name}{recipe['name']} × {produced}"})
+            elif outcome == "explode":
+                state["stats"]["explosions"] += 1
+                result.update({"quantity": 0, "message": f"炸炉了！炼制{recipe['name']}的药材化为飞灰"})
+            else:
+                self._add_inventory(state["pills"], "waste:low", 1)
+                result.update({"quantity": 1, "message": f"药性失和，{recipe['name']}凝成了一枚废丹"})
+            # 完成一炉才记一次熟练度，与收丹、事件、幂等回执同事务提交。
+            # 部署前尚未领取的旧炉按该丹方获得一次经验；历史收丹回执不补发。
+            before = catalog.alchemy_progress(state["alchemy_xp"])
+            gained = furnace.get("alchemy_xp", recipe["alchemy_xp"])
+            state["alchemy_xp"] += gained
+            after = catalog.alchemy_progress(state["alchemy_xp"])
+            leveled_up = after["level"] > before["level"]
+            result.update({"alchemy_xp_gained": gained, "alchemy_level_before": before["level"],
+                           "alchemy_level": after["level"], "alchemy_leveled_up": leveled_up})
+            result["message"] += f"；炼丹经验 +{gained}"
+            if leveled_up:
+                result["message"] += (f"，丹炉升至 {after['level']} 级·{after['name']}"
+                                      f"（后续炼制用时缩短 {100 - after['duration_percent']}%，成功固定多 {after['bonus_pills']} 枚）")
+        elif action == "sell_pill":
+            pill = self._pill_def(params.get("pill_id"))
+            grade = params.get("grade")
+            if grade not in catalog.PILL_GRADE_BY_ID or (pill["id"] == "waste" and grade != "low"):
+                raise FarmError("丹药品阶不正确")
+            key = f"{pill['id']}:{grade}"
+            grade_name = catalog.PILL_GRADE_BY_ID[grade]["name"]
+            self._integer(quantity, 1, 9999, "出售数量")
+            self._add_inventory(state["pills"], key, -quantity)
+            amount = catalog.pill_price(pill["id"], grade) * quantity
+            self._coins(connection, farm, amount, f"出售{grade_name}{pill['name']}×{quantity}")
+            result.update({"message": f"出售{grade_name}{pill['name']}，获得 {amount} 灵石", "coins": amount,
+                           "pill_id": pill["id"], "grade": grade, "quantity": quantity})
         else:
             raise FarmError("不支持这个灵圃操作")
         return result
@@ -523,7 +689,8 @@ class FarmService:
             raise FarmError("请选择要拜访的道友")
         # 新增的可选字段缺省不写指纹，部署前的幂等回执仍可重放。
         fingerprint_params = {key: value for key, value in params.items()
-                              if key not in {"pet_id", "item_id"} or value is not None}
+                              if key not in {"pet_id", "item_id", "recipe_id", "fire", "pill_id", "grade"}
+                              or value is not None}
         fingerprint = self._dump({"action": action, **fingerprint_params, "target_user_id": target_id})
         now = self.clock()
         with self._transaction() as connection:
@@ -557,7 +724,9 @@ class FarmService:
             return response
 
     async def act(self, profile, action, *, request_id, plot_id=None, crop_id=None,
-                  quantity=1, quality="normal", target_user_id=None, pet_id=None, item_id=None):
+                  quantity=1, quality="normal", target_user_id=None, pet_id=None, item_id=None,
+                  recipe_id=None, fire=None, pill_id=None, grade=None):
         params = {"plot_id": plot_id, "crop_id": crop_id, "quantity": quantity,
-                  "quality": quality, "target_user_id": target_user_id, "pet_id": pet_id, "item_id": item_id}
+                  "quality": quality, "target_user_id": target_user_id, "pet_id": pet_id, "item_id": item_id,
+                  "recipe_id": recipe_id, "fire": fire, "pill_id": pill_id, "grade": grade}
         return await asyncio.to_thread(self._act, profile, action, params, request_id)

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CopyRoomCode from './CopyRoomCode.vue';
-const props = defineProps<{ username: string; apiCall: <T>(path: string, method: 'GET' | 'POST', body?: unknown, retries?: number) => Promise<T> }>();
-const emit = defineEmits<{ back: []; roomActive: [boolean] }>();
+import type { RoomInvite } from './roomInvites';
+const props = defineProps<{ username: string; initialRoomId?: string; apiCall: <T>(path: string, method: 'GET' | 'POST', body?: unknown, retries?: number) => Promise<T> }>();
+const emit = defineEmits<{ back: []; roomActive: [boolean]; invite: [RoomInvite] }>();
 const frame = ref<HTMLIFrameElement>();
 const started = ref(false);
 const busy = ref(false);
@@ -16,11 +17,32 @@ const roomCode = ref('');
 const capacity = ref(8);
 const pending = ref(false);
 let commandTimer: ReturnType<typeof setTimeout> | undefined;
+const invitationToJoin = ref(props.initialRoomId || '');
+let roomsReady = false;
+function tryJoinInvitation() {
+  if (!invitationToJoin.value || !roomsReady || !online.value || phase.value !== 'lobby' || pending.value) return;
+  const id = invitationToJoin.value;
+  invitationToJoin.value = '';
+  roomCode.value = id;
+  const target = rooms.value.find(item => item.id === id);
+  if (!target || target.playing || target.count >= target.capacity) {
+    error.value = '邀请房间已关闭、已满或已开局，请重新选择房间';
+    return;
+  }
+  command('join', id);
+}
+function getInvite(): RoomInvite | null {
+  if (!started.value || !online.value || pending.value || phase.value !== 'waiting' || !room.value.roomId) return null;
+  return { game_type: 'noname', room_id: room.value.roomId, player_count: room.value.players.length, max_players: room.value.capacity, state: 'waiting' };
+}
+function invite() { const target = getInvite(); if (target) emit('invite', target); }
+defineExpose({ getInvite });
 const roomActive = computed(() => started.value && (!online.value || ['waiting', 'playing'].includes(phase.value)));
 watch(roomActive, active => emit('roomActive', active), { immediate: true, flush: 'sync' });
 let launch: { type: string; username: string; mode: string };
 function reset() {
   clearTimeout(commandTimer); started.value = false; online.value = false; pending.value = false;
+  invitationToJoin.value = ''; roomsReady = false;
   phase.value = 'loading'; rooms.value = []; room.value = { roomId: '', host: false, players: [], capacity: 8 };
 }
 function command(action: string, id?: string) {
@@ -36,6 +58,8 @@ async function start(mode: string) {
     const status = await props.apiCall<{ available: boolean }>('/api/noname/status', 'GET');
     if (!status.available) throw new Error('三国杀资源正在准备，请稍后再试');
     launch = { type: 'noname-launch', username: props.username, mode };
+    roomsReady = false;
+    if (mode !== 'online') invitationToJoin.value = '';
     online.value = mode === 'online';
     started.value = true;
   } catch (reason) { error.value = reason instanceof Error ? reason.message : '启动失败'; }
@@ -55,11 +79,14 @@ async function message(event: MessageEvent) {
       reply({ ticket: session.ticket });
     } catch { reply({ error: true }); }
   }
-  if (event.data?.type === 'noname-rooms' && Array.isArray(event.data.rooms)) rooms.value = event.data.rooms;
+  if (event.data?.type === 'noname-rooms' && Array.isArray(event.data.rooms)) {
+    rooms.value = event.data.rooms; roomsReady = true; tryJoinInvitation();
+  }
   if (event.data?.type === 'noname-state') {
     if (phase.value !== event.data.phase) { pending.value = false; clearTimeout(commandTimer); }
     phase.value = event.data.phase;
     room.value = event.data;
+    tryJoinInvitation();
   }
   if (event.data?.type === 'noname-exit') reset();
   if (event.data?.type === 'noname-error') {
@@ -75,6 +102,7 @@ onBeforeUnmount(() => { window.removeEventListener('message', message); clearTim
     <div v-if="!started" class="noname-entry">
       <svg viewBox="0 0 160 140" aria-hidden="true"><path d="M20 30 80 10l60 20v55l-60 45-60-45z" fill="#684877" stroke="#edc278" stroke-width="5"/><path d="m45 35 72 66m-2-67-70 69" stroke="#ffe5a3" stroke-width="8"/><text x="80" y="85" text-anchor="middle" fill="#fff1ca" font-size="42" font-family="serif">杀</text></svg>
       <h2>群雄相聚，各显神通</h2><p>经典身份 · 标准武将与标准牌。单机对战 AI，或邀请好友同桌。</p>
+      <p v-if="invitationToJoin">受邀加入房间 {{ initialRoomId }}，接受许可后点击“好友联机”入座。</p>
       <label><input v-model="accepted" type="checkbox"> 我已阅读并接受下方 GPL-3.0 许可说明</label>
       <div class="noname-modes"><button class="game-button gold" :disabled="busy || !accepted" @click="start('solo')">单机试玩</button><button class="game-button" :disabled="busy || !accepted" @click="start('online')">好友联机</button></div>
       <p class="noname-license">基于无名杀 GPL-3.0，保留原版经典身份玩法与界面。<a href="https://github.com/libnoname/noname" target="_blank" rel="noopener">项目源码</a> · <a href="/noname/LICENSE" target="_blank">许可证</a> · <a href="/noname/upstream-source.tar.gz">对应源码</a></p>
@@ -92,6 +120,7 @@ onBeforeUnmount(() => { window.removeEventListener('message', message); clearTim
         </template>
         <template v-else-if="phase === 'waiting'">
           <div class="room-controls"><span>房间号</span><CopyRoomCode :room-id="room.roomId" /><span>{{ room.players.length }}/{{ room.capacity }} 人</span></div>
+          <div class="room-controls"><button class="game-button" :disabled="pending || !room.roomId" @click="invite">招募队友</button></div>
           <div class="noname-seats"><div v-for="(name, index) in room.players" :key="index"><span class="seat-token">{{ name.slice(0, 1) }}</span><strong>{{ name }}</strong><small>{{ index === 0 ? '房主' : '已入座' }}</small></div></div>
           <div class="room-controls start-controls"><button v-if="room.host" class="game-button gold" :disabled="pending || room.players.length < 2" @click="command('start')">开始游戏</button><strong v-else>等待房主开局</strong><span>{{ room.players.length < 2 ? '至少两名玩家入座后可以开始' : '空位由电脑补齐' }}</span></div>
         </template>

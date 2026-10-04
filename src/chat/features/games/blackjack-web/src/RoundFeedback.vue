@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import SpiritStoneIcon from './SpiritStoneIcon.vue';
 withDefaults(defineProps<{
   title: string;
   subtitle?: string;
   detail?: string;
+  spiritStone?: boolean;
   tone?: 'win' | 'loss' | 'push' | 'mahjong';
   animated?: boolean;
 }>(), { subtitle: '', detail: '', tone: 'win', animated: false });
@@ -51,7 +53,7 @@ withDefaults(defineProps<{
         <h2 class="round-feedback-title">{{ title }}</h2>
       </div>
       <p v-if="subtitle" class="round-feedback-subtitle">{{ subtitle }}</p>
-      <p v-if="detail" class="round-feedback-detail">{{ detail }}</p>
+      <p v-if="detail" class="round-feedback-detail"><SpiritStoneIcon v-if="spiritStone" />{{ detail }}</p>
     </div>
   </section>
 </template>

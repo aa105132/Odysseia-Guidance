@@ -1,37 +1,107 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import SpiritStoneIcon from './SpiritStoneIcon.vue';
 import FarmPlant from './FarmPlant.vue';
 import FarmSprite from './FarmSprite.vue';
-import { FARM_ART, FARM_ATLASES, actionAnimation, itemArt, petAnimation, petArt, type FarmAnimation } from './farmAtlas';
+import FarmAlchemyRoom from './FarmAlchemyRoom.vue';
+import { FARM_ART, FARM_ATLASES, actionAnimation, itemArt, petAnimation, petArt, pillArt, type FarmAnimation } from './farmAtlas';
 import GameTools from './GameTools.vue';
 import { playGameSound, playGameVoice } from './gameAudio';
-import type { CropQuality, FarmAction, FarmActionBody, FarmApiCall, FarmCrop, FarmPlot, FarmProfile, FarmState, FarmVisit } from './farmTypes';
+import type { CropQuality, FarmAction, FarmActionBody, FarmApiCall, FarmCrop, FarmPlot, FarmProfile, FarmState, FarmVisit, PillGrade, RefineOutcome } from './farmTypes';
 
 const props = defineProps<{ profile: FarmProfile; apiCall: FarmApiCall }>();
 const emit = defineEmits<{ back: []; balance: [number] }>();
-type FarmTab = 'shop' | 'bag' | 'upgrades' | 'visits' | 'guide' | 'pets' | 'items';
+type FarmTab = 'shop' | 'bag' | 'upgrades' | 'visits' | 'guide' | 'pets' | 'items' | 'alchemy';
 const tab = ref<FarmTab>('shop');
 const panelOpen = ref(false);
+const alchemyOpen = ref(false);
+let alchemyTrigger: HTMLElement | null = null;
 const selectedPlot = ref<number | null>(null);
 const sceneFrame = ref<HTMLElement | null>(null);
 const sceneSize = ref({ width: 1536, height: 1024 });
 let sceneObserver: ResizeObserver | undefined;
-const sceneStyle = computed(() => {
-  const scale = Math.max(sceneSize.value.width / 1536, sceneSize.value.height / 1024);
-  return { width: `${1536 * scale}px`, height: `${1024 * scale}px`, '--world-scale': scale };
+// garden-world.webp v2 里画好的田圃土面（1536×1024 像素，掩膜实测）：上、右、下、左四角与外接框。
+const SOIL_QUAD: [number, number][] = [[687, 359], [996, 509], [632, 722], [265, 539]];
+const FIELD_BOX = { x: 234, y: 314, w: 768, h: 422 };
+const FIELD = { left: FIELD_BOX.x / 15.36, width: FIELD_BOX.w / 15.36 };
+const PLOT_ASPECT = 1.1;
+const worldScale = computed(() => {
+  const { width, height } = sceneSize.value;
+  const cover = Math.max(width / 1536, height / 1024);
+  // 竖屏时 cover 会裁掉田圃：改为让整块田圃刚好放进屏宽，上下由模糊背景补齐。
+  return width < height ? Math.min(cover, Math.max(width * 0.96 / FIELD_BOX.w, height * 0.5 / 1024)) : cover;
 });
-function plotPosition(id: number) {
-  const row = Math.floor((id - 1) / 3);
-  const column = (id - 1) % 3;
-  const rows = Math.ceil((state.value?.plots.length ?? 3) / 3);
-  const spacing = rows === 1 ? 0 : rows === 2 ? 21 : rows === 3 ? 15 : 11.5;
-  const first = rows === 1 ? 59 : rows === 2 ? 48 : rows === 3 ? 42 : 40;
-  const wide = sceneSize.value.width / sceneSize.value.height > 1.95;
-  const top = wide ? 43 + (first + row * spacing - 43) * .68 : first + row * spacing;
-  return { left: `${38 + column * 13 + row * 2.1}%`, top: `${top}%`, width: rows > 2 ? '12.5%' : '14%', height: rows > 2 ? '13.5%' : wide ? '15%' : '18%', zIndex: 3 + row * 2 + column };
+const sceneStyle = computed(() => {
+  const { width, height } = sceneSize.value;
+  const scale = worldScale.value;
+  const scaledWidth = 1536 * scale;
+  const scaledHeight = 1024 * scale;
+  const visible = Math.min(1, width / scaledWidth);
+  const fieldLeft = FIELD.left / 100;
+  const fieldRight = (FIELD.left + FIELD.width) / 100;
+  // 横向被裁切时把焦点移向田圃，保证整块灵田可见。
+  let focus = 0.5;
+  if (visible < 1) {
+    focus = fieldRight - fieldLeft + 0.04 > visible ? (fieldLeft + fieldRight) / 2 : Math.min(Math.max(focus, fieldRight - visible / 2 + 0.02), fieldLeft + visible / 2 - 0.02);
+    focus = Math.min(Math.max(focus, visible / 2), 1 - visible / 2);
+  }
+  return { width: `${scaledWidth}px`, height: `${scaledHeight}px`, left: `${width / 2 - focus * scaledWidth}px`, top: `${(height - scaledHeight) / 2}px`, transform: 'none', '--world-scale': scale };
+});
+// 单位正方形 → 土面四边形的透视映射，让田块顺着画面透视排布（四角向中心内缩 12%，不压田埂）。
+const soilMap = (() => {
+  const cx = SOIL_QUAD.reduce((sum, point) => sum + point[0], 0) / 4;
+  const cy = SOIL_QUAD.reduce((sum, point) => sum + point[1], 0) / 4;
+  const inset = (index: number): [number, number] => { const [x, y] = SOIL_QUAD[index]!; return [cx + (x - cx) * 0.88, cy + (y - cy) * 0.88]; };
+  const [x0, y0] = inset(0); const [x1, y1] = inset(1); const [x2, y2] = inset(2); const [x3, y3] = inset(3);
+  const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3;
+  const dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+  const den = dx1 * dy2 - dx2 * dy1;
+  const g = (dx3 * dy2 - dx2 * dy3) / den, h = (dx1 * dy3 - dx3 * dy1) / den;
+  const a = x1 - x0 + g * x1, b = x3 - x0 + h * x3, d = y1 - y0 + g * y1, e = y3 - y0 + h * y3;
+  return (s: number, t: number) => { const w = g * s + h * t + 1; return { x: (a * s + b * t + x0) / w, y: (d * s + e * t + y0) / w }; };
+})();
+const fieldCells = computed(() => (state.value?.plots.length ?? 0) + (ownFarm.value && nextLand.value ? 1 : 0));
+const fieldColumns = computed(() => Math.max(1, Math.ceil(Math.sqrt(fieldCells.value))));
+const fieldRows = computed(() => Math.max(1, Math.ceil(fieldCells.value / fieldColumns.value)));
+const plotCenters = computed(() => Array.from({ length: fieldCells.value }, (_, index) => soilMap((index % fieldColumns.value + 0.5) / fieldColumns.value, (Math.floor(index / fieldColumns.value) + 0.5) / fieldRows.value)));
+// 田块宽度取「任意两块在横向或纵向上都能错开」的最大值，保证透视排布下互不重叠。
+const plotWidth = computed(() => {
+  const centers = plotCenters.value;
+  let limit = 150;
+  for (let i = 0; i < centers.length; i++) for (let j = i + 1; j < centers.length; j++) {
+    limit = Math.min(limit, Math.max(Math.abs(centers[i]!.x - centers[j]!.x), Math.abs(centers[i]!.y - centers[j]!.y) / PLOT_ASPECT));
+  }
+  return limit * 0.94;
+});
+function plotLayout(index: number) {
+  const center = plotCenters.value[index] ?? { x: FIELD_BOX.x + FIELD_BOX.w / 2, y: FIELD_BOX.y + FIELD_BOX.h / 2 };
+  const width = plotWidth.value;
+  const height = width * PLOT_ASPECT;
+  return { left: `${(center.x - width / 2 - FIELD_BOX.x) / FIELD_BOX.w * 100}%`, top: `${(center.y - height * 0.62 - FIELD_BOX.y) / FIELD_BOX.h * 100}%`, width: `${width / FIELD_BOX.w * 100}%`, height: `${height / FIELD_BOX.h * 100}%`, zIndex: 3 + Math.round(center.y - FIELD_BOX.y) };
 }
+const hoverPlot = ref<number | null>(null);
+// 每块田对应土面透视网格里的一格，画成带田埂的四边形，和作物中心一致。
+const plotCells = computed(() => {
+  const cols = fieldColumns.value, rows = fieldRows.value;
+  const plots = state.value?.plots ?? [];
+  return Array.from({ length: fieldCells.value }, (_, index) => {
+    const c = index % cols, r = Math.floor(index / cols);
+    const corners = [soilMap(c / cols, r / rows), soilMap((c + 1) / cols, r / rows), soilMap((c + 1) / cols, (r + 1) / rows), soilMap(c / cols, (r + 1) / rows)];
+    const cx = corners.reduce((sum, p) => sum + p.x, 0) / 4, cy = corners.reduce((sum, p) => sum + p.y, 0) / 4;
+    const points = corners.map(p => `${(cx + (p.x - cx) * 0.9 - FIELD_BOX.x).toFixed(1)},${(cy + (p.y - cy) * 0.9 - FIELD_BOX.y).toFixed(1)}`).join(' ');
+    const plot = plots[index];
+    return { index, points, plotId: plot?.plot_id ?? null, empty: !plot || plot.status === 'empty', expand: !plot };
+  });
+});
+const fieldStyle = computed(() => ({ left: `${FIELD_BOX.x / 15.36}%`, top: `${FIELD_BOX.y / 10.24}%`, width: `${FIELD_BOX.w / 15.36}%`, height: `${FIELD_BOX.h / 10.24}%` }));
+const fieldDensity = computed(() => {
+  const real = plotWidth.value * worldScale.value;
+  if (real < 44) return 'field-tiny';
+  return real < 70 ? 'field-compact' : '';
+});
+function plotActionsUp(index: number) { return (plotCenters.value[index]?.y ?? 0) > FIELD_BOX.y + FIELD_BOX.h * 0.6; }
 function selectPlot(plotId: number) { selectedPlot.value = plotId; panelOpen.value = false; }
-const dockIcons: Record<FarmTab, string> = { shop: 'seed', pets: 'pet', items: 'water', bag: 'bag', upgrades: 'upgrade', visits: 'visits', guide: 'guide' };
+const dockIcons: Record<FarmTab, string> = { shop: 'seed', pets: 'pet', items: 'water', alchemy: 'alchemy', bag: 'bag', upgrades: 'upgrade', visits: 'visits', guide: 'guide' };
 const state = ref<FarmState | null>(null);
 const loading = ref(true);
 const busy = ref(false);
@@ -65,7 +135,7 @@ let serverOffset = 0;
 let ticker: ReturnType<typeof setInterval> | undefined;
 let lastRefresh = 0;
 let refreshInFlight = false;
-const tabs: { id: FarmTab; label: string }[] = [{ id: 'shop', label: '种子铺' }, { id: 'pets', label: '灵兽' }, { id: 'items', label: '道具' }, { id: 'bag', label: '仓库' }, { id: 'upgrades', label: '洞天' }, { id: 'visits', label: '串门' }, { id: 'guide', label: '灵草图鉴' }];
+const tabs: { id: FarmTab; label: string }[] = [{ id: 'shop', label: '种子铺' }, { id: 'pets', label: '灵兽' }, { id: 'items', label: '道具' }, { id: 'alchemy', label: '炼丹房' }, { id: 'bag', label: '仓库' }, { id: 'upgrades', label: '洞天' }, { id: 'visits', label: '串门' }, { id: 'guide', label: '灵草图鉴' }];
 const qualityNames: Record<CropQuality, string> = { normal: '凡品', spirit: '灵品', celestial: '仙品' };
 const cropMap = computed(() => new Map(state.value?.catalog.crops.map(crop => [crop.id, crop]) ?? []));
 const seedMap = computed(() => new Map(state.value?.inventory.seeds.map(seed => [seed.crop_id, seed.quantity]) ?? []));
@@ -87,6 +157,21 @@ const actionLocked = computed(() => busy.value || loading.value || Boolean(pendi
 const canFeed = computed(() => ownFarm.value && Boolean(state.value?.guardian) && (itemMap.value.get('pet_food') ?? 0) > 0 && guardianRemaining.value + Number(state.value?.catalog.rules.pet_food_seconds ?? 86400) <= Number(state.value?.catalog.rules.pet_guard_max_seconds ?? 259200));
 const selectedItemName = computed(() => state.value?.catalog.items?.find(item => item.id === selectedItem.value)?.name ?? '道具');
 const ownFarm = computed(() => state.value?.is_owner ?? true);
+// 炼丹房的选药草稿由独立场景保留，父组件只负责请求、重试与收丹结果。
+const alchemyResult = ref<{ outcome: RefineOutcome; pillId: string | null; grade: PillGrade | null; quantity: number | null; message: string; sequence: number } | null>(null);
+let alchemyTimer: ReturnType<typeof setTimeout> | undefined;
+let alchemySequence = 0;
+const pillCount = computed(() => state.value?.inventory.pills?.reduce((sum, pill) => sum + pill.quantity, 0) ?? 0);
+// 丹炉计时只看服务端给的时间点；成丹结果封存在服务端，收丹时才揭晓。
+const furnace = computed(() => ownFarm.value ? state.value?.furnace ?? null : null);
+const furnaceRemaining = computed(() => furnace.value ? Math.max(0, furnace.value.ready_at - now.value) : 0);
+const furnaceReady = computed(() => Boolean(furnace.value && (furnace.value.ready || furnaceRemaining.value <= 0)));
+function showAlchemyResult(result: FarmState['result']) {
+  if (!result?.outcome) return;
+  alchemyResult.value = { outcome: result.outcome, pillId: result.pill_id ?? null, grade: result.grade ?? null, quantity: result.quantity ?? null, message: result.message, sequence: ++alchemySequence };
+  if (alchemyTimer) clearTimeout(alchemyTimer);
+  alchemyTimer = setTimeout(() => { alchemyResult.value = null; }, 6000);
+}
 function number(value: number | null | undefined) { return (Number.isFinite(value) ? value! : 0).toLocaleString('zh-CN'); }
 function cropName(id: string) { return cropMap.value.get(id)?.name ?? id; }
 function cropIcon(id: string | null) { return id ? cropMap.value.get(id)?.icon_key ?? id : ''; }
@@ -165,7 +250,22 @@ async function loadVisits() {
     if (!disposed && sequence === visitsSequence) visitsLoading.value = false;
   }
 }
-function chooseTab(value: FarmTab) { tab.value = value; panelOpen.value = true; selectedPlot.value = null; if (value === 'visits') void loadVisits(); }
+function chooseTab(value: FarmTab) {
+  selectedPlot.value = null;
+  if (value === 'alchemy') {
+    alchemyTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panelOpen.value = false;
+    alchemyOpen.value = true;
+    return;
+  }
+  tab.value = value; panelOpen.value = true;
+  if (value === 'visits') void loadVisits();
+}
+async function closeAlchemy() {
+  alchemyOpen.value = false;
+  await nextTick();
+  alchemyTrigger?.focus({ preventScroll: true });
+}
 async function visit(id = '') {
   if (busy.value || pendingRetry.value) return;
   notice.value = ''; activeEffects.value = {};
@@ -236,7 +336,12 @@ async function act(action: FarmAction, fields: Partial<Omit<FarmActionBody, 'act
     const message = response.result?.message || '已完成';
     notice.value = message;
     displayEffect(body, message, response.result?.caught ?? false);
-    playGameSound(response.result?.caught ? 'click' : action === 'harvest' || action === 'sell' || action === 'steal' ? 'win' : 'click');
+    if (action === 'refine') {
+      if (alchemyTimer) clearTimeout(alchemyTimer);
+      alchemyResult.value = null;
+    }
+    if (action === 'collect_pill') showAlchemyResult(response.result);
+    playGameSound(response.result?.caught ? 'click' : action === 'harvest' || action === 'sell' || action === 'steal' || action === 'sell_pill' || response.result?.outcome === 'success' || response.result?.outcome === 'great_success' ? 'win' : 'click');
     const actionVoices: Partial<Record<FarmAction, string>> = { plant: 'farm_plant', water: 'farm_water', pest: 'farm_pest', harvest: 'farm_harvest' };
     const voice = action === 'harvest' && response.result?.quality && response.result.quality !== 'normal' ? 'farm_mutation' : actionVoices[action];
     if (voice) void playGameVoice(voice);
@@ -268,7 +373,7 @@ onMounted(() => {
   ticker = setInterval(() => {
     now.value = Date.now() / 1000 + serverOffset;
     if (document.hidden || busy.value || pendingRetry.value || refreshInFlight) return;
-    const due = state.value?.plots.some(plot => plot.status === 'growing' && plotRemaining(plot) <= 0);
+    const due = state.value?.plots.some(plot => plot.status === 'growing' && plotRemaining(plot) <= 0) || Boolean(furnace.value && !furnace.value.ready && furnaceRemaining.value <= 0);
     if (Date.now() - lastRefresh > (due ? 5000 : 20000)) { lastRefresh = Date.now(); void loadFarm(ownerId.value, true); }
   }, 1000);
   document.addEventListener('visibilitychange', onVisibility);
@@ -281,6 +386,7 @@ onBeforeUnmount(() => {
   effectTimers.clear();
   if (matureTimer) clearTimeout(matureTimer);
   if (guardianTimer) clearTimeout(guardianTimer);
+  if (alchemyTimer) clearTimeout(alchemyTimer);
   document.removeEventListener('visibilitychange', onVisibility);
   plantDialog.value?.close(); confirmDialog.value?.close(); itemDialog.value?.close();
 });
@@ -288,10 +394,11 @@ onBeforeUnmount(() => {
 
 <template>
   <section ref="sceneFrame" class="farm-game farm-world" :class="{ 'farm-hidden': pageHidden, 'farm-drawer-open': panelOpen, 'farm-wide': sceneSize.width / sceneSize.height > 1.95, 'farm-dense': (state?.plots.length ?? 0) > 6 }" aria-label="灵草洞天" :aria-busy="loading || busy">
-    <div class="farm-world-backdrop" :style="sceneStyle"><img :src="`${FARM_ART}/garden-world.webp`" alt="" draggable="false"><div class="world-qi"><i /><i /><i /></div></div>
+    <div v-show="!alchemyOpen" class="farm-outdoors" :inert="alchemyOpen" :aria-hidden="alchemyOpen || undefined">
+    <div class="farm-world-backdrop" :style="sceneStyle"><img :src="`${FARM_ART}/garden-world.webp?v=alchemy-20260927`" alt="" draggable="false"><div class="world-qi"><i /><i /><i /></div></div>
     <header class="farm-heading">
       <div class="farm-heading-main"><button class="farm-back farm-button quiet" :disabled="busy || loading || Boolean(pendingRetry)" @click="emit('back')"><img :src="`${FARM_ART}/icons/back.webp`" alt="">游戏大厅</button><div><span class="farm-eyebrow">月月茶楼 · 山水间的一方洞天</span><h2>灵草洞天</h2></div></div>
-      <div class="farm-heading-actions"><span class="farm-wallet">灵石 <b>{{ number(ownFarm ? state?.balance ?? profile.balance : profile.balance) }}</b></span><GameTools :profile="profile" :api-call="apiCall" audio-only /><button v-if="!ownFarm" class="farm-button" :disabled="busy || loading || Boolean(pendingRetry)" @click="visit()">回我的灵田</button><button class="farm-button quiet farm-refresh" aria-label="刷新农场" :disabled="busy || loading || Boolean(pendingRetry)" @click="loadFarm()"><img :src="`${FARM_ART}/icons/refresh.webp`" alt="">刷新</button></div>
+      <div class="farm-heading-actions"><span class="farm-wallet">灵石 <b><SpiritStoneIcon />{{ number(ownFarm ? state?.balance ?? profile.balance : profile.balance) }}</b></span><GameTools :profile="profile" :api-call="apiCall" audio-only /><button v-if="!ownFarm" class="farm-button" :disabled="busy || loading || Boolean(pendingRetry)" @click="visit()">回我的灵田</button><button class="farm-button quiet farm-refresh" aria-label="刷新农场" :disabled="busy || loading || Boolean(pendingRetry)" @click="loadFarm()"><img :src="`${FARM_ART}/icons/refresh.webp`" alt="">刷新</button></div>
     </header>
     <div v-if="error" class="farm-alert" role="alert"><span>{{ error }}</span><button v-if="pendingRetry" class="farm-button" :disabled="busy || loading" @click="retryAction">核对这次操作</button><button v-else-if="!state" class="farm-button" :disabled="loading" @click="loadFarm()">重新加载</button></div>
     <p v-if="notice" class="farm-notice" role="status">{{ notice }}</p>
@@ -299,16 +406,28 @@ onBeforeUnmount(() => {
     <template v-if="state">
       <div class="farm-summary">
         <div class="farm-owner"><img :src="state.owner.avatar_url || '/ui/player-avatar.svg'" alt="" @error="avatarFallback"><div><strong>{{ ownFarm ? '我的灵田' : `${state.owner.username}的灵田` }}</strong><span>{{ ownFarm ? '离线也会自然成长' : '每茬最多摘一份，给主人留足收成' }}</span></div></div>
-        <div class="farm-level"><span>洞天 <b>{{ state.farm.level }}</b> 级</span><div class="farm-meter" role="progressbar" aria-label="农场升级经验" :aria-valuenow="state.farm.xp" :aria-valuemax="state.farm.next_level_xp || state.farm.xp" aria-valuemin="0"><i :style="{ width: `${xpProgress}%` }" /></div><small>{{ state.farm.next_level_xp ? `${number(state.farm.xp)} / ${number(state.farm.next_level_xp)} 修为` : '已至圆满' }}</small></div>
+        <div class="farm-level"><span>洞天 <b>{{ state.farm.level }}</b> 级</span><div class="farm-meter" role="progressbar" aria-label="农场升级经验" :aria-valuenow="state.farm.xp" :aria-valuemax="state.farm.next_level_xp || state.farm.xp" aria-valuemin="0"><i :style="{ width: `${xpProgress}%` }" /></div><small>{{ state.farm.next_level_xp ? `${number(state.farm.xp)} / ${number(state.farm.next_level_xp)} 经验` : '已至圆满' }}</small></div>
         <div class="farm-resource"><span>聚灵阵 {{ state.farm.aura_level }} 阶</span><strong>{{ state.farm.growth_multiplier }}<small>× 生长</small></strong></div>
         <div class="farm-resource"><span>成熟灵田</span><strong>{{ totalHarvest }}<small> / {{ state.farm.unlocked_plots }} 块</small></strong></div>
       </div>
       <div class="farm-layout">
         <main class="farm-garden" :style="sceneStyle">
           <div class="garden-caption"><div><span>灵田</span><h3>{{ ownFarm ? '灵田正好，万物有灵' : '来邻居的洞天走走' }}</h3></div><span class="garden-weather"><i /> 灵气流转</span></div>
-          <div class="farm-plots">
-            <article v-for="plot in state.plots" :key="`${state.owner.user_id}-${plot.plot_id}`" class="farm-plot" :style="plotPosition(plot.plot_id)" :class="[`plot-${plot.status}`, { 'plot-has-pest': plot.has_pest && !plot.pest_cleared, 'plot-effect': Boolean(activeEffects[plot.plot_id]), 'plot-selected': selectedPlot === plot.plot_id, 'plot-actions-up': (state.plots.length > 6 && plot.plot_id > 9) || (sceneSize.width / sceneSize.height > 1.95 && plot.plot_id > 6) }]" :aria-label="`${plot.plot_id}号灵田 ${plot.crop_name || '空地'} ${plotLabel(plot)}`">
-              <button class="plot-hitbox" :aria-label="`选择${plot.plot_id}号灵田 ${plot.crop_name || '空地'}`" :aria-pressed="selectedPlot === plot.plot_id" @click="selectPlot(plot.plot_id)"></button>
+          <button class="world-alchemy" :class="{ 'world-alchemy-brewing': furnace && !furnaceReady, 'world-alchemy-ready': furnaceReady }" type="button" aria-label="进入炼丹房" :title="furnace ? (furnaceReady ? '丹药已成，可收丹' : `炼制中，剩余 ${secondsLabel(furnaceRemaining)}`) : '进入炼丹房'" @click="chooseTab('alchemy')"><span><img :src="pillArt('pill-gold')" alt="">炼丹房<em v-if="furnace" class="world-alchemy-timer">{{ furnaceReady ? '可收丹' : secondsLabel(furnaceRemaining) }}</em><small v-if="pillCount">{{ pillCount }}</small></span></button>
+          <div class="farm-field" :class="fieldDensity" :style="fieldStyle">
+            <div class="field-plaque" aria-hidden="true">灵田 · {{ state.plots.length }} 块</div>
+            <svg class="field-grid" :viewBox="`0 0 ${FIELD_BOX.w} ${FIELD_BOX.h}`" preserveAspectRatio="none" aria-hidden="true">
+              <defs><pattern id="farm-furrow" patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(-27)"><rect width="9" height="2.4" fill="#f4e3b23d" /><rect y="2.4" width="9" height="1.6" fill="#1e100652" /></pattern></defs>
+              <g v-for="cell in plotCells" :key="cell.index" class="field-cell" :class="{ 'cell-empty': cell.empty, 'cell-expand': cell.expand, 'cell-active': cell.plotId !== null && (cell.plotId === selectedPlot || cell.plotId === hoverPlot) }">
+                <polygon class="cell-soil" :points="cell.points" />
+                <polygon v-if="cell.empty && !cell.expand" class="cell-furrow" :points="cell.points" />
+                <polygon class="cell-ridge-shadow" :points="cell.points" />
+                <polygon class="cell-ridge" :points="cell.points" />
+              </g>
+            </svg>
+            <div class="farm-plots">
+            <article v-for="(plot, index) in state.plots" :key="`${state.owner.user_id}-${plot.plot_id}`" class="farm-plot" :style="plotLayout(index)" :class="[`plot-${plot.status}`, { 'plot-has-pest': plot.has_pest && !plot.pest_cleared, 'plot-effect': Boolean(activeEffects[plot.plot_id]), 'plot-selected': selectedPlot === plot.plot_id, 'plot-actions-up': plotActionsUp(index) }]" :aria-label="`${plot.plot_id}号灵田 ${plot.crop_name || '空地'} ${plotLabel(plot)}`">
+              <button class="plot-hitbox" :aria-label="`选择${plot.plot_id}号灵田 ${plot.crop_name || '空地'}`" :aria-pressed="selectedPlot === plot.plot_id" @click="selectPlot(plot.plot_id)" @mouseenter="hoverPlot = plot.plot_id" @mouseleave="hoverPlot = null"></button>
               <header><span class="plot-number">{{ String(plot.plot_id).padStart(2, '0') }}</span><span v-if="plot.has_pest && !plot.pest_cleared" class="plot-badge pest-badge">有虫害</span><span v-else-if="plot.status === 'mature'" class="plot-badge" :class="`quality-${plot.quality}`">{{ qualityNames[plot.quality ?? 'normal'] }}</span><span v-else-if="wardRemaining(plot)" class="plot-watered">护田符 {{ secondsLabel(wardRemaining(plot)) }}</span><span v-else-if="plot.watered" class="plot-watered">已浇水</span></header>
               <div class="plot-scene" :class="{ 'scene-water': activeEffects[plot.plot_id]?.kind === 'water' }">
                 <img class="plot-soil" :src="`${FARM_ART}/soil-tile.webp`" alt="" draggable="false">
@@ -328,12 +447,12 @@ onBeforeUnmount(() => {
               </div>
               <div v-else-if="!ownFarm && selectedPlot === plot.plot_id" class="plot-actions"><button v-if="plot.status === 'mature'" class="farm-button harvest" :disabled="busy || loading || !plot.can_steal || Boolean(pendingRetry)" @click="act('steal', { plot_id: plot.plot_id, target_user_id: state.owner.user_id })">{{ plot.can_steal ? '偷采 1 份' : '本轮不可偷采' }}</button><span v-else class="plot-tended">{{ plot.status === 'empty' ? '地主还没播种' : '还未成熟，过会儿再来' }}</span></div>
             </article>
-
+              <button v-if="ownFarm && nextLand" class="farm-plot plot-expand" :style="plotLayout(state.plots.length)" :disabled="busy || loading || Boolean(pendingRetry) || state.farm.level < nextLand.required_level || (state.balance ?? 0) < nextLand.cost" @click="requestUpgrade('expand')"><span class="expand-stone">＋</span><strong>开辟灵田</strong><span>洞天 {{ nextLand.required_level }} 级 · <SpiritStoneIcon />{{ number(nextLand.cost) }} 灵石</span><small>扩至 {{ nextLand.plot_count }} 块</small></button>
+            </div>
           </div>
           <div class="garden-guardian" :class="{ 'guardian-resting': !guardianActive, 'guardian-celebrating': guardianCelebrating }">
             <template v-if="state.guardian"><FarmSprite class="guardian-sprite" :animation="petAnimation(state.guardian.pet_id)" :fallback="petArt(state.guardian.pet_id)" :loop="guardianActive" :frame="guardianActive ? undefined : 0" :paused="pageHidden" :label="state.guardian.name" /><div class="guardian-caption"><span>{{ guardianActive ? '正在巡守' : '休息中' }}</span><strong>{{ state.guardian.name }}</strong><p>{{ guardianActive ? `抓偷概率 ${Math.round(state.guardian.guard_chance * 100)}% · ${secondsLabel(guardianRemaining)}` : '守护已到期，喂一份口粮唤醒它' }}</p><button v-if="ownFarm" class="farm-button" :disabled="actionLocked || !canFeed" @click="showItem('pet_food')">喂口粮 <small>×{{ itemMap.get('pet_food') ?? 0 }}</small></button></div></template>
             <template v-else><FarmSprite class="guardian-preview" animation="fox-idle" :fallback="petArt('qingling_fox')" :loop="true" :paused="pageHidden" label="青团灵狐" /><div class="guardian-caption"><span>田间伙伴</span><strong>{{ ownFarm ? '请一只灵兽来守护灵田' : '这片灵田还没有灵兽巡守' }}</strong><p>可爱的伙伴，也能抓住偷菜者</p><button v-if="ownFarm" class="farm-button" @click="chooseTab('pets')">去灵兽阁</button></div></template>
-            <button v-if="ownFarm && nextLand" class="farm-plot plot-expand" :disabled="busy || loading || Boolean(pendingRetry) || state.farm.level < nextLand.required_level || (state.balance ?? 0) < nextLand.cost" @click="requestUpgrade('expand')"><span class="expand-stone">＋</span><strong>开辟灵田</strong><span>洞天 {{ nextLand.required_level }} 级 · {{ number(nextLand.cost) }} 灵石</span><small>扩至 {{ nextLand.plot_count }} 块</small></button>
           </div>
 
         </main>
@@ -342,7 +461,7 @@ onBeforeUnmount(() => {
           <div class="farm-panel-content">
             <template v-if="tab === 'shop'">
               <div class="panel-title"><h3>灵种小铺</h3><span>好收成，从一粒种子开始</span></div><p v-if="!ownFarm" class="panel-hint">回到自己的灵田后，即可购买和播种。</p>
-              <article v-for="crop in state.catalog.crops" :key="crop.id" class="crop-shop-item" :class="{ 'crop-locked': crop.unlock_level > state.farm.level }"><div class="crop-shop-art"><FarmPlant :name="crop.name" :icon="crop.icon_key" /></div><div class="crop-shop-info"><h4>{{ crop.name }}<span v-if="crop.unlock_level > state.farm.level">{{ crop.unlock_level }} 级解锁</span></h4><p>{{ secondsLabel(crop.grow_seconds / state.farm.growth_multiplier) }} · {{ crop.base_yield }} 份 / 茬</p><small>售价 {{ number(crop.sale_price) }} 灵石 / 份 · 持有 {{ seedMap.get(crop.id) ?? 0 }} 粒</small><div class="crop-purchase"><label>数量 <input v-model.number="quantity[crop.id]" :aria-label="`${crop.name}购买数量`" type="number" min="1" max="99" step="1" :placeholder="'1'" :disabled="busy || loading || !ownFarm" @blur="quantityChanged(crop.id)"></label><button class="farm-button" :disabled="purchaseDisabled(crop) || Boolean(pendingRetry)" @click="act('buy_seed', { crop_id: crop.id, quantity: orderQuantity(crop.id) })">{{ number(crop.seed_price * orderQuantity(crop.id)) }} 灵石 · 购买</button></div></div></article>
+              <article v-for="crop in state.catalog.crops" :key="crop.id" class="crop-shop-item" :class="{ 'crop-locked': crop.unlock_level > state.farm.level }"><div class="crop-shop-art"><FarmPlant :name="crop.name" :icon="crop.icon_key" /></div><div class="crop-shop-info"><h4>{{ crop.name }}<span v-if="crop.unlock_level > state.farm.level">{{ crop.unlock_level }} 级解锁</span></h4><p>{{ secondsLabel(crop.grow_seconds / state.farm.growth_multiplier) }} · {{ crop.base_yield }} 份 / 茬</p><small>售价 <SpiritStoneIcon />{{ number(crop.sale_price) }} 灵石 / 份 · 持有 {{ seedMap.get(crop.id) ?? 0 }} 粒</small><div class="crop-purchase"><label>数量 <input v-model.number="quantity[crop.id]" :aria-label="`${crop.name}购买数量`" type="number" min="1" max="99" step="1" :placeholder="'1'" :disabled="busy || loading || !ownFarm" @blur="quantityChanged(crop.id)"></label><button class="farm-button" :disabled="purchaseDisabled(crop) || Boolean(pendingRetry)" @click="act('buy_seed', { crop_id: crop.id, quantity: orderQuantity(crop.id) })"><SpiritStoneIcon />{{ number(crop.seed_price * orderQuantity(crop.id)) }} 灵石 · 购买</button></div></div></article>
             </template>
             <template v-else-if="tab === 'pets'">
               <div class="panel-title"><h3>灵兽阁</h3><span>一位伙伴，一份安心</span></div>
@@ -350,31 +469,31 @@ onBeforeUnmount(() => {
               <article v-for="pet in state.catalog.pets ?? []" :key="pet.id" class="pet-shop-card" :class="{ 'pet-equipped': petMap.get(pet.id)?.equipped }">
                 <div class="pet-portrait"><img :src="petArt(pet.icon_key)" :alt="pet.name" draggable="false"><span v-if="petMap.get(pet.id)?.equipped">已出战</span><span v-else-if="pet.unlock_level > state.farm.level">{{ pet.unlock_level }} 级解锁</span></div>
                 <div class="pet-card-body"><h4>{{ pet.name }}<small>抓偷 {{ Math.round(pet.guard_chance * 100) }}%</small></h4><p>{{ pet.description }}</p><small v-if="petMap.has(pet.id)" class="pet-expiry">{{ Math.max(0, petMap.get(pet.id)!.guard_until - now) > 0 ? `守护剩余 ${secondsLabel(petMap.get(pet.id)!.guard_until - now)}` : '守护已结束，出战后可喂养' }}</small>
-                  <button v-if="!petMap.has(pet.id)" class="farm-button primary" :disabled="shopDisabled(pet.id, pet.price, pet.unlock_level)" @click="act('buy_pet', { pet_id: pet.id })">{{ number(pet.price) }} 灵石 · 请回家</button><button v-else class="farm-button" :disabled="actionLocked || !ownFarm || petMap.get(pet.id)?.equipped" @click="act('equip_pet', { pet_id: pet.id })">{{ petMap.get(pet.id)?.equipped ? '正在守护这片灵田' : '出战守护' }}</button>
+                  <button v-if="!petMap.has(pet.id)" class="farm-button primary" :disabled="shopDisabled(pet.id, pet.price, pet.unlock_level)" @click="act('buy_pet', { pet_id: pet.id })"><SpiritStoneIcon />{{ number(pet.price) }} 灵石 · 请回家</button><button v-else class="farm-button" :disabled="actionLocked || !ownFarm || petMap.get(pet.id)?.equipped" @click="act('equip_pet', { pet_id: pet.id })">{{ petMap.get(pet.id)?.equipped ? '正在守护这片灵田' : '出战守护' }}</button>
                 </div>
               </article>
               <p class="panel-hint">{{ state.catalog.rules.pet_note }}</p>
             </template>
             <template v-else-if="tab === 'items'">
               <div class="panel-title"><h3>灵物铺</h3><span>把田间的日子，照料得更好</span></div><p v-if="!ownFarm" class="panel-hint">回到自己的灵田后，可购买和使用道具。</p>
-              <article v-for="item in state.catalog.items ?? []" :key="item.id" class="item-shop-card"><img :src="itemArt(item.icon_key)" :alt="item.name" draggable="false"><div><h4>{{ item.name }}<small>持有 {{ itemMap.get(item.id) ?? 0 }}</small></h4><p>{{ item.description }}</p><div class="crop-purchase"><label>数量 <input v-model.number="quantity[item.id]" :aria-label="`${item.name}购买数量`" type="number" min="1" max="99" step="1" placeholder="1" :disabled="actionLocked || !ownFarm" @blur="quantityChanged(item.id)"></label><button class="farm-button" :disabled="shopDisabled(item.id, item.price, item.unlock_level, true)" @click="act('buy_item', { item_id: item.id, quantity: orderQuantity(item.id) })">{{ number(item.price * orderQuantity(item.id)) }} 灵石 · 购买</button></div><button class="farm-button item-use" :disabled="actionLocked || !ownFarm || !(itemMap.get(item.id) ?? 0) || (item.id === 'pet_food' ? !canFeed : !state.plots.some(plot => eligibleItemPlot(plot, item.id)))" @click="showItem(item.id)">{{ item.id === 'pet_food' ? '喂给当前灵兽' : '选择灵田使用' }}</button></div></article><p class="panel-hint">{{ state.catalog.rules.item_note }}</p>
+              <article v-for="item in state.catalog.items ?? []" :key="item.id" class="item-shop-card"><img :src="itemArt(item.icon_key)" :alt="item.name" draggable="false"><div><h4>{{ item.name }}<small>持有 {{ itemMap.get(item.id) ?? 0 }}</small></h4><p>{{ item.description }}</p><div class="crop-purchase"><label>数量 <input v-model.number="quantity[item.id]" :aria-label="`${item.name}购买数量`" type="number" min="1" max="99" step="1" placeholder="1" :disabled="actionLocked || !ownFarm" @blur="quantityChanged(item.id)"></label><button class="farm-button" :disabled="shopDisabled(item.id, item.price, item.unlock_level, true)" @click="act('buy_item', { item_id: item.id, quantity: orderQuantity(item.id) })"><SpiritStoneIcon />{{ number(item.price * orderQuantity(item.id)) }} 灵石 · 购买</button></div><button class="farm-button item-use" :disabled="actionLocked || !ownFarm || !(itemMap.get(item.id) ?? 0) || (item.id === 'pet_food' ? !canFeed : !state.plots.some(plot => eligibleItemPlot(plot, item.id)))" @click="showItem(item.id)">{{ item.id === 'pet_food' ? '喂给当前灵兽' : '选择灵田使用' }}</button></div></article><p class="panel-hint">{{ state.catalog.rules.item_note }}</p>
             </template>
             <template v-else-if="tab === 'bag'">
               <div class="panel-title"><h3>我的仓库</h3><span>成熟后收获，入库后出售</span></div>
               <p v-if="!ownFarm" class="panel-empty">邻居的仓库只对本人开放。</p>
-              <template v-else><h4 class="bag-section-title">收成 <span>{{ inventoryCount }} 份</span></h4><p v-if="!state.inventory.produce.length" class="panel-empty">仓库还空着。第一株灵草成熟后，记得来收获。</p><article v-for="item in state.inventory.produce" :key="`${item.crop_id}-${item.quality}`" class="bag-item"><div class="bag-art"><FarmPlant :name="cropName(item.crop_id)" :icon="cropIcon(item.crop_id)" :quality="item.quality" /></div><div><h4>{{ cropName(item.crop_id) }} <span :class="`quality-${item.quality}`">{{ qualityNames[item.quality] }}</span></h4><p>{{ item.quantity }} 份 · 每份 {{ number(item.unit_price) }} 灵石</p><button class="farm-button" :disabled="busy || loading || Boolean(pendingRetry)" @click="act('sell', { crop_id: item.crop_id, quality: item.quality, quantity: saleQuantity(item.quantity) })">出售 {{ saleQuantity(item.quantity) }} 份 · {{ number(saleQuantity(item.quantity) * item.unit_price) }} 灵石</button></div></article><h4 class="bag-section-title">种子</h4><div class="bag-seeds"><span v-for="seed in state.inventory.seeds.filter(item => item.quantity > 0)" :key="seed.crop_id">{{ cropName(seed.crop_id) }} <b>× {{ seed.quantity }}</b></span><p v-if="!state.inventory.seeds.some(item => item.quantity > 0)" class="panel-empty">种子用完了，去种子铺补一些吧。</p></div></template>
+              <template v-else><h4 class="bag-section-title">收成 <span>{{ inventoryCount }} 份</span></h4><p v-if="!state.inventory.produce.length" class="panel-empty">仓库还空着。第一株灵草成熟后，记得来收获。</p><article v-for="item in state.inventory.produce" :key="`${item.crop_id}-${item.quality}`" class="bag-item"><div class="bag-art"><FarmPlant :name="cropName(item.crop_id)" :icon="cropIcon(item.crop_id)" :quality="item.quality" /></div><div><h4>{{ cropName(item.crop_id) }} <span :class="`quality-${item.quality}`">{{ qualityNames[item.quality] }}</span></h4><p>{{ item.quantity }} 份 · 每份 <SpiritStoneIcon />{{ number(item.unit_price) }} 灵石</p><button class="farm-button" :disabled="busy || loading || Boolean(pendingRetry)" @click="act('sell', { crop_id: item.crop_id, quality: item.quality, quantity: saleQuantity(item.quantity) })">出售 {{ saleQuantity(item.quantity) }} 份 · <SpiritStoneIcon />{{ number(saleQuantity(item.quantity) * item.unit_price) }} 灵石</button></div></article><h4 class="bag-section-title">种子</h4><div class="bag-seeds"><span v-for="seed in state.inventory.seeds.filter(item => item.quantity > 0)" :key="seed.crop_id">{{ cropName(seed.crop_id) }} <b>× {{ seed.quantity }}</b></span><p v-if="!state.inventory.seeds.some(item => item.quantity > 0)" class="panel-empty">种子用完了，去种子铺补一些吧。</p></div></template>
             </template>
             <template v-else-if="tab === 'upgrades'">
-              <div class="panel-title"><h3>经营一方洞天</h3><span>收获积攒修为，灵石建设灵田</span></div>
-              <div class="upgrade-card"><span class="upgrade-symbol">田</span><div><h4>开辟灵田</h4><p>当前 {{ state.farm.unlocked_plots }} 块<template v-if="nextLand"> → {{ nextLand.plot_count }} 块</template></p><small v-if="nextLand">需要洞天 {{ nextLand.required_level }} 级</small><small v-else>灵田已全部开辟</small></div><button v-if="nextLand" class="farm-button primary" :disabled="busy || loading || !ownFarm || Boolean(pendingRetry) || state.farm.level < nextLand.required_level || (state.balance ?? 0) < nextLand.cost" @click="requestUpgrade('expand')">{{ number(nextLand.cost) }} 灵石 · 扩建</button></div>
-              <div class="upgrade-card"><span class="upgrade-symbol aura-symbol">灵</span><div><h4>聚灵阵</h4><p>{{ state.farm.growth_multiplier }} 倍生长 · 变异额外 +{{ Math.round(state.farm.mutation_bonus * 100) }}%</p><small v-if="nextAura">下一阶 {{ nextAura.growth_multiplier }} 倍生长 · 洞天 {{ nextAura.required_level }} 级解锁</small><small v-else>聚灵阵已至圆满</small></div><button v-if="nextAura" class="farm-button primary" :disabled="busy || loading || !ownFarm || Boolean(pendingRetry) || state.farm.level < nextAura.required_level || (state.balance ?? 0) < nextAura.cost" @click="requestUpgrade('upgrade_aura')">{{ number(nextAura.cost) }} 灵石 · 升级</button></div>
-              <div class="farm-path"><h4>修行有序，慢慢来</h4><ol><li>从赠送的种子起步，完成第一轮收获。</li><li>出售成品积攒灵石，收获修为提升洞天等级。</li><li>开新地扩大种植，再升级聚灵阵缩短等待。</li><li>解锁珍稀灵草，静候灵品、仙品变异。</li></ol><p v-if="nextCrop">下一株：洞天 {{ nextCrop.unlock_level }} 级解锁 <b>{{ nextCrop.name }}</b></p></div>
+              <div class="panel-title"><h3>经营一方洞天</h3><span>收获积攒经验，灵石建设灵田</span></div>
+              <div class="upgrade-card"><span class="upgrade-symbol">田</span><div><h4>开辟灵田</h4><p>当前 {{ state.farm.unlocked_plots }} 块<template v-if="nextLand"> → {{ nextLand.plot_count }} 块</template></p><small v-if="nextLand">需要洞天 {{ nextLand.required_level }} 级</small><small v-else>灵田已全部开辟</small></div><button v-if="nextLand" class="farm-button primary" :disabled="busy || loading || !ownFarm || Boolean(pendingRetry) || state.farm.level < nextLand.required_level || (state.balance ?? 0) < nextLand.cost" @click="requestUpgrade('expand')"><SpiritStoneIcon />{{ number(nextLand.cost) }} 灵石 · 扩建</button></div>
+              <div class="upgrade-card"><span class="upgrade-symbol aura-symbol">灵</span><div><h4>聚灵阵</h4><p>{{ state.farm.growth_multiplier }} 倍生长 · 变异额外 +{{ Math.round(state.farm.mutation_bonus * 100) }}%</p><small v-if="nextAura">下一阶 {{ nextAura.growth_multiplier }} 倍生长 · 洞天 {{ nextAura.required_level }} 级解锁</small><small v-else>聚灵阵已至圆满</small></div><button v-if="nextAura" class="farm-button primary" :disabled="busy || loading || !ownFarm || Boolean(pendingRetry) || state.farm.level < nextAura.required_level || (state.balance ?? 0) < nextAura.cost" @click="requestUpgrade('upgrade_aura')"><SpiritStoneIcon />{{ number(nextAura.cost) }} 灵石 · 升级</button></div>
+              <div class="farm-path"><h4>修行有序，慢慢来</h4><ol><li>从赠送的种子起步，完成第一轮收获。</li><li>出售成品积攒灵石，收获经验提升洞天等级。</li><li>开新地扩大种植，再升级聚灵阵缩短等待。</li><li>解锁珍稀灵草，静候灵品、仙品变异。</li></ol><p v-if="nextCrop">下一株：洞天 {{ nextCrop.unlock_level }} 级解锁 <b>{{ nextCrop.name }}</b></p></div>
             </template>
             <template v-else-if="tab === 'visits'">
               <div class="panel-title"><h3>拜访邻居</h3><button class="farm-button quiet" :disabled="visitsLoading" @click="loadVisits">换一批</button></div><p class="panel-hint">{{ stealingNote }}</p><p v-if="visitsLoading" class="panel-empty" role="status">正在寻找邻居的洞天…</p><p v-else-if="visitsError" class="farm-alert" role="alert">{{ visitsError }}</p><p v-else-if="!visits.length" class="panel-empty">还没有可拜访的邻居。邀请朋友来种第一株灵草吧。</p><article v-for="neighbor in visits" :key="neighbor.user_id" class="farm-neighbor"><img :src="neighbor.avatar_url || '/ui/player-avatar.svg'" alt="" @error="avatarFallback"><div><h4>{{ neighbor.username }}</h4><span>洞天 {{ neighbor.level }} 级 · {{ neighbor.mature_plots }} 块成熟</span></div><button class="farm-button" :disabled="busy || loading || Boolean(pendingRetry) || String(neighbor.user_id) === String(state.owner.user_id)" @click="visit(String(neighbor.user_id))">拜访</button></article>
             </template>
             <template v-else>
-              <div class="panel-title"><h3>灵草图鉴</h3><span>{{ state.catalog.crops.length }} 种灵草 · 成品一览</span></div><p class="panel-hint">{{ pricingNote }}</p><div class="quality-guide"><span>凡品 ×1</span><span class="quality-spirit">灵品 ×2</span><span class="quality-celestial">仙品 ×5</span></div><p class="panel-hint">成熟时揭晓品质。聚灵阵提高变异机会，不保证每轮变异。</p><div class="crop-gallery"><article v-for="crop in state.catalog.crops" :key="crop.id"><FarmPlant :name="crop.name" :icon="crop.icon_key" /><h4>{{ crop.name }}</h4><span>洞天 {{ crop.unlock_level }} 级</span><p>{{ crop.description }}</p><small>凡品 {{ number(crop.sale_price) }} 灵石 / 份</small><a v-if="crop.source_url.startsWith('https://')" :href="crop.source_url" target="_blank" rel="noopener noreferrer">灵草出处 ↗</a></article></div>
+              <div class="panel-title"><h3>灵草图鉴</h3><span>{{ state.catalog.crops.length }} 种灵草 · 成品一览</span></div><p class="panel-hint">{{ pricingNote }}</p><div class="quality-guide"><span>凡品 ×1</span><span class="quality-spirit">灵品 ×2</span><span class="quality-celestial">仙品 ×5</span></div><p class="panel-hint">成熟时揭晓品质。聚灵阵提高变异机会，不保证每轮变异。</p><div class="crop-gallery"><article v-for="crop in state.catalog.crops" :key="crop.id"><FarmPlant :name="crop.name" :icon="crop.icon_key" /><h4>{{ crop.name }}</h4><span>洞天 {{ crop.unlock_level }} 级</span><p>{{ crop.description }}</p><small>凡品 <SpiritStoneIcon />{{ number(crop.sale_price) }} 灵石 / 份</small><a v-if="crop.source_url.startsWith('https://')" :href="crop.source_url" target="_blank" rel="noopener noreferrer">灵草出处 ↗</a></article></div>
             </template>
           </div>
         </aside>
@@ -383,15 +502,18 @@ onBeforeUnmount(() => {
     <div v-if="state" class="farm-world-notes"><div class="farm-garden-note"><span aria-hidden="true">✦</span> 浇水可缩短本轮等待；有虫也会成熟，及时除虫可保住收成。</div>
           <p v-if="protectionRemaining" class="farm-protection">新手守护还剩 {{ secondsLabel(protectionRemaining) }}，期间灵草不会被偷采。</p>
           <details v-if="state.activity.length" class="farm-activity"><summary>洞天记事 <span>最近 {{ state.activity.length }} 条</span></summary><ol><li v-for="(item, index) in state.activity" :key="index"><span>{{ item.message || '完成一次照料' }}</span><time>{{ activityTime(item.created_at ?? item.timestamp) }}</time></li></ol></details></div>
-    <nav class="farm-tabs farm-world-dock" aria-label="农场功能"><button v-for="item in tabs" :key="item.id" :class="{ active: panelOpen && tab === item.id }" :aria-pressed="panelOpen && tab === item.id" @click="chooseTab(item.id)"><img :src="`${FARM_ART}/icons/${dockIcons[item.id]}.webp`" alt=""><span>{{ item.label }}</span><small v-if="item.id === 'bag' && inventoryCount">{{ inventoryCount }}</small></button></nav>
+    <nav class="farm-tabs farm-world-dock" aria-label="农场功能"><button v-for="item in tabs" :key="item.id" :class="{ active: panelOpen && tab === item.id }" :aria-pressed="panelOpen && tab === item.id" @click="chooseTab(item.id)"><img :src="item.id === 'alchemy' ? pillArt('pill-gold') : `${FARM_ART}/icons/${dockIcons[item.id]}.webp`" alt=""><span>{{ item.label }}</span><small v-if="item.id === 'bag' && inventoryCount">{{ inventoryCount }}</small><small v-else-if="item.id === 'alchemy' && pillCount">{{ pillCount }}</small></button></nav>
     <dialog ref="plantDialog" class="farm-dialog" aria-labelledby="farm-plant-title" @close="plantingPlot = null" @cancel="plantingPlot = null"><div class="dialog-heading"><div><span>第 {{ plantingPlot ?? 1 }} 块灵田</span><h3 id="farm-plant-title">选一粒灵种</h3></div><button class="farm-button quiet" aria-label="关闭播种面板" :disabled="busy || loading" @click="closePlant">关闭</button></div><p>种下后自然成长，浇水还能再快一些。</p><div class="plant-seed-list"><button v-for="crop in availableSeeds" :key="crop.id" class="plant-seed-option" :disabled="busy || loading || Boolean(pendingRetry)" @click="plantingPlot !== null && act('plant', { plot_id: plantingPlot, crop_id: crop.id })"><FarmPlant :name="crop.name" :icon="crop.icon_key" /><strong>{{ crop.name }}</strong><span>持有 {{ seedMap.get(crop.id) }} 粒</span><small>{{ secondsLabel(crop.grow_seconds / (state?.farm.growth_multiplier ?? 1)) }} · 收获 {{ crop.base_yield }} 份</small><b>播种</b></button></div><p v-if="!availableSeeds.length" class="panel-empty">没有可用种子。去种子铺挑一包吧。</p><button v-if="!availableSeeds.length" class="farm-button primary" @click="closePlant(); chooseTab('shop')">去种子铺</button><div v-if="pendingRetry" class="farm-alert" role="alert">{{ error }}<button class="farm-button" :disabled="busy || loading" @click="retryAction">核对这次操作</button></div></dialog>
     <dialog ref="itemDialog" class="farm-dialog" aria-labelledby="farm-item-title" @close="selectedItem = ''" @cancel="selectedItem = ''"><div class="dialog-heading"><div><span>持有 {{ itemMap.get(selectedItem) ?? 0 }} 份</span><h3 id="farm-item-title">{{ selectedItemName }} · 选择灵田</h3></div><button class="farm-button quiet" :disabled="busy" @click="closeItem">关闭</button></div><div class="item-target-list"><button v-for="plot in state?.plots ?? []" :key="plot.plot_id" class="item-target" :disabled="actionLocked || !eligibleItemPlot(plot)" @click="act('use_item', { item_id: selectedItem, plot_id: plot.plot_id })"><FarmPlant v-if="plot.crop_id" :name="plot.crop_name ?? ''" :icon="cropIcon(plot.crop_id)" :stage="stage(plot)" /><span v-else class="empty-item-target">待播种</span><strong>{{ plot.plot_id }}号灵田 · {{ plot.crop_name || '空田' }}</strong><span>{{ eligibleItemPlot(plot) ? '消耗 1 份使用' : plot.status === 'empty' ? '请先播种' : selectedItem === 'spirit_dew' && plot.status === 'mature' ? '已经成熟' : '本茬已经使用' }}</span></button></div><div v-if="pendingRetry" class="farm-alert" role="alert">{{ error }}<button class="farm-button" :disabled="busy || loading" @click="retryAction">核对这次操作</button></div></dialog>
-    <dialog ref="confirmDialog" class="farm-dialog confirm-farm-dialog" aria-labelledby="farm-confirm-title" @close="confirmation = null" @cancel="confirmation = null"><template v-if="confirmation"><div class="dialog-heading"><h3 id="farm-confirm-title">{{ confirmation.title }}</h3><button class="farm-button quiet" :disabled="busy || loading" @click="closeConfirm">取消</button></div><p>{{ confirmation.description }}</p><div class="confirm-cost">消耗 <strong>{{ number(confirmation.cost) }}</strong> 灵石<small>当前余额 {{ number(state?.balance) }} 灵石</small></div><button class="farm-button primary" :disabled="busy || loading || Boolean(pendingRetry)" @click="act(confirmation.action)">确认{{ confirmation.action === 'expand' ? '扩建' : '升级' }}</button><div v-if="pendingRetry" class="farm-alert" role="alert">{{ error }}<button class="farm-button" :disabled="busy || loading" @click="retryAction">核对这次操作</button></div></template></dialog>
+    <dialog ref="confirmDialog" class="farm-dialog confirm-farm-dialog" aria-labelledby="farm-confirm-title" @close="confirmation = null" @cancel="confirmation = null"><template v-if="confirmation"><div class="dialog-heading"><h3 id="farm-confirm-title">{{ confirmation.title }}</h3><button class="farm-button quiet" :disabled="busy || loading" @click="closeConfirm">取消</button></div><p>{{ confirmation.description }}</p><div class="confirm-cost">消耗 <strong><SpiritStoneIcon />{{ number(confirmation.cost) }}</strong> 灵石<small>当前余额 <SpiritStoneIcon />{{ number(state?.balance) }} 灵石</small></div><button class="farm-button primary" :disabled="busy || loading || Boolean(pendingRetry)" @click="act(confirmation.action)">确认{{ confirmation.action === 'expand' ? '扩建' : '升级' }}</button><div v-if="pendingRetry" class="farm-alert" role="alert">{{ error }}<button class="farm-button" :disabled="busy || loading" @click="retryAction">核对这次操作</button></div></template></dialog>
+    </div>
+    <FarmAlchemyRoom v-if="state" v-show="alchemyOpen" :active="alchemyOpen" :state="state" :locked="actionLocked" :busy="busy" :now="now" :paused="pageHidden" :error="error" :notice="notice" :retry-pending="Boolean(pendingRetry)" :result="alchemyResult" @back="closeAlchemy" @retry="retryAction" @action="act" />
   </section>
 </template>
 
 <style scoped>
-.farm-game { --farm-ink: #4b2f1d; --farm-muted: #896647; --farm-line: #d4b582; --farm-green: #356d55; --farm-gold: #b57c32; color: var(--farm-ink); color-scheme: light; display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; padding: clamp(12px, 1.5vw, 22px); background: linear-gradient(#fff5dfed 0 135px, #d8dfb100 330px), url('/ui/farm-v2/garden-world.webp') center / cover fixed, #b5c585; border: 2px solid #b58143; border-radius: 15px; box-shadow: inset 0 0 0 3px #f4d99c88; container-type: inline-size; }
+.farm-outdoors { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; isolation: isolate; }
+.farm-game { --farm-ink: #4b2f1d; --farm-muted: #896647; --farm-line: #d4b582; --farm-green: #356d55; --farm-gold: #b57c32; color: var(--farm-ink); color-scheme: light; display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; overflow: auto; padding: clamp(12px, 1.5vw, 22px); background: linear-gradient(#fff5dfed 0 135px, #d8dfb100 330px), url('/ui/farm-v2/garden-world.webp?v=alchemy-20260927') center / cover fixed, #b5c585; border: 2px solid #b58143; border-radius: 15px; box-shadow: inset 0 0 0 3px #f4d99c88; container-type: inline-size; }
 .farm-game button { font-family: inherit; }
 .farm-heading, .farm-heading-main, .farm-heading-actions { display: flex; align-items: center; gap: 18px; }
 .farm-heading { justify-content: space-between; flex: none; margin-bottom: 20px; }
@@ -525,27 +647,58 @@ onBeforeUnmount(() => {
 
 /* 与背景共用1536×1024坐标，田地、灵植、灵兽不会在窗口缩放时漂移。 */
 .farm-world { position: relative; isolation: isolate; padding: 0; overflow: hidden; border: 0; border-radius: 0; background: #366c62; box-shadow: none; min-height: 0; }
+.farm-outdoors::before { content: ''; position: absolute; inset: -24px; z-index: -2; background: #366c62 url('/ui/farm-v2/garden-world.webp?v=alchemy-20260927') center / cover no-repeat; filter: blur(14px) brightness(.7) saturate(.9); pointer-events: none; }
 .farm-world-backdrop, .farm-world .farm-garden { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); flex: none; max-width: none; }
 .farm-world-backdrop { z-index: -1; pointer-events: none; }.farm-world-backdrop > img { width: 100%; height: 100%; object-fit: fill; }
 .farm-world .farm-layout { position: absolute; inset: 0; display: block; pointer-events: none; }
 .farm-world .farm-garden { margin: 0; padding: 0; border: 0; border-radius: 0; background: none; pointer-events: none; }
-.farm-world .garden-caption { display: none; }.farm-world .farm-plots { position: absolute; inset: 0; display: block; }
-.farm-world .farm-plot { position: absolute; width: 13%; height: 17%; min-height: 0; padding: 0; margin: 0; transform: translate(-50%, -50%); display: block; border: 0; border-radius: 0; background: none; box-shadow: none; pointer-events: none; }
-.farm-world .farm-plot.plot-selected { z-index: 22 !important; }
-.plot-hitbox { position: absolute; z-index: 8; left: 0; right: 0; top: 10%; bottom: 0; background: none; border: 0; padding: 0; cursor: pointer; pointer-events: auto; border-radius: 30% 45% 20% 25%; }
-.plot-hitbox:focus-visible { outline: 2px solid #fbe5a2; outline-offset: 3px; }.plot-hitbox:hover ~ .plot-scene .plot-soil, .plot-selected .plot-soil { filter: brightness(1.17) drop-shadow(0 0 6px #b8eaa9aa); }
-.farm-world .plot-scene { position: absolute; inset: 0; margin: 0; width: 100%; height: 100%; overflow: visible; display: block; }
-.farm-world .plot-soil { inset: auto; width: 124%; height: 100%; left: -12%; bottom: -12%; z-index: 0; object-fit: contain; }
-.farm-world .plot-scene :deep(.farm-plant) { position: absolute; z-index: 2; width: 83%; max-width: none; height: 105%; left: 8.5%; bottom: 15%; margin: 0; filter: drop-shadow(0 7px 3px #174b2738); }
-.farm-world .plot-scene :deep(.painted-plant) { clip-path: inset(0 0 12% 0); }
-.farm-world .farm-plot > header { position: absolute; z-index: 3; height: auto; display: flex; align-items: center; justify-content: flex-start; top: 0; left: 18%; gap: 3px; transform: scale(clamp(.7, var(--world-scale), 1)); transform-origin: center bottom; }
-.farm-world .plot-number { display: none; }.farm-world .plot-badge, .farm-world .plot-watered { padding: 2px 4px; border-radius: 2px; background: #203d35de; border: 1px solid #b49f61; color: #fff0b7; font-size: 10px; }.farm-world .plot-watered { color: #aee4d3; }.farm-world .pest-badge { color: #ffba91; }
-.farm-world .plot-info { position: absolute; z-index: 3; top: 80%; left: 50%; transform: translateX(-50%); width: max-content; min-width: 58%; max-width: 110%; min-height: 0; padding: 4px 9px; gap: 2px; margin: 0; background: #183e35de; border: 1px solid #bba668b3; border-radius: 3px; box-shadow: 0 2px 4px #10302735; text-shadow: 0 1px #0c2e23; }
-.farm-world .plot-info strong { color: #fff1bd; font-size: clamp(10px, 1.25cqw, 16px); font-family: KaiTi, STKaiti, serif; font-weight: 500; }.farm-world .plot-info > span { color: #e3e5ba; font-size: clamp(8px, .85cqw, 11px); }.farm-world .plot-info > small { display: none; }.farm-world .plot-selected .plot-info > .plot-ward-note { display: block; color: #f3d995; }.farm-world .plot-selected .plot-info > .plot-dew-note { display: block; color: #a6d5bd; }.farm-world .plot-progress { margin: 1px 0 0; height: 2px; background: #16372b; }.farm-world .plot-progress i { background: #c4bf77; }
-.farm-world .plot-actions { position: absolute; z-index: 20; top: calc(80% + 51px); left: 50%; transform: translateX(-50%); display: flex; width: max-content; max-width: 205%; min-height: 30px; margin: 0; padding: 4px; gap: 4px; border: 1px solid #c3a569; background: #173d35f0; border-radius: 5px; box-shadow: 0 4px 12px #12382d52; pointer-events: auto; }
-.farm-world .plot-actions .farm-button { flex: none; white-space: nowrap; min-height: 32px; padding: 5px 12px; font-size: 12px; }.farm-world .plot-actions .plot-tended { background: transparent; color: #d3d9b1; padding: 5px 8px; white-space: nowrap; }
-.farm-world .plot-empty-mark { position: absolute; top: 47%; left: 50%; margin: 0; transform: translate(-50%, -50%); color: #eae1b2; text-shadow: 0 2px #385037; font-size: 26px; }
-.farm-world .plot-sprite { width: 130%; height: auto; bottom: 5%; z-index: 7; }.farm-world .plot-sprite[data-animation='water'] { left: 72%; }.farm-world .plot-action-effect { top: 4%; font-size: 11px; }
+.farm-world .garden-caption { display: none; }
+/* 灵田直接落在背景画好的田圃土面上：按透视四边形排布，田块越多越小，互不重叠。 */
+.farm-world .farm-field { position: absolute; z-index: 4; pointer-events: none; }
+.farm-world .field-plaque { position: absolute; z-index: 1; left: 59%; top: 0; transform: translate(-50%, -115%); padding: 1px 12px; color: #fff0bd; font-family: KaiTi, STKaiti, serif; font-size: clamp(10px, calc(15px * var(--world-scale)), 15px); letter-spacing: 2px; white-space: nowrap; background: #173d35d9; border: 1px solid #c3ad73; border-radius: 3px; box-shadow: 0 2px 6px #10302a44; }
+.farm-world .farm-field .farm-plots { position: absolute; inset: 0; display: block; }
+.farm-world .farm-field .farm-plot { position: absolute; min-width: 0; min-height: 0; padding: 0; margin: 0; transform: none; display: block; border: 0; border-radius: 0; background: none; box-shadow: none; pointer-events: none; }
+.farm-world .farm-field .farm-plot.plot-selected { z-index: 1000 !important; }
+.plot-hitbox { position: absolute; z-index: 8; left: 4%; right: 4%; top: 10%; bottom: 0; background: none; border: 0; padding: 0; cursor: pointer; pointer-events: auto; border-radius: 45%; }
+.plot-hitbox:focus-visible { outline: 2px solid #fbe5a2; outline-offset: 2px; }
+.farm-world .farm-field .plot-scene { position: absolute; inset: 0; margin: 0; width: 100%; height: 100%; overflow: visible; display: block; }
+.farm-world .farm-field .plot-scene::before { content: ''; position: absolute; z-index: 0; left: 26%; right: 26%; bottom: 25%; height: 9%; border-radius: 50%; background: radial-gradient(ellipse closest-side, #1d1008a6 0%, #1d100800 100%); pointer-events: none; }
+.farm-world .farm-field .plot-soil { display: none; }
+.farm-world .field-grid { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.field-grid .cell-soil { fill: #4a2c1466; mix-blend-mode: multiply; }
+.field-grid .cell-furrow { fill: url(#farm-furrow); }
+.field-grid .cell-ridge-shadow { fill: none; stroke: #2a170a4d; stroke-width: 2.6; stroke-linejoin: round; transform: translateY(1.2px); }
+.field-grid .cell-ridge { fill: none; stroke: #cdb27a5c; stroke-width: 1.3; stroke-linejoin: round; transition: stroke .2s ease, stroke-width .2s ease; }
+.field-grid .cell-expand .cell-soil { fill: #4a2c1433; }
+.field-grid .cell-expand .cell-ridge { stroke-dasharray: 6 6; stroke: #cdb27a40; }
+.field-grid .cell-active .cell-ridge { stroke: #e8cf8ca8; stroke-width: 2; filter: drop-shadow(0 0 2px #e8cf8c80); }
+.farm-world .farm-field .plot-empty .plot-scene::before { display: none; }
+.farm-world .farm-field .plot-scene :deep(.farm-plant) { position: absolute; z-index: 2; width: 92%; max-width: none; height: 100%; left: 4%; bottom: 26%; margin: 0; filter: drop-shadow(0 4px 2px #174b2740); }
+.farm-world .farm-field .plot-scene :deep(.painted-plant) { clip-path: inset(0 0 10% 0); }
+.farm-world .farm-field .farm-plot > header { position: absolute; z-index: 3; top: -4%; left: 50%; height: auto; display: flex; align-items: center; gap: 3px; transform: translateX(-50%); }
+.farm-world .plot-number { display: none; }.farm-world .plot-badge, .farm-world .plot-watered { padding: 1px 4px; border-radius: 2px; background: #203d35de; border: 1px solid #b49f61; color: #fff0b7; font-size: clamp(8px, calc(11px * var(--world-scale)), 11px); white-space: nowrap; }.farm-world .plot-watered { color: #aee4d3; }.farm-world .pest-badge { color: #ffba91; }
+.farm-world .farm-field .plot-info { position: absolute; z-index: 3; top: auto; bottom: -8%; left: 50%; transform: translateX(-50%); width: max-content; min-width: 0; max-width: 150%; min-height: 0; padding: 1px 6px; gap: 1px; margin: 0; overflow: hidden; text-align: center; white-space: nowrap; background: #183e35d9; border: 1px solid #bba668a0; border-radius: 3px; box-shadow: 0 2px 4px #10302735; text-shadow: 0 1px #0c2e23; }
+.farm-world .farm-field .plot-info strong { display: block; overflow: hidden; text-overflow: ellipsis; color: #fff1bd; font-size: clamp(9px, calc(14px * var(--world-scale)), 14px); font-family: KaiTi, STKaiti, serif; font-weight: 500; }.farm-world .farm-field .plot-info > span { display: block; overflow: hidden; text-overflow: ellipsis; color: #e3e5ba; font-size: clamp(8px, calc(10px * var(--world-scale)), 10px); }.farm-world .plot-info > small { display: none; }.farm-world .plot-selected .plot-info > .plot-ward-note { display: block; color: #f3d995; }.farm-world .plot-selected .plot-info > .plot-dew-note { display: block; color: #a6d5bd; }.farm-world .plot-progress { margin: 1px 0 0; height: 2px; background: #16372b; }.farm-world .plot-progress i { background: #c4bf77; }
+.farm-world .farm-field .plot-actions { position: absolute; z-index: 20; top: calc(100% + 14px); bottom: auto; left: 50%; transform: translateX(-50%); display: flex; width: max-content; max-width: 300%; min-height: 30px; margin: 0; padding: 4px; gap: 4px; border: 1px solid #c3a569; background: #173d35f2; border-radius: 5px; box-shadow: 0 4px 12px #12382d52; pointer-events: auto; }
+.farm-world .farm-field .plot-actions .farm-button { flex: none; white-space: nowrap; min-height: 30px; padding: 4px 11px; font-size: 12px; }.farm-world .farm-field .plot-actions .plot-tended { background: transparent; color: #d3d9b1; padding: 5px 8px; white-space: nowrap; }
+.farm-world .farm-field .farm-plot.plot-actions-up .plot-actions { top: auto; bottom: calc(100% + 6px); }
+.farm-world .farm-field .plot-empty-mark { position: absolute; z-index: 2; top: 70%; left: 50%; margin: 0; transform: translate(-50%, -50%); color: #eae1b2cc; text-shadow: 0 2px #385037; font-size: clamp(12px, calc(24px * var(--world-scale)), 24px); }
+.farm-world .farm-field .plot-empty .plot-empty-mark { top: 62%; color: #f6e8b8b3; text-shadow: 0 1px 2px #3a2615; font-size: clamp(10px, calc(18px * var(--world-scale)), 18px); }
+.farm-world .farm-field .plot-sprite { width: 130%; height: auto; left: -15%; bottom: 8%; z-index: 7; }.farm-world .farm-field .plot-sprite[data-animation='water'] { left: 40%; }.farm-world .farm-field .plot-action-effect { top: 4%; font-size: 11px; white-space: nowrap; }
+.farm-world .farm-field .farm-plot.plot-expand { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 1px; padding: 0 0 6%; color: #f0dcaa; text-align: center; background: radial-gradient(ellipse 60% 26% at 50% 80%, #2a1c10b8 0 55%, #2a1c1000 100%); border: 0; border-radius: 0; pointer-events: auto; cursor: pointer; text-shadow: 0 1px 2px #1a0f06; }
+.farm-world .farm-field .plot-expand .expand-stone { width: auto; height: auto; margin: 0; border: 0; background: transparent; color: #f3dd9b; font-size: clamp(14px, calc(26px * var(--world-scale)), 26px); line-height: 1; }
+.farm-world .farm-field .plot-expand > strong { font-family: KaiTi, STKaiti, serif; font-size: clamp(9px, calc(14px * var(--world-scale)), 14px); font-weight: 500; white-space: nowrap; }.farm-world .farm-field .plot-expand > span:not(.expand-stone) { display: block; color: #e3d2a4; font-size: clamp(8px, calc(10px * var(--world-scale)), 10px); white-space: nowrap; }.farm-world .farm-field .plot-expand > small { display: none; }.farm-world .farm-field .plot-expand:disabled { opacity: .62; cursor: default; }.farm-world .farm-field .plot-expand:not(:disabled):hover .expand-stone { color: #fff3c2; text-shadow: 0 0 8px #f5dc8f; }
+.farm-world .farm-field .farm-plot.plot-expand { background: none; justify-content: center; padding: 0; }
+.farm-world .field-compact .farm-plot:not(.plot-selected) .plot-info, .farm-world .field-compact .plot-expand > span:not(.expand-stone), .farm-world .field-tiny .plot-expand > strong { display: none; }
+.farm-world .field-tiny .farm-plot:not(.plot-selected) .plot-info, .farm-world .field-tiny .plot-expand > span:not(.expand-stone) { display: none; }.farm-world .field-tiny .plot-badge, .farm-world .field-tiny .plot-watered { font-size: 8px; padding: 0 2px; }
+/* 场景里画好的炼丹阁：点击进入独立炼丹房。 */
+.farm-world .world-alchemy { position: absolute; z-index: 3; left: 67%; top: 12%; width: 24%; height: 38%; padding: 0; border: 0; border-radius: 42% 42% 14% 14%; background: none; cursor: pointer; pointer-events: auto; }
+.farm-world .world-alchemy::before { content: ''; position: absolute; inset: 6% 4%; border-radius: inherit; background: radial-gradient(ellipse at 50% 55%, #ffe39a55, #ffe39a00 68%); opacity: 0; transition: opacity .25s ease; }
+.farm-world .world-alchemy:hover::before, .farm-world .world-alchemy:focus-visible::before { opacity: 1; }.farm-world .world-alchemy:focus-visible { outline: 2px solid #fbe5a2; outline-offset: 2px; }
+.farm-world .world-alchemy > span { position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 3px 13px 3px 4px; color: #fff0bd; font-family: KaiTi, STKaiti, serif; font-size: clamp(11px, calc(18px * var(--world-scale)), 18px); letter-spacing: 2px; white-space: nowrap; background: #173d35eb; border: 1px solid #c3ad73; border-radius: 20px; box-shadow: 0 3px 10px #10302a66; transition: transform .2s ease, box-shadow .2s ease; }
+.farm-world .world-alchemy > span img { width: clamp(18px, calc(32px * var(--world-scale)), 32px); height: clamp(18px, calc(32px * var(--world-scale)), 32px); object-fit: contain; }.farm-world .world-alchemy > span small { margin-left: 2px; padding: 0 5px; color: #fff; font-size: 10px; letter-spacing: 0; background: #a84d34; border-radius: 8px; }
+.farm-world .world-alchemy:hover > span, .farm-world .world-alchemy:focus-visible > span { transform: translateX(-50%) translateY(-3px); box-shadow: 0 0 14px #f5d57c99, 0 3px 10px #10302a66; }
+@media (prefers-reduced-motion: reduce) { .farm-world .world-alchemy::before, .farm-world .world-alchemy > span { transition: none; } }
 .farm-world .farm-heading { position: absolute; z-index: 30; top: 13px; left: 15px; right: 15px; margin: 0; gap: 12px; align-items: flex-start; pointer-events: none; }
 .farm-world .farm-heading-main, .farm-world .farm-heading-actions { pointer-events: auto; }.farm-world .farm-heading-main { gap: 9px; }.farm-world .farm-heading-main > div { padding: 8px 17px 8px 10px; background: linear-gradient(90deg, #183b33ed, #173d35c9); border-block: 1px solid #c1b783; border-right: 1px solid #b4ac7d; border-radius: 0 32px 32px 0; }.farm-world .farm-heading h2 { font-size: 25px; margin: 0; color: #fff0bb; text-shadow: 0 2px #0c3025; line-height: 1.15; }.farm-world .farm-eyebrow { color: #c6d6ba; font-size: 8px; letter-spacing: 1px; }
 .farm-world .farm-back, .farm-world .farm-refresh { display: flex; align-items: center; gap: 3px; font-size: 10px; padding: 3px 6px; color: #fff0c9; border: 1px solid #b5ab78; border-radius: 20px; background: #17382eda; text-shadow: 0 1px #102e26; }.farm-world .farm-back img, .farm-world .farm-refresh img { width: 24px; height: 24px; object-fit: contain; }.farm-world .farm-heading-actions { gap: 7px; align-items: center; }.farm-world .farm-wallet { color: #e2d6b2; padding: 7px 13px; border: 1px solid #bcb180; border-radius: 22px; background: #153d34e0; font-size: 11px; }.farm-world .farm-wallet b { color: #fff0ba; font-size: 18px; }.farm-world .farm-heading-actions :deep(.game-button) { color: #ffebaf; border-color: #b5ab77; background: #173d35db; padding: 6px 10px; border-radius: 20px; }
@@ -563,9 +716,12 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) { .world-qi i { animation: none; opacity: .3; } }
 
 
-.farm-world.farm-wide .garden-guardian { top: 55%; width: 16%; height: 24%; left: 80%; }.farm-world.farm-wide .guardian-caption { top: 73%; }.farm-world.farm-wide .guardian-caption strong { font-size: 12px; }.farm-world.farm-wide .guardian-caption p { font-size: 8px; }.farm-world.farm-wide .farm-world-dock { padding-top: 1px; }.farm-world.farm-wide .farm-world-dock img { width: 29px; height: 29px; }.farm-world.farm-wide .farm-world-dock button { font-size: 10px; }.farm-world.farm-wide .farm-plot.plot-expand { left: 47%; top: -5%; }.farm-world.farm-wide .plot-info { top: 74%; }.farm-world.farm-wide .plot-actions { top: calc(74% + 39px); }
+.farm-world.farm-wide .garden-guardian { top: 55%; width: 16%; height: 24%; left: 80%; }.farm-world.farm-wide .guardian-caption { top: 73%; }.farm-world.farm-wide .guardian-caption strong { font-size: 12px; }.farm-world.farm-wide .guardian-caption p { font-size: 8px; }.farm-world.farm-wide .farm-world-dock { padding-top: 1px; }.farm-world.farm-wide .farm-world-dock img { width: 29px; height: 29px; }.farm-world.farm-wide .farm-world-dock button { font-size: 10px; }
 
-.farm-world.farm-wide .plot-info { min-width: 52%; padding: 2px 4px; }.farm-world.farm-wide .plot-info strong { font-size: 10px; }.farm-world.farm-wide .plot-info > span { font-size: 8px; }.farm-world.farm-wide .plot-scene :deep(.farm-plant) { height: 88%; bottom: 19%; }.farm-world.farm-wide .plot-actions { top: calc(74% + 31px); }
-.farm-world.farm-dense .plot-scene :deep(.farm-plant) { height: 90%; bottom: 18%; }.farm-world.farm-dense .plot-info { padding: 2px 5px; }.farm-world.farm-dense .plot-info strong { font-size: clamp(9px, 1cqw, 13px); }.farm-world.farm-dense .plot-info > span { font-size: 8px; }.farm-world.farm-dense .plot-actions { top: calc(80% + 35px); }
-.farm-world .farm-plot.plot-actions-up .plot-actions { top: auto; bottom: 76%; }
+.farm-world .world-alchemy > span em { margin-left: 2px; padding: 0 6px; font-style: normal; font-family: inherit; font-size: clamp(9px, calc(12px * var(--world-scale)), 12px); letter-spacing: 0; color: #ffe6a6; background: #6b3a1ecc; border-radius: 8px; font-variant-numeric: tabular-nums; }
+.farm-world .world-alchemy-ready > span { animation: world-alchemy-ready 1.4s ease-in-out infinite; }.farm-world .world-alchemy-ready > span em { color: #fff; background: #b57c32; }
+.farm-world .world-alchemy-brewing::after { content: ''; position: absolute; left: 46%; top: 2%; width: 12%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, #f4efe0aa, #f4efe000 70%); opacity: 0; animation: alchemy-smoke 3.6s ease-out infinite; pointer-events: none; }
+@keyframes alchemy-smoke { 0% { opacity: 0; transform: translateY(0) scale(.6); } 20% { opacity: .85; } 100% { opacity: 0; transform: translateY(-160%) scale(1.9); } }
+@keyframes world-alchemy-ready { 0%, 100% { box-shadow: 0 0 6px #f5d57c66, 0 3px 10px #10302a66; } 50% { box-shadow: 0 0 20px #f5d57ccc, 0 3px 10px #10302a66; } }
+@media (prefers-reduced-motion: reduce) { .farm-world .world-alchemy-ready > span, .farm-world .world-alchemy-brewing::after { animation: none; } }
 </style>

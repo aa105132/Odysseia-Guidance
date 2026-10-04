@@ -844,12 +844,13 @@ async def _download_audio(
     category="娱乐",
 )
 async def request_song(
-    song_name: str,
+    song_name: Optional[str] = None,
     artist: Optional[str] = None,
     source: Optional[str] = None,
     br: Optional[int] = None,
     song_comment: Optional[str] = None,
     send_to_channel: bool = True,
+    query: Optional[str] = None,
     **kwargs,
 ) -> dict:
     """
@@ -888,6 +889,8 @@ async def request_song(
     Returns:
         成功发送文件或链接时返回 skip_ai_response=True，避免月月再补发重复文本。
     """
+    if not song_name:
+        song_name = query or kwargs.get("query") or kwargs.get("name") or kwargs.get("keyword")
     query = str(song_name or "").strip()
     original_query = query
     artist_text = str(artist or "").strip()

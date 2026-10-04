@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import SpiritStoneIcon from './SpiritStoneIcon.vue';
+const PokerogueGame = defineAsyncComponent(() => import('./PokerogueGame.vue'));
 import dialogueConfig from "./dialogue.json";
 import TableGames from "./TableGames.vue";
 import FarmGame from "./FarmGame.vue";
 import YueyueMascot from "./YueyueMascot.vue";
 import GameTools from "./GameTools.vue";
 import GameStatsPanel from "./GameStatsPanel.vue";
+import GameMailbox from "./GameMailbox.vue";
 import { mountGameAudio, unmountGameAudio, playGameSound, setGameAudioScene, playRoundMusic, playGameVoice, stopGameVoice } from "./gameAudio";
 import { welcomeVoiceByText } from './gameVoiceLines';
 import GameSocial from './GameSocial.vue';
@@ -30,6 +33,7 @@ type ViewMode =
   | "lobby"
   | "table_games"
   | "noname"
+  | "pokerogue"
   | "farm"
   | "table";
 type RoomStage = "waiting" | "playing" | "dealer_turn" | "finished";
@@ -37,6 +41,9 @@ type RoomStage = "waiting" | "playing" | "dealer_turn" | "finished";
 type PublicConfigResponse = {
   discord_client_id?: string;
   noname_available?: boolean;
+  pokerogue_available?: boolean;
+  game_maintenance?: Record<string, string>;
+  maintenance_announcement?: string;
 };
 
 type ProfileResponse = {
@@ -123,6 +130,12 @@ const viewMode = ref<ViewMode>("loading");
 const lobbyStatsPanel = ref<'stats' | 'leaderboard' | null>(null);
 const lobbyPage = ref<'games' | 'rooms'>('games');
 const nonameAvailable = ref(false);
+const pokerogueAvailable = ref(false);
+const gameMaintenance = ref<Record<string, string>>({});
+const maintenanceAnnouncement = ref('');
+function maintenanceReason(gameType: string): string {
+  return gameMaintenance.value[gameType] || '';
+}
 const selectedTableGame = ref<TableGameType>('texas');
 const availableTableGames: TableGameType[] = ['texas', 'landlord', 'mahjong', 'golden_flower', 'guandan'];
 const loadingText = ref("初始化中...");
@@ -132,6 +145,8 @@ const roomInput = ref("");
 const showRoomDirectory = ref(false);
 const directoryGameType = ref('');
 const pendingTableRoom = ref('');
+const pendingNonameRoom = ref('');
+const nonameGame = ref<InstanceType<typeof NonameGame> | null>(null);
 // Keep pre-game choices and the actual table in one mounted branch.
 const tableRoomActive = ref(false);
 const tableEntryBusy = ref(false);
@@ -701,7 +716,7 @@ function buildRequestHeaders(includeJson: boolean): HeadersInit {
 
 async function apiCall<T>(
   endpoint: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   body?: unknown,
   retries = method === "GET" ? 1 : 0,
 ): Promise<T> {
@@ -759,6 +774,9 @@ async function fetchPublicConfig(): Promise<void> {
 
   const configData = (await response.json()) as PublicConfigResponse;
   nonameAvailable.value = configData.noname_available === true;
+  pokerogueAvailable.value = configData.pokerogue_available === true;
+  gameMaintenance.value = Object.fromEntries(Object.entries(configData.game_maintenance ?? {}).filter(([, reason]) => typeof reason === 'string' && reason.trim()));
+  maintenanceAnnouncement.value = typeof configData.maintenance_announcement === 'string' ? configData.maintenance_announcement.trim() : '';
   runtimeDiscordClientId.value = String(configData.discord_client_id ?? "").trim();
 }
 
@@ -936,6 +954,8 @@ function clearNotices() {
 
 function enterGameHub() {
   pendingTableRoom.value = '';
+  pendingNonameRoom.value = '';
+  inviteTarget.value = null;
   resetPresentation();
   stopRoomPolling();
   viewMode.value = "game_hub";
@@ -949,6 +969,10 @@ function enterBlackjackModeSelect() {
 }
 
 function openTableGame(gameType: TableGameType) {
+  if (maintenanceReason(gameType)) {
+    errorMessage.value = maintenanceReason(gameType);
+    return;
+  }
   lastLobbyGame.value = gameType;
   pendingTableRoom.value = '';
   resetPresentation();
@@ -965,6 +989,18 @@ function openRoomDirectory(gameType = '') {
 
 async function joinListedRoom(room: { room_id: string; game_type: string }): Promise<boolean> {
   clearNotices();
+  if (maintenanceReason(room.game_type)) {
+    errorMessage.value = maintenanceReason(room.game_type);
+    throw new Error(errorMessage.value);
+  }
+  if (room.game_type === 'noname') {
+    if (!nonameAvailable.value) throw new Error('三国杀暂不可用，请稍后再试');
+    pendingNonameRoom.value = room.room_id;
+    lastLobbyGame.value = 'noname';
+    stopRoomPolling();
+    viewMode.value = 'noname';
+    return true;
+  }
   if (room.game_type === 'blackjack') {
     const data = await apiCall<RoomEnvelope>('/api/multi/room/join', 'POST', { room_id: room.room_id }, 0);
     applyRoomEnvelope(data, true);
@@ -1163,14 +1199,22 @@ function recruitTeammates() {
 async function shareRoom(room: RoomInviteTarget): Promise<string> {
   if (!discordSdkInstance) throw new Error('请在 Discord 小活动内分享');
   // 分享前取最新成员数，避免弹窗打开后有人进出导致招募信息过期。
-  const endpoint = room.game_type === 'blackjack' ? '/api/multi/room/' : '/api/tables/';
-  const current = await apiCall<{ room: { players: { is_bot?: boolean }[]; max_players: number; state: string } | null }>(`${endpoint}${encodeURIComponent(room.room_id)}`, 'GET');
-  if (!current.room) throw new Error('你已离开该房间，请重新进入后招募');
-  const target = { ...room, player_count: current.room.players.length, max_players: current.room.max_players, bot_count: current.room.players.filter(player => player.is_bot).length, state: current.room.state };
+  let target: RoomInviteTarget;
+  if (room.game_type === 'noname') {
+    const current = nonameGame.value?.getInvite();
+    if (!current || current.room_id !== room.room_id) throw new Error('你已离开该房间或已经开局，请重新进入后招募');
+    if ((current.player_count ?? 0) >= (current.max_players ?? 0)) throw new Error('房间已满，请有空位后再招募');
+    target = current;
+  } else {
+    const endpoint = room.game_type === 'blackjack' ? '/api/multi/room/' : '/api/tables/';
+    const current = await apiCall<{ room: { players: { is_bot?: boolean }[]; max_players: number; state: string } | null }>(`${endpoint}${encodeURIComponent(room.room_id)}`, 'GET');
+    if (!current.room) throw new Error('你已离开该房间，请重新进入后招募');
+    target = { ...room, player_count: current.room.players.length, max_players: current.room.max_players, bot_count: current.room.players.filter(player => player.is_bot).length, state: current.room.state };
+  }
   inviteTarget.value = target;
   const result = await discordSdkInstance.commands.shareLink({
     message: roomInviteDescription(target),
-    custom_id: roomInviteCode(room),
+    custom_id: roomInviteCode(target),
   });
   if (result.didSendMessage) return '已通过 Discord 分享邀请';
   if (result.didCopyLink) return '已复制 Discord 邀请链接';
@@ -1431,9 +1475,9 @@ async function bootstrap() {
   loadingText.value = "正在连接服务...";
 
   try {
+    await fetchPublicConfig();
     if (isEmbedded) {
       try {
-        await fetchPublicConfig();
         if (!runtimeDiscordClientId.value) {
           throw new Error("DISCORD_CLIENT_ID 未配置");
         }
@@ -1465,7 +1509,7 @@ async function bootstrap() {
 watch(
   () => [viewMode.value, roomState.value?.state ?? "", singleGame.value?.game_state ?? ""],
   () => {
-    if (viewMode.value !== 'table_games') setGameAudioScene(['single', 'table'].includes(viewMode.value) ? 'playing' : 'lobby');
+    if (viewMode.value !== 'table_games') setGameAudioScene(viewMode.value === 'pokerogue' ? 'external' : ['single', 'table'].includes(viewMode.value) ? 'playing' : 'lobby');
     startDealerSpeechLoop();
   },
   { immediate: true, flush: 'sync' },
@@ -1510,6 +1554,7 @@ onBeforeUnmount(() => {
 
         <div v-if="profile" class="lobby-profile-actions">
         <GameTools :profile="profile" :api-call="apiCall" audio-only />
+        <GameMailbox :user-id="profile.user_id" :api-call="apiCall" @balance="profile && (profile.balance = $event)" />
         <button type="button" class="profile-chip" aria-label="查看个人信息与统计" @click="lobbyStatsPanel = 'stats'">
           <img class="profile-avatar" :src="playerAvatarSrc({
             user_id: String(profile.user_id),
@@ -1527,7 +1572,7 @@ onBeforeUnmount(() => {
           })" alt="玩家头像" />
           <div class="profile-meta">
             <div class="profile-name">{{ profile.username }}</div>
-            <div class="profile-balance">余额：{{ profile.balance }}</div>
+            <div class="profile-balance">余额：<SpiritStoneIcon />{{ profile.balance }}</div>
           </div>
         </button>
         </div>
@@ -1558,15 +1603,15 @@ onBeforeUnmount(() => {
               <button class="game-button" :aria-pressed="lobbyPage === 'rooms'" @click="lobbyPage = 'rooms'">房间列表</button>
             </div>
           </header>
-          <div v-if="lobbyPage === 'games'" class="game-grid hub-game-grid" :class="{ 'has-noname': nonameAvailable }" aria-label="精选玩法">
+          <div v-if="lobbyPage === 'games'" class="game-grid hub-game-grid" :class="{ 'has-noname': nonameAvailable || pokerogueAvailable, 'has-pokerogue': pokerogueAvailable, 'has-both-extras': nonameAvailable && pokerogueAvailable }" aria-label="精选玩法">
             <button class="game-card blackjack-card" :disabled="requestInFlight" @click="enterBlackjackModeSelect">
               <span class="game-card-art"><img src="/ui/farm-v2/games/blackjack.webp" alt="" /></span>
               <span class="game-card-copy"><span class="game-name">21点</span><span class="game-desc">立即游玩</span></span>
               <span class="card-arrow" aria-hidden="true">›</span>
             </button>
-            <button v-for="gameType in availableTableGames" :key="gameType" :class="['game-card', `${gameType}-card`]" :aria-label="`${tableGameRules[gameType].title} 单人挑战 / 多人同桌`" :disabled="requestInFlight" @click="openTableGame(gameType)">
+            <button v-for="gameType in availableTableGames" :key="gameType" :class="['game-card', `${gameType}-card`, { 'maintenance-card': maintenanceReason(gameType) }]" :aria-label="maintenanceReason(gameType) || `${tableGameRules[gameType].title} 单人挑战 / 多人同桌`" :title="maintenanceReason(gameType) || undefined" :disabled="requestInFlight || Boolean(maintenanceReason(gameType))" @click="openTableGame(gameType)">
               <span class="game-card-art"><img :src="`/ui/farm-v2/games/${gameType}.webp`" alt="" /></span>
-              <span class="game-card-copy"><span class="game-name">{{ tableGameRules[gameType].title }}</span><span class="game-desc">单人 / 多人</span></span>
+              <span class="game-card-copy"><span class="game-name">{{ tableGameRules[gameType].title }}</span><span class="game-desc">{{ maintenanceReason(gameType) ? '维护中' : '单人 / 多人' }}</span></span>
               <span class="card-arrow" aria-hidden="true">›</span>
             </button>
             <button v-if="nonameAvailable" class="game-card noname-card" :disabled="requestInFlight" @click="lastLobbyGame = 'noname'; viewMode = 'noname'">
@@ -1574,8 +1619,13 @@ onBeforeUnmount(() => {
               <span class="game-card-copy"><span class="game-name">三国杀</span><span class="game-desc">无名杀 · 免费娱乐试玩</span></span>
               <span class="card-arrow" aria-hidden="true">›</span>
             </button>
+            <button v-if="pokerogueAvailable" class="game-card pokerogue-card" :disabled="requestInFlight" @click="lastLobbyGame = 'pokerogue'; viewMode = 'pokerogue'">
+              <span class="game-card-art"><img src="/ui/pokerogue-entry.svg" alt="" /></span>
+              <span class="game-card-copy"><span class="game-name">宝可梦</span><span class="game-desc">肉鸽冒险 · 云存档</span></span>
+              <span class="card-arrow" aria-hidden="true">›</span>
+            </button>
           </div>
-          <RoomDirectory v-else-if="profile" embedded :api-call="apiCall" :balance="profile.balance" :join-room="joinListedRoom" @close="lobbyPage = 'games'" />
+          <RoomDirectory v-else-if="profile" embedded :api-call="apiCall" :balance="profile.balance" :maintenance="gameMaintenance" :join-room="joinListedRoom" @close="lobbyPage = 'games'" />
           <p v-else class="lobby-waiting" role="status">正在加载牌友信息…</p>
           <p class="lobby-footnote"><span aria-hidden="true">◆</span> 棋牌游戏使用账户灵石<template v-if="nonameAvailable"> · 三国杀免费娱乐</template></p>
           </div>
@@ -1603,12 +1653,16 @@ onBeforeUnmount(() => {
             <TableGames :game-type="selectedTableGame" :initial-room-id="pendingTableRoom" :profile="profile" :api-call="apiCall" :embedded="!tableRoomActive" @room-active="tableRoomActive = $event" @entry-busy="tableEntryBusy = $event" @back="enterGameHub" @balance="profile.balance = $event" @invite="openRoomInvite" @join-failed="enterGameHub(); errorMessage = $event" />
           </GameViewport>
           <GameViewport v-else-if="viewMode === 'noname' && profile" key="noname" :class="{ 'lobby-embedded-viewport': !nonameRoomActive }">
-            <NonameGame :username="profile.username" :api-call="apiCall" @room-active="nonameRoomActive = $event" @back="enterGameHub" />
+            <NonameGame ref="nonameGame" :initial-room-id="pendingNonameRoom" :username="profile.username" :api-call="apiCall" @room-active="nonameRoomActive = $event" @invite="openRoomInvite" @back="enterGameHub" />
           </GameViewport>
           </Transition>
           </div>
         </section>
       </section>
+
+      <GameViewport v-else-if="viewMode === 'pokerogue' && profile" style="background: #171820">
+        <PokerogueGame :key="String(profile.user_id)" :username="profile.username" :api-call="apiCall" @back="enterGameHub" />
+      </GameViewport>
 
       <GameViewport v-else-if="viewMode === 'farm' && profile">
         <FarmGame :profile="profile" :api-call="apiCall" @back="enterGameHub" @balance="profile.balance = $event" />
@@ -1656,19 +1710,19 @@ onBeforeUnmount(() => {
                 <img v-for="(card, index) in singleGame?.player_hand || []" :key="`${cardRoundKey}-single-player-${index}`" :class="{ 'card-dealing': cardMotion('single:player', index)?.kind === 'deal' }" :data-card-dealing="Boolean(cardMotion('single:player', index))" :data-card-motion="cardMotion('single:player', index)?.kind" :style="{ '--deal-delay': `${cardMotion('single:player', index)?.delay ?? 0}ms` }" :src="cardImageSrc(card)" :alt="card" class="playing-card">
                 <span v-if="!singleGame?.player_hand.length" key="player-placeholder" class="card-placeholder">你的手牌</span>
               </TransitionGroup>
-              <span class="seat-bet"><i aria-hidden="true"></i>{{ singleGame?.bet_amount ?? 0 }}</span>
+              <span class="seat-bet"><SpiritStoneIcon />{{ singleGame?.bet_amount ?? 0 }}</span>
               <div class="player-info-tag" :class="{ 'turn-active': canSingleOperate }">
                 <img :src="profile?.avatar_url || withAssetVersion('/character/normal.webp')" :alt="`${profile?.username || '玩家'}头像`" class="seat-player-avatar" :data-game-avatar="viewerUserId">
-                <div class="seat-player-info"><h2>{{ profile?.username || '玩家' }} <span class="viewer-label">你</span></h2><p>持有 {{ profile?.balance ?? 0 }} 灵石</p></div>
+                <div class="seat-player-info"><h2>{{ profile?.username || '玩家' }} <span class="viewer-label">你</span></h2><p>持有 <SpiritStoneIcon />{{ profile?.balance ?? 0 }} 灵石</p></div>
               </div>
             </section>
-            <div v-if="resultVisible && blackjackResult" class="blackjack-result"><RoundFeedback :key="resultKey" aria-label="本局结果" :title="blackjackResult.title" :subtitle="blackjackResult.subtitle" :detail="blackjackResult.detail" :tone="blackjackResult.tone" :animated="resultAnimated" /></div>
+            <div v-if="resultVisible && blackjackResult" class="blackjack-result"><RoundFeedback :key="resultKey" aria-label="本局结果" :title="blackjackResult.title" :subtitle="blackjackResult.subtitle" :detail="blackjackResult.detail" spirit-stone :tone="blackjackResult.tone" :animated="resultAnimated" /></div>
             <aside v-if="dealerSpeech && !blackjackResult" class="table-dealer-speech" aria-label="荷官对话">{{ dealerSpeech }}</aside>
           </div>
         </div>
 
         <footer class="action-dock single-action-zone" :class="{ 'betting-dock': !canSingleOperate }" aria-label="单人游戏操作">
-          <p class="balance-text">余额：{{ profile?.balance ?? 0 }}<span v-if="singleGame"> · 本局下注：{{ singleGame.bet_amount }}</span></p>
+          <p class="balance-text">余额：<SpiritStoneIcon />{{ profile?.balance ?? 0 }}<span v-if="singleGame"> · 本局下注：<SpiritStoneIcon />{{ singleGame.bet_amount }}</span></p>
           <div v-if="canSingleOperate" class="action-row">
             <button class="primary-btn game-button gold" @click="singleHit" :disabled="requestInFlight">要牌</button>
             <button class="game-button" @click="singleStand" :disabled="requestInFlight">停牌</button>
@@ -1681,7 +1735,7 @@ onBeforeUnmount(() => {
               <button class="primary-btn game-button gold" :disabled="requestInFlight || !canSingleStart" @click="startSingleGame">{{ singleGame ? '再来一局' : '开始对战' }}</button>
             </div>
             <div class="action-row quick-bets" aria-label="快捷下注">
-              <button class="game-button" v-for="option in singleBetOptions" :key="`single-${option.key}`" :disabled="requestInFlight" @click="applySingleBetOption(option.value)">{{ option.label }} <span>{{ option.value }}</span></button>
+              <button class="game-button" v-for="option in singleBetOptions" :key="`single-${option.key}`" :disabled="requestInFlight" @click="applySingleBetOption(option.value)">{{ option.label }} <span><SpiritStoneIcon />{{ option.value }}</span></button>
             </div>
           </template>
         </footer>
@@ -1733,7 +1787,7 @@ onBeforeUnmount(() => {
                       <p class="player-status"><span class="score-badge">{{ seatPlayerMap[seatIndex]?.score ?? 0 }}</span> {{ getPlayerStatusText(seatPlayerMap[seatIndex]!) }}<span v-if="seatPlayerMap[seatIndex]?.result"> · {{ getPlayerResultText(seatPlayerMap[seatIndex]!) }}</span></p>
                     </div>
                   </div>
-                  <span class="seat-bet"><i aria-hidden="true"></i>{{ seatPlayerMap[seatIndex]?.bet_amount ?? 0 }}</span>
+                  <span class="seat-bet"><SpiritStoneIcon />{{ seatPlayerMap[seatIndex]?.bet_amount ?? 0 }}</span>
                   <TransitionGroup name="card" tag="div" class="card-hand player-hand" :style="cardHandStyle(seatPlayerMap[seatIndex]?.hand)" :data-dealing="hasDealingCards(`multi:${seatPlayerMap[seatIndex]?.user_id}`)">
                     <img v-for="(card, index) in seatPlayerMap[seatIndex]?.hand || []" :key="`${cardRoundKey}-p${seatIndex}-${index}`" :class="{ 'card-dealing': cardMotion(`multi:${seatPlayerMap[seatIndex]?.user_id}`, index)?.kind === 'deal' }" :data-card-dealing="Boolean(cardMotion(`multi:${seatPlayerMap[seatIndex]?.user_id}`, index))" :data-card-motion="cardMotion(`multi:${seatPlayerMap[seatIndex]?.user_id}`, index)?.kind" :style="{ '--deal-delay': `${cardMotion(`multi:${seatPlayerMap[seatIndex]?.user_id}`, index)?.delay ?? 0}ms` }" :src="cardImageSrc(card)" :alt="card" class="playing-card">
                     <span v-if="!seatPlayerMap[seatIndex]?.hand.length" :key="`empty-hand-${seatIndex}`" class="card-placeholder">待发牌</span>
@@ -1742,13 +1796,13 @@ onBeforeUnmount(() => {
                 <div v-else class="empty-seat-label"><span class="empty-seat-icon" aria-hidden="true">＋</span><p>等待入座</p></div>
               </section>
             </div>
-            <div v-if="resultVisible && blackjackResult" class="blackjack-result"><RoundFeedback :key="resultKey" aria-label="本局结果" :title="blackjackResult.title" :subtitle="blackjackResult.subtitle" :detail="blackjackResult.detail" :tone="blackjackResult.tone" :animated="resultAnimated" /></div>
+            <div v-if="resultVisible && blackjackResult" class="blackjack-result"><RoundFeedback :key="resultKey" aria-label="本局结果" :title="blackjackResult.title" :subtitle="blackjackResult.subtitle" :detail="blackjackResult.detail" spirit-stone :tone="blackjackResult.tone" :animated="resultAnimated" /></div>
             <aside v-if="dealerSpeech && !blackjackResult" class="table-dealer-speech" aria-label="荷官对话">{{ dealerSpeech }}</aside>
           </div>
         </div>
 
         <footer class="action-dock" :class="{ 'betting-dock': isRoomBettingStage }" aria-label="多人游戏操作">
-          <p class="balance-text">余额：{{ profile?.balance ?? 0 }} · 你的下注：{{ viewerPlayer?.bet_amount ?? 0 }}<span v-if="roomState.state === 'waiting'"> · 已准备 {{ roomState.ready_player_count }}/{{ players.length }}</span></p>
+          <p class="balance-text">余额：<SpiritStoneIcon />{{ profile?.balance ?? 0 }} · 你的下注：<SpiritStoneIcon />{{ viewerPlayer?.bet_amount ?? 0 }}<span v-if="roomState.state === 'waiting'"> · 已准备 {{ roomState.ready_player_count }}/{{ players.length }}</span></p>
           <template v-if="isRoomBettingStage">
             <div class="action-row multi-waiting-controls">
               <label class="sr-only" for="multi-bet-input">多人下注金额</label>
@@ -1760,7 +1814,7 @@ onBeforeUnmount(() => {
               <button class="game-button" v-if="isHost" :disabled="requestInFlight || (!players.some(player => player.is_bot) && players.length >= roomState.max_players)" @click="toggleRoomBot">{{ players.some(player => player.is_bot) ? '移除月月陪玩' : '添加月月陪玩' }}</button>
             </div>
             <div v-if="!viewerPlayer?.is_ready && viewerPlayer" class="action-row quick-bets" aria-label="快捷下注">
-              <button class="game-button" v-for="option in singleBetOptions" :key="`multi-${option.key}`" :disabled="requestInFlight || !canSetBet" @click="betInput = option.value">{{ option.label }} <span>{{ option.value }}</span></button>
+              <button class="game-button" v-for="option in singleBetOptions" :key="`multi-${option.key}`" :disabled="requestInFlight || !canSetBet" @click="betInput = option.value">{{ option.label }} <span><SpiritStoneIcon />{{ option.value }}</span></button>
             </div>
           </template>
           <div v-else-if="roomState.state === 'playing'" class="action-row multi-playing-controls">
@@ -1812,12 +1866,13 @@ onBeforeUnmount(() => {
         <p>房主可在等待或结算完成后添加月月陪玩，占用一个普通玩家座位。陪玩下注跟随房主、自动准备，根据自身软硬点数与荷官明牌选择要牌或停牌；荷官仍独立结算。等待开局时离桌退回已下注灵石；对局进行中离桌视为放弃，没收本局下注。结算完成后退出不会再次扣款。</p>
       </dialog>
     </template>
-    <RoomDirectory v-if="showRoomDirectory && profile" :api-call="apiCall" :balance="profile.balance" :game-type="directoryGameType" :join-room="joinListedRoom" @close="showRoomDirectory = false" />
+    <RoomDirectory v-if="showRoomDirectory && profile" :api-call="apiCall" :balance="profile.balance" :maintenance="gameMaintenance" :game-type="directoryGameType" :join-room="joinListedRoom" @close="showRoomDirectory = false" />
     <RoomInvite v-if="inviteTarget" :room="inviteTarget" :client-id="runtimeDiscordClientId" :share="isDiscordMode ? shareRoom : undefined" @close="inviteTarget = null" />
   </div>
 </template>
 
 <style scoped>
+.hub-fullscreen .hub-game-grid > .game-card.maintenance-card:disabled { opacity: 1; cursor: not-allowed; filter: saturate(.65); }
 .social-avatar-button { display: inline-flex; padding: 0; border: 0; background: none; cursor: pointer; flex-shrink: 0; }
 .social-avatar-button:disabled { opacity: 1; cursor: default; }
 .blackjack-time-setting { display: flex; align-items: center; gap: 12px; margin: 12px 0; }

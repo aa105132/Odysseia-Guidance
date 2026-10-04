@@ -89,6 +89,158 @@ RULES = {
 }
 
 
+FIRE_LEVELS = (
+    {"id": "wen", "name": "文火", "rank": 0, "description": "火势温和，适合药性娇弱的丹方。"},
+    {"id": "zhong", "name": "中火", "rank": 1, "description": "文武相济，多数筑基前后的丹方用它。"},
+    {"id": "wu", "name": "武火", "rank": 2, "description": "烈火猛炼，逼出珍药药力，也最容易炸炉。"},
+)
+FIRE_BY_ID = {fire["id"]: fire for fire in FIRE_LEVELS}
+# 药性：负数偏寒、正数偏热；丹方寒热加上药引后越接近零，炉火越稳。
+HERB_NATURES = {"qixing": -1, "huangjing": 1, "zihou": 1, "yusui": -1,
+                "nishang": 0, "tianyuan": 1, "jinlei": 2, "jiuqu": -1}
+NATURE_NAMES = {-2: "大寒", -1: "寒", 0: "平", 1: "热", 2: "大热"}
+PILL_GRADES = (
+    {"id": "low", "name": "下品", "multiplier": 1.0},
+    {"id": "mid", "name": "中品", "multiplier": 2.2},
+    {"id": "high", "name": "上品", "multiplier": 6.0},
+)
+PILL_GRADE_BY_ID = {grade["id"]: grade for grade in PILL_GRADES}
+
+
+def _pill(pill_id, name, icon, sale, description):
+    return {"id": pill_id, "name": name, "icon_key": icon, "sale_price": sale, "description": description}
+
+
+# 现阶段只开放一、二品的入门丹药，丹药只用于炼制和出售。
+# 1级成丹后随机1~4枚，条件期望两枚；每5级固定多一枚，成品售价和基础分布不变。
+# 药引额外消耗一份，调和提高稳定性；前端显示含全部材料的平均回收，昂贵药引不保证划算。
+PILLS = (
+    _pill("xisui", "洗髓丹", "pill-green", 40, "一品丹药，丹色青碧，药铺常年收购。"),
+    _pill("huanglong", "黄龙丹", "pill-gold", 64, "二品丹药，丹纹金黄，比洗髓丹更受药铺欢迎。"),
+    _pill("yangqi", "养气丹", "pill-blue", 220, "二品丹药，丹气温润，是入门丹方里最值钱的一种。"),
+    _pill("waste", "废丹", "pill-waste", 1, "药性冲突或寒热不平凝成的丹渣，只能低价卖掉。"),
+)
+PILL_BY_ID = {pill["id"]: pill for pill in PILLS}
+
+
+def _recipe(recipe_id, pill_id, level, fire, materials, seconds, alchemy_xp, note):
+    return {"id": recipe_id, "pill_id": pill_id, "name": PILL_BY_ID[pill_id]["name"],
+            "unlock_level": level, "fire": fire, "materials": dict(materials),
+            "heat": sum(HERB_NATURES[crop_id] * count for crop_id, count in materials.items()),
+            "refine_seconds": seconds, "alchemy_xp": alchemy_xp,
+            # 以下概率以成丹为条件，数量和品阶独立；普通成功75%，大成功25%。
+            "yield_outcomes": [
+                {"outcome": "success", "quantity": 1, "probability": 0.375},
+                {"outcome": "success", "quantity": 2, "probability": 0.375},
+                {"outcome": "great_success", "quantity": 3, "probability": 0.125},
+                {"outcome": "great_success", "quantity": 4, "probability": 0.125},
+            ], "note": note}
+
+
+RECIPES = (
+    # 炼制时长：丹炉同一时间只炼一炉，越值钱的丹方越久，限制单位时间的灵石产出。
+    _recipe("xisui", "xisui", 1, "wen", {"qixing": 2, "huangjing": 1}, 300, 10,
+            "七星草为主、黄精芝为辅；丹性偏寒，宜以热性药引调和，文火慢炼。"),
+    _recipe("huanglong", "huanglong", 3, "zhong", {"huangjing": 2, "qixing": 1}, 480, 16,
+            "黄精芝为主、七星草为辅；丹性偏热，宜以寒性药引调和，中火炼成。"),
+    _recipe("yangqi", "yangqi", 4, "zhong", {"zihou": 2, "yusui": 1}, 900, 30,
+            "紫猴花为主、玉髓芝为辅；丹性偏热，宜以寒性药引调和，中火炼成。"),
+)
+RECIPE_BY_ID = {recipe["id"]: recipe for recipe in RECIPES}
+ALCHEMY_RULES = {
+    # 下标是火候与丹方要求相差的档数。
+    "fire_odds": [{"success": 0.80, "explode": 0.04},
+                  {"success": 0.50, "explode": 0.12},
+                  {"success": 0.20, "explode": 0.35}],
+    "balanced_success_bonus": 0.12, "imbalance_success_penalty": 0.10,
+    "imbalance_explode_penalty": 0.08,
+    "grade_odds": {"normal": {"high": 0.0, "mid": 0.10},
+                   "spirit": {"high": 0.05, "mid": 0.85},
+                   "celestial": {"high": 0.85, "mid": 0.15}},
+    "balanced_high_bonus": {"normal": 0.03, "spirit": 0.10, "celestial": 0.10},
+    "note": "主药与辅药定丹方，药引调和寒热，火候对准丹方才稳；成丹后75%普通成功得1~2枚，25%大成功得3~4枚，各档内等概率。"
+            "丹炉同一时间只炼一炉。炸炉损失全部药材，失准只得一枚废丹。药引也计成本，平均回收不等于保底收益。",
+}
+
+
+# 炼丹熟练度独立于洞天经验；只由完成一炉并收丹累积，不设灵石升级路径。
+ALCHEMY_PROGRESSION = {
+    "levels": [
+        {"level": level, "name": name, "required_xp": xp,
+         "duration_percent": 100 - (level - 1) * 20 // 19, "bonus_pills": level // 5}
+        for level, (name, xp) in enumerate([
+            ("青玉丹炉", 0), ("温玉丹炉", 100), ("凝灵丹炉", 300), ("赤霞丹炉", 700),
+            ("紫霄丹炉", 1500), ("玄纹丹炉", 2800), ("碧焰丹炉", 4500), ("赤阳丹炉", 6800),
+            ("流金丹炉", 9800), ("五行丹炉", 13500), ("云鼎丹炉", 18000), ("灵曜丹炉", 23500),
+            ("星辉丹炉", 30000), ("月华丹炉", 37500), ("日曜丹炉", 46000), ("太玄丹炉", 56000),
+            ("乾元丹炉", 67500), ("混元丹炉", 81000), ("造化丹炉", 98500), ("太清丹炉", 120000),
+        ], start=1)
+    ],
+    "note": "收丹获得炼丹经验，无每日上限，累计达标自动升级丹炉，不消耗灵石。共20级，满级需120000经验。"
+            "每炉经验按丹方固定，成丹、废丹、炸炉均可积累，与品阶和数量无关。"
+            "每5级成功固定多1枚，最多多4枚；最高缩短20%用时。只影响新开炉，旧炉保持封炉记录。",
+}
+
+
+def alchemy_progress(xp):
+    """等级从累计经验推导，不另外存储可购买或篡改的炉级。"""
+    levels = ALCHEMY_PROGRESSION["levels"]
+    index = max(index for index, level in enumerate(levels) if xp >= level["required_xp"])
+    current = levels[index]
+    return {"xp": xp, "level": current["level"], "name": current["name"],
+            "level_xp": current["required_xp"],
+            "next_level_xp": levels[index + 1]["required_xp"] if index + 1 < len(levels) else None,
+            "max_level": levels[-1]["level"], "duration_percent": current["duration_percent"],
+            "bonus_pills": current["bonus_pills"]}
+
+
+def alchemy_duration(recipe, xp):
+    # 整秒向上取整，前端使用同一公式；只在开炉时计算。
+    return max(1, (recipe["refine_seconds"] * alchemy_progress(xp)["duration_percent"] + 99) // 100)
+
+
+def refine_odds(recipe, fire_id, catalyst_id=None):
+    rules = ALCHEMY_RULES
+    diff = abs(FIRE_BY_ID[fire_id]["rank"] - FIRE_BY_ID[recipe["fire"]]["rank"])
+    base = rules["fire_odds"][diff]
+    balance = recipe["heat"] + (HERB_NATURES[catalyst_id] if catalyst_id else 0)
+    imbalance = abs(balance)
+    success = base["success"] + (rules["balanced_success_bonus"] if imbalance == 0
+                                  else -rules["imbalance_success_penalty"] * imbalance)
+    explode = base["explode"] + rules["imbalance_explode_penalty"] * imbalance
+    success = round(min(0.95, max(0.05, success)), 4)
+    explode = round(min(1 - success, min(0.9, max(0.01, explode))), 4)
+    return {"success": success, "explode": explode, "waste": round(1 - success - explode, 4),
+            "balance": balance, "fire_diff": diff}
+
+
+def grade_odds(quality, balanced):
+    odds = ALCHEMY_RULES["grade_odds"][quality]
+    high = round(min(1.0, odds["high"] + (ALCHEMY_RULES["balanced_high_bonus"][quality] if balanced else 0)), 4)
+    mid = round(min(odds["mid"], 1 - high), 4)
+    return {"high": high, "mid": mid, "low": round(1 - high - mid, 4)}
+
+
+def alchemy_yield_outcomes(recipe, bonus_pills=0):
+    """基础成功分布平移固定炉级增产；不改变档位、概率或目录原值。"""
+    return [{**choice, "quantity": choice["quantity"] + bonus_pills}
+            for choice in recipe["yield_outcomes"]]
+
+
+def refine_yield(recipe, roll):
+    """独立抽取成丹后的档位与数量，不改变品阶概率。"""
+    threshold = 0.0
+    for choice in recipe["yield_outcomes"]:
+        threshold = round(threshold + choice["probability"], 4)
+        if roll < threshold:
+            return {"outcome": choice["outcome"], "quantity": choice["quantity"]}
+    raise ValueError("成丹产量概率未覆盖抽签值")
+
+
+def pill_price(pill_id, grade):
+    return max(1, round(PILL_BY_ID[pill_id]["sale_price"] * PILL_GRADE_BY_ID[grade]["multiplier"]))
+
+
 def farm_level(xp):
     return sum(xp >= threshold for threshold in LEVEL_XP)
 
@@ -98,4 +250,20 @@ def get_catalog():
             "pets": [dict(pet) for pet in PETS], "items": [dict(item) for item in ITEMS],
             "land_levels": [dict(level) for level in LAND_LEVELS],
             "aura_levels": [dict(level) for level in AURA_LEVELS],
-            "rules": dict(RULES), "level_xp": list(LEVEL_XP)}
+            "rules": dict(RULES), "level_xp": list(LEVEL_XP),
+            "alchemy": {"recipes": [json_copy(recipe) for recipe in RECIPES],
+                        "pills": [dict(pill) for pill in PILLS],
+                        "fires": [dict(fire) for fire in FIRE_LEVELS],
+                        "grades": [dict(grade) for grade in PILL_GRADES],
+                        "herb_natures": dict(HERB_NATURES),
+                        "nature_names": {str(key): name for key, name in NATURE_NAMES.items()},
+                        "rules": json_copy(ALCHEMY_RULES),
+                        "progression": json_copy(ALCHEMY_PROGRESSION)}}
+
+
+def json_copy(value):
+    if isinstance(value, dict):
+        return {key: json_copy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [json_copy(item) for item in value]
+    return value

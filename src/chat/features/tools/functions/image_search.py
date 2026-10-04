@@ -317,7 +317,6 @@ async def _post_openai_image_search(query: str, *, max_results: int, is_retry: b
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are an image search tool. Search the web and show the actual images directly in your reply, each with its original URL."},
             {"role": "user", "content": prompt},
         ],
         "stream": False,

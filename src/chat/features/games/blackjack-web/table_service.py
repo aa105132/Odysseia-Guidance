@@ -22,6 +22,20 @@ GAME_SPECS = {
     "mahjong": (4, 4, "traditional_games", "MahjongGame"),
     "sichuan_mahjong": (4, 4, "sichuan_mahjong", "SichuanMahjongGame"),
 }
+GAME_MAINTENANCE = {
+    "golden_flower": "炸金花维护中，正在修复异常对局收益问题，恢复时间另行通知。",
+}
+MAINTENANCE_ANNOUNCEMENT = (
+    "炸金花维护中：正在修复异常对局收益问题，恢复时间另行通知。其他玩法正常开放。"
+    "有游戏对局记录的账号将获得5,000灵石补偿，请留意邮箱。"
+)
+
+
+def require_game_available(game_type: str) -> None:
+    if game_type in GAME_MAINTENANCE:
+        raise ValueError(GAME_MAINTENANCE[game_type])
+
+
 CUSTOM_MAX_BASE_STAKE = 20
 CUSTOM_MAX_LOSS_LIMIT = 2000
 ROOM_TIERS = {
@@ -324,6 +338,7 @@ class TableService:
                turn_timeout_seconds: int = 60) -> dict:
         if game_type not in GAME_SPECS:
             raise ValueError("不支持的游戏类型")
+        require_game_available(game_type)
         if mode not in ("solo", "multi"):
             raise ValueError("不支持的游戏模式")
         if type(auto_start_when_ready) is not bool:
@@ -378,6 +393,7 @@ class TableService:
             # 重连保留当前截止时间，刷新页面不能无限延长自己的回合。
             self._changed(room)
             return self._snapshot(room, user_id)
+        require_game_available(room.game_type)
         if room.mode == "solo":
             raise ValueError("这是单人挑战房间")
         if room.state == "playing":
@@ -403,6 +419,8 @@ class TableService:
     def ready(self, room_id: str, user_id: str, ready: bool) -> dict:
         room = self._room(room_id)
         player = self._member(room, user_id)
+        if ready:
+            require_game_available(room.game_type)
         if room.state == "playing":
             raise ValueError("牌局进行中，不能修改准备状态")
         player.is_ready = ready
@@ -453,6 +471,8 @@ class TableService:
     def should_auto_start(self, room_id: str) -> bool:
         """只判断是否可开局；实际开局和冻结资金由接口在房间锁内完成。"""
         room = self._room(room_id)
+        if room.game_type in GAME_MAINTENANCE:
+            return False
         if not room.auto_start_when_ready or room.state == "playing" or room.settlement_status == "reserved":
             return False
         active = [player for player in room.players.values() if player.connected or player.is_bot]
@@ -515,6 +535,7 @@ class TableService:
     def start(self, room_id: str, user_id: str) -> dict:
         room = self._room(room_id)
         self._member(room, user_id)
+        require_game_available(room.game_type)
         if room.host_user_id != str(user_id):
             raise PermissionError("只有房主可以开始游戏")
         if room.state == "playing":

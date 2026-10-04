@@ -623,8 +623,8 @@ async def generate_image(
                     import io
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
 
-                    # 获取实际使用的模型名称
-                    imagen_model_name = (
+                    # 获取实际使用的模型名称（优先上游响应返回的真实模型，回退理论配置值）
+                    resolved_model = (
                         str(model_name_override).strip()
                         if model_name_override is not None and str(model_name_override).strip()
                         else gemini_imagen_service._get_model_for_resolution(
@@ -632,6 +632,10 @@ async def generate_image(
                             is_edit=False,
                             content_rating=content_rating,
                         )
+                    )
+                    imagen_model_name = (
+                        str(gemini_imagen_service.last_actual_model or "").strip()
+                        or resolved_model
                     )
 
                     # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
@@ -742,6 +746,16 @@ async def generate_image(
                         parsed_user_id, actual_cost, f"AI图片生成x{actual_count}: {prompt[:25]}..."
                     )
                     log.info(f"用户 {parsed_user_id} 生成 {actual_count} 张图片成功，扣除 {actual_cost} 灵石")
+                    # 扣费后把灵石消耗+余额写回 Embed footer
+                    try:
+                        _bal_after = await coin_service.get_balance(parsed_user_id)
+                        if sent_message and sent_message.embeds:
+                            _emb = sent_message.embeds[0]
+                            _old_footer = _emb.footer.text or ""
+                            _emb.set_footer(text=f"{_old_footer} · 灵石 -{actual_cost}（余 {_bal_after}）" if _old_footer else f"灵石 -{actual_cost}（余 {_bal_after}）")
+                            await sent_message.edit(embed=_emb)
+                    except Exception as _e:
+                        log.warning(f"更新Embed灵石信息失败: {_e}")
                 except Exception as e:
                     log.error(f"扣除灵石失败: {e}")
 
@@ -1155,6 +1169,16 @@ async def generate_images_batch(
                         parsed_user_id, actual_cost, f"AI批量图片生成x{actual_count}"
                     )
                     log.info(f"用户 {parsed_user_id} 批量生成 {actual_count} 张图片，扣除 {actual_cost} 灵石")
+                    # 扣费后把灵石消耗+余额写回 Embed footer
+                    try:
+                        _bal_after = await coin_service.get_balance(parsed_user_id)
+                        if sent_message and sent_message.embeds:
+                            _emb = sent_message.embeds[0]
+                            _old_footer = _emb.footer.text or ""
+                            _emb.set_footer(text=f"{_old_footer} · 灵石 -{actual_cost}（余 {_bal_after}）" if _old_footer else f"灵石 -{actual_cost}（余 {_bal_after}）")
+                            await sent_message.edit(embed=_emb)
+                    except Exception as _e:
+                        log.warning(f"更新Embed灵石信息失败: {_e}")
                 except Exception as e:
                     log.error(f"扣除灵石失败: {e}")
 

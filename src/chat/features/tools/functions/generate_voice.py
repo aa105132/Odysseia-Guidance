@@ -258,8 +258,9 @@ async def generate_voice(
         emotion_scale: （可选）情感强度，建议 1.0~5.0（推荐 4.0）。
         force_send: 是否强制执行发送。默认 False。通常无需设置，除非用户明确要求语音，或你明确要在极度愤怒场景无条件发语音。
         send_text_after_voice: 语音发送成功后，是否补发一条同文文本消息。默认 False。
-        voice_provider: （可选）语音合成引擎，可选值：doubao（默认，火山引擎豆包 TTS 银月克隆音色）、elevenlabs（ElevenLabs V3 银月音色，豆包失败时自动回退）。
-            留空使用系统默认（doubao/火山引擎，银月克隆音色）。豆包失败时自动回退到 ElevenLabs V3。
+        voice_provider: （可选）语音合成引擎。默认 elevenlabs（ElevenLabs V3 银月克隆音色）。
+            可选值：elevenlabs（默认）、doubao（火山引擎豆包，失败时自动回退 ElevenLabs）、xiaomi。
+            留空使用系统默认（ElevenLabs V3 银月音色）。
 
     Returns:
         成功时会把音频文件直接发送到频道，并返回 skip_ai_response=True。

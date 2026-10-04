@@ -417,7 +417,39 @@ def pattern_to_placeholder(pattern: re.Pattern) -> str:
 
 
 def compile_placeholder_pattern(placeholder: str) -> re.Pattern:
+    """Compile a mapping placeholder so LLM typos still match.
+
+    Canonical form is <疑惑>. Models often emit <:疑惑> or <#疑惑>.
+    Do not match real Discord emojis <:name:id> or channel mentions <#123>.
+    """
+    name = (placeholder or "").strip()
+    if name.startswith("<") and name.endswith(">") and ":" not in name[1:-1]:
+        inner = name[1:-1].lstrip("#:")
+        if inner and not inner.isdigit():
+            return re.compile(rf"<[:#]?\s*{re.escape(inner)}\s*>")
     return re.compile(re.escape(placeholder))
+
+
+_MALFORMED_EMOTION_TAG = re.compile(
+    r"<([:#])\s*([^<>:\r\n]{1,24})\s*>"
+)
+
+
+def normalize_emotion_tag_wrappers(text: str) -> str:
+    """Turn <:疑惑> / <#疑惑> into <疑惑> before exact mapping regexes run.
+
+    Leaves <:name:id>, <@id>, <@&id>, and numeric <#id> untouched.
+    """
+    if not text:
+        return text
+
+    def _repl(match: re.Match) -> str:
+        inner = (match.group(2) or "").strip()
+        if not inner or inner.isdigit():
+            return match.group(0)
+        return f"<{inner}>"
+
+    return _MALFORMED_EMOTION_TAG.sub(_repl, text)
 
 
 def _replace_default_emoji_mappings(mappings: list[tuple[re.Pattern, list[str]]]) -> None:
@@ -526,7 +558,7 @@ def replace_emotion_tags(text: str, event_id: str = None, faction_id: str = None
             emoji_mappings = faction_emojis
     
     # 替换表情标签
-    result = text
+    result = normalize_emotion_tag_wrappers(text)
     for pattern, emoji_list in emoji_mappings:
         # 从列表中随机选择一个表情
         emoji = random.choice(emoji_list)

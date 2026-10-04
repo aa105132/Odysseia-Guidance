@@ -4,6 +4,8 @@ export type RoomInvite = { room_id: string; game_type: string; player_count?: nu
 const games = new Set(['blackjack', 'texas', 'golden_flower', 'landlord', 'mahjong', 'sichuan_mahjong', 'guandan']);
 
 export function parseRoomInvite(value: string | null): RoomInvite | null {
+  const noname = /^room:noname:([A-Za-z0-9_-]{1,80})$/.exec(value ?? '');
+  if (noname) return { game_type: 'noname', room_id: noname[1]! };
   const match = /^room:([a-z_]+):([A-Z0-9]{6})$/.exec(value ?? '');
   return match && games.has(match[1]!) ? { game_type: match[1]!, room_id: match[2]! } : null;
 }
@@ -20,8 +22,9 @@ export function roomInviteUrl(clientId: string, room: RoomInvite): string {
 }
 
 export function roomInviteDescription(room: RoomInvite): string {
-  const title = room.game_type === 'blackjack' ? '多人 21 点' : tableGameRules[room.game_type as TableRoomGameType]?.title ?? '桌游';
+  const title = room.game_type === 'noname' ? '三国杀 · 经典身份' : room.game_type === 'blackjack' ? '多人 21 点' : tableGameRules[room.game_type as TableRoomGameType]?.title ?? '桌游';
   const gameplay: Record<string, string> = {
+    noname: '标准武将与标准牌，免费娱乐；房主离开会结束房间',
     blackjack: '与月月荷官比点数，接近 21 点且不能爆牌',
     texas: '两张底牌搭配公共牌，下注争夺底池',
     golden_flower: '三张牌比大小，可闷牌、看牌和比牌',

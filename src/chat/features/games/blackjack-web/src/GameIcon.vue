@@ -1,5 +1,5 @@
 <script setup lang="ts">
-type IconName = 'blackjack' | 'landlord' | 'mahjong' | 'texas' | 'golden_flower' | 'guandan' | 'beginner' | 'intermediate' | 'advanced' | 'solo' | 'friends' | 'room' | 'robot' | 'leaderboard';
+type IconName = 'blackjack' | 'landlord' | 'mahjong' | 'texas' | 'golden_flower' | 'guandan' | 'noname' | 'beginner' | 'intermediate' | 'advanced' | 'solo' | 'friends' | 'room' | 'robot' | 'leaderboard';
 const props = defineProps<{ name: IconName }>();
 const paintedGames = ['blackjack', 'landlord', 'mahjong', 'texas', 'golden_flower'];
 </script>
@@ -8,7 +8,11 @@ const paintedGames = ['blackjack', 'landlord', 'mahjong', 'texas', 'golden_flowe
   <img v-if="paintedGames.includes(props.name)" class="game-icon painted-game-icon" :src="`/ui/guochao/game-${name}.webp`" alt="" aria-hidden="true" draggable="false">
   <svg v-else class="game-icon" viewBox="0 0 160 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
     <ellipse cx="80" cy="104" rx="55" ry="8" fill="#041819" opacity=".24" />
-    <g v-if="name === 'guandan'">
+    <g v-if="name === 'noname'">
+      <path d="m80 12 46 20v48l-46 29-46-29V32z" fill="#684877" stroke="#edc278" stroke-width="4"/>
+      <text x="80" y="80" text-anchor="middle" fill="#fff1ca" font-size="55" font-family="serif">杀</text>
+    </g>
+    <g v-else-if="name === 'guandan'">
       <circle cx="80" cy="58" r="47" fill="#8c5e70" opacity=".18"/>
       <g transform="rotate(-18 54 66)"><rect x="24" y="22" width="56" height="81" rx="8" fill="#fff3d5" stroke="#ad7651" stroke-width="3"/><text x="32" y="44" fill="#9f354b" font-size="20" font-weight="bold">2</text><path d="M51 60c-13-16-26 8 0 24 26-16 13-40 0-24" fill="#b7515c"/></g>
       <g transform="rotate(16 105 65)"><rect x="77" y="17" width="56" height="81" rx="8" fill="#fff5dc" stroke="#ad7651" stroke-width="3"/><text x="85" y="40" fill="#514369" font-size="20" font-weight="bold">A</text><path d="M105 48c-29 27-14 33-3 25l-4 13h14l-4-13c11 8 26 2-3-25" fill="#514369"/></g>

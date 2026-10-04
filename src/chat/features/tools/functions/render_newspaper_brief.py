@@ -35,7 +35,7 @@ def _build_image_prompt(final_title: str, body: str) -> str:
     """根据标题和正文片段构造画图提示词。"""
     snippet = body[:120].replace("\n", " ").strip()
     prompt = (
-        f"可爱的银狐少女月月风格的插画，主题是：{final_title}。"
+        f"可爱的成年银狐女性月月风格的插画，主题是：{final_title}。"
         f"温暖明亮的色彩，Q版风格，跟以下总结内容相关联的场景：{snippet}。"
         f"银白色长发，高马尾，异色瞳（左眼淡绿右眼淡蓝），"
         f"白皙肤色，毛茸茸的白色狐耳内侧粉色，银白色蓬松大尾巴，"

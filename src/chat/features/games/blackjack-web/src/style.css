@@ -27,6 +27,7 @@ body:has(.table-fullscreen)::before {
   background: linear-gradient(#2634404f, #1726359c), #34414f url('/ui/guochao/teahouse-room-muted.webp') center / cover;
 }
 body:has(.farm-game)::before { background: #dce7d8; }
+body:has(.pokerogue-game)::before { background: #171820; }
 :root[data-activity-rotated='true'] body::before {
   width: var(--activity-screen-height, 100dvh);
   height: var(--activity-screen-width, 100vw);

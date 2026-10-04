@@ -70,7 +70,7 @@ def filter_tool_declarations(tool_declarations: Iterable[Callable]) -> List[Call
             and not is_spring_festival_tool_visible()
         ):
             continue
-        if tool_name == "generate_image_novelai" and not NOVELAI_CONFIG.get("ENABLED", False):
+        if tool_name in ("generate_image_novelai", "generate_image_comfyui", "generate_video", "generate_video_comfyui"):
             continue
         filtered_tools.append(tool)
     return filtered_tools

@@ -75,6 +75,17 @@ class TableWallet:
                 )
             """)
             connection.execute("""
+                CREATE TABLE IF NOT EXISTS table_game_stat_exclusions (
+                    round_key TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    operation_id TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    evidence_sha256 TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(round_key, user_id)
+                )
+            """)
+            connection.execute("""
                 CREATE TABLE IF NOT EXISTS blackjack_waiting_refunds (
                     refund_key TEXT PRIMARY KEY,
                     user_id INTEGER NOT NULL,
@@ -230,9 +241,15 @@ class TableWallet:
         return datetime.now(timezone(timedelta(hours=8))).date().isoformat()
 
     @staticmethod
-    def _results_cte() -> str:
+    def _results_cte(include_excluded: bool = True) -> str:
         # 旧托管记录没有日期和游戏类型，只参与全部游戏的累计统计。
-        return """WITH results AS (
+        exclusion_filter = "" if include_excluded else """
+            WHERE NOT EXISTS (SELECT 1 FROM table_game_stat_exclusions x
+                              WHERE x.round_key = r.round_key AND x.user_id = r.user_id)
+        """
+        # Filter after the union so legacy escrow cannot reintroduce excluded pairs.
+        # History/details include all rows; exclusions are independent of profit adjustments.
+        return """WITH all_results AS (
             SELECT r.round_key, r.user_id, r.game_type, r.username, r.avatar_url,
                    r.profit + COALESCE(a.profit_delta, 0) AS profit,
                    r.settled_at, r.settled_day, 0 AS legacy,
@@ -247,12 +264,14 @@ class TableWallet:
             FROM table_game_escrow e WHERE e.status = 'settled'
               AND NOT EXISTS (SELECT 1 FROM table_game_results r
                               WHERE r.round_key = e.round_key AND r.user_id = e.user_id)
-        ) """
+        ), results AS (
+            SELECT * FROM all_results r
+        """ + exclusion_filter + ") "
 
     def _statistics(self, user_id: str, game_type: str | None):
         day = self._today()
         with self._transaction() as connection:
-            row = connection.execute(self._results_cte() + """
+            row = connection.execute(self._results_cte(include_excluded=False) + """
                 SELECT COUNT(*), COALESCE(SUM(profit > 0), 0),
                        COALESCE(SUM(profit < 0), 0), COALESCE(SUM(profit = 0), 0),
                        COALESCE(SUM(profit), 0),
@@ -295,7 +314,7 @@ class TableWallet:
             parameters.append(day)
         where = "WHERE " + " AND ".join(conditions) if conditions else ""
         with self._transaction() as connection:
-            rows = connection.execute(self._results_cte() + f"""
+            rows = connection.execute(self._results_cte(include_excluded=False) + f"""
                 , totals AS (
                     SELECT user_id, COUNT(*) AS rounds, SUM(profit) AS profit,
                            SUM(legacy) AS legacy_rounds

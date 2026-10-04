@@ -1,0 +1,346 @@
+/* Tea-house dialog contract: use the lobby's brocade and gilded frame, not a
+ * full-screen illustration. Warm paper carries readable data; cinnabar marks
+ * actions/selection, jade marks gains. Existing currency artwork stays intact.
+ * 4/8px rhythm · 4/8/12px radii · KaiTi headings, inherited UI body, tabular sums.
+ * Keep native dialogs, focus, disabled states and all business handlers intact.
+ * Decoration never covers controls; only the paper body scrolls. */
+.gc-dialog, .gc-directory {
+  --gc-red: #85332e;
+  --gc-red-deep: #48222a;
+  --gc-gold: #e4bc77;
+  --gc-line: #c9aa77;
+  --gc-paper: #f5ead4;
+  --gc-ink: #4f3528;
+  --gc-muted: #806246;
+  --gc-positive: #28624a;
+  --gc-negative: #a13b37;
+  --gc-space: 16px;
+  color: var(--gc-ink);
+  font-size: 14px;
+  line-height: 1.5;
+  text-shadow: none;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+}
+.gc-dialog {
+  position: relative;
+  width: min(760px, calc(var(--activity-width, 100vw) - 24px));
+  max-width: none;
+  max-height: calc(var(--activity-height, 100dvh) - 24px);
+  margin: auto;
+  padding: 12px;
+  border: 1px solid var(--gc-gold);
+  border-radius: 12px;
+  background: url('/ui/lobby/card-brocade.svg'), linear-gradient(125deg, #a74a35, var(--gc-red) 30%, var(--gc-red-deep));
+  box-shadow: inset 0 0 0 4px #e5bd7424, inset 0 1px #fff0b7, 0 20px 72px #200e19a8;
+  overflow: visible;
+}
+.gc-dialog[open] { display: flex; flex-direction: column; }
+.gc-dialog::before { content: ''; position: absolute; inset: 0; border: 24px solid transparent; border-image: url('/ui/lobby/card-frame.svg') 36 / 24px / 0 stretch; pointer-events: none; z-index: 2; }
+.gc-dialog::backdrop { background: #26151bc9; backdrop-filter: blur(3px); }
+.gc-heading { display: flex; flex: none; align-items: center; gap: 12px; padding: 12px 12px 20px; color: #fff0cc; }
+.gc-heading > div { flex: 1; min-width: 0; }
+.gc-heading small { color: #f2cf97; font-size: 11px; letter-spacing: 2px; }
+.gc-heading h2 { margin: 4px 0 0; color: #fff0cc; font: 700 28px/1.2 'STKaiti', 'KaiTi', 'Microsoft YaHei', serif; letter-spacing: 3px; text-shadow: 0 2px 1px #471d20; overflow-wrap: anywhere; }
+.gc-seal { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 48px; border: 1px solid #e5b775; border-radius: 4px; color: #f5d08e; background: #3e172333; box-shadow: inset 0 0 0 3px #e5b77522; font: 26px/1 'STKaiti', 'KaiTi', serif; }
+.gc-paper, .gc-directory .directory-list { background: radial-gradient(ellipse at top left, #fff9e9, transparent 65%), var(--gc-paper); color: var(--gc-ink); border: 1px solid var(--gc-line); box-shadow: inset 0 0 0 3px #fff8e85c; }
+.gc-paper { border-radius: 4px; padding: var(--gc-space); }
+.gc-dialog :is(button, select, input), .gc-directory :is(button, select, input) { font-family: inherit; touch-action: manipulation; }
+.gc-dialog button, .gc-directory button, .gc-dialog .game-button, .gc-directory .game-button, .gc-dialog .game-button.quiet, .gc-directory .game-button.quiet {
+  min-width: 0; min-height: 36px; padding: 8px 12px; border: 1px solid #b28650; border-radius: 4px;
+  background: linear-gradient(#fff6e1, #ecdbb7); color: #713f28; box-shadow: inset 0 1px #fff9ed, 0 2px 0 #7048291c;
+  font-size: 13px; font-weight: 600; line-height: 1.35; text-shadow: none; white-space: normal; cursor: pointer;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+.gc-dialog button:hover:not(:disabled), .gc-directory button:hover:not(:disabled) { border-color: #873c29; background-color: #e9cea0; box-shadow: inset 0 0 0 1px #aa6a39; filter: none; }
+.gc-dialog button:active:not(:disabled), .gc-directory button:active:not(:disabled) { box-shadow: inset 0 2px 5px #5a271c40; filter: brightness(.97); }
+.gc-dialog button:disabled, .gc-directory button:disabled { opacity: .55; filter: saturate(.45); cursor: not-allowed; }
+.gc-dialog .gc-heading .gc-close { flex: none; min-width: 64px; min-height: 40px; padding: 8px 12px; color: #ffebbc; background: #47212780; border-color: #d4a565; box-shadow: inset 0 0 0 2px #e5b7751c; font-weight: 500; }
+.gc-dialog .gc-close::before { content: '×'; margin-right: 6px; font: 18px/1 Georgia, serif; }
+.gc-dialog .gc-close:hover:not(:disabled) { color: #fff5d8; background: #a74937; border-color: #ffe4a5; }
+.gc-dialog :focus-visible, .gc-directory :focus-visible, .gc-dialog :is(button, input, select):focus-visible, .gc-directory :is(button, input, select):focus-visible { outline: 3px solid #f5ce7d; outline-offset: 3px; }
+.gc-dialog .gc-paper :focus-visible, .gc-dialog .stats-period :focus-visible, .gc-directory .directory-list :focus-visible { outline-color: #913b2d; outline-offset: 2px; }
+.gc-dialog :is(select, input[type='checkbox']), .gc-directory :is(select, input[type='checkbox']) { accent-color: #993f31; }
+.gc-dialog select, .gc-directory select { min-width: 0; min-height: 36px; max-width: 152px; padding: 6px 8px; border: 1px solid #bd955a; border-radius: 4px; background: #fff4de; color: #653d27; font-size: 13px; }
+.gc-dialog select:disabled, .gc-directory select:disabled { opacity: .7; }
+.gc-dialog :is(.mail-list, .mail-detail, .stats-content, .tools-content), .gc-directory .directory-list { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #b48950 #efe0c1; scrollbar-gutter: stable; }
+.gc-dialog :is(.mail-error, .mail-notice), .gc-directory .directory-error { flex: none; max-height: 25%; overflow: auto; padding: 12px; margin: 0 0 8px; border: 1px solid #bb7760; border-radius: 4px; background: #fae5d7; color: #8c3028; font-size: 13px; overflow-wrap: anywhere; }
+.gc-dialog .mail-notice { border-color: #8aa17b; color: #2e5e44; background: #e6edd7; }
+.gc-dialog :is(.mail-empty, .stats-empty) { padding: 40px 12px; text-align: center; color: var(--gc-muted); line-height: 1.8; }
+
+/* Mail: envelopes read like correspondence; the attachment is a small treasury slip. */
+.game-mail-dialog.gc-dialog { width: min(640px, calc(var(--activity-width, 100vw) - 24px)); }
+.gc-dialog .mail-shell { display: flex; flex-direction: column; min-height: 0; max-height: calc(var(--activity-height, 100dvh) - 50px); }
+.gc-dialog .mail-list { min-height: min(280px, 25dvh); }
+.gc-dialog .mail-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 16px; width: 100%; padding: 16px 8px; border: 0; border-bottom: 1px solid #ceae794f; border-radius: 0; background: transparent; box-shadow: none; color: var(--gc-ink); text-align: left; font-weight: 400; }
+.gc-dialog .mail-row:hover:not(:disabled) { background: #e9d3ab69; box-shadow: none; border-color: #b89059; }
+.gc-dialog .mail-seal { display: grid; place-items: center; width: 40px; height: 44px; border: 1px solid #bda37d; border-radius: 4px; color: #8d7358; background: #e9dcc4; box-shadow: inset 0 0 0 3px #fff6de80; font: 24px/1 'STKaiti', 'KaiTi', serif; }
+.gc-dialog .mail-seal.unread { color: #fff0c9; border-color: #9b4d35; background: url('/ui/lobby/card-brocade.svg'), #973f31; box-shadow: inset 0 0 0 3px #e5b77545; }
+.gc-dialog .mail-summary { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gc-dialog .mail-summary strong { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; line-height: 1.6; }
+.gc-dialog .mail-summary time, .gc-dialog .mail-detail time { color: var(--gc-muted); font-size: 12px; font-weight: 400; }
+.gc-dialog .mail-summary > span { color: #885922; font-size: 13px; }
+.gc-dialog .mail-unread { padding: 2px 6px; border: 1px solid #b86d47; border-radius: 3px; color: #913c2e; font-size: 11px; }
+.gc-dialog .mail-detail h3 { margin: 24px 0 8px; color: #703d2a; font: 700 23px/1.5 'STKaiti', 'KaiTi', 'Microsoft YaHei', serif; overflow-wrap: anywhere; }
+.gc-dialog .mail-back { background: none; border-color: #bd9b69; box-shadow: none; }
+.gc-dialog .mail-back::before { content: '‹'; font-size: 18px; margin-right: 8px; }
+.gc-dialog .mail-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; font-size: 15px; margin: 24px 0; }
+.gc-dialog .mail-attachment { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; padding: 20px; border: 1px solid #b98c4d; border-left: 4px solid #a14b30; border-radius: 4px; background: linear-gradient(110deg, #eed5a2, #fcf0d2); box-shadow: inset 0 0 0 3px #fffae850; }
+.gc-dialog .mail-attachment > div { min-width: 0; }
+.gc-dialog .mail-attachment small { color: #77542f; letter-spacing: 2px; font-size: 12px; }
+.gc-dialog .mail-attachment strong { display: block; margin: 8px 0; color: #743e22; font-size: 32px; line-height: 1.2; overflow-wrap: anywhere; }
+.gc-dialog .mail-attachment p { margin: 0; color: #7c5b38; font-size: 12px; }
+.gc-dialog .mail-attachment button, .gc-directory .directory-room > button { background: url('/ui/lobby/card-brocade.svg'), linear-gradient(#a74b34, #773029); color: #fff0c7; border-color: #c59a57; box-shadow: inset 0 0 0 2px #efd09a2e, 0 2px 0 #4c2625; padding: 10px 16px; }
+.gc-dialog .mail-more { display: block; margin: 20px auto 0; }
+.gc-dialog .mail-refresh { display: block; margin: 16px 0 0 auto; }
+
+/* Ledger & ranking: gilded tabs outside the scrollable paper. */
+.gc-dialog .stats-controls { display: flex; flex-wrap: wrap; align-items: center; flex: none; gap: 12px; padding: 0 4px 12px; color: #f5d9a5; }
+.gc-dialog .stats-tabs { display: flex; gap: 4px; padding: 4px; border: 1px solid #d0a36580; border-radius: 6px; background: #351a244f; }
+.gc-dialog .stats-tabs button { border-color: transparent; background: transparent; box-shadow: none; color: #f9dfb2; font-weight: 500; }
+.gc-dialog .stats-tabs button[aria-pressed='true'] { color: #6b361f; border-color: #ffdf9b; background: linear-gradient(115deg, #d6a34e, #ffe3a2 45%, #e2b264); box-shadow: inset 0 0 0 2px #7c492325; font-weight: 700; }
+.gc-dialog .stats-game-filter { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; }
+.gc-dialog .stats-period { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex: none; padding: 12px 16px; color: #795731; background: #ead3a9; border: 1px solid var(--gc-line); border-bottom: 0; border-radius: 4px 4px 0 0; }
+.gc-dialog .stats-period button { padding: 6px 12px; background: transparent; box-shadow: none; border-color: #b8935b; }
+.gc-dialog .stats-period button[aria-pressed='true'] { background: #88392e; border-color: #88392e; color: #fff0cd; }
+.gc-dialog .stats-period > span { font-size: 12px; margin-left: auto; }
+.gc-dialog .stats-tabs button:hover:not(:disabled):not([aria-pressed='true']) { color: #fff0c9; background: #b1583e80; border-color: #d5a564; }
+.gc-dialog .stats-tabs button[aria-pressed='true']:hover { background: linear-gradient(115deg, #e0b367, #ffebb8 45%, #edc67e); }
+.gc-dialog .stats-period + .stats-content { border-radius: 0 0 4px 4px; }
+.gc-dialog .stats-content { padding: 20px; }
+.gc-dialog .stats-profile { display: flex; align-items: center; gap: 12px; padding: 0 0 16px; border-bottom: 1px solid #caaa7680; }
+.gc-dialog .stats-profile img { flex: none; width: 48px; height: 48px; border: 2px solid #bd8e48; border-radius: 6px; object-fit: cover; }
+.gc-dialog .stats-profile > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gc-dialog .stats-profile strong { overflow-wrap: anywhere; font-size: 15px; }
+.gc-dialog .stats-profile span { color: var(--gc-muted); font-size: 12px; }
+.gc-dialog .stats-profile .stats-balance { margin-left: auto; text-align: right; color: #8a5726; overflow-wrap: anywhere; }
+.gc-dialog .stats-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.gc-dialog .stats-metrics > div { min-width: 0; padding: 16px; border: 1px solid #c9aa77; border-top: 3px solid #b58b4b; border-radius: 4px; background: #fff9e98f; }
+.gc-dialog .stats-metrics > div:nth-child(n + 3) { background: #ecdbb97a; border-top-color: #973f31; }
+.gc-dialog :is(.stats-metrics, .stats-extremes, .stats-outcomes) dt { color: var(--gc-muted); font-size: 12px; }
+.gc-dialog .stats-metrics dd { margin: 8px 0 0; font-size: 28px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.gc-dialog :is(.stats-metrics, .stats-extremes, .stats-profit) small { font-size: 12px; font-weight: 400; margin-left: 4px; }
+.gc-dialog .stats-outcomes { display: flex; justify-content: space-around; flex-wrap: wrap; gap: 12px; margin: 0; padding: 12px; border-block: 1px solid #caaa7680; background: #ead7b24d; }
+.gc-dialog .stats-outcomes > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.gc-dialog .stats-outcomes dd { margin: 0; font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.gc-dialog .stats-extremes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 16px 0; }
+.gc-dialog .stats-extremes > div { min-width: 0; padding: 12px 8px; border-left: 2px solid #c4a275; background: #fff8e65c; }
+.gc-dialog .stats-extremes dd { margin: 8px 0 0; font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.gc-dialog :is(.stats-explanation, .stats-notes, .history-notice) { color: var(--gc-muted); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.gc-dialog .stats-notes { margin-top: 20px; padding-top: 12px; border-top: 1px solid #bc9c6c70; }
+.gc-dialog .stats-notes p { margin: 4px 0 0; }
+.gc-dialog .stats-ranking { list-style: none; margin: 0; padding: 0; }
+.gc-dialog .stats-ranking li { display: grid; grid-template-columns: 36px 40px minmax(0, 1fr) minmax(100px, auto); align-items: center; gap: 12px; padding: 12px; margin-bottom: 8px; border: 1px solid #c6a77780; border-radius: 4px; background: #fff9e985; }
+.gc-dialog .stats-ranking li[data-rank='1'] { border-color: #b88738; background: linear-gradient(100deg, #e8c7838c, #fff7e2 60%); }
+.gc-dialog .stats-ranking li[data-rank='2'] { background: linear-gradient(100deg, #dad8c08c, #fff8e6 60%); }
+.gc-dialog .stats-ranking li[data-rank='3'] { background: linear-gradient(100deg, #dcb5935e, #fff8e6 60%); }
+.gc-dialog .stats-rank { display: grid; place-items: center; width: 32px; height: 36px; font: 700 20px/1 Georgia, serif; color: #97724a; }
+.gc-dialog .stats-top-three { border: 1px solid #b68a49; border-radius: 4px 4px 12px 12px; background: linear-gradient(#fce6ac, #d7ac63); box-shadow: inset 0 0 0 3px #fff4c966; color: #763f20; }
+.gc-dialog [data-rank='2'] .stats-top-three { background: linear-gradient(#f1eddb, #c7c5b1); border-color: #aaa283; color: #665f45; }
+.gc-dialog [data-rank='3'] .stats-top-three { background: linear-gradient(#f0d2b5, #c99b76); border-color: #b28863; color: #774c33; }
+.gc-dialog .stats-ranking img { width: 40px; height: 40px; border: 1px solid #c3a16a; border-radius: 6px; object-fit: cover; }
+.gc-dialog .stats-player { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.gc-dialog .stats-player strong { font-size: 14px; overflow-wrap: anywhere; }
+.gc-dialog .stats-player strong small { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px; background: #913c2e; color: #fff4d9; font-size: 11px; font-weight: 400; }
+.gc-dialog .stats-player > span { color: var(--gc-muted); font-size: 12px; }
+.gc-dialog .stats-profit { font-size: 20px; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
+.gc-dialog .stats-ranking li.stats-is-self { border-color: #964332; box-shadow: inset 3px 0 #964332; background: #efdab3; }
+.gc-dialog .profit-positive { color: var(--gc-positive); }
+.gc-dialog .profit-negative { color: var(--gc-negative); }
+.gc-dialog .stats-self-rank { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; padding: 16px; margin-top: 16px; border: 1px solid #b58445; border-radius: 4px; background: #e9cf9b80; color: #6e4328; font-size: 13px; overflow-wrap: anywhere; }
+.gc-dialog .stats-self-rank strong { margin-left: 8px; }
+.gc-dialog .stats-error { color: #9a322c; }
+.gc-dialog :is(.stats-no-rounds, .history-notice) { padding: 12px; margin-top: 12px; border-left: 3px solid #b58b4b; background: #ead7b252; font-size: 13px; }
+.gc-dialog .history-section { margin-top: 24px; border-top: 1px solid #be9b63; padding-top: 12px; }
+.gc-dialog .history-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.gc-dialog :is(.history-section-heading h3, .history-actions-title) { margin: 4px 0; color: #7a412b; font: 700 20px/1.5 'STKaiti', 'KaiTi', serif; }
+.gc-dialog .history-section-heading > span { color: var(--gc-muted); font-size: 12px; }
+.gc-dialog :is(.history-list, .transaction-list, .round-actions) { margin: 0; padding: 0; list-style: none; }
+.gc-dialog .history-list li { margin: 8px 0; }
+.gc-dialog .history-round { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 12px; width: 100%; padding: 12px; background: #fff9e980; border-color: #c6a77780; box-shadow: none; color: var(--gc-ink); text-align: left; }
+.gc-dialog .history-round > span { display: flex; flex-direction: column; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.gc-dialog .history-round > span:last-child { text-align: right; }
+.gc-dialog .history-round strong { font-size: 14px; }
+.gc-dialog :is(.history-round time, .history-round small, .transaction-list time, .round-detail-summary time) { color: var(--gc-muted); font-size: 12px; font-weight: 400; }
+.gc-dialog .history-round b { font-size: 16px; }
+.gc-dialog .history-notice p { margin: 0 0 8px; }
+.gc-dialog .history-more { display: block; margin: 16px auto; }
+.gc-dialog .transactions-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 16px; border-block: 1px solid #b99154; background: linear-gradient(110deg, #ecd6a9, #fff4db); color: #815028; }
+.gc-dialog .transactions-heading strong { font-size: 30px; overflow-wrap: anywhere; }
+.gc-dialog .transactions-heading small { font-size: 13px; }
+.gc-dialog .transaction-list li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, .65fr); align-items: center; gap: 16px; padding: 16px 4px; border-bottom: 1px solid #caaa7680; }
+.gc-dialog .transaction-list li > div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gc-dialog .transaction-list strong { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.gc-dialog .transaction-list b { font-size: 18px; text-align: right; overflow-wrap: anywhere; }
+.gc-dialog .transaction-list small { font-size: 11px; font-weight: 400; margin-left: 4px; }
+.gc-dialog .round-detail-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px; margin-bottom: 12px; border-block: 1px solid #caaa76; background: #ecd6a966; }
+.gc-dialog .round-detail-summary b { margin-left: auto; font-size: 22px; overflow-wrap: anywhere; }
+.gc-dialog .round-funds dd { font-size: 16px; }
+.gc-dialog .recorded-hand { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 16px 0; }
+.gc-dialog .recorded-hand strong { width: 100%; font-size: 13px; overflow-wrap: anywhere; }
+.gc-dialog .recorded-hand span { display: inline-block; padding: 6px 8px; border: 1px solid #c4a275; border-radius: 4px; background: #fffaf0; font-size: 14px; }
+.gc-dialog .recorded-hand small { font-size: 12px; }
+.gc-dialog .round-actions li { display: grid; grid-template-columns: 24px minmax(0, 1fr) 128px; gap: 8px; padding: 12px 0; border-bottom: 1px solid #caaa7680; }
+.gc-dialog .action-index { color: #9b733c; font: 16px/1.5 Georgia, serif; }
+.gc-dialog .round-actions strong { font-size: 13px; overflow-wrap: anywhere; }
+.gc-dialog .round-actions p { margin: 4px 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.gc-dialog .round-actions small, .gc-dialog .round-actions time { color: var(--gc-muted); font-size: 11px; }
+.gc-dialog .round-actions time { text-align: right; }
+
+/* Sound: native keyboard-operable inputs, no imitation switches. */
+.game-tools-dialog.gc-dialog { width: min(460px, calc(var(--activity-width, 100vw) - 24px)); }
+.gc-dialog .tools-content { padding: 16px; }
+.gc-dialog .tools-links { display: flex; gap: 8px; margin-bottom: 12px; }
+.gc-dialog .tools-links button { flex: 1; }
+.gc-dialog .audio-group { padding: 12px; margin-bottom: 12px; border: 1px solid #c9aa77; border-radius: 4px; background: #fff8e585; }
+.gc-dialog .audio-toggle { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 48px; cursor: pointer; }
+.gc-dialog .audio-toggle > span { display: grid; gap: 4px; font-size: 15px; font-weight: 600; }
+.gc-dialog .audio-toggle small { color: var(--gc-muted); font-size: 12px; font-weight: 400; }
+.gc-dialog .audio-toggle input { flex: none; width: 22px; height: 22px; margin: 0; accent-color: #993f31; }
+.gc-dialog .audio-volume { display: block; margin-top: 12px; }
+.gc-dialog .audio-volume > span { display: flex; justify-content: space-between; font-size: 12px; color: var(--gc-muted); }
+.gc-dialog .volume-value { color: #8b3c2b; }
+.gc-dialog input[type='range'] { display: block; width: 100%; height: 32px; margin: 4px 0 0; padding: 0; cursor: pointer; accent-color: #993f31; }
+.gc-dialog input[type='range']:disabled { opacity: .4; cursor: not-allowed; }
+.gc-dialog .tools-content > p { margin: 8px 0 0; color: var(--gc-muted); font-size: 12px; }
+
+/* Room directory shares the same materials, but the embedded lobby variant
+ * has a compact frame rather than a second ornamental heading. */
+.room-directory.gc-dialog { width: min(850px, calc(var(--activity-width, 100vw) - 24px)); height: min(680px, calc(var(--activity-height, 100dvh) - 24px)); }
+.gc-directory .directory-heading > .game-icon { flex: none; width: 48px; height: 48px; object-fit: contain; }
+.gc-directory .directory-filters { display: flex; align-items: center; flex-wrap: wrap; flex: none; gap: 12px; padding: 0 4px 12px; color: #f4d9aa; font-size: 12px; }
+.gc-directory .directory-filters label { display: flex; align-items: center; gap: 6px; min-height: 36px; min-width: 0; }
+.gc-directory .directory-open { flex: 1; white-space: nowrap; }
+.gc-directory .directory-open input { width: 18px; height: 18px; margin: 0; accent-color: #ae6840; }
+.gc-directory .directory-list { flex: 1; padding: 12px; border-radius: 4px; }
+.gc-directory .directory-room { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px; margin-bottom: 8px; border: 1px solid #c9aa7790; border-radius: 4px; background: #fff9e68f; }
+.gc-directory .directory-room > .game-icon { width: 56px; height: 56px; object-fit: contain; }
+.gc-directory .directory-room-info { min-width: 0; }
+.gc-directory .directory-room h3 { margin: 0 0 6px; color: #71422c; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.gc-directory .directory-room h3 span { display: inline-block; margin-left: 4px; padding: 1px 5px; border: 1px solid #c3a06c; border-radius: 3px; color: #876036; font-size: 11px; font-weight: 400; }
+.gc-directory .directory-host { margin: 0 0 6px; color: #6f5942; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.gc-directory .directory-terms { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; color: #7c603e; font-size: 12px; overflow-wrap: anywhere; }
+.gc-directory .directory-room > button { min-width: 76px; }
+.gc-directory .directory-empty { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; min-height: 100%; padding: 16px; text-align: center; }
+.gc-directory .directory-empty .game-icon { width: 80px; height: 64px; }
+.gc-directory .directory-empty strong { color: #795131; font-size: 15px; }
+.gc-directory .directory-empty p { margin: 0; color: var(--gc-muted); font-size: 12px; line-height: 1.7; }
+.gc-directory footer { flex: none; margin-top: 12px; padding-inline: 4px; color: #f0cfa0; font-size: 11px; line-height: 1.5; }
+.gc-directory .directory-pages { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; flex: none; gap: 8px; margin-top: 8px; color: #f0cfa0; font-size: 12px; }
+.gc-directory.room-directory-embedded { display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; min-width: 0; min-height: 0; width: 100%; height: auto; margin: 0; padding: 12px; border: 1px solid #d1a35f; border-radius: 8px; background: url('/ui/lobby/card-brocade.svg'), linear-gradient(145deg, #813c30, #42252b); box-shadow: inset 0 0 0 3px #e1b57422; }
+.gc-directory .embedded-directory-title { flex: none; margin: 0; color: #ffe7b8; font: 700 20px/1.5 'STKaiti', 'KaiTi', serif; }
+.gc-directory .embedded-directory-title small { display: block; color: #ebc994; font: 11px/1.6 'Microsoft YaHei', sans-serif; }
+.gc-directory.room-directory-embedded .directory-filters { gap: 8px; padding: 0; }
+.gc-directory.room-directory-embedded .directory-list { padding: 8px; }
+.gc-directory.room-directory-embedded .directory-room { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 8px; padding: 8px; }
+.gc-directory.room-directory-embedded .directory-room > .game-icon { width: 40px; height: 40px; }
+.gc-directory.room-directory-embedded .directory-room > button { min-width: 64px; padding: 8px; }
+.gc-directory.room-directory-embedded .directory-room h3 { font-size: 14px; }
+.gc-directory.room-directory-embedded footer { margin: 0; font-size: 10px; }
+.gc-directory.room-directory-embedded .directory-error { margin: 0; max-height: 64px; }
+
+/* Dialogs inherit the activity coordinate system, including rotated embeds.
+ * Container queries therefore take precedence over physical media dimensions. */
+@container activity-viewport (max-width: 620px) {
+  .gc-dialog { --gc-space: 12px; padding: 8px; }
+  .gc-dialog .gc-heading { padding: 8px 8px 16px; gap: 8px; }
+  .gc-dialog .gc-heading h2 { font-size: 24px; }
+  .gc-dialog .gc-heading small { letter-spacing: 1px; }
+  .gc-dialog .stats-controls { gap: 8px; }
+  .gc-dialog .stats-tabs button { padding-inline: 8px; }
+  .gc-dialog .stats-game-filter { gap: 4px; }
+  .gc-dialog .stats-game-filter select { max-width: 116px; }
+  .gc-dialog .stats-content { padding: 12px; }
+  .gc-dialog .stats-extremes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gc-dialog .stats-ranking li { gap: 8px; padding: 8px; grid-template-columns: 32px 32px minmax(0, 1fr) minmax(84px, auto); }
+  .gc-dialog .stats-ranking img { width: 32px; height: 32px; }
+  .gc-dialog .stats-profit { font-size: 18px; }
+  .gc-dialog .round-actions li { grid-template-columns: 20px minmax(0, 1fr) 90px; }
+  .gc-directory .directory-filters { gap: 8px; }
+  .gc-directory .directory-filters select { max-width: 120px; }
+  .gc-directory .directory-room { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 8px; padding: 8px; }
+  .gc-directory .directory-room > .game-icon { width: 40px; height: 40px; }
+  .gc-directory .directory-room > button { min-width: 64px; padding: 8px; }
+}
+@container activity-viewport (max-width: 430px) {
+  .gc-dialog .stats-controls { justify-content: space-between; }
+  .gc-dialog .stats-tabs { width: 100%; }
+  .gc-dialog .stats-tabs button { flex: 1; }
+  .gc-dialog .stats-game-filter { margin-left: 0; }
+  .gc-dialog .stats-refresh { margin-left: auto; }
+  .gc-dialog .stats-period { padding: 8px; }
+  .gc-dialog .stats-period > span { width: 100%; margin: 0; }
+  .gc-dialog .stats-profile { flex-wrap: wrap; }
+  .gc-dialog .stats-profile .stats-balance { width: 100%; text-align: left; margin: 0; }
+  .gc-dialog .stats-metrics { gap: 8px; }
+  .gc-dialog .stats-metrics > div { padding: 12px 8px; }
+  .gc-dialog .stats-metrics dd { font-size: 22px; }
+  .gc-dialog .stats-ranking li { grid-template-columns: 32px 32px minmax(0, 1fr); }
+  .gc-dialog .stats-profit { grid-column: 2 / -1; padding-top: 4px; border-top: 1px solid #caaa7640; }
+  .gc-dialog .round-actions li { grid-template-columns: 20px minmax(0, 1fr); }
+  .gc-dialog .round-actions time { grid-column: 2; text-align: left; }
+  .gc-directory .directory-room { grid-template-columns: 32px minmax(0, 1fr); }
+  .gc-directory .directory-room > .game-icon { width: 32px; height: 40px; }
+  .gc-directory .directory-room > button { grid-column: 2; justify-self: end; }
+}
+@container activity-viewport (max-height: 450px) {
+  .gc-dialog { padding: 8px; }
+  .gc-dialog .gc-heading { padding: 4px 8px 8px; gap: 8px; }
+  .gc-dialog .gc-heading small { display: none; }
+  .gc-dialog .gc-heading h2 { margin: 0; font-size: 22px; }
+  .gc-dialog .gc-seal { height: 36px; width: 32px; flex-basis: 32px; font-size: 22px; }
+  .gc-dialog .gc-heading .gc-close { min-height: 36px; }
+  .gc-dialog .stats-controls { padding-bottom: 8px; gap: 8px; }
+  .gc-dialog .stats-tabs { padding: 0; }
+  .gc-dialog .stats-tabs button { padding-inline: 8px; }
+  .gc-dialog .stats-period { padding: 6px 12px; }
+  .gc-dialog .stats-content, .gc-dialog .tools-content { padding: 12px; }
+  .gc-dialog .stats-metrics > div { padding: 12px; }
+  .gc-dialog .stats-metrics dd { font-size: 24px; }
+  .gc-directory .directory-heading > .game-icon { width: 36px; height: 36px; }
+  .gc-directory .directory-filters { padding-bottom: 8px; }
+  .gc-directory footer { margin-top: 8px; font-size: 10px; }
+  .gc-directory .directory-list { padding: 8px; }
+}
+@container activity-viewport (max-height: 600px) {
+  .gc-directory.room-directory-embedded { padding: 8px; gap: 6px; }
+  .gc-directory .embedded-directory-title { display: none; }
+  .gc-directory.room-directory-embedded .directory-filters { gap: 6px; font-size: 11px; }
+  .gc-directory.room-directory-embedded .directory-filters select { max-width: 112px; padding: 4px; min-height: 32px; }
+  .gc-directory.room-directory-embedded .directory-filters label, .gc-directory.room-directory-embedded .game-button { min-height: 32px; }
+  .gc-directory.room-directory-embedded .directory-empty { padding: 4px; gap: 4px; }
+  .gc-directory.room-directory-embedded .directory-empty .game-icon { width: 44px; height: 36px; }
+}
+@container activity-viewport (max-width: 640px) {
+  .gc-directory.room-directory-embedded { padding: 6px; }
+  .gc-directory.room-directory-embedded .directory-filters { gap: 4px; }
+  .gc-directory.room-directory-embedded .directory-filters select { max-width: 96px; }
+  .gc-directory.room-directory-embedded .directory-list { padding: 6px; }
+  .gc-directory.room-directory-embedded .directory-room { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding: 6px; }
+  .gc-directory.room-directory-embedded .directory-room > .game-icon { display: none; }
+  .gc-directory.room-directory-embedded .directory-room > button { grid-column: auto; min-width: 56px; font-size: 11px; padding-inline: 6px; }
+  .gc-directory.room-directory-embedded .directory-pages { gap: 4px; font-size: 10px; }
+  .gc-directory.room-directory-embedded .directory-pages .game-button { padding-inline: 6px; font-size: 11px; }
+}
+/* Mail is teleported to body rather than #app; its paper follows physical width. */
+@media (max-width: 600px) {
+  .game-mail-dialog .mail-row { gap: 8px; grid-template-columns: 36px minmax(0, 1fr) auto; }
+  .game-mail-dialog .mail-seal { width: 32px; height: 40px; }
+  .game-mail-dialog .mail-list, .game-mail-dialog .mail-detail { padding: 12px; }
+  .game-mail-dialog .mail-attachment { padding: 12px; }
+}
+@media (max-height: 420px) {
+  .game-mail-dialog .gc-heading { padding: 4px 8px 12px; }
+  .game-mail-dialog .gc-heading small { display: none; }
+  .game-mail-dialog .gc-heading h2 { font-size: 22px; }
+  .game-mail-dialog .gc-seal { height: 36px; }
+}
+/* Entrances signal a new layer/result; no repeating ornamental animation. */
+@keyframes gc-paper-enter { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
+.gc-dialog[open] > .gc-paper, .gc-dialog[open] .mail-list, .gc-dialog[open] .mail-detail { animation: gc-paper-enter 220ms cubic-bezier(.2, .85, .3, 1.12) both; }
+.gc-dialog .stats-ranking li, .gc-dialog .mail-row { animation: gc-paper-enter 200ms cubic-bezier(.2, .85, .3, 1.12) backwards; }
+.gc-dialog :is(.stats-ranking li, .mail-row):nth-child(2) { animation-delay: 20ms; }
+.gc-dialog :is(.stats-ranking li, .mail-row):nth-child(3) { animation-delay: 40ms; }
+@media (prefers-reduced-motion: reduce) {
+  .gc-dialog *, .gc-directory * { animation: none !important; transition: none !important; }
+}

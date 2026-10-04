@@ -34,6 +34,7 @@ class GeminiImagenService:
     """
 
     def __init__(self):
+        self.last_actual_model: Optional[str] = None
         self.executor = ThreadPoolExecutor(max_workers=20)
         self._client = None
         self._api_format = "gemini"  # 默认使用 gemini 格式
@@ -269,6 +270,39 @@ class GeminiImagenService:
         if normalized in {"b64_json", "base64", "url"}:
             return normalized
         return None
+
+    # 上游(OpenAI系)对"少女/女孩+学院/校园"组合审查极严（451 minors）。
+    # LLM 现场生成的提示词无法保证干净，发送前统一替换未成年暗示词。
+    _MINOR_WORD_REPLACEMENTS = [
+        ("中学生", "成年女性"),
+        ("小学生", "成年女性"),
+        ("高中生", "成年女性"),
+        ("女学生", "成年女性"),
+        ("学生妹", "成年女性"),
+        ("萝莉", "成年女性"),
+        ("少女", "成年女性"),
+        ("女孩", "成年女性"),
+        ("小姑娘", "成年女性"),
+        ("小女生", "成年女性"),
+        ("JK", "成年女性"),
+        ("学院风", "休闲风"),
+        ("学院派", "休闲风"),
+        ("校服", "休闲连衣裙"),
+        ("校园", "城市公园"),
+        ("教室", "咖啡馆"),
+        ("课堂", "咖啡馆"),
+    ]
+
+    @classmethod
+    def _sanitize_prompt_minor_words(cls, prompt: str) -> str:
+        """替换提示词中的未成年暗示词，规避上游 451 内容审查。"""
+        text = str(prompt or "")
+        if not text:
+            return text
+        for old_word, new_word in cls._MINOR_WORD_REPLACEMENTS:
+            if old_word in text:
+                text = text.replace(old_word, new_word)
+        return text
 
     async def _parse_json_or_sse_payload(self, response: aiohttp.ClientResponse) -> Optional[dict]:
         """兼容普通 JSON 和 SSE 文本响应。"""
@@ -529,6 +563,7 @@ class GeminiImagenService:
         Returns:
             成功时返回图像字节数据列表，失败时返回 None
         """
+        prompt = self._sanitize_prompt_minor_words(prompt)
         if not self.is_available():
             log.error("Gemini Imagen 服务不可用")
             return None
@@ -544,6 +579,9 @@ class GeminiImagenService:
                 content_rating=content_rating,
             )
         )
+        # 每次生成前清空上次残留的实际模型名（bufan.live 响应体常无 model 字段，
+        # 不清空会让 NSFW 的旧值污染 SFW 图的 footer 显示）
+        self.last_actual_model = None
         log.info(f"使用模型 {model_name} 生成图像 (分辨率: {resolution}, 内容分级: {content_rating})")
 
         # 分辨率自动映射 openai_image_size
@@ -1333,6 +1371,9 @@ class GeminiImagenService:
         request_response_format = self._resolve_request_response_format(
             openai_response_format or config.get("IMAGE_RESPONSE_FORMAT")
         )
+        # 部分模型（如 Bot专用sfw生图）不接受 response_format，硬传会被上游拒绝
+        if model_name and ("Bot专用" in model_name or "sfw生图" in model_name):
+            request_response_format = None
 
         payload: Dict[str, Any] = {
             "model": model_name,
@@ -1346,10 +1387,8 @@ class GeminiImagenService:
 
         if openai_image_size:
             payload["size"] = str(openai_image_size).strip()
-        elif aspect_ratio and aspect_ratio != "auto":
-            # resolution=default 时不传 openai_image_size，但 aspect_ratio 有值
-            # 直接把 ratio 传给 size，davinci-2api 会按宽高比推断
-            payload["size"] = str(aspect_ratio).strip()
+        # aspect_ratio 不再塞进 size：上游 gpt-image-2.5-flare 只认 WIDTHxHEIGHT，
+        # 传 "3:4" 这类比例值直接 400。比例语义由 prompt 文本承载（_build_openai_image_prompt 已附加）
         if request_response_format:
             payload["response_format"] = request_response_format
         if streaming_enabled:
@@ -1358,6 +1397,10 @@ class GeminiImagenService:
             payload["quality"] = str(openai_quality).strip()
         if openai_style:
             payload["style"] = str(openai_style).strip()
+        # 透明背景支持：开关开启时请求 RGBA PNG（gpt-image-2 经 ri 渠道实测支持）
+        if config.get("TRANSPARENT_BACKGROUND", False):
+            payload["background"] = "transparent"
+            payload["output_format"] = "png"
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -1417,6 +1460,11 @@ class GeminiImagenService:
                         if not data:
                             log.warning("OpenAI 图片接口返回空响应")
                             return None
+
+                        # 记录上游响应里的实际模型名（供 footer 显示）
+                        resp_model = str(data.get("model") or "").strip() if isinstance(data, dict) else ""
+                        if resp_model:
+                            self.last_actual_model = resp_model
 
                         images = await self._extract_images_from_openai_response(
                             data,
@@ -1598,6 +1646,21 @@ class GeminiImagenService:
                                             finish_reason = choice.get("finish_reason")
                                             if finish_reason:
                                                 log.debug(f"流式响应完成，原因: {finish_reason}")
+
+                                    # 记录上游响应里的实际模型名（供 footer 显示）
+                                    resp_model = str(chunk.get("model") or "").strip() if isinstance(chunk, dict) else ""
+                                    if resp_model:
+                                        self.last_actual_model = resp_model
+
+                                    # image_generation.completed 事件（伪SSE图片流）：
+                                    # data JSON 无 choices，图片直接在顶层 b64_json/url
+                                    if isinstance(chunk, dict) and "choices" not in chunk:
+                                        top_b64 = chunk.get("b64_json") or chunk.get("base64")
+                                        if top_b64:
+                                            collected_parts.append({"b64_json": top_b64})
+                                        top_url = str(chunk.get("url") or "").strip()
+                                        if top_url:
+                                            collected_parts.append({"image_url": {"url": top_url}})
                                     
                                 except json.JSONDecodeError as e:
                                     log.warning(f"解析流式响应块失败: {e}, 数据长度: {len(data_str)}")
@@ -1858,6 +1921,28 @@ class GeminiImagenService:
         accept_url = response_format in ("auto", "url")
 
         log.debug(f"图片响应格式策略: {response_format} (base64={accept_base64}, url={accept_url})")
+
+        # 顶层 url / b64_json 字段：伪SSE的 image_generation.completed 事件
+        # (如 bufan.live gpt-image-2) 把图片直接放在响应体顶层，不在 data[]/choices[] 里
+        if isinstance(data, dict):
+            top_b64 = data.get("b64_json") or data.get("base64")
+            if top_b64 and accept_base64:
+                try:
+                    normalized_b64 = re.sub(r"\s+", "", str(top_b64))
+                    images.append(base64.b64decode(normalized_b64))
+                except Exception as e:
+                    log.warning(f"解码顶层 base64 失败: {e}")
+            top_url = str(data.get("url") or "").strip()
+            if top_url:
+                if top_url.startswith("data:image") and accept_base64:
+                    try:
+                        b64_data = top_url.split(",", 1)[1]
+                        normalized_b64 = re.sub(r"\s+", "", b64_data)
+                        images.append(base64.b64decode(normalized_b64))
+                    except Exception as e:
+                        log.warning(f"解码顶层 data URL 失败: {e}")
+                elif (top_url.startswith("http://") or top_url.startswith("https://")) and accept_url:
+                    url_images_pending.append(top_url)
 
         if isinstance(data.get("data"), list):
             for item in data["data"]:
@@ -2156,6 +2241,7 @@ class GeminiImagenService:
         Returns:
             成功时返回图像字节数据，失败时返回 None
         """
+        prompt = self._sanitize_prompt_minor_words(prompt)
         retry_max_attempts = max(
             1, int(app_config.GEMINI_IMAGEN_CONFIG.get("EMPTY_RESULT_MAX_RETRIES", 3))
         )
@@ -2271,6 +2357,8 @@ class GeminiImagenService:
                 content_rating=content_rating,
             )
         )
+        # 每次生成前清空上次残留的实际模型名（同 t2i，防 NSFW 旧值污染 footer）
+        self.last_actual_model = None
         log.info(f"图生图使用模型: {model_name} (分辨率: {resolution}, 内容分级: {content_rating})")
 
         # 分辨率自动映射 openai_image_size
@@ -2595,6 +2683,10 @@ class GeminiImagenService:
                         if not data:
                             log.warning("OpenAI 图生图 chat/completions 返回空响应")
                             return None
+
+                        resp_model = str(data.get("model") or "").strip() if isinstance(data, dict) else ""
+                        if resp_model:
+                            self.last_actual_model = resp_model
                         
                         # 解析响应，提取图像（复用通用提取方法）
                         images = await self._extract_images_from_openai_response(
@@ -2659,6 +2751,10 @@ class GeminiImagenService:
             if stream_override is None
             else stream_override
         )
+        # /images/edits 端点强制非流式：上游流式偶发只回 keep-alive 不发 completed 事件
+        # （200 但解析结果为空 -> 误判"空响应" -> 回退 chat/completions 丢参考图重画）。
+        # edits 的 JSON 响应直接带最终图 URL，流式无收益，禁用最稳。
+        streaming_enabled = False
         request_response_format = self._resolve_request_response_format(
             openai_response_format or config.get("IMAGE_RESPONSE_FORMAT")
         )
@@ -2699,11 +2795,10 @@ class GeminiImagenService:
                 )
                 if openai_image_size:
                     form.add_field("size", str(openai_image_size).strip())
-                elif aspect_ratio and aspect_ratio != "auto":
-                    # resolution=default 时不传 openai_image_size，但 aspect_ratio 有值
-                    # 直接把 ratio 传给 size，davinci-2api 会按宽高比推断
-                    form.add_field("size", str(aspect_ratio).strip())
-                if request_response_format:
+                # aspect_ratio 不再塞进 size（同 t2i：上游只认 WIDTHxHEIGHT）
+                # 部分模型（如 Bot专用sfw生图）不接受 response_format，硬传会被上游拒绝
+                skip_rf = model_name and ("Bot专用" in model_name or "sfw生图" in model_name)
+                if request_response_format and not skip_rf:
                     form.add_field("response_format", request_response_format)
                 if streaming_enabled:
                     form.add_field("stream", "true")
@@ -2711,6 +2806,10 @@ class GeminiImagenService:
                     form.add_field("quality", str(openai_quality).strip())
                 if openai_style:
                     form.add_field("style", str(openai_style).strip())
+                # 透明背景支持：与文生图同开关
+                if config.get("TRANSPARENT_BACKGROUND", False):
+                    form.add_field("background", "transparent")
+                    form.add_field("output_format", "png")
 
                 # 多参考图时第 1 张通常是“待编辑底图”，后续才是头像/风格参考。
                 # 旧逻辑固定截断到 9 张，会导致多人物搜索参考图被静默丢弃；

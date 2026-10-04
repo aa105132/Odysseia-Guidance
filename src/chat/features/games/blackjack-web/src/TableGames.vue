@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import SpiritStoneIcon from './SpiritStoneIcon.vue';
 import { CUSTOM_ROOM_LIMITS, tableGameRules, type TableGameType, type TableRoomGameType } from './tableGameRules';
 import GameIcon from './GameIcon.vue';
 import RoundFeedback from './RoundFeedback.vue';
@@ -902,13 +903,13 @@ onBeforeUnmount(() => {
     <div v-if="recovering" class="tg-lobby" role="status">正在恢复房间…</div>
     <div v-else-if="!room" class="tg-lobby">
       <div class="tg-lobby-inner">
-        <div class="tg-lobby-heading"><div><span class="tg-eyebrow">月月牌室 · 选择场次</span><div v-if="props.gameType === 'mahjong'" class="tg-variant-tabs" role="group" aria-label="选择麻将模式"><button class="game-button" :class="{ gold: selectedMahjongType === 'mahjong' }" :aria-pressed="selectedMahjongType === 'mahjong'" :disabled="busy" @click="chooseMahjong('mahjong')">基础麻将</button><button class="game-button" :class="{ gold: selectedMahjongType === 'sichuan_mahjong' }" :aria-pressed="selectedMahjongType === 'sichuan_mahjong'" :disabled="busy" @click="chooseMahjong('sichuan_mahjong')">四川血战</button></div><h3 v-else>入席，好牌等你</h3><p>{{ rules.players }}</p></div><div class="tg-lobby-balance"><span>我的灵石</span><strong>{{ profile.balance.toLocaleString() }}</strong></div></div>
+        <div class="tg-lobby-heading"><div><span class="tg-eyebrow">月月牌室 · 选择场次</span><div v-if="props.gameType === 'mahjong'" class="tg-variant-tabs" role="group" aria-label="选择麻将模式"><button class="game-button" :class="{ gold: selectedMahjongType === 'mahjong' }" :aria-pressed="selectedMahjongType === 'mahjong'" :disabled="busy" @click="chooseMahjong('mahjong')">基础麻将</button><button class="game-button" :class="{ gold: selectedMahjongType === 'sichuan_mahjong' }" :aria-pressed="selectedMahjongType === 'sichuan_mahjong'" :disabled="busy" @click="chooseMahjong('sichuan_mahjong')">四川血战</button></div><h3 v-else>入席，好牌等你</h3><p>{{ rules.players }}</p></div><div class="tg-lobby-balance"><span>我的灵石</span><strong><SpiritStoneIcon />{{ profile.balance.toLocaleString() }}</strong></div></div>
         <div class="tg-tier-grid" role="group" aria-label="选择游戏场次">
           <button v-for="item in tiers" :key="item.id" class="tg-tier-card" :class="[`tg-tier-${item.id}`, { selected: selectedTier === item.id }]" :aria-label="`选择${item.title}`" :aria-pressed="selectedTier === item.id" :disabled="busy" @click="selectedTier = item.id">
             <svg class="tg-scroll-frame" viewBox="0 0 300 280" preserveAspectRatio="none" fill="none" aria-hidden="true"><path d="M22 9h256l10 14v234l-10 14H22l-10-14V23Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M18 24h28V12m-27 26h14V25m249-1h-28V12m27 26h-14V25M18 256h28v12m-27-26h14v13m249 1h-28v12m27-26h-14v13" stroke="currentColor" stroke-width="3"/><path d="M109 14h25l16-8 16 8h25M109 266h25l16 8 16-8h25" stroke="currentColor" stroke-width="2"/></svg>
             <GameIcon class="tg-tier-art" :name="item.id" />
             <div class="tg-tier-heading"><span>{{ item.subtitle }}</span><strong>{{ item.title }}</strong></div>
-            <div class="tg-tier-terms"><span>底分 <b>{{ item.base }}</b></span><span>准入 <b>{{ item.entry }}</b></span><span>单局最多输 <b>{{ item.limit }}</b></span></div>
+            <div class="tg-tier-terms"><span>底分 <b><SpiritStoneIcon />{{ item.base }}</b></span><span>准入 <b><SpiritStoneIcon />{{ item.entry }}</b></span><span>单局最多输 <b><SpiritStoneIcon />{{ item.limit }}</b></span></div>
             <span class="tg-tier-selected">{{ selectedTier === item.id ? '已选场次' : '选择场次' }}</span>
           </button>
         </div>
@@ -917,7 +918,7 @@ onBeforeUnmount(() => {
           <div class="tg-friends-entry"><button class="tg-mode-card" aria-label="好友同桌" :disabled="busy || !canEnterTier" @click="create('multi')"><GameIcon name="friends" /><span><strong>好友同桌</strong><small>创建{{ tier.title }}，邀请朋友</small></span><span class="tg-entry-arrow" aria-hidden="true">›</span></button><label v-if="!embedded" class="tg-check"><input v-model="includeYueyue" type="checkbox" :disabled="busy">邀请月月一起玩</label></div>
         </div>
         <div v-if="!embedded" class="tg-turn-setting tg-turn-create"><label for="create-turn-seconds">操作等待时长（秒）</label><select id="create-turn-seconds" v-model.number="createTurnSeconds" :disabled="busy"><option v-for="seconds in turnTimeOptions" :key="seconds" :value="seconds">{{ seconds }} 秒</option></select><small>适用于单人和好友房间</small></div>
-        <div class="tg-lobby-footer"><p :class="{ 'tg-entry-insufficient': !canEnterTier }">{{ canEnterTier ? `${tier.title} · 底分 ${tier.base} · 准入 ${tier.entry} 灵石` : `进入${tier.title}还需 ${tier.entry - profile.balance} 灵石` }}</p><div class="tg-actions"><button v-if="embedded" class="game-button" :disabled="busy" @click="entrySettingsDialog?.showModal()">入席设置</button><button class="game-button" :disabled="busy" @click="showRoomDirectory = true">房间列表</button><button class="game-button quiet" :disabled="busy" @click="error = ''; customDialog?.showModal()"><GameIcon name="room" />自定义房间</button><button class="game-button gold" :disabled="busy" @click="error = ''; joinDialog?.showModal()">加入房间</button></div></div>
+        <div class="tg-lobby-footer"><p :class="{ 'tg-entry-insufficient': !canEnterTier }"><SpiritStoneIcon />{{ canEnterTier ? `${tier.title} · 底分 ${tier.base} · 准入 ${tier.entry} 灵石` : `进入${tier.title}还需 ${tier.entry - profile.balance} 灵石` }}</p><div class="tg-actions"><button v-if="embedded" class="game-button" :disabled="busy" @click="entrySettingsDialog?.showModal()">入席设置</button><button class="game-button" :disabled="busy" @click="showRoomDirectory = true">房间列表</button><button class="game-button quiet" :disabled="busy" @click="error = ''; customDialog?.showModal()"><GameIcon name="room" />自定义房间</button><button class="game-button gold" :disabled="busy" @click="error = ''; joinDialog?.showModal()">加入房间</button></div></div>
       </div>
     </div>
 
@@ -934,7 +935,7 @@ onBeforeUnmount(() => {
             <i v-for="card in dealtBacks" :key="card.id" class="tg-deal-card" :class="{ 'tg-deal-tile': isMahjong }" :data-seat-id="card.userId" :data-card-dealing="true" :style="dealBackStyle(card)" @animationend="finishBackAnimation(card.id)"><img v-if="!isMahjong" src="/table-assets/card-back.png" alt=""></i>
           </div>
           <div v-if="roundResult && resultReady" class="tg-round-result">
-            <RoundFeedback :title="roundResult.title" :subtitle="roundResult.subtitle" :detail="roundResult.detail" :tone="roundResult.tone" :animated="resultAnimated" :aria-label="isMahjong && game?.winners.length ? '胡牌结果' : '本局结果'" />
+            <RoundFeedback :title="roundResult.title" :subtitle="roundResult.subtitle" :detail="roundResult.detail" :spirit-stone="room.settlement_status === 'settled' && typeof room.actual_settlement?.[viewerId] === 'number'" :tone="roundResult.tone" :animated="resultAnimated" :aria-label="isMahjong && game?.winners.length ? '胡牌结果' : '本局结果'" />
           </div>
           <div v-if="winNotice && !game?.finished" class="tg-win-notice" :data-win-event-id="winNotice.id">
             <RoundFeedback :key="winNotice.id" title="胡牌 · 血战继续" :subtitle="`${nameFor(winNotice.user_id)} · ${winNotice.fan}番 ${winNotice.label}${winNotice.tile ? ` · 胡${cardLabel(winNotice.tile)}` : ''}`" detail="本局尚未结束 · 灵石待结算" tone="mahjong" :animated="!reducedMotion" aria-label="血战途中胡牌" />
@@ -958,7 +959,7 @@ onBeforeUnmount(() => {
               </template>
             </div>
             <template v-if="game">
-              <div v-if="game.pot !== undefined" class="tg-pot"><i class="tg-chip-stack" aria-hidden="true"></i><div><small>底池</small><strong>{{ game.pot }} <span>灵石</span></strong></div></div>
+              <div v-if="game.pot !== undefined" class="tg-pot"><i class="tg-chip-stack" aria-hidden="true"></i><div><small>底池</small><strong><SpiritStoneIcon />{{ game.pot }} <span>灵石</span></strong></div></div>
               <div v-if="currentGameType === 'texas'" class="tg-public-cards" aria-label="公共牌">
                 <div v-for="index in 5" :key="index" class="tg-board-card" :data-card-dealing="dealingBoard[index - 1] !== undefined" :style="{ '--deal-delay': `${dealingBoard[index - 1] ?? 0}ms` }" :class="{ 'tg-card-slot': !game.community_cards?.[index - 1] }" @animationend="delete dealingBoard[index - 1]">
                   <img v-if="game.community_cards?.[index - 1] && cardImage(game.community_cards[index - 1]!)" :src="cardImage(game.community_cards[index - 1]!)!" :alt="cardLabel(game.community_cards[index - 1]!)"><span v-else aria-hidden="true">♠</span>
@@ -977,7 +978,7 @@ onBeforeUnmount(() => {
                 <p v-if="game.last_discard" class="tg-table-caption">{{ nameFor(game.last_discard.user_id) }} 打出 {{ cardLabel(game.last_discard.tile) }}</p>
               </template>
             </template>
-            <div v-else class="tg-table-welcome"><span>♠ ♥ ♣ ♦</span><strong>{{ rules.title }}</strong><p>{{ tierNames[room.room_tier] }} · 底分 {{ room.base_stake }} 灵石</p><small>等待玩家准备</small></div>
+            <div v-else class="tg-table-welcome"><span>♠ ♥ ♣ ♦</span><strong>{{ rules.title }}</strong><p>{{ tierNames[room.room_tier] }} · 底分 <SpiritStoneIcon />{{ room.base_stake }} 灵石</p><small>等待玩家准备</small></div>
           </div>
           <div class="tg-seats">
             <section v-for="(member, index) in seatedPlayers" :key="member.user_id" class="tg-seat" :style="seatStyle(index)" :data-position="seatDirection(index)" :data-has-won="Boolean(gamePlayer(member.user_id)?.has_won)" :class="{ 'tg-self': String(member.user_id) === viewerId, 'tg-current': String(member.user_id) === String(game?.current_player_id) && !game?.finished, 'tg-folded': room.state === 'playing' && gamePlayer(member.user_id)?.folded, 'tg-has-won': gamePlayer(member.user_id)?.has_won }">
@@ -994,7 +995,7 @@ onBeforeUnmount(() => {
               <p v-else-if="gamePlayer(member.user_id)?.folded" class="tg-seat-state">已弃牌</p><p v-else-if="member.connected === false && !member.is_bot" class="tg-seat-state">托管中</p>
               <p v-if="isGuandan && game" class="tg-guandan-team" :class="{ teammate: gamePlayer(member.user_id)?.team === myGame?.team }">{{ gamePlayer(member.user_id)?.team === myGame?.team ? '我方' : '对方' }}<span v-if="index === 2"> · 队友</span><strong v-if="gamePlayer(member.user_id)?.finished_rank"> · 第{{ gamePlayer(member.user_id)?.finished_rank }}名</strong></p>
               <p v-if="gamePlayer(member.user_id)?.hand_name" class="tg-hand-name">{{ gamePlayer(member.user_id)?.hand_name }}</p>
-              <p v-if="game?.finished" class="tg-settled" :class="{ 'tg-positive': settledDelta(member.user_id) > 0 }"><span class="tg-settled-label">{{ room.actual_settlement ? '实际净变动' : '待结算净变动' }}</span> {{ settledDelta(member.user_id) > 0 ? '+' : '' }}{{ settledDelta(member.user_id) }} 灵石</p>
+              <p v-if="game?.finished" class="tg-settled" :class="{ 'tg-positive': settledDelta(member.user_id) > 0 }"><span class="tg-settled-label">{{ room.actual_settlement ? '实际净变动' : '待结算净变动' }}</span> <SpiritStoneIcon />{{ settledDelta(member.user_id) > 0 ? '+' : '' }}{{ settledDelta(member.user_id) }} 灵石</p>
               <div v-if="game?.finished && String(member.user_id) !== viewerId && gamePlayer(member.user_id)?.hand.length" class="tg-opponent-hand" :style="{ '--public-count': gamePlayer(member.user_id)?.hand.length ?? 1 }"><img v-for="(card, cardIndex) in gamePlayer(member.user_id)?.hand" :key="cardIndex" :src="cardImage(card) || '/table-assets/card-back.png'" :alt="cardLabel(card)"></div>
               <div v-else-if="!game?.finished && String(member.user_id) !== viewerId && gamePlayer(member.user_id)?.hand_count" class="tg-hidden-hand" :aria-label="`${gamePlayer(member.user_id)?.hand_count} 张暗牌`"><i v-for="back in Math.min(gamePlayer(member.user_id)?.hand_count ?? 0, 3)" :key="back" :class="{ 'tg-tile-back': isMahjong }"></i><span>{{ gamePlayer(member.user_id)?.hand_count }} 张</span></div>
               <div v-if="meldsFor(member.user_id).length" class="tg-melds" aria-label="副露"><span v-for="(tile, tileIndex) in meldsFor(member.user_id)" :key="tileIndex" class="tg-river-tile"><img :src="cardImage(tile)!" :alt="cardLabel(tile)"></span></div>
@@ -1021,7 +1022,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <p class="tg-wallet-strip">余额 {{ profile.balance }} 灵石 · 底分 {{ room.base_stake }} · 单局最多输 {{ room.loss_limit }}<span v-if="room.settlement_status === 'settled'"> · 本局已结算</span><span v-else-if="room.settlement_status === 'reserved'"> · {{ isSichuan ? '整局结束统一结算' : '本局已冻结' }}</span></p>
+        <p class="tg-wallet-strip">余额 <SpiritStoneIcon />{{ profile.balance }} 灵石 · 底分 <SpiritStoneIcon />{{ room.base_stake }} · 单局最多输 <SpiritStoneIcon />{{ room.loss_limit }}<span v-if="room.settlement_status === 'settled'"> · 本局已结算</span><span v-else-if="room.settlement_status === 'reserved'"> · {{ isSichuan ? '整局结束统一结算' : '本局已冻结' }}</span></p>
         <div class="tg-control-panel">
         <p v-if="isGuandan && game?.finished" class="tg-guandan-match" role="status">{{ guandanMatchText }}</p>
         <template v-if="room.state === 'waiting' || room.state === 'finished'">
@@ -1072,32 +1073,32 @@ onBeforeUnmount(() => {
       <form @submit.prevent="create('multi', 'custom')">
         <div class="tg-setting-fields"><label>底分<input v-model.number="customBase" type="number" min="1" :max="maxBaseStake" step="1" inputmode="numeric" :disabled="busy"></label><label>单局最多输<input v-model.number="customLimit" type="number" :min="Math.max(100, customBase * 10)" :max="Math.min(maxLossLimit, profile.balance)" step="1" inputmode="numeric" :disabled="busy"></label></div>
         <p class="tg-modal-hint">底分 1–{{ maxBaseStake }} · 每人单局最多输 {{ maxLossLimit }} 灵石。</p>
-        <p class="tg-modal-hint">准入灵石 {{ customLimit }} · 单局上限至少 100 灵石，且不低于底分的 10 倍、不能超过余额。</p>
+        <p class="tg-modal-hint">准入灵石 <SpiritStoneIcon />{{ customLimit }} · 单局上限至少 100 灵石，且不低于底分的 10 倍、不能超过余额。</p>
         <p class="tg-modal-hint">开局冻结单局上限，结算按实际输赢返还；不会自动追加。</p>
         <label class="tg-check"><input v-model="includeYueyue" type="checkbox" :disabled="busy">邀请月月一起玩</label>
         <div class="tg-turn-setting"><label for="custom-turn-seconds">操作等待时长（秒）</label><input id="custom-turn-seconds" v-model.number="createTurnSeconds" type="number" min="15" max="300" step="1" inputmode="numeric" :disabled="busy"></div>
         <p v-if="error" class="tg-modal-error" role="alert">{{ error }}</p>
-        <div class="tg-modal-footer"><span>可用 {{ profile.balance }} 灵石</span><button class="game-button gold" :disabled="busy || !customValid">创建自定义房间</button></div>
+        <div class="tg-modal-footer"><span>可用 <SpiritStoneIcon />{{ profile.balance }} 灵石</span><button class="game-button gold" :disabled="busy || !customValid">创建自定义房间</button></div>
       </form>
     </dialog>
 
     <dialog ref="joinDialog" class="tg-modal tg-join-modal" aria-labelledby="join-room-title">
       <div class="tg-modal-head"><GameIcon name="friends" /><div><small>朋友已经就位</small><h2 id="join-room-title">加入房间</h2></div><button class="game-button quiet" aria-label="关闭加入房间" @click="joinDialog?.close()">关闭</button></div>
-      <form @submit.prevent="join"><label class="tg-room-code-label" for="table-room-id">桌游房间号<input id="table-room-id" v-model="roomInput" placeholder="输入房间号" maxlength="16" autocomplete="off" autocapitalize="characters" :disabled="busy"></label><p class="tg-modal-hint">输入好友分享的房间号，加入后准备即可开局。</p><p v-if="error" class="tg-modal-error" role="alert">{{ error }}</p><div class="tg-modal-footer"><span>可用 {{ profile.balance }} 灵石</span><button class="game-button gold" :disabled="busy || !roomInput.trim()">确认加入</button></div></form>
+      <form @submit.prevent="join"><label class="tg-room-code-label" for="table-room-id">桌游房间号<input id="table-room-id" v-model="roomInput" placeholder="输入房间号" maxlength="16" autocomplete="off" autocapitalize="characters" :disabled="busy"></label><p class="tg-modal-hint">输入好友分享的房间号，加入后准备即可开局。</p><p v-if="error" class="tg-modal-error" role="alert">{{ error }}</p><div class="tg-modal-footer"><span>可用 <SpiritStoneIcon />{{ profile.balance }} 灵石</span><button class="game-button gold" :disabled="busy || !roomInput.trim()">确认加入</button></div></form>
     </dialog>
 
     <dialog ref="settingsDialog" class="tg-modal" aria-labelledby="room-settings-title">
       <div class="tg-modal-head"><GameIcon name="room" /><div><small>{{ room?.room_id }} · {{ room ? tierNames[room.room_tier] : '' }}</small><h2 id="room-settings-title">房间设置</h2></div><button class="game-button quiet" aria-label="关闭房间设置" @click="settingsDialog?.close()">关闭</button></div>
       <template v-if="room">
         <form v-if="canManage" @submit.prevent="saveSettings">
-          <template v-if="room.room_tier === 'custom'"><div class="tg-setting-fields"><label>底分<input v-model.number="settingsBase" type="number" min="1" :max="maxBaseStake" step="1" inputmode="numeric" :disabled="busy"></label><label>单局最多输<input v-model.number="settingsLimit" type="number" :min="Math.max(100, settingsBase * 10)" :max="Math.min(maxLossLimit, profile.balance)" step="1" inputmode="numeric" :disabled="busy"></label></div><p class="tg-modal-hint">底分 1–{{ maxBaseStake }} · 每人单局最多输 {{ maxLossLimit }} 灵石。</p><p class="tg-modal-hint">准入灵石 {{ settingsLimit }} · 修改底分或单局上限后，所有真人需重新准备。</p><p class="tg-modal-hint">每位真人余额须满足新准入，最低单局上限为 100 灵石和 10 倍底分中的较大值。</p></template>
-          <dl v-else class="tg-room-terms"><div><dt>底分</dt><dd>{{ room.base_stake }} 灵石</dd></div><div><dt>准入灵石</dt><dd>{{ room.entry_min }}</dd></div><div><dt>单局最多输</dt><dd>{{ room.loss_limit }} 灵石</dd></div></dl>
+          <template v-if="room.room_tier === 'custom'"><div class="tg-setting-fields"><label>底分<input v-model.number="settingsBase" type="number" min="1" :max="maxBaseStake" step="1" inputmode="numeric" :disabled="busy"></label><label>单局最多输<input v-model.number="settingsLimit" type="number" :min="Math.max(100, settingsBase * 10)" :max="Math.min(maxLossLimit, profile.balance)" step="1" inputmode="numeric" :disabled="busy"></label></div><p class="tg-modal-hint">底分 1–{{ maxBaseStake }} · 每人单局最多输 {{ maxLossLimit }} 灵石。</p><p class="tg-modal-hint">准入灵石 <SpiritStoneIcon />{{ settingsLimit }} · 修改底分或单局上限后，所有真人需重新准备。</p><p class="tg-modal-hint">每位真人余额须满足新准入，最低单局上限为 100 灵石和 10 倍底分中的较大值。</p></template>
+          <dl v-else class="tg-room-terms"><div><dt>底分</dt><dd><SpiritStoneIcon />{{ room.base_stake }} 灵石</dd></div><div><dt>准入灵石</dt><dd><SpiritStoneIcon />{{ room.entry_min }}</dd></div><div><dt>单局最多输</dt><dd><SpiritStoneIcon />{{ room.loss_limit }} 灵石</dd></div></dl>
           <label class="tg-auto-start-option"><input v-model="settingsAutoStart" type="checkbox" :disabled="busy">全员准备后自动开启游戏</label>
           <div class="tg-turn-setting"><label for="settings-turn-seconds">操作等待时长（秒）</label><input id="settings-turn-seconds" v-model.number="settingsTurnSeconds" type="number" min="15" max="300" step="1" inputmode="numeric" :disabled="busy"></div><p class="tg-modal-hint">可设 15–300 秒；修改后所有真人需重新准备。</p>
           <p class="tg-modal-hint">达到最低人数且所有玩家准备后自动开局。关闭后由房主手动开始。</p>
-          <p v-if="error" class="tg-modal-error" role="alert">{{ error }}</p><div class="tg-modal-footer"><span>可用 {{ profile.balance }} 灵石</span><button class="game-button gold" :disabled="busy || !settingsValid || !settingsChanged">保存设置</button></div>
+          <p v-if="error" class="tg-modal-error" role="alert">{{ error }}</p><div class="tg-modal-footer"><span>可用 <SpiritStoneIcon />{{ profile.balance }} 灵石</span><button class="game-button gold" :disabled="busy || !settingsValid || !settingsChanged">保存设置</button></div>
         </form>
-        <template v-else><dl class="tg-room-terms"><div><dt>底分</dt><dd>{{ room.base_stake }} 灵石</dd></div><div><dt>准入灵石</dt><dd>{{ room.entry_min }}</dd></div><div><dt>单局最多输</dt><dd>{{ room.loss_limit }} 灵石</dd></div><div><dt>操作等待时长</dt><dd>{{ room.turn_timeout_seconds ?? 60 }} 秒</dd></div></dl><p class="tg-modal-hint">全员准备后自动开局：{{ room.auto_start_when_ready ? '已开启' : '已关闭' }}。房间设置由房主在本局结束后调整。</p></template>
+        <template v-else><dl class="tg-room-terms"><div><dt>底分</dt><dd><SpiritStoneIcon />{{ room.base_stake }} 灵石</dd></div><div><dt>准入灵石</dt><dd><SpiritStoneIcon />{{ room.entry_min }}</dd></div><div><dt>单局最多输</dt><dd><SpiritStoneIcon />{{ room.loss_limit }} 灵石</dd></div><div><dt>操作等待时长</dt><dd>{{ room.turn_timeout_seconds ?? 60 }} 秒</dd></div></dl><p class="tg-modal-hint">全员准备后自动开局：{{ room.auto_start_when_ready ? '已开启' : '已关闭' }}。房间设置由房主在本局结束后调整。</p></template>
         <section class="tg-room-members" aria-label="房间成员">
           <h3>房间成员</h3><p v-if="host" class="tg-modal-hint">房主可在等待开局或结算完成后移出玩家。</p>
           <ul class="tg-bot-list"><li v-for="member in room.players" :key="member.user_id"><img :src="member.avatar_url || '/character/normal.webp'" alt=""><div><strong>{{ member.username }}{{ String(member.user_id) === String(room.host_user_id) ? ' · 房主' : member.is_bot ? ' · AI' : '' }}</strong><small>{{ room.state === 'playing' ? '对局中' : member.is_ready ? '已准备' : '未准备' }}</small></div><button v-if="host && !member.is_bot && String(member.user_id) !== String(room.host_user_id)" class="game-button quiet" :aria-label="`踢出 ${member.username}`" :disabled="busy || !canManage" @click="kickPlayer(member)">踢出</button></li></ul>

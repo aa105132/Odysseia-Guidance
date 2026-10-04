@@ -15,7 +15,7 @@ FarmError = _farm_module.FarmError
 class FarmActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["buy_seed", "plant", "water", "pest", "harvest", "sell", "expand", "upgrade_aura", "steal", "buy_pet", "equip_pet", "buy_item", "use_item"]
+    action: Literal["buy_seed", "plant", "water", "pest", "harvest", "sell", "expand", "upgrade_aura", "steal", "buy_pet", "equip_pet", "buy_item", "use_item", "refine", "collect_pill", "sell_pill"]
     request_id: Annotated[StrictStr, Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")]
     plot_id: Annotated[StrictInt, Field(ge=1, le=12)] | None = None
     crop_id: Annotated[StrictStr, Field(min_length=1, max_length=32, pattern=r"^[a-z_]+$")] | None = None
@@ -24,6 +24,10 @@ class FarmActionRequest(BaseModel):
     quantity: Annotated[StrictInt, Field(ge=1, le=9999)] = 1
     quality: Literal["normal", "spirit", "celestial"] = "normal"
     target_user_id: StrictInt | StrictStr | None = None
+    recipe_id: Annotated[StrictStr, Field(min_length=1, max_length=32, pattern=r"^[a-z_]+$")] | None = None
+    fire: Literal["wen", "zhong", "wu"] | None = None
+    pill_id: Annotated[StrictStr, Field(min_length=1, max_length=32, pattern=r"^[a-z_]+$")] | None = None
+    grade: Literal["low", "mid", "high"] | None = None
 
     @model_validator(mode="after")
     def validate_action_fields(self):
@@ -41,6 +45,9 @@ class FarmActionRequest(BaseModel):
             "equip_pet": ({"pet_id"}, {"pet_id"}),
             "buy_item": ({"item_id"}, {"item_id", "quantity"}),
             "use_item": ({"item_id"}, {"item_id", "plot_id"}),
+            "refine": ({"recipe_id", "fire"}, {"recipe_id", "fire", "crop_id", "quality"}),
+            "collect_pill": (set(), set()),
+            "sell_pill": ({"pill_id", "grade"}, {"pill_id", "grade", "quantity"}),
         }
         required, allowed = fields[self.action]
         supplied = self.model_fields_set - {"action", "request_id"}

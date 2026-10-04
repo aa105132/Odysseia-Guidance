@@ -569,6 +569,8 @@ def _get_imagen_config():
         # 单次生成任务总超时（秒）：从第一次请求开始计时，含所有重试/空回重试
         # 到点后不再重试，直接放弃
         "TOTAL_TIMEOUT_SECONDS": _parse_int_env("GEMINI_IMAGEN_TOTAL_TIMEOUT_SECONDS", 600),
+        # 透明背景：true 时生图请求带 background=transparent + output_format=png
+        "TRANSPARENT_BACKGROUND": _parse_bool_env("TRANSPARENT_BACKGROUND", "False"),
     }
 
 GEMINI_IMAGEN_CONFIG = _get_imagen_config()
@@ -646,6 +648,13 @@ def get_voice_provider_defaults(provider: str = "doubao") -> dict:
             "MAX_TEXT_LENGTH": 8000,
         }
 
+    if normalized_provider == "elevenlabs":
+        return {
+            "MODEL_NAME": "eleven_v3",
+            "VOICE_TYPE": "l09yLd0oPD6mye4jJFg2",
+            "MAX_TEXT_LENGTH": 200,
+        }
+
     return {
         "MODEL_NAME": "FunAudioLLM/CosyVoice2-0.5B",
         "VOICE_TYPE": "zh_female_wanwanxiaohe_moon_bigtts",
@@ -659,7 +668,7 @@ def _get_voice_config():
     provider_defaults = get_voice_provider_defaults(provider)
     return {
         "ENABLED": _parse_bool_env("VOICE_ENABLED", "False"),
-        # 提供商: "doubao"（火山引擎）, "siliconflow"（硅基流动）, "custom"（自定义 OpenAI 兼容）, "xiaomi"（小米 MiMo）
+        # 提供商: "elevenlabs"（ElevenLabs V3 银月）, "doubao"（火山引擎）, "siliconflow", "custom", "xiaomi"
         "PROVIDER": provider,
         # 通用端点（留空按 provider 使用默认）
         "BASE_URL": os.getenv("VOICE_API_URL", ""),
@@ -1287,7 +1296,7 @@ PROMPT_CONFIG = {
         "描述必须包含你的完整外貌特征，缺一不可：银白色长发扎高马尾、左眼淡绿色右眼淡蓝色异色瞳、白皙肤色、毛茸茸的白色狐耳（内侧粉色）、银白色蓬松大尾巴、马尾处插着银色月牙发簪、两侧戴着细微尖三角形耳坠。再加上你与食物的互动动作、画面风格和氛围。你来决定怎么跟食物互动——可以开心地吃、嫌弃地推开、好奇地研究、把食物顶在头上等等。\n"
         "如果你不想画,可以不加这个标签。\n\n"
         "**示例**:\n"
-        "哼,这个看起来...还、还不错啦!我给10分!<affection:+5;coins:+50><image_prompt:银白色长发扎成高马尾的可爱银狐少女开心地大口吃着美味的寿司,左眼淡绿右眼淡蓝的异色瞳闪闪发亮,白皙脸颊透着粉红,毛茸茸的白色狐耳内侧粉色微微抖动,银白色蓬松大尾巴兴奋地摇晃,马尾处的银色月牙发簪轻轻晃动,两侧尖三角形耳坠若隐若现,Q版风格,温暖明亮的背景>"
+        "哼,这个看起来...还、还不错啦!我给10分!<affection:+5;coins:+50><image_prompt:银白色长发扎成高马尾的可爱成年银狐女性开心地大口吃着美味的寿司,左眼淡绿右眼淡蓝的异色瞳闪闪发亮,白皙脸颊透着粉红,毛茸茸的白色狐耳内侧粉色微微抖动,银白色蓬松大尾巴兴奋地摇晃,马尾处的银色月牙发簪轻轻晃动,两侧尖三角形耳坠若隐若现,Q版风格,温暖明亮的背景>"
     ),
 }
 

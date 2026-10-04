@@ -676,7 +676,13 @@ class RegenerateView(discord.ui.View):
                     if success_message:
                         processed_success = replace_emojis(success_message)
                         embed.add_field(name="\u200b", value=processed_success[:1024], inline=False)
-                    embed.set_footer(text=f"模型: {edit_model_name}")
+                    # 扣费已完成，查余额并写入 footer（含实际模型名）
+                    try:
+                        _bal_after = await coin_service.get_balance(clicker_user_id)
+                        _actual_m = str(getattr(gemini_imagen_service, "last_actual_model", "") or "").strip()
+                        embed.set_footer(text=f"模型: {_actual_m or edit_model_name} · 灵石 -{cost}（余 {_bal_after}）")
+                    except Exception:
+                        embed.set_footer(text=f"模型: {edit_model_name} · 灵石 -{cost}")
 
                     # 创建新的重新生成视图
                     new_view = RegenerateView(
@@ -1177,7 +1183,13 @@ class SlashCommandRegenerateView(discord.ui.View):
                         inline=False,
                     )
                     embed.add_field(name="\u200b", value="重新生成完成~", inline=False)
-                    embed.set_footer(text=f"模型: {edit_model_name}")
+                    # 扣费已完成，查余额并写入 footer（含实际模型名）
+                    try:
+                        _bal_after = await coin_service.get_balance(clicker_user_id)
+                        _actual_m = str(getattr(gemini_imagen_service, "last_actual_model", "") or "").strip()
+                        embed.set_footer(text=f"模型: {_actual_m or edit_model_name} · 灵石 -{cost}（余 {_bal_after}）")
+                    except Exception:
+                        embed.set_footer(text=f"模型: {edit_model_name} · 灵石 -{cost}")
 
                     # 创建新的重新生成视图
                     new_view = SlashCommandRegenerateView(

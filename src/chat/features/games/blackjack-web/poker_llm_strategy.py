@@ -181,6 +181,8 @@ def golden_flower_strategy(state: dict, you: str) -> dict:
         "compare_cost": compare_cost, "compare_stack_fraction": round(compare_cost / max(1, stack), 4),
         "heads_up_compare_break_even_win_rate": round(compare_cost / max(1, pot + compare_cost), 4) if len(opponents) == 1 else None,
         "compare_caution": "仅单挑比牌胜者立即拿走底池；多人比牌只淘汰一人，不等于立即赢池。同牌力时发起方负。",
+        "continuation_caution": "跟注/加注前按新注额预留与所有剩余对手逐个比牌的费用；多人比牌后也需留钱。不能只因当前付得起就跟到下一轮只剩弃牌。单挑比牌或本次达到行动上限立即摊牌除外；不保证对手未来加注后仍付得起。",
+        "seen_vs_blind_caution": "自己已看牌、未看牌对手仍有钱支付一倍基础跟注时，继续投入应立即向该对手比牌而非反复付双倍跟注；比牌费用自身也按明牌倍率计算。仍受弱牌预算和多人后续资金约束，付不起就退出。",
         "raise_to_examples": samples,
         "mix_percentile": _seed((you, state)) % 100,
         "unseen_range_note": "未看牌对手不知道自己的牌，其盲跟或盲加注本身不能证明手牌强；看牌也不等于有强牌，要结合看牌后的公开行动。",

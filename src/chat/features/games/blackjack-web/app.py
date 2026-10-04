@@ -128,7 +128,9 @@ def _configure_game_llm():
     """环境已加载后安装服务端决策器；缺少配置时保持原算法。"""
     global game_bot_runner
     module = import_module("src.chat.features.games.blackjack-web.game_llm")
-    client = module.GameLLMClient()
+    search_module = import_module("src.chat.features.games.blackjack-web.texas_search_client")
+    client = search_module.TexasSearchClient(module.GameLLMClient())
+    log.info("Texas search enabled=%s simulations=%d deadline=%.1f", client.texas_search_enabled, client.simulations, client.search_timeout)
     if not client.enabled:
         log.info("陪玩 LLM 未启用，使用本地算法")
         return
@@ -556,6 +558,9 @@ async def get_public_config():
     return JSONResponse(content={
         "discord_client_id": client_id,
         "noname_available": (_noname_bridge.NONAME_DIST_DIR / "index.html").is_file(),
+        "pokerogue_available": _pokerogue_host.pokerogue_available(),
+        "game_maintenance": dict(_table_module.GAME_MAINTENANCE),
+        "maintenance_announcement": _table_module.MAINTENANCE_ANNOUNCEMENT,
     })
 
 
@@ -1174,16 +1179,20 @@ async def list_game_rooms(
     user: Dict[str, Any] = Depends(get_current_user_profile),
 ):
     """统一大厅列表使用现有身份校验，只返回公开摘要，不读取钱包或牌局快照。"""
-    if game_type is not None and game_type not in {"blackjack", *_table_module.GAME_SPECS}:
+    if game_type is not None and game_type not in {"blackjack", "noname", *_table_module.GAME_SPECS}:
         raise HTTPException(status_code=400, detail="不支持的游戏类型")
     rooms = []
     if game_type in (None, "blackjack"):
         rooms.extend(multiplayer_blackjack_service.list_rooms(int(user["user_id"])))
-    if game_type != "blackjack":
+    if game_type not in ("blackjack", "noname"):
         rooms.extend(table_service.list_rooms(str(user["user_id"]), game_type))
+    warning = ''
+    if game_type in (None, "noname"):
+        noname_rooms, warning = await _noname_directory.directory.list_rooms(_noname_bridge.NONAME_DIST_DIR)
+        rooms.extend(noname_rooms)
     # 自己的房间和可加入的空位排在前面，同组按最近操作时间排序。
     rooms.sort(key=lambda room: (not room["is_member"], not room["can_join"], -room["updated_at"], room["room_id"]))
-    return {"success": True, "rooms": rooms[offset:offset + limit], "total": len(rooms)}
+    return {"success": True, "rooms": rooms[offset:offset + limit], "total": len(rooms), "warning": warning}
 
 
 @app.post("/api/multi/room/auto-join")
@@ -2185,11 +2194,25 @@ async def leave_table(request: RoomRequest, user: Dict[str, Any] = Depends(get_c
 
 # --- 静态文件服务 (仅在生产构建后生效) ---
 _noname_bridge = import_module("src.chat.features.games.blackjack-web.noname_bridge")
+_noname_directory = import_module("src.chat.features.games.blackjack-web.noname_directory")
 _noname_host = import_module("src.chat.features.games.blackjack-web.noname_host")
 _farm_api = import_module("src.chat.features.games.blackjack-web.farm_api")
 app.include_router(_farm_api.create_farm_router(get_current_user_profile, lambda: chat_db_manager.db_path))
+_mail_api = import_module("src.chat.features.games.blackjack-web.mail_api")
+app.include_router(_mail_api.create_mail_router(get_current_user_profile, lambda: chat_db_manager.db_path))
 app.include_router(_noname_bridge.create_noname_router(get_current_user_profile))
 app.mount("/noname", _noname_host.create_noname_app(_noname_bridge.NONAME_DIST_DIR), name="noname")
+_pokerogue_host = import_module("src.chat.features.games.blackjack-web.pokerogue_host")
+_pokerogue_cloud = import_module("src.chat.features.games.blackjack-web.pokerogue_cloud")
+app.include_router(_pokerogue_cloud.create_pokerogue_router(get_current_user_profile, lambda: chat_db_manager.db_path))
+_pokerogue_battle = import_module("src.chat.features.games.blackjack-web.pokerogue_battle")
+app.include_router(_pokerogue_battle.create_pokerogue_battle_router(get_current_user_profile, lambda: os.path.join(os.path.dirname(chat_db_manager.db_path), "pokerogue-battle.db")))
+
+@app.get("/api/pokerogue/status")
+async def pokerogue_status(user=Depends(get_current_user_profile)):
+    return {"available": _pokerogue_host.pokerogue_available()}
+
+app.mount("/pokerogue", _pokerogue_host.create_pokerogue_app(), name="pokerogue")
 
 static_files_path = os.path.join(
     os.path.dirname(__file__),
