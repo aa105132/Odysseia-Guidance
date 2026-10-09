@@ -844,12 +844,13 @@ async def _download_audio(
     category="娱乐",
 )
 async def request_song(
-    song_name: str,
+    song_name: Optional[str] = None,
     artist: Optional[str] = None,
     source: Optional[str] = None,
     br: Optional[int] = None,
     song_comment: Optional[str] = None,
     send_to_channel: bool = True,
+    query: Optional[str] = None,
     **kwargs,
 ) -> dict:
     """
@@ -888,6 +889,8 @@ async def request_song(
     Returns:
         成功发送文件或链接时返回 skip_ai_response=True，避免月月再补发重复文本。
     """
+    if not song_name:
+        song_name = query or kwargs.get("query") or kwargs.get("name") or kwargs.get("keyword")
     query = str(song_name or "").strip()
     original_query = query
     artist_text = str(artist or "").strip()
@@ -1056,6 +1059,50 @@ async def request_song(
                 "search_attempts": search_attempts,
                 "source_result_counts": source_result_counts,
             }
+
+            if not audio_url:
+                # [修复 2026-10-09] 选中源拿不到音频链接时（如 joox 上游抽风返回 url:""），
+                # 依次回退尝试其他源的同名候选，而不是直接报失败。
+                for cand in all_tracks:
+                    if not isinstance(cand, dict):
+                        continue
+                    if selected and str(cand.get("id")) == str(selected.get("id")) and str(cand.get("source")) == str(selected.get("source")):
+                        continue
+                    cand_source = str(cand.get("source") or "").strip().lower()
+                    if cand_source not in ("netease", "joox", "bilibili"):
+                        continue
+                    try:
+                        cand_url_info = await _fetch_song_url(session, cand, requested_br)
+                        cand_url = str(cand_url_info.get("url") or "").strip()
+                    except Exception:
+                        continue
+                    if cand_url:
+                        log.warning(
+                            "点歌回退: 选中源 %s 无音频链接，改用 %s 的《%s》",
+                            selected.get("source") if selected else "?",
+                            cand_source,
+                            cand.get("name"),
+                        )
+                        selected = cand
+                        url_info = cand_url_info
+                        audio_url = cand_url
+                        actual_br = _coerce_int(url_info.get("br"), requested_br)
+                        remote_size = _coerce_int(url_info.get("size"))
+                        source_name = str(selected.get("source") or "").strip() or sources[0]
+                        base_result = {
+                            **base_result,
+                            "track": selected,
+                            "source": source_name,
+                            "br": actual_br,
+                            "remote_size": remote_size,
+                            "audio_url": audio_url,
+                            "fallback_used": True,
+                        }
+                        try:
+                            cover_url = await _fetch_cover_url(session, selected)
+                        except Exception:
+                            pass
+                        break
 
             if not audio_url:
                 return {

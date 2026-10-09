@@ -261,6 +261,13 @@ async def generate_image(
                 - 添加氛围/光照（柔和的光线、夕阳等）
                 - 添加细节描述提升画质
 
+                【电影感/巨物类请求必读】当用户请求包含"电影感、大片、史诗、巨物、神明、古神、
+                中国龙、巨兽、山海经、灾难、压迫感"任一关键词时，必须先调用
+                manage_skills(action="view", name="cinematic-colossal-prompt")
+                读取技能规则，再按规则把简单主体扩写成实拍级电影镜头简报（三层尺度参照、
+                环境物理反馈、局部遮挡不完整展示、低机位仰拍宽银幕、可信光源、低饱和灾难色盘），
+                并把技能里的"负面约束"整段写进 negative_prompt 参数。
+
                 例如用户说"画一只可爱的小猫"，你应该生成：
                 "一只可爱的小猫，毛茸茸的皮毛，大而圆的眼睛，二次元风格，柔和的光线，高画质，细节丰富"
 
@@ -623,8 +630,8 @@ async def generate_image(
                     import io
                     from src.chat.features.tools.ui.regenerate_view import RegenerateView
 
-                    # 获取实际使用的模型名称
-                    imagen_model_name = (
+                    # 获取实际使用的模型名称（优先上游响应返回的真实模型，回退理论配置值）
+                    resolved_model = (
                         str(model_name_override).strip()
                         if model_name_override is not None and str(model_name_override).strip()
                         else gemini_imagen_service._get_model_for_resolution(
@@ -632,6 +639,10 @@ async def generate_image(
                             is_edit=False,
                             content_rating=content_rating,
                         )
+                    )
+                    imagen_model_name = (
+                        str(gemini_imagen_service.last_actual_model or "").strip()
+                        or resolved_model
                     )
 
                     # 构建 Discord Embed（标题+提示词+成功回复全在 Embed 内）
@@ -742,6 +753,16 @@ async def generate_image(
                         parsed_user_id, actual_cost, f"AI图片生成x{actual_count}: {prompt[:25]}..."
                     )
                     log.info(f"用户 {parsed_user_id} 生成 {actual_count} 张图片成功，扣除 {actual_cost} 灵石")
+                    # 扣费后把灵石消耗+余额写回 Embed footer
+                    try:
+                        _bal_after = await coin_service.get_balance(parsed_user_id)
+                        if sent_message and sent_message.embeds:
+                            _emb = sent_message.embeds[0]
+                            _old_footer = _emb.footer.text or ""
+                            _emb.set_footer(text=f"{_old_footer} · 灵石 -{actual_cost}（余 {_bal_after}）" if _old_footer else f"灵石 -{actual_cost}（余 {_bal_after}）")
+                            await sent_message.edit(embed=_emb)
+                    except Exception as _e:
+                        log.warning(f"更新Embed灵石信息失败: {_e}")
                 except Exception as e:
                     log.error(f"扣除灵石失败: {e}")
 
@@ -1155,6 +1176,16 @@ async def generate_images_batch(
                         parsed_user_id, actual_cost, f"AI批量图片生成x{actual_count}"
                     )
                     log.info(f"用户 {parsed_user_id} 批量生成 {actual_count} 张图片，扣除 {actual_cost} 灵石")
+                    # 扣费后把灵石消耗+余额写回 Embed footer
+                    try:
+                        _bal_after = await coin_service.get_balance(parsed_user_id)
+                        if sent_message and sent_message.embeds:
+                            _emb = sent_message.embeds[0]
+                            _old_footer = _emb.footer.text or ""
+                            _emb.set_footer(text=f"{_old_footer} · 灵石 -{actual_cost}（余 {_bal_after}）" if _old_footer else f"灵石 -{actual_cost}（余 {_bal_after}）")
+                            await sent_message.edit(embed=_emb)
+                    except Exception as _e:
+                        log.warning(f"更新Embed灵石信息失败: {_e}")
                 except Exception as e:
                     log.error(f"扣除灵石失败: {e}")
 

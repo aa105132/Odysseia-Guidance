@@ -951,6 +951,23 @@ class PromptService:
         if not message and attachment_images:
             current_user_parts.append(f"用户名:{user_name}, 用户消息:(媒体消息)")
 
+        # [归属修正 2026-10-09 v3] "光@不说话"时 Discord content 是 "<@id>"，清洗后
+        # 只剩 "@月月啊" 这类纯 mention 文本——也算"没有输入文字"。
+        # 关键：提示/引导文本【严禁】拼进当前用户消息里——用户轮必须与上游一致，
+        # 只有 "[user_name]: 内容"，后面什么都不挂。任何挂在用户消息后面的文字都会
+        # 被模型当成"用户身上拖着的东西"进行角色扮演（"输出传输要求挂尾巴"RP事故
+        # 正是这个模式触发的）。引导统一放进最后一条 model 消息。
+        def _is_mention_only(m: str) -> bool:
+            if not m:
+                return True
+            import re as _re
+            residual = _re.sub(r"@[^\s@]{0,32}", "", m)  # 去掉 @月月啊 / @name 等残片
+            return residual.strip() == ""
+
+        _mention_only_flag = bool(
+            not images and (not message or _is_mention_only(message))
+        )
+
         # 追加所有附件图片到末尾
         gif_max_frames = chat_config.IMAGE_PROCESSING_CONFIG.get("GIF_MAX_FRAMES", 4)
         video_max_frames = chat_config.IMAGE_PROCESSING_CONFIG.get(
@@ -1059,13 +1076,28 @@ class PromptService:
                 else:
                     cleaned_user_parts.append(part)
 
-            # Gemini API 不允许连续的 'user' 角色消息。
-            # 如果频道历史的最后一条是 'user'，我们需要将当前输入合并进去。
-            if final_conversation and final_conversation[-1].get("role") == "user":
-                final_conversation[-1]["parts"].extend(cleaned_user_parts)
-                log.debug("将当前用户输入合并到上一条 'user' 消息中。")
-            else:
-                final_conversation.append({"role": "user", "parts": cleaned_user_parts})
+            # [归属修正 2026-10-09 v3] 光@不说话时，把引导语放进最后一条 model 消息
+            # （与上游"最终指令合并到最后一条 model 消息"同路），用户轮保持纯净，
+            # 只含 "[user]: 内容"，后面什么都不挂。
+            if _mention_only_flag:
+                _mention_guidance = (
+                    f"[系统提示] {user_name} 这条消息只是 @ 了你，没有输入任何文字。"
+                    f"这不是测试接口/协议/传输通道，也不存在什么'输出传输要求'——"
+                    f"那是以前的误会，月月是只普通的狐娘，用户消息后面不会拖任何代码。"
+                    f"把这条当作 {user_name} 在叫你，用平时聊天的语气自然回应就好；"
+                    f"不要把频道历史记录里其他人的话当成 {user_name} 说的，"
+                    f"也不要在回复里描写任何挂在用户消息后面的文本。"
+                )
+                for _i in range(len(final_conversation) - 1, -1, -1):
+                    if final_conversation[_i].get("role") == "model":
+                        final_conversation[_i]["parts"].append(_mention_guidance)
+                        log.debug("纯@消息：引导语已并入最后一条 model 消息（用户轮保持纯净）。")
+                        break
+
+            # [恢复上游语义 2026-10-02] 当前用户输入永远作为独立的最后一条 user 消息，
+            # 不合并进任何历史/注入块——保证模型清楚"最后这条才是当前用户说的话"。
+            # 上游（Echoer009/Odysseia-Guidance）就是独立 user turn，无合并逻辑。
+            final_conversation.append({"role": "user", "parts": cleaned_user_parts})
 
         if chat_config.DEBUG_CONFIG["LOG_FINAL_CONTEXT"]:
             log.debug(
